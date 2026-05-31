@@ -1,0 +1,263 @@
+package llm
+
+import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"time"
+)
+
+// Role 表示对话中的消息角色，映射 OpenAI Chat Completions 协议。
+type Role string
+
+const (
+	RoleSystem    Role = "system"
+	RoleUser      Role = "user"
+	RoleAssistant Role = "assistant"
+	RoleTool      Role = "tool"
+)
+
+// Message 表示对话中的一条消息，直接映射 OpenAI 协议的 message 对象。
+// JSON struct tags 配合 omitempty 实现零分配序列化，无需手动 buildMessages。
+type Message struct {
+	Role             Role       `json:"role"`                         // system / user / assistant / tool
+	Content          string     `json:"content,omitempty"`            // 文本内容（tool 角色时为工具执行结果）
+	ReasoningContent string     `json:"reasoning_content"`            // 思考链内容（DeepSeek 要求有 tool_calls 时必须回传，即使是空字符串）
+	ToolCallID       string     `json:"tool_call_id,omitempty"`       // tool 角色时关联的工具调用 ID
+	ToolCalls        []ToolCall `json:"tool_calls,omitempty"`         // assistant 角色时可能包含的工具调用
+	Name             string     `json:"name,omitempty"`               // 可选，工具名（tool 角色时）
+}
+
+// ToolCall 表示 LLM 发起的一次工具调用请求。
+type ToolCall struct {
+	Index     int    // 工具调用序号（流式模式下用于分片累积，非流式时为 0）；序列化时排除
+	ID        string // 工具调用唯一 ID
+	Name      string // 工具名
+	Arguments string // JSON 编码的调用参数
+}
+
+// MarshalJSON 输出 OpenAI 兼容格式 {id, type:"function", function:{name, arguments}}。
+// Index（内部字段，用于流式分片累积）不出现在输出中。
+func (tc ToolCall) MarshalJSON() ([]byte, error) {
+	return json.Marshal(struct {
+		ID       string `json:"id"`
+		Type     string `json:"type"`
+		Function struct {
+			Name      string `json:"name"`
+			Arguments string `json:"arguments"`
+		} `json:"function"`
+	}{
+		ID:   tc.ID,
+		Type: "function",
+		Function: struct {
+			Name      string `json:"name"`
+			Arguments string `json:"arguments"`
+		}{
+			Name:      tc.Name,
+			Arguments: tc.Arguments,
+		},
+	})
+}
+
+// ToolSpec 定义一个可供 LLM 调用的工具。
+type ToolSpec struct {
+	Name        string      // 函数名，须匹配 ^[a-zA-Z0-9_-]{1,64}$
+	Description string      // 函数描述
+	Parameters  interface{} // JSON Schema 格式的参数定义
+}
+
+// Response 封装 LLM 返回的完整信息。
+type Response struct {
+	Content          string     // 文本回复内容
+	ReasoningContent string     // 推理/思考链内容（思考模式下非空，DeepSeek 独有）
+	FinishReason     string     // 完成原因：stop / length / tool_calls / content_filter / insufficient_system_resource
+	ToolCalls        []ToolCall // 工具调用列表（LLM 请求执行工具时非空）
+	Usage            *UsageInfo // Token 用量信息（Provider 未返回时为 nil）
+	Model            string     // API 返回的实际模型名
+}
+
+// UsageInfo 记录单次 LLM 调用的 Token 消耗。
+// 此数据是 Context Manager（Wave 4）进行上下文窗口管理的输入源，
+// Client 作为 LLM 调用的唯一出口，必须保留并传递此信息。
+type UsageInfo struct {
+	PromptTokens     int // 输入 Token 数
+	CompletionTokens int // 输出 Token 数
+	TotalTokens      int // 总 Token 数
+	// 以下为 Prompt Cache 相关字段（Provider 不支持时为 0）
+	CacheHitTokens  int // 命中前缀缓存的 Token 数
+	CacheMissTokens int // 未命中前缀缓存的 Token 数
+	// 思考模式相关（DeepSeek 独有）
+	ReasoningTokens int // 思考链消耗的 Token 数
+}
+
+// ErrorClass 区分错误的可恢复性。
+type ErrorClass int
+
+const (
+	ErrorClassRetryable    ErrorClass = iota // 可重试（网络超时、429、5xx）
+	ErrorClassNonRetryable                   // 不可重试（401、403、400、模型不存在）
+)
+
+// RetryPolicy 定义重试行为参数。
+type RetryPolicy struct {
+	MaxRetries     int           // 最大重试次数，默认 3
+	InitialBackoff time.Duration // 初始等待时间，默认 1s
+	MaxBackoff     time.Duration // 最大等待时间，默认 30s
+	Multiplier     float64       // 退避乘数，默认 2.0
+}
+
+// RetryEvent 记录一次重试尝试的元数据，并发安全（值类型）。
+// Wave 5 的 ObserverBus 可将此类型包装为通用 Event 的 Payload。
+type RetryEvent struct {
+	Attempt     int           // 当前尝试序号（0-based，0 = 首次请求）
+	MaxAttempts int           // 最大尝试次数（含首次，= MaxRetries + 1）
+	Error       error         // 导致重试的错误；成功时为 nil
+	Backoff     time.Duration // 下次重试前的等待时间；不再重试时为 0
+	WillRetry   bool          // 是否还会重试
+	Timestamp   time.Time     // 事件触发时间
+}
+
+// RetryHook 是重试事件的回调签名。
+// 实现者不应在回调中阻塞或 panic。
+type RetryHook func(ctx context.Context, ev RetryEvent)
+
+// DefaultRetryPolicy 返回推荐的重试配置。
+func DefaultRetryPolicy() RetryPolicy {
+	return RetryPolicy{
+		MaxRetries:     3,
+		InitialBackoff: 1 * time.Second,
+		MaxBackoff:     30 * time.Second,
+		Multiplier:     2.0,
+	}
+}
+
+// ProviderType 标识 LLM 提供商。
+type ProviderType string
+
+const (
+	ProviderOpenAI   ProviderType = "openai"    // 标准 OpenAI 协议，也是默认兜底
+	ProviderDeepSeek ProviderType = "deepseek"
+	// 后续扩展:
+	// ProviderAnthropic ProviderType = "anthropic"
+	// ProviderOllama    ProviderType = "ollama"
+)
+
+// ClientConfig 在构造 Client 时传入，运行期不可变。
+type ClientConfig struct {
+	Provider       ProviderType      // Provider 类型
+	APIKey         string            // API Key
+	Model          string            // 模型名称，如 "deepseek-chat"
+	BaseURL        string            // 可选，留空使用 Provider 默认端点
+	ResponseFormat string            // 可选，强制输出格式："json_object" 启用 JSON 模式，空字符串不设置
+	ExtraParams    map[string]any    // 可选，注入 Provider 特殊参数（如 DeepSeek 的 frequency_penalty 等）
+	RetryPolicy    RetryPolicy       // 重试策略配置
+	Timeout        time.Duration     // 单次请求超时，默认 600s（对齐 DeepSeek 服务端保活超时）
+	Headers        map[string]string // 可选，注入自定义 HTTP 请求头
+	HTTPClient     *http.Client      // 可选，注入自定义 HTTP 传输层（代理、TLS 证书等），nil 使用默认
+	OnRetry        RetryHook         // 可选，重试事件回调；nil 时不触发
+}
+
+// StreamingEvent 流式响应中的一个增量块。
+type StreamingEvent struct {
+	Delta          string     // 本次增量文本
+	ReasoningDelta string     // 本次增量思考内容（DeepSeek 思考模式下出现）
+	ToolCalls      []ToolCall // 流式累积完成后的工具调用列表（仅在 Done=true 时完整填充）
+	FinishReason   string     // 完成原因（仅在 Done=true 时非空）
+	Usage          *UsageInfo // Token 用量（仅在 Done=true 的最后一帧非空）
+	Model          string     // API 返回的实际模型名（首帧或最后一帧携带）
+	Done           bool       // 是否为流结束信号
+	Err            error      // 流处理中的错误（仅在 Done=true 且出错时非 nil）
+}
+
+// ValidateMessages 检查消息配对不变量：每条含 tool_calls 的 assistant 消息
+// 之后必须有对应 tool_call_id 的 tool 消息。违反时剔除无法配对的 tool_calls。
+// 返回可能被修改的消息切片和校验结果是否通过。
+func ValidateMessages(msgs []Message) ([]Message, bool) {
+	clean := make([]Message, 0, len(msgs))
+	changed := false
+
+	for i := 0; i < len(msgs); i++ {
+		msg := msgs[i]
+		if msg.Role != RoleAssistant || len(msg.ToolCalls) == 0 {
+			clean = append(clean, msg)
+			continue
+		}
+
+		// 收集后续 tool 消息的 tool_call_id 集合
+		toolIDs := make(map[string]bool, len(msg.ToolCalls))
+		for j := i + 1; j < len(msgs); j++ {
+			if msgs[j].Role == RoleTool && msgs[j].ToolCallID != "" {
+				toolIDs[msgs[j].ToolCallID] = true
+			}
+			// 遇到下一条 assistant 或 user 消息停止搜索
+			if msgs[j].Role == RoleAssistant || msgs[j].Role == RoleUser {
+				break
+			}
+		}
+
+		// 保留有配对的 tool_calls
+		var valid []ToolCall
+		for _, tc := range msg.ToolCalls {
+			if tc.ID == "" {
+				changed = true
+				continue
+			}
+			if toolIDs[tc.ID] {
+				valid = append(valid, tc)
+			} else {
+				changed = true
+			}
+		}
+
+		msg.ToolCalls = valid
+		clean = append(clean, msg)
+	}
+
+	if !changed {
+		return msgs, true
+	}
+	return clean, false
+}
+
+// ---------------------------------------------------------------------------
+// BalanceInfo — 账户余额
+// ---------------------------------------------------------------------------
+
+// BalanceInfo 表示账户余额查询结果。
+// 部分 Provider（如 OpenAI）不支持余额查询，此时 IsAvailable 为 false。
+type BalanceInfo struct {
+	IsAvailable  bool              // 当前账户是否有余额可供 API 调用
+	BalanceInfos []CurrencyBalance // 各币种余额明细
+}
+
+// CurrencyBalance 表示单个币种的余额明细。
+type CurrencyBalance struct {
+	Currency        string // 货币代码：CNY / USD
+	TotalBalance    string // 总的可用余额（包括赠金和充值余额）
+	GrantedBalance  string // 未过期的赠金余额
+	ToppedUpBalance string // 充值余额
+}
+
+// FilterValidToolCalls 从 tool_calls 中剔除无效项：空 ID、空 Name、
+// 或在 registry 中不存在的工具名。返回过滤后的切片。
+// registry 为空时仅检查 ID/Name 非空。
+func FilterValidToolCalls(calls []ToolCall, registry map[string]bool) []ToolCall {
+	if len(calls) == 0 {
+		return nil
+	}
+	valid := make([]ToolCall, 0, len(calls))
+	for _, tc := range calls {
+		if tc.ID == "" || tc.Name == "" {
+			continue
+		}
+		if registry != nil && !registry[tc.Name] {
+			continue
+		}
+		valid = append(valid, tc)
+	}
+	if len(valid) == 0 {
+		return nil
+	}
+	return valid
+}
+
