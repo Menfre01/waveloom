@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 160" fill="none">
+  <defs>
+    <linearGradient id="w" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#5f5faf"/>
+      <stop offset="50%" stop-color="#5fafd7"/>
+      <stop offset="100%" stop-color="#5faf5f"/>
+    </linearGradient>
+  </defs>
+
+  <!-- W mark: interleaved wave threads -->
+  <g transform="translate(30, 20)">
+    <!-- Thread 1: top wave -->
+    <path d="M 0 50 Q 15 10, 30 50 T 60 50 T 90 50 T 120 50"
+          stroke="url(#w)" stroke-width="4" stroke-linecap="round" fill="none" opacity="0.9"/>
+    <!-- Thread 2: middle wave -->
+    <path d="M 0 80 Q 20 45, 40 80 T 80 80 T 120 80"
+          stroke="url(#w)" stroke-width="4" stroke-linecap="round" fill="none" opacity="0.7"/>
+    <!-- Thread 3: bottom wave -->
+    <path d="M 0 110 Q 25 80, 50 110 T 100 110"
+          stroke="url(#w)" stroke-width="4" stroke-linecap="round" fill="none" opacity="0.5"/>
+  </g>
+
+  <!-- Wordmark -->
+  <text x="175" y="100" font-family="ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace"
+        font-size="62" font-weight="700" fill="url(#w)" letter-spacing="-2">Waveloom</text>
+</svg>

@@ -1,0 +1,35 @@
+{
+    "llm": {
+        "api_key": "sk-your-api-key",
+        "provider": "openai",
+        "model": "gpt-4o",
+        "base_url": "https://api.openai.com/v1",
+        "timeout": "120s",
+        "retry": {
+            "max_retries": 3,
+            "initial_backoff": "1s",
+            "max_backoff": "30s",
+            "multiplier": 2.0
+        },
+        "headers": {},
+        "extra_params": {
+            "temperature": 0.7,
+            "max_tokens": 4096
+        }
+    },
+    "permissions": {
+        "allow": ["read_file", "search_file", "grep", "ls"],
+        "deny": ["shell(rm -rf /*)"],
+        "ask": ["write_file", "edit_file"]
+    },
+    "session": {
+        "dir": ".waveloom/sessions"
+    },
+    "compaction": {
+        "tier1_threshold": 0.60,
+        "tier2_threshold": 0.80,
+        "tier3_threshold": 0.95,
+        "protection_zone_tokens": "8K",
+        "context_limit_tokens": "1M"
+    }
+}

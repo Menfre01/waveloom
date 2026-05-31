@@ -1,0 +1,350 @@
+package tool
+
+import (
+	"context"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+	"time"
+)
+
+func TestWebFetchSuccess(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		w.Write([]byte("Hello, world!"))
+	}))
+	defer server.Close()
+
+	tool := &WebFetch{skipHostCheck: true}
+	result, err := tool.Execute(context.Background(), WebFetchParams{
+		URL: server.URL + "/test.txt",
+	})
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if result.Error != nil {
+		t.Fatalf("Execute() result.Error = %v", result.Error)
+	}
+	if !strings.Contains(result.Content, "Hello, world!") {
+		t.Errorf("expected content to contain 'Hello, world!', got %q", result.Content)
+	}
+	if result.Meta.ByteCount == 0 {
+		t.Error("ByteCount should be > 0")
+	}
+}
+
+func TestWebFetchHTMLStripped(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Write([]byte("<html><body><h1>Title</h1><p>Paragraph</p></body></html>"))
+	}))
+	defer server.Close()
+
+	tool := &WebFetch{skipHostCheck: true}
+	result, err := tool.Execute(context.Background(), WebFetchParams{
+		URL: server.URL + "/page.html",
+	})
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if result.Error != nil {
+		t.Fatalf("Execute() result.Error = %v", result.Error)
+	}
+	// HTML tags should be stripped
+	if strings.Contains(result.Content, "<html>") || strings.Contains(result.Content, "<body>") {
+		t.Errorf("HTML tags should be stripped, got %q", result.Content)
+	}
+	// Should contain the text content
+	if !strings.Contains(result.Content, "Title") || !strings.Contains(result.Content, "Paragraph") {
+		t.Errorf("expected content to contain 'Title' and 'Paragraph', got %q", result.Content)
+	}
+}
+
+func TestWebFetchJSON(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"name":"waveloom","version":"0.1.0"}`))
+	}))
+	defer server.Close()
+
+	tool := &WebFetch{skipHostCheck: true}
+	result, err := tool.Execute(context.Background(), WebFetchParams{
+		URL: server.URL + "/api.json",
+	})
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if result.Error != nil {
+		t.Fatalf("Execute() result.Error = %v", result.Error)
+	}
+	if !strings.Contains(result.Content, "waveloom") {
+		t.Errorf("expected content to contain 'waveloom', got %q", result.Content)
+	}
+}
+
+func TestWebFetchHTTPError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		w.Write([]byte("not found"))
+	}))
+	defer server.Close()
+
+	tool := &WebFetch{skipHostCheck: true}
+	result, err := tool.Execute(context.Background(), WebFetchParams{
+		URL: server.URL + "/missing",
+	})
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if result.Error == nil {
+		t.Fatal("expected error for 404 response")
+	}
+	if result.Error.Class != ErrorClassRecoverable {
+		t.Errorf("expected Recoverable error, got %v", result.Error.Class)
+	}
+	if result.Error.Kind != ErrKindCommandFailed {
+		t.Errorf("expected ErrKindCommandFailed, got %v", result.Error.Kind)
+	}
+}
+
+func TestWebFetchInvalidURL(t *testing.T) {
+	tool := &WebFetch{}
+	result, err := tool.Execute(context.Background(), WebFetchParams{
+		URL: "not-a-valid-url",
+	})
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if result.Error == nil {
+		t.Fatal("expected error for invalid URL")
+	}
+	if result.Error.Kind != ErrKindInvalidArgs {
+		t.Errorf("expected ErrKindInvalidArgs, got %v", result.Error.Kind)
+	}
+}
+
+func TestWebFetchTimeout(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// 阻塞直到客户端超时断开，通过 ctx 感知取消避免 httptest.Server.Close 阻塞
+		select {
+		case <-time.After(10 * time.Second):
+		case <-r.Context().Done():
+		}
+	}))
+	defer server.Close()
+
+	tool := &WebFetch{skipHostCheck: true}
+	result, err := tool.Execute(context.Background(), WebFetchParams{
+		URL:       server.URL + "/slow",
+		TimeoutMs: 50,
+	})
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if result.Error == nil {
+		t.Fatal("expected timeout error")
+	}
+	if result.Error.Kind != ErrKindTimeout {
+		t.Errorf("expected ErrKindTimeout, got %v", result.Error.Kind)
+	}
+}
+
+func TestWebFetchBinaryContentType(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "image/png")
+		w.Write([]byte{0x89, 0x50, 0x4E, 0x47})
+	}))
+	defer server.Close()
+
+	tool := &WebFetch{skipHostCheck: true}
+	result, err := tool.Execute(context.Background(), WebFetchParams{
+		URL: server.URL + "/image.png",
+	})
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if result.Error == nil {
+		t.Fatal("expected error for binary content type")
+	}
+	if result.Error.Kind != ErrKindBinaryFile {
+		t.Errorf("expected ErrKindBinaryFile, got %v", result.Error.Kind)
+	}
+}
+
+func TestWebFetchSizeLimit(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/plain")
+		// Write 100KB of data
+		data := strings.Repeat("a", 100*1024)
+		w.Write([]byte(data))
+	}))
+	defer server.Close()
+
+	tool := &WebFetch{skipHostCheck: true}
+	result, err := tool.Execute(context.Background(), WebFetchParams{
+		URL:     server.URL + "/large.txt",
+		MaxSize: 1024, // limit to 1KB
+	})
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if result.Error != nil {
+		t.Fatalf("unexpected error: %v", result.Error)
+	}
+	// Should be truncated
+	if strings.Count(result.Content, "truncated") == 0 {
+		t.Error("expected truncated indicator in content")
+	}
+	if !strings.Contains(result.Content, "a") {
+		t.Error("expected some content")
+	}
+}
+
+func TestWebFetchNameDescription(t *testing.T) {
+	tool := &WebFetch{}
+	if tool.Name() != "web_fetch" {
+		t.Errorf("Name() = %q, want %q", tool.Name(), "web_fetch")
+	}
+	if tool.Description() == "" {
+		t.Error("Description() should not be empty")
+	}
+	if tool.ConcurrentSafe() != true {
+		t.Error("ConcurrentSafe() should be true")
+	}
+}
+
+func TestWebFetchSchemaValid(t *testing.T) {
+	tool := &WebFetch{}
+	schema := tool.Schema()
+	if len(schema) == 0 {
+		t.Error("Schema() should not be empty")
+	}
+	// Should be valid JSON
+	if !strings.Contains(string(schema), "url") {
+		t.Error("Schema should contain 'url'")
+	}
+}
+
+// ── SSRF 防护测试 ──
+
+func TestWebFetchLoopbackRejected(t *testing.T) {
+	tool := &WebFetch{}
+
+	tests := []struct {
+		name string
+		url  string
+	}{
+		{"IPv4 loopback", "http://127.0.0.1:8080/"},
+		{"IPv4 loopback alt", "http://127.0.0.2/test"},
+		{"IPv6 loopback", "http://[::1]:8080/"},
+		{"localhost", "http://localhost/admin"},
+		{"localhost with port", "http://localhost:3000/api"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := tool.Execute(context.Background(), WebFetchParams{URL: tt.url})
+			if err != nil {
+				t.Fatalf("Execute() error = %v", err)
+			}
+			if result.Error == nil {
+				t.Fatalf("expected error for %s, got nil", tt.url)
+			}
+			if result.Error.Kind != ErrKindInvalidArgs {
+				t.Errorf("expected ErrKindInvalidArgs, got %v", result.Error.Kind)
+			}
+		})
+	}
+}
+
+func TestWebFetchPrivateRejected(t *testing.T) {
+	tool := &WebFetch{}
+
+	tests := []string{
+		"http://10.0.0.1/api",
+		"http://172.16.0.1/",
+		"http://192.168.1.1/admin",
+		"http://169.254.169.254/latest/meta-data/",
+	}
+	for _, u := range tests {
+		t.Run(u, func(t *testing.T) {
+			result, err := tool.Execute(context.Background(), WebFetchParams{URL: u})
+			if err != nil {
+				t.Fatalf("Execute() error = %v", err)
+			}
+			if result.Error == nil {
+				t.Fatalf("expected error for %s, got nil", u)
+			}
+			if result.Error.Kind != ErrKindInvalidArgs {
+				t.Errorf("expected ErrKindInvalidArgs, got %v", result.Error.Kind)
+			}
+		})
+	}
+}
+
+func TestWebFetchRedirectToPrivateRejected(t *testing.T) {
+	// 第一个请求返回重定向到内网地址，应被 CheckRedirect 拦截
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/redirect" {
+			http.Redirect(w, r, "http://127.0.0.1/secret", http.StatusFound)
+			return
+		}
+		w.Header().Set("Content-Type", "text/plain")
+		w.Write([]byte("ok"))
+	}))
+	defer server.Close()
+
+	tool := &WebFetch{skipHostCheck: true} // 初始 URL 在 loopback，但 CheckRedirect 仍会拦截
+	result, err := tool.Execute(context.Background(), WebFetchParams{
+		URL: server.URL + "/redirect",
+	})
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if result.Error == nil {
+		t.Fatal("expected error for redirect to loopback")
+	}
+}
+
+func TestWebFetchRedirectToPublicAllowed(t *testing.T) {
+	// 重定向到同服务器的公共地址应被允许
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/redirect" {
+			http.Redirect(w, r, "/target", http.StatusFound)
+			return
+		}
+		w.Header().Set("Content-Type", "text/plain")
+		w.Write([]byte("redirected content"))
+	}))
+	defer server.Close()
+
+	tool := &WebFetch{
+		skipHostCheck: true,
+		httpClient:    server.Client(), // 使用 httptest 内置 client（绕过 SSRF CheckRedirect）
+	}
+	result, err := tool.Execute(context.Background(), WebFetchParams{
+		URL: server.URL + "/redirect",
+	})
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if result.Error != nil {
+		t.Fatalf("unexpected error for public redirect: %v", result.Error)
+	}
+	if !strings.Contains(result.Content, "redirected content") {
+		t.Errorf("expected 'redirected content', got %q", result.Content)
+	}
+}
+
+func TestWebFetchUnresolvableHostRejected(t *testing.T) {
+	tool := &WebFetch{}
+	result, err := tool.Execute(context.Background(), WebFetchParams{
+		URL: "http://this-host-definitely-does-not-exist.invalid/",
+	})
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if result.Error == nil {
+		t.Fatal("expected error for unresolvable host")
+	}
+}

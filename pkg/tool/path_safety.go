@@ -1,0 +1,358 @@
+package tool
+
+import (
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"strings"
+)
+
+// ---------------------------------------------------------------------------
+// 常量
+// ---------------------------------------------------------------------------
+
+const (
+	// MaxReadBytes 是 read_file 单次返回的最大字节数。
+	// 100KB ≈ 30K tokens（英文代码），对于绝大多数源文件足够。
+	MaxReadBytes = 100 << 10 // 100KB
+
+	// FastPathMaxSize 是小文件快速路径的阈值。
+	// 小于此值的普通文件一次 ReadFile 读完，避免逐行 Scan 的异步开销。
+	FastPathMaxSize = 10 << 20 // 10MB
+
+	MaxWriteBytes  = 500 << 10 // 500KB — write_file 拒绝写入超过此大小的内容
+	MaxShellOutput = 100 << 10 // 100KB — shell 输出截断阈值
+	MaxShellLines  = 3000      // shell 输出最大行数
+	MaxLineBytes   = 4096      // shell 输出单行最大字节数，超长行截断
+)
+
+// ---------------------------------------------------------------------------
+// 跳过的目录
+// ---------------------------------------------------------------------------
+
+var skipDirs = map[string]bool{
+	".git":         true,
+	".svn":         true,
+	".hg":          true,
+	"node_modules": true,
+	".claude":      true,
+	"__pycache__":  true,
+	".DS_Store":    true,
+}
+
+// ---------------------------------------------------------------------------
+// 设备文件黑名单 — 读取这些路径会永远阻塞（无 EOF）
+// ---------------------------------------------------------------------------
+
+var blockedDevicePaths = map[string]bool{
+	"/dev/zero":    true,
+	"/dev/random":  true,
+	"/dev/urandom": true,
+	"/dev/full":    true,
+	"/dev/stdin":   true,
+	"/dev/tty":     true,
+	"/dev/console": true,
+	"/dev/stdout":  true,
+	"/dev/stderr":  true,
+}
+
+// IsBlockedDevicePath 检查路径是否为阻塞设备文件。
+func IsBlockedDevicePath(path string) bool {
+	if blockedDevicePaths[path] {
+		return true
+	}
+	// Linux: /proc/self/fd/0,1,2 是 stdio 别名
+	if strings.HasPrefix(path, "/proc/") &&
+		(strings.HasSuffix(path, "/fd/0") ||
+			strings.HasSuffix(path, "/fd/1") ||
+			strings.HasSuffix(path, "/fd/2")) {
+		return true
+	}
+	return false
+}
+
+// ---------------------------------------------------------------------------
+// 已知二进制扩展名 — 零 I/O 成本快速拒绝
+// ---------------------------------------------------------------------------
+
+var binaryExtensions = map[string]bool{
+	".o":     true,
+	".a":     true,
+	".so":    true,
+	".dylib": true,
+	".dll":   true,
+	".exe":   true,
+	".bin":   true,
+	".dat":   true,
+	".class": true,
+	".pyc":   true,
+	".pyo":   true,
+	".pyd":   true,
+	".wasm":  true,
+	".zip":   true,
+	".tar":   true,
+	".gz":    true,
+	".bz2":   true,
+	".xz":    true,
+	".7z":    true,
+	".rar":   true,
+	".jpg":   true,
+	".jpeg":  true,
+	".png":   true,
+	".gif":   true,
+	".bmp":   true,
+	".ico":   true,
+	".webp":  true,
+	".mp3":   true,
+	".mp4":   true,
+	".avi":   true,
+	".mov":   true,
+	".wav":   true,
+	".flac":  true,
+	".ttf":   true,
+	".otf":   true,
+	".woff":  true,
+	".woff2": true,
+	".eot":   true,
+	".pdf":   true,
+}
+
+// HasBinaryExtension 通过扩展名判断文件是否为已知二进制格式。
+func HasBinaryExtension(path string) bool {
+	ext := strings.ToLower(filepath.Ext(path))
+	return binaryExtensions[ext]
+}
+
+// ---------------------------------------------------------------------------
+// ResolvePath — 路径标准化
+// ---------------------------------------------------------------------------
+
+func ResolvePath(path string) (string, error) {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return "", fmt.Errorf("failed to resolve path: %w", err)
+	}
+	return filepath.Clean(abs), nil
+}
+
+// ResolvePathWithDir 将路径基于指定工作目录解析为绝对路径。
+// workingDir 为空时回退到 ResolvePath（基于进程 CWD）。
+func ResolvePathWithDir(path, workingDir string) (string, error) {
+	if workingDir == "" {
+		return ResolvePath(path)
+	}
+	absDir, err := filepath.Abs(workingDir)
+	if err != nil {
+		return "", fmt.Errorf("failed to resolve working_dir: %w", err)
+	}
+	absDir = filepath.Clean(absDir)
+
+	var absPath string
+	if filepath.IsAbs(path) {
+		absPath = path
+	} else {
+		absPath = filepath.Join(absDir, path)
+	}
+	return filepath.Clean(absPath), nil
+}
+
+// ---------------------------------------------------------------------------
+// IsWithinDir — 项目边界检查
+// ---------------------------------------------------------------------------
+
+func IsWithinDir(path, dir string) bool {
+	evalPath, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		evalPath = path
+	}
+	evalDir, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		evalDir = dir
+	}
+	rel, err := filepath.Rel(evalDir, evalPath)
+	if err != nil {
+		return false
+	}
+	return !strings.HasPrefix(rel, "..") && rel != "." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+}
+
+// ---------------------------------------------------------------------------
+// IsBinaryByContent — 基于内容检测二进制（前 512 字节中 null 占比 > 30%）
+// ---------------------------------------------------------------------------
+
+func IsBinaryByContent(path string) (bool, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return false, err
+	}
+	defer f.Close()
+
+	buf := make([]byte, 512)
+	n, err := f.Read(buf)
+	if err != nil && err != io.EOF {
+		return false, err
+	}
+	if n == 0 {
+		return false, nil
+	}
+
+	nullCount := 0
+	for i := 0; i < n; i++ {
+		if buf[i] == 0 {
+			nullCount++
+		}
+	}
+	return float64(nullCount)/float64(n) > 0.30, nil
+}
+
+// ---------------------------------------------------------------------------
+// IsBinaryFile — 两层检测：先扩展名（零 I/O），再内容
+// ---------------------------------------------------------------------------
+
+func IsBinaryFile(path string) (bool, error) {
+	if HasBinaryExtension(path) {
+		return true, nil
+	}
+	return IsBinaryByContent(path)
+}
+
+// ---------------------------------------------------------------------------
+// ShouldSkipDir — 隐藏目录跳过
+// ---------------------------------------------------------------------------
+
+func ShouldSkipDir(name string) bool {
+	return skipDirs[name] || strings.HasPrefix(name, ".")
+}
+
+// ---------------------------------------------------------------------------
+// FindSimilarFile — 在目标文件的父目录中查找相似文件名
+// ---------------------------------------------------------------------------
+
+func FindSimilarFile(targetPath string) string {
+	dir := filepath.Dir(targetPath)
+	name := filepath.Base(targetPath)
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return ""
+	}
+
+	var best string
+	bestDist := len(name)/2 + 1 // 至少要有一定相似度
+
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		d := editDistance(name, e.Name())
+		if d < bestDist {
+			bestDist = d
+			best = e.Name()
+		}
+	}
+	return best
+}
+
+// editDistance 计算两个字符串的 Levenshtein 距离（简化版，仅用于短字符串）。
+func editDistance(a, b string) int {
+	if len(a) == 0 {
+		return len(b)
+	}
+	if len(b) == 0 {
+		return len(a)
+	}
+
+	// 保证 a 是较短的字符串
+	if len(a) > len(b) {
+		a, b = b, a
+	}
+
+	prev := make([]int, len(a)+1)
+	curr := make([]int, len(a)+1)
+	for i := 0; i <= len(a); i++ {
+		prev[i] = i
+	}
+
+	for j := 1; j <= len(b); j++ {
+		curr[0] = j
+		for i := 1; i <= len(a); i++ {
+			cost := 0
+			if a[i-1] != b[j-1] {
+				cost = 1
+			}
+			curr[i] = min3(prev[i]+1, curr[i-1]+1, prev[i-1]+cost)
+		}
+		prev, curr = curr, prev
+	}
+	return prev[len(a)]
+}
+
+func min3(a, b, c int) int {
+	if a < b {
+		if a < c {
+			return a
+		}
+		return c
+	}
+	if b < c {
+		return b
+	}
+	return c
+}
+
+// ---------------------------------------------------------------------------
+// SuggestPathUnderCwd — 检查目标文件名是否存在于 CWD 下
+// ---------------------------------------------------------------------------
+
+func SuggestPathUnderCwd(targetPath string) string {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return ""
+	}
+
+	name := filepath.Base(targetPath)
+	candidate := filepath.Join(cwd, name)
+	if _, err := os.Stat(candidate); err == nil {
+		rel, _ := filepath.Rel(cwd, candidate)
+		return rel
+	}
+	return ""
+}
+
+// ---------------------------------------------------------------------------
+// EstimateTokens — 粗略估算 token 消耗
+// 参考 DeepSeek: 1 英文字符 ≈ 0.3 token，1 中文字符 ≈ 0.6 token
+// ---------------------------------------------------------------------------
+
+func EstimateTokens(s string) int {
+	ascii := 0
+	nonASCII := 0
+	for _, r := range s {
+		if r < 128 {
+			ascii++
+		} else {
+			nonASCII++
+		}
+	}
+	return int(float64(ascii)*0.3 + float64(nonASCII)*0.6)
+}
+
+// ---------------------------------------------------------------------------
+// formatSize — 格式化文件大小
+// ---------------------------------------------------------------------------
+
+func formatSize(size int64) string {
+	const (
+		KB = 1024
+		MB = 1024 * KB
+	)
+	switch {
+	case size >= MB:
+		return fmt.Sprintf("%.1fMB", float64(size)/float64(MB))
+	case size >= KB:
+		return fmt.Sprintf("%.1fKB", float64(size)/float64(KB))
+	default:
+		return fmt.Sprintf("%dB", size)
+	}
+}

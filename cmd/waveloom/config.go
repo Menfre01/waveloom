@@ -1,0 +1,153 @@
+package main
+
+import (
+	"flag"
+	"fmt"
+	"os"
+	"strconv"
+	"strings"
+)
+
+// CLIConfig 命令行配置。
+type CLIConfig struct {
+	OneShot      string // 单次模式 prompt
+	ShowHelp     bool
+	Setup        bool   // 首次设置向导
+	MaxTurns     int
+	SystemPrompt string
+	Model        string
+	ContextLimit int    // 解析后的上下文窗口 token 数
+	Theme           string // 主题模式: auto / dark / light
+	ResumeSessionID string // 恢复指定 session ID（空 = 新建 session）
+	BypassPerm      bool
+	Verbose      bool   // 输出 LLM / 工具执行明细到 stderr
+	SettingsPath string // settings.json 路径
+}
+
+// parseCLI 解析命令行参数。
+func parseCLI() CLIConfig {
+	cfg := CLIConfig{}
+	var contextLimitRaw string
+
+	flag.Usage = func() {
+		printHelp()
+	}
+
+	flag.StringVar(&cfg.Model, "model", "", "LLM 模型名称（默认从环境变量 LLM_MODEL 读取）")
+	flag.IntVar(&cfg.MaxTurns, "max-turns", 0, "最大 turn 数（0=无限制）")
+	flag.StringVar(&cfg.SystemPrompt, "system-prompt", "", "系统提示词")
+	flag.StringVar(&contextLimitRaw, "context-limit", "1M", "上下文窗口 token 上限")
+	flag.StringVar(&cfg.Theme, "theme", "auto", "主题模式 (auto/dark/light)，auto 自动检测终端背景色")
+	flag.StringVar(&cfg.SettingsPath, "settings", "", "显式指定项目配置文件路径（默认: .waveloom/settings.json）")
+	flag.StringVar(&cfg.ResumeSessionID, "resume", "", "恢复指定 session ID 的对话（空 = 新建 session）")
+	flag.BoolVar(&cfg.Verbose, "verbose", false, "输出 LLM 调用和工具执行的详细日志到 stderr")
+	flag.BoolVar(&cfg.BypassPerm, "bypass-permissions", false, "跳过权限检查（CI/测试）")
+
+	setup := flag.Bool("setup", false, "首次设置向导")
+
+	help := flag.Bool("help", false, "显示帮助")
+	h := flag.Bool("h", false, "显示帮助")
+
+	flag.Parse()
+
+	cfg.Setup = *setup
+	cfg.ShowHelp = *help || *h
+
+	// 解析上下文窗口大小（支持 1M / 200k / 1048576 等格式）
+	var parseErr error
+	cfg.ContextLimit, parseErr = parseTokenLimit(contextLimitRaw)
+	if parseErr != nil {
+		fmt.Fprintf(os.Stderr, "警告: 无法解析 --context-limit '%s' (%v)，回退为 1M\n", contextLimitRaw, parseErr)
+		cfg.ContextLimit = 1000000
+	}
+
+	// 单次模式：命令行剩余参数即 prompt
+	args := flag.Args()
+	if len(args) > 0 {
+		cfg.OneShot = args[0]
+	}
+
+	// 校验 theme 值
+	switch cfg.Theme {
+	case "auto", "dark", "light":
+		// ok
+	default:
+		fmt.Fprintf(os.Stderr, "警告: 未知主题 '%s'，回退为 auto\n", cfg.Theme)
+		cfg.Theme = "auto"
+	}
+
+	return cfg
+}
+// parseTokenLimit 解析上下文窗口大小字符串（支持 1M / 200k / 1048576 等格式）。
+func parseTokenLimit(s string) (int, error) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return 0, fmt.Errorf("empty value")
+	}
+
+	// 后缀单位
+	multiplier := 1
+	last := s[len(s)-1]
+	switch {
+	case last == 'M' || last == 'm':
+		multiplier = 1000 * 1000
+		s = s[:len(s)-1]
+	case last == 'K' || last == 'k':
+		multiplier = 1000
+		s = s[:len(s)-1]
+	}
+
+	v, err := strconv.Atoi(s)
+	if err != nil {
+		return 0, fmt.Errorf("invalid number: %w", err)
+	}
+	if v <= 0 {
+		return 0, fmt.Errorf("must be positive")
+	}
+	return v * multiplier, nil
+}
+
+// printHelp 显示帮助信息。
+func printHelp() {
+	fmt.Fprintf(os.Stderr, `Waveloom — Code Agent CLI
+
+用法:
+  wvl                     交互式 TUI 模式
+  wvl setup               首次设置向导
+  wvl "prompt"            单次执行模式
+  wvl --help              显示帮助
+
+选项:
+  --settings PATH         配置文件路径（项目级；全局 ~/.waveloom/settings.json 自动合并）
+  --model NAME            LLM 模型名称
+  --theme MODE            主题模式: auto（默认）/ dark / light
+                          auto 自动检测终端背景色
+  --verbose               记录 LLM 调用和工具执行日志到 .waveloom/wvl.log
+  --max-turns N           最大 turn 数（0=无限制）
+  --system-prompt TEXT    系统提示词
+  --context-limit N       上下文窗口 token 上限，支持 1M / 200k / 1048576 等格式（默认: 1M）
+  --bypass-permissions    跳过权限检查（CI/测试）
+  --resume ID             恢复指定 session ID 的对话
+
+配置文件（settings.json）:
+  ~/.waveloom/settings.json  用户全局配置（安全基线）
+  .waveloom/settings.json    项目级配置（字段覆盖全局，权限同键覆盖全局）
+  --settings PATH            显式指定项目配置文件
+
+  llm.api_key              API Key（必填；为空时回退 LLM_API_KEY 环境变量）
+  llm.provider              Provider（openai / deepseek）
+  llm.model                 模型名称
+  llm.base_url              API 端点
+  llm.timeout               请求超时（如 "600s"）
+  llm.extra_params          额外参数（如 temperature, max_tokens, thinking 等）
+
+  permissions.allow[]       直接允许的规则
+  permissions.deny[]        直接拒绝的规则
+  permissions.ask[]         需用户确认的规则
+                           格式: "tool_name" 或 "tool_name(pattern)"
+
+环境变量:
+  LLM_API_KEY             API Key（settings.json 未设置时的回退）
+
+`)
+}

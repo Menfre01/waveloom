@@ -1,0 +1,290 @@
+package tool
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"os/exec"
+	"regexp"
+	"strings"
+	"time"
+)
+
+// ---------------------------------------------------------------------------
+// Shell — 执行 Shell 命令
+// ---------------------------------------------------------------------------
+
+type ShellParams struct {
+	Command    string `json:"command"`
+	WorkingDir string `json:"working_dir"`
+	TimeoutMs  int    `json:"timeout_ms"`
+}
+
+type Shell struct{}
+
+func (t *Shell) Name() string    { return "shell" }
+func (t *Shell) Schema() json.RawMessage { return shellSchema }
+func (t *Shell) ConcurrentSafe() bool    { return false }
+
+// Description 引导 LLM 优先使用专用工具，仅在必要时使用 shell。
+func (t *Shell) Description() string {
+	return strings.Join([]string{
+		"在子进程中执行 Shell 命令。设置执行超时（默认 120s，最大 600s），捕获 stdout 和 stderr。",
+		"",
+		"优先使用专用工具而非 shell:",
+		"  - 读文件: read_file（非 cat/head/tail）",
+		"  - 写文件: write_file（非 echo >/cat <<EOF）",
+		"  - 编辑文件: edit_file（非 sed/awk）",
+		"  - 搜索文件: search_file（非 find）",
+		"  - 内容搜索: grep（非 grep/rg）",
+		"  - 列出目录: ls（非 ls 命令）",
+		"",
+		"多条独立命令可在一次响应中并行发起多个 shell 调用。",
+		"有依赖关系的命令用 && 串联，不要用换行符分隔。",
+		"避免不必要的 sleep；长任务用 run_in_background（后续支持）。",
+		"",
+		"需要切换工作目录时，使用 working_dir 参数指定，不要在命令中使用 cd 前缀。",
+		"例: 要在 /tmp 下执行 ls，传 {\"command\":\"ls\", \"working_dir\":\"/tmp\"}，而非 {\"command\":\"cd /tmp && ls\"}。",
+	}, " ")
+}
+
+// ── cd 前缀归一化 ──
+
+// cdPattern 匹配 Shell 命令中的 "cd <path> &&" 或 "cd <path> ;" 前缀。
+// 支持单引号、双引号和无引号路径。
+//   例: cd /foo && bar       → dir=/foo, cmd=bar
+//        cd "/foo bar" && baz → dir=/foo bar, cmd=baz
+//        cd /foo; bar        → dir=/foo, cmd=bar
+var cdPattern = regexp.MustCompile(`^cd\s+(?:"([^"]*)"|'([^']*)'|([^\s;&]+))\s*(?:&&|;)\s*(.*)$`)
+
+// NormalizeShellCommand 剥离命令中的 cd 前缀，返回归一化后的命令和提取的工作目录。
+// 若命令不以 cd 开头，extractedDir 返回空字符串，原始命令原样返回。
+func NormalizeShellCommand(command string) (normalized string, extractedDir string) {
+	matches := cdPattern.FindStringSubmatch(command)
+	if matches == nil {
+		return command, ""
+	}
+	// matches[1]: 双引号路径, matches[2]: 单引号路径, matches[3]: 无引号路径, matches[4]: 剩余命令
+	dir := matches[1]
+	if dir == "" {
+		dir = matches[2]
+	}
+	if dir == "" {
+		dir = matches[3]
+	}
+	return matches[4], dir
+}
+
+// ── 超时常量 ──
+
+const (
+	DefaultShellTimeoutMs = 120000
+	MaxShellTimeoutMs     = 600000
+)
+
+// ── Execute ──
+
+func (t *Shell) Execute(ctx context.Context, p ShellParams) (*ToolResult, error) {
+	// ── Step 1: 超时设置 ──
+	timeoutMs := p.TimeoutMs
+	if timeoutMs <= 0 {
+		timeoutMs = DefaultShellTimeoutMs
+	}
+	if timeoutMs > MaxShellTimeoutMs {
+		timeoutMs = MaxShellTimeoutMs
+	}
+
+	timeout := time.Duration(timeoutMs) * time.Millisecond
+	cmdCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	// ── Step 2: 归一化命令（剥离 cd 前缀，提取工作目录） ──
+	normalizedCmd, extractedDir := NormalizeShellCommand(p.Command)
+	if p.WorkingDir == "" && extractedDir != "" {
+		p.WorkingDir = extractedDir
+	}
+
+	// ── Step 3: 构造并执行命令 ──
+	cmd := exec.CommandContext(cmdCtx, "sh", "-c", normalizedCmd)
+	if p.WorkingDir != "" {
+		cmd.Dir = p.WorkingDir
+	}
+
+	start := time.Now()
+	output, err := cmd.CombinedOutput()
+	duration := time.Since(start)
+
+	// ── Step 4: 格式化输出 ──
+	exitCode := -1
+	if err == nil {
+		exitCode = 0
+	} else if exitErr, ok := err.(*exec.ExitError); ok {
+		exitCode = exitErr.ExitCode()
+	}
+
+	var content string
+	var toolErr *ToolError
+
+	if err != nil {
+		if cmdCtx.Err() == context.DeadlineExceeded {
+			partialOutput := truncateOutput(string(output), MaxShellLines)
+			content = formatShellResult("Command timed out", exitCode, duration, timeout, partialOutput, false)
+			toolErr = &ToolError{
+				Class:   ErrorClassRecoverable,
+				Kind:    ErrKindTimeout,
+				Message: fmt.Sprintf("command timed out after %s", formatDuration(timeout)),
+			}
+		} else {
+			stderrOutput := truncateOutput(string(output), MaxShellLines)
+			content = formatShellResult("Command failed", exitCode, duration, timeout, stderrOutput, true)
+			kind := classifyShellError(exitCode, stderrOutput)
+			toolErr = &ToolError{
+				Class:   ErrorClassRecoverable,
+				Kind:    kind,
+				Message: fmt.Sprintf("command exited with code %d", exitCode),
+			}
+		}
+	} else {
+		stdoutOutput := truncateOutput(string(output), MaxShellLines)
+		content = formatShellResult("Command succeeded", exitCode, duration, timeout, stdoutOutput, false)
+	}
+
+	return &ToolResult{
+		Content: content,
+		Meta: ToolMeta{
+			Duration: duration,
+			ExitCode: exitCode,
+		},
+		Error: toolErr,
+	}, nil
+}
+
+// ── formatShellResult ──
+
+func formatShellResult(
+	status string,
+	exitCode int,
+	duration time.Duration,
+	timeout time.Duration,
+	output string,
+	isError bool,
+) string {
+	var buf bytes.Buffer
+
+	// 头行：状态 + exit code + 耗时
+	buf.WriteString(status)
+	if exitCode >= 0 {
+		buf.WriteString(fmt.Sprintf(" (exit=%d)", exitCode))
+	}
+	buf.WriteString(fmt.Sprintf("  %s\n", duration.Round(time.Millisecond)))
+
+	// 超时标记
+	if exitCode == -1 && isError {
+		buf.WriteString(fmt.Sprintf("   Timeout: %s\n", formatDuration(timeout)))
+	}
+
+	// 输出标题
+	label := "   stdout:"
+	if isError {
+		label = "   stderr/stdout:"
+	}
+	buf.WriteString(label)
+
+	// 输出内容（有缩进）
+	if strings.TrimSpace(output) == "" {
+		buf.WriteString(" (empty)\n")
+	} else {
+		buf.WriteByte('\n')
+		for _, line := range strings.Split(output, "\n") {
+			buf.WriteString("     ")
+			buf.WriteString(line)
+			buf.WriteByte('\n')
+		}
+	}
+
+	return buf.String()
+}
+
+// ── truncateOutput ──
+
+func truncateOutput(output string, maxLines int) string {
+	lines := strings.Split(output, "\n")
+
+	// 单行截断：超长行截断为 MaxLineBytes，防止单行 HTML/JSON 淹没输出
+	for i, line := range lines {
+		if len(line) > MaxLineBytes {
+			lines[i] = line[:MaxLineBytes] + fmt.Sprintf("... [line truncated at %d bytes]", MaxLineBytes)
+		}
+	}
+
+	if len(lines) <= maxLines {
+		return strings.Join(lines, "\n")
+	}
+
+	head := maxLines / 2
+	tail := maxLines / 2
+	var buf bytes.Buffer
+	for i, line := range lines {
+		if i < head || i >= len(lines)-tail {
+			buf.WriteString(line)
+			buf.WriteByte('\n')
+		} else if i == head {
+			buf.WriteString(fmt.Sprintf("... [truncated: %d lines omitted]\n", len(lines)-head-tail))
+		}
+	}
+	return buf.String()
+}
+
+// ── classifyShellError ──
+
+// classifyShellError 基于退出码和 stderr 输出确定错误 Kind。
+//
+// 规则（按优先级）：
+//  1. 退出码 127 → command_not_found（命令不存在）
+//  2. 退出码 126 → command_permission_denied（命令不可执行）
+//  3. stderr 匹配 "permission denied" / "operation not permitted" → command_permission_denied
+//  4. stderr 匹配 "no such file" / "not found" / "cannot access" → file_not_found
+//  5. 退出码 2 → invalid_args（语法/参数错误）
+//  6. 其他 → command_failed（通用命令失败）
+//
+// 不同 Kind 在 agentloop 中各自独立计数，避免不同类型错误相互累积触发 retry_limit。
+func classifyShellError(exitCode int, fallbackOutput string) string {
+	// 退出码 127: 命令未找到
+	if exitCode == 127 {
+		return ErrKindCommandNotFound
+	}
+	// 退出码 126: 命令不可执行（权限问题）
+	if exitCode == 126 {
+		return ErrKindCommandPermission
+	}
+
+	// stderr 模式匹配
+	lower := strings.ToLower(fallbackOutput)
+	if strings.Contains(lower, "permission denied") ||
+		strings.Contains(lower, "operation not permitted") ||
+		strings.Contains(lower, "not permitted") {
+		return ErrKindCommandPermission
+	}
+	if strings.Contains(lower, "no such file") ||
+		strings.Contains(lower, "not found") ||
+		strings.Contains(lower, "cannot access") {
+		return ErrKindFileNotFound
+	}
+
+	// 退出码 2: 语法/参数错误
+	if exitCode == 2 {
+		return ErrKindInvalidArgs
+	}
+
+	return ErrKindCommandFailed
+}
+
+// ── formatDuration ──
+
+func formatDuration(d time.Duration) string {
+	if d < time.Minute {
+		return fmt.Sprintf("%.0fs", d.Seconds())
+	}
+	return fmt.Sprintf("%.1fmin", d.Minutes())
+}

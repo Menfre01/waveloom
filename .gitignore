@@ -1,0 +1,27 @@
+# 本地配置文件
+settings.json
+.env
+
+# macOS
+.DS_Store
+
+# Go
+coverage.out
+*.test
+*.out
+
+# 构建产物
+bin/
+# 根目录 waveloom 二进制（go build 本地产物）
+/waveloom
+
+# Waveloom verbose 日志
+.waveloom/wvl.log
+.waveloom/wvl.log.*
+.waveloom/
+
+# IDE
+.vscode/
+
+# Claude Code
+.claude/
