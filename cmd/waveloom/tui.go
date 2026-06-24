@@ -106,8 +106,8 @@ var defaultSystemPrompt = fmt.Sprintf(`You are Waveloom %s, a terminal-based cod
 // 自定义消息类型
 // ---------------------------------------------------------------------------
 
-// version 是 Waveloom 的当前版本号。
-const version = "v0.1.0"
+// version 是 Waveloom 的当前版本号，通过 ldflags 注入。
+var version = "v0.0.1"
 
 // maxParas 是段落列表的硬上限，超出时从头部淘汰旧段落。
 // 200 个段落 ≈ 40–60 个典型 turn，保证渲染性能稳定。
