@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"path/filepath"
 
@@ -17,6 +18,9 @@ import (
 )
 
 func main() {
+	// 0. 注入构建版本号到 context 包（ldflags → session 文件兼容性检查）
+	ctxpkg.BuildVersion = version
+
 	// 1. 解析命令行参数
 	cfg := parseCLI()
 	if cfg.ShowHelp {
@@ -61,7 +65,7 @@ func main() {
 	}
 
 	// 5. 初始化 LSP Manager（全局，供 LSP 工具使用）
-	initLSPManager(globalPath, projectPath)
+	initLSPManager(globalPath, projectPath, verboseLog)
 
 	// 6. 初始化 Tool Registry
 	registry := tool.NewRegistry()
@@ -161,7 +165,7 @@ func registerBuiltinTools(r tool.Registry) {
 
 // initLSPManager 初始化 LSP Server 管理器。
 // 合并全局和项目 settings.json 中的 lsp 配置。
-func initLSPManager(globalPath, projectPath string) {
+func initLSPManager(globalPath, projectPath string, verboseLog io.Writer) {
 	// 加载用户覆盖配置
 	userServers := lsp.LoadUserServers(projectPath)
 	if globalOverrides := lsp.LoadUserServers(globalPath); len(globalOverrides) > 0 {
@@ -172,7 +176,11 @@ func initLSPManager(globalPath, projectPath string) {
 		}
 	}
 
-	tool.LSPManager = lsp.NewManager(lsp.WithUserServers(userServers))
+	opts := []lsp.ManagerOption{lsp.WithUserServers(userServers)}
+	if verboseLog != nil {
+		opts = append(opts, lsp.WithLogger(log.New(verboseLog, "[lsp] ", log.LstdFlags)))
+	}
+	tool.LSPManager = lsp.NewManager(opts...)
 }
 
 // resolveSettingsPaths 返回全局和项目配置文件路径。

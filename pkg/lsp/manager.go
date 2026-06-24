@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"os/exec"
@@ -110,7 +111,7 @@ func NewManager(opts ...ManagerOption) *Manager {
 		instances:   make(map[string]*ServerInstance),
 		userServers: make(map[string]ServerConfig),
 		idleTimeout: 5 * time.Minute,
-		logger:      log.New(os.Stderr, "[lsp] ", log.LstdFlags),
+		logger:      log.New(io.Discard, "[lsp] ", log.LstdFlags),
 		ctx:         ctx,
 		cancel:      cancel,
 	}

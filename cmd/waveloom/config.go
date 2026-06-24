@@ -64,7 +64,12 @@ func parseCLI() CLIConfig {
 	// 单次模式：命令行剩余参数即 prompt
 	args := flag.Args()
 	if len(args) > 0 {
-		cfg.OneShot = args[0]
+		// "setup" 作为子命令处理，不走 oneshot
+		if args[0] == "setup" {
+			cfg.Setup = true
+		} else {
+			cfg.OneShot = args[0]
+		}
 	}
 
 	// 校验 theme 值
