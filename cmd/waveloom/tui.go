@@ -100,14 +100,11 @@ var defaultSystemPrompt = fmt.Sprintf(`You are Waveloom %s, a terminal-based cod
 
 - Stop and report completion when the user's request is fully satisfied.
 - If you cannot complete a task, explain the bottleneck concisely and propose next steps.
-- Do NOT loop on the same sub-task repeatedly. If stuck, ask for guidance.`, version)
+- Do NOT loop on the same sub-task repeatedly. If stuck, ask for guidance.`, Version)
 
 // ---------------------------------------------------------------------------
 // 自定义消息类型
 // ---------------------------------------------------------------------------
-
-// version 是 Waveloom 的当前版本号，通过 ldflags 注入。
-var version = "v0.0.2"
 
 // maxParas 是段落列表的硬上限，超出时从头部淘汰旧段落。
 // 200 个段落 ≈ 40–60 个典型 turn，保证渲染性能稳定。
@@ -2122,7 +2119,7 @@ func (m *model) renderHeader() string {
 	if sid := m.cm.SessionID(); sid != "" {
 		sidPart := styleHeaderAccent.Render("session: ") +
 			styleHeader.Render(sid)
-		verStr := styleHeaderAccent.Render(version)
+		verStr := styleHeaderAccent.Render(Version)
 		leftWidth := lipgloss.Width(sidPart)
 		rightWidth := lipgloss.Width(verStr)
 		pad := contentWidth - leftWidth - rightWidth
@@ -2134,7 +2131,7 @@ func (m *model) renderHeader() string {
 		)
 	} else {
 		// 无 session 时版本号右对齐
-		verStr := styleHeaderAccent.Render(version)
+		verStr := styleHeaderAccent.Render(Version)
 		sidLine = lipgloss.NewStyle().Width(contentWidth).Align(lipgloss.Right).Render(verStr)
 	}
 	sb.WriteString(sidLine)

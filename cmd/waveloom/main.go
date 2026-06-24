@@ -19,10 +19,14 @@ import (
 
 func main() {
 	// 0. 注入构建版本号到 context 包（ldflags → session 文件兼容性检查）
-	ctxpkg.BuildVersion = version
+	ctxpkg.BuildVersion = Version
 
 	// 1. 解析命令行参数
 	cfg := parseCLI()
+	if cfg.ShowVersion {
+		fmt.Println(Version)
+		return
+	}
 	if cfg.ShowHelp {
 		printHelp()
 		return

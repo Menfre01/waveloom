@@ -12,6 +12,7 @@ import (
 type CLIConfig struct {
 	OneShot      string // 单次模式 prompt
 	ShowHelp     bool
+	ShowVersion  bool
 	Setup        bool   // 首次设置向导
 	MaxTurns     int
 	SystemPrompt string
@@ -47,11 +48,13 @@ func parseCLI() CLIConfig {
 
 	help := flag.Bool("help", false, "显示帮助")
 	h := flag.Bool("h", false, "显示帮助")
+	version := flag.Bool("version", false, "显示版本号")
 
 	flag.Parse()
 
 	cfg.Setup = *setup
 	cfg.ShowHelp = *help || *h
+	cfg.ShowVersion = *version
 
 	// 解析上下文窗口大小（支持 1M / 200k / 1048576 等格式）
 	var parseErr error
@@ -121,9 +124,11 @@ func printHelp() {
   wvl setup               首次设置向导
   wvl "prompt"            单次执行模式
   wvl --help              显示帮助
+  wvl --version           显示版本号
 
 选项:
   --settings PATH         配置文件路径（项目级；全局 ~/.waveloom/settings.json 自动合并）
+  --version               显示版本号
   --model NAME            LLM 模型名称
   --theme MODE            主题模式: auto（默认）/ dark / light
                           auto 自动检测终端背景色

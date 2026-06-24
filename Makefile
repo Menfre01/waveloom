@@ -2,7 +2,7 @@ BINARY = wvl
 MODULE = ./cmd/waveloom
 LOCALBIN ?= $(HOME)/go/bin
 VERSION ?= $(shell git describe --tags --dirty --always 2>/dev/null || echo dev)
-LDFLAGS = -s -w -X main.version=$(VERSION) -X waveloom/pkg/context.BuildVersion=$(VERSION)
+LDFLAGS = -s -w -X main.Version=$(VERSION) -X waveloom/pkg/context.BuildVersion=$(VERSION)
 
 # Release matrix
 GOOSES = linux darwin
