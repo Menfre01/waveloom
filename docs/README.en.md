@@ -1,16 +1,21 @@
-<p align="right"><a href="../README.md">中文版</a></p>
+<p align="center">
+  <strong>English</strong>
+  &nbsp;·&nbsp;
+  <a href="../README.md">简体中文</a>
+</p>
 
 <p align="center">
   <img src="./logo.svg" alt="Waveloom" width="420"/>
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/github/v/release/Menfre01/waveloom?style=flat-square&color=00ADD8" alt="release"/>
-  <img src="https://img.shields.io/badge/language-Go-00ADD8?style=flat-square&logo=go&logoColor=white" alt="Go"/>
-  <img src="https://img.shields.io/badge/DeepSeek-native-4D6BFE?style=flat-square" alt="DeepSeek"/>
-  <img src="https://img.shields.io/badge/license-Apache%202.0-8b949e?style=flat-square" alt="license"/>
-  <img src="https://img.shields.io/badge/TUI-Bubble%20Tea-5faf7d?style=flat-square" alt="Bubble Tea"/>
-  <img src="https://img.shields.io/badge/status-alpha-d4a76a?style=flat-square" alt="alpha"/>
+  <a href="https://github.com/Menfre01/waveloom/releases/latest"><img src="https://img.shields.io/github/v/release/Menfre01/waveloom?style=flat-square&color=00ADD8&labelColor=161b22" alt="release"/></a>
+  <a href="#"><img src="https://img.shields.io/badge/language-Go-00ADD8?style=flat-square&logo=go&logoColor=white&labelColor=161b22" alt="Go"/></a>
+  <a href="#"><img src="https://img.shields.io/badge/DeepSeek-native-4D6BFE?style=flat-square&labelColor=161b22" alt="DeepSeek"/></a>
+  <a href="../LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-8b949e?style=flat-square&labelColor=161b22" alt="license"/></a>
+  <a href="https://github.com/charmbracelet/bubbletea"><img src="https://img.shields.io/badge/TUI-Bubble%20Tea-5fafd7?style=flat-square&labelColor=161b22" alt="Bubble Tea"/></a>
+  <a href="#"><img src="https://img.shields.io/badge/status-alpha-d4a76a?style=flat-square&labelColor=161b22" alt="alpha"/></a>
+  <a href="https://github.com/Menfre01/waveloom/releases"><img src="https://img.shields.io/github/downloads/Menfre01/waveloom/total?style=flat-square&color=3fb950&labelColor=161b22&label=downloads" alt="downloads"/></a>
 </p>
 
 ---
@@ -18,6 +23,9 @@
 **Waveloom** is a terminal Code Agent **purpose-built for DeepSeek prefix caching** (pure Go). It leverages DeepSeek's prefix cache mechanism — with a fixed System Prompt anchor, turn-accumulated message history, and compaction that never mutates bytes — to push context cache hit rates to **95–99%**, slashing input token costs to **1/50 ~ 1/120** of the cache-miss price.
 
 You describe what you want in natural language. The agent reads code, analyzes logic, edits files, and executes commands — right in your terminal. Every write and command execution requires your consent first. Primary recommended models: `deepseek-v4-flash` and `deepseek-v4-pro`. OpenAI-compatible endpoints also supported.
+
+> [!IMPORTANT]
+> **One-shot mode**: `wvl "write unit tests for the HTTP server"` — single command execution with instant results, no interactive UI needed.
 
 ---
 
@@ -101,8 +109,6 @@ wvl setup
 # Or skip config entirely with an env var:
 LLM_API_KEY=sk-... wvl
 ```
-
-> **One-shot mode**: `wvl "write unit tests for the HTTP server"`
 
 ---
 
@@ -256,6 +262,7 @@ Priority: **CLI flags > `.waveloom/settings.json` (project) > `~/.waveloom/setti
 | `--bypass-permissions` | Skip all permission checks |
 | `--resume ID` | Resume a specific session |
 | `--settings PATH` | Specify config file path |
+| `--version` | Show version |
 
 ---
 
@@ -287,6 +294,18 @@ Waveloom systematically optimizes for this:
 Cache hit rates are typically **95–99%**, meaning in a 1M-token context window, only 10K–50K tokens are billed at the standard rate. This is not luck — it's by architectural design.
 
 > See [`specs/compaction.md`](../specs/compaction.md) — complete design of context compaction.
+
+---
+
+## Star History
+
+<a href="https://www.star-history.com/?repos=Menfre01/waveloom&type=date&legend=top-left" rel="nofollow">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=Menfre01/waveloom&type=date&theme=dark&legend=top-left">
+    <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=Menfre01/waveloom&type=date&legend=top-left">
+    <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=Menfre01/waveloom&type=date&legend=top-left" width="100%">
+  </picture>
+</a>
 
 ---
 
