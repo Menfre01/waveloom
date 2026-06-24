@@ -13,6 +13,10 @@ import (
 	"waveloom/pkg/llm"
 )
 
+// BuildVersion 由 main() 在启动时注入（来自 ldflags 或 fallback）。
+// session 文件写入此版本号，用于兼容性检查。
+var BuildVersion = "dev"
+
 // sessionFile 是 session 落盘文件的顶层结构。
 type sessionFile struct {
 	SessionID   string              `json:"session_id"`
@@ -218,7 +222,7 @@ func NewSessionID() string {
 
 // version 返回当前程序版本（写入 session 文件，用于兼容性检查）。
 func version() string {
-	return "v0.1.0"
+	return BuildVersion
 }
 
 // --- settings.json session 配置 ---
