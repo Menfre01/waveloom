@@ -43,32 +43,63 @@ Waveloom 内置以下工具，Agent 根据任务自主调用：
 
 ---
 
-## 快速开始
+## 安装
 
-前置条件：**Go 1.25+**，以及一个 [DeepSeek API Key](https://platform.deepseek.com/api_keys)。
+依赖：[DeepSeek API Key](https://platform.deepseek.com/api_keys)。
+
+### 预编译二进制（推荐）
+
+无需 Go 环境，下载即用。前往 [Releases](https://github.com/Menfre01/waveloom/releases/latest) 下载对应平台的 `wvl`。
 
 ```sh
-# 1. 安装
+# macOS (ARM64 — Apple Silicon)
+curl -fsSL https://github.com/Menfre01/waveloom/releases/latest/download/wvl_darwin_arm64.tar.gz | tar -xz -C /usr/local/bin wvl
+
+# macOS (AMD64 — Intel)
+curl -fsSL https://github.com/Menfre01/waveloom/releases/latest/download/wvl_darwin_amd64.tar.gz | tar -xz -C /usr/local/bin wvl
+
+# Linux (AMD64)
+curl -fsSL https://github.com/Menfre01/waveloom/releases/latest/download/wvl_linux_amd64.tar.gz | tar -xz -C /usr/local/bin wvl
+
+# Linux (ARM64)
+curl -fsSL https://github.com/Menfre01/waveloom/releases/latest/download/wvl_linux_arm64.tar.gz | tar -xz -C /usr/local/bin wvl
+```
+
+> 没有 `/usr/local/bin` 写入权限？安装到 `~/.local/bin`：
+> ```sh
+> mkdir -p ~/.local/bin
+> curl -fsSL https://github.com/Menfre01/waveloom/releases/latest/download/wvl_darwin_arm64.tar.gz | tar -xz -C ~/.local/bin wvl
+> export PATH="$HOME/.local/bin:$PATH"  # 建议加到 ~/.bashrc 或 ~/.zshrc
+> ```
+>
+> macOS 首次运行若提示"无法验证开发者"，执行：
+> ```sh
+> xattr -d com.apple.quarantine /usr/local/bin/wvl
+> ```
+
+### 从源码构建
+
+前置条件：**Go 1.25+**。
+
+```sh
 git clone https://github.com/Menfre01/waveloom.git
 cd waveloom && make install
+# wvl 安装到 $HOME/go/bin，确保该路径在 PATH 中：
+export PATH=$HOME/go/bin:$PATH
+```
 
-# 如果 wvl 找不到，确保 $HOME/go/bin 在 PATH 中：
-export PATH=$HOME/go/bin:$PATH  # 建议加到 ~/.bashrc 或 ~/.zshrc
+### 首次配置
 
-# 2. 首次设置（交互式引导，只需一次）
+```sh
+# 交互式引导（只需一次）
 wvl setup
 # → 选择 Provider → 输入 API Key → 选择模型 → 完成
-#
-# 或者手动创建配置文件（参考 settings.example.json）：
-# cp settings.example.json .waveloom/settings.json && vim .waveloom/settings.json
 
-# 3. 开始使用
-wvl
+# 或跳过配置，直接用环境变量：
+LLM_API_KEY=sk-... wvl
 ```
 
 > **只用一次**：不想进 TUI？`wvl "帮我写一个 HTTP server 的单元测试"`
->
-> **跳过配置文件**：`LLM_API_KEY=sk-... wvl`
 
 ---
 

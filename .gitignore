@@ -12,6 +12,7 @@ coverage.out
 
 # 构建产物
 bin/
+dist/
 # 根目录 waveloom 二进制（go build 本地产物）
 /waveloom
 
