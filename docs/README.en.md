@@ -41,18 +41,20 @@ Requires: [DeepSeek API Key](https://platform.deepseek.com/api_keys).
 
 No Go required. Grab the right binary from [Releases](https://github.com/Menfre01/waveloom/releases/latest).
 
+> `/usr/local/bin` requires sudo. Or use `~/.local/bin` instead (see fallback below).
+
 ```sh
 # macOS (ARM64 — Apple Silicon)
-curl -fsSL https://github.com/Menfre01/waveloom/releases/latest/download/wvl_darwin_arm64.tar.gz | tar -xz -C /usr/local/bin wvl
+sudo curl -fsSL https://github.com/Menfre01/waveloom/releases/latest/download/wvl_darwin_arm64.tar.gz | sudo tar -xz -C /usr/local/bin wvl
 
 # macOS (AMD64 — Intel)
-curl -fsSL https://github.com/Menfre01/waveloom/releases/latest/download/wvl_darwin_amd64.tar.gz | tar -xz -C /usr/local/bin wvl
+sudo curl -fsSL https://github.com/Menfre01/waveloom/releases/latest/download/wvl_darwin_amd64.tar.gz | sudo tar -xz -C /usr/local/bin wvl
 
 # Linux (AMD64)
-curl -fsSL https://github.com/Menfre01/waveloom/releases/latest/download/wvl_linux_amd64.tar.gz | tar -xz -C /usr/local/bin wvl
+sudo curl -fsSL https://github.com/Menfre01/waveloom/releases/latest/download/wvl_linux_amd64.tar.gz | sudo tar -xz -C /usr/local/bin wvl
 
 # Linux (ARM64)
-curl -fsSL https://github.com/Menfre01/waveloom/releases/latest/download/wvl_linux_arm64.tar.gz | tar -xz -C /usr/local/bin wvl
+sudo curl -fsSL https://github.com/Menfre01/waveloom/releases/latest/download/wvl_linux_arm64.tar.gz | sudo tar -xz -C /usr/local/bin wvl
 ```
 
 > No write permission for `/usr/local/bin`? Install to `~/.local/bin`:

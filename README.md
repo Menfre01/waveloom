@@ -41,28 +41,30 @@
 
 无需 Go 环境，下载即用。前往 [Releases](https://github.com/Menfre01/waveloom/releases/latest) 下载对应平台的 `wvl`。
 
+> `/usr/local/bin` 需要 sudo 权限，或改用 `~/.local/bin`（见下方备选方案）。
+
 **macOS (ARM64 — Apple Silicon)**
 
 ```sh
-curl -fsSL https://github.com/Menfre01/waveloom/releases/latest/download/wvl_darwin_arm64.tar.gz | tar -xz -C /usr/local/bin wvl
+sudo curl -fsSL https://github.com/Menfre01/waveloom/releases/latest/download/wvl_darwin_arm64.tar.gz | sudo tar -xz -C /usr/local/bin wvl
 ```
 
 **macOS (AMD64 — Intel)**
 
 ```sh
-curl -fsSL https://github.com/Menfre01/waveloom/releases/latest/download/wvl_darwin_amd64.tar.gz | tar -xz -C /usr/local/bin wvl
+sudo curl -fsSL https://github.com/Menfre01/waveloom/releases/latest/download/wvl_darwin_amd64.tar.gz | sudo tar -xz -C /usr/local/bin wvl
 ```
 
 **Linux (AMD64)**
 
 ```sh
-curl -fsSL https://github.com/Menfre01/waveloom/releases/latest/download/wvl_linux_amd64.tar.gz | tar -xz -C /usr/local/bin wvl
+sudo curl -fsSL https://github.com/Menfre01/waveloom/releases/latest/download/wvl_linux_amd64.tar.gz | sudo tar -xz -C /usr/local/bin wvl
 ```
 
 **Linux (ARM64)**
 
 ```sh
-curl -fsSL https://github.com/Menfre01/waveloom/releases/latest/download/wvl_linux_arm64.tar.gz | tar -xz -C /usr/local/bin wvl
+sudo curl -fsSL https://github.com/Menfre01/waveloom/releases/latest/download/wvl_linux_arm64.tar.gz | sudo tar -xz -C /usr/local/bin wvl
 ```
 
 > 没有 `/usr/local/bin` 写入权限？安装到 `~/.local/bin`：
