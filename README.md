@@ -51,17 +51,27 @@ Waveloom 内置以下工具，Agent 根据任务自主调用：
 
 无需 Go 环境，下载即用。前往 [Releases](https://github.com/Menfre01/waveloom/releases/latest) 下载对应平台的 `wvl`。
 
+**macOS (ARM64 — Apple Silicon)**
+
 ```sh
-# macOS (ARM64 — Apple Silicon)
 curl -fsSL https://github.com/Menfre01/waveloom/releases/latest/download/wvl_darwin_arm64.tar.gz | tar -xz -C /usr/local/bin wvl
+```
 
-# macOS (AMD64 — Intel)
+**macOS (AMD64 — Intel)**
+
+```sh
 curl -fsSL https://github.com/Menfre01/waveloom/releases/latest/download/wvl_darwin_amd64.tar.gz | tar -xz -C /usr/local/bin wvl
+```
 
-# Linux (AMD64)
+**Linux (AMD64)**
+
+```sh
 curl -fsSL https://github.com/Menfre01/waveloom/releases/latest/download/wvl_linux_amd64.tar.gz | tar -xz -C /usr/local/bin wvl
+```
 
-# Linux (ARM64)
+**Linux (ARM64)**
+
+```sh
 curl -fsSL https://github.com/Menfre01/waveloom/releases/latest/download/wvl_linux_arm64.tar.gz | tar -xz -C /usr/local/bin wvl
 ```
 
@@ -86,6 +96,16 @@ git clone https://github.com/Menfre01/waveloom.git
 cd waveloom && make install
 # wvl 安装到 $HOME/go/bin，确保该路径在 PATH 中：
 export PATH=$HOME/go/bin:$PATH
+```
+
+### 更新
+
+**预编译二进制**：重新执行安装命令，覆盖旧版本即可。
+
+**从源码构建**：
+
+```sh
+cd waveloom && git pull && make install
 ```
 
 ### 首次配置
