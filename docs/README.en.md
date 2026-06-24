@@ -14,32 +14,22 @@
 
 ---
 
-**Waveloom** is a pure-Go terminal coding agent. You tell it what to do in natural language, and it reads code, analyzes logic, edits files, and executes commands — right in your terminal. You observe, review, and step in to make decisions when needed.
+**Waveloom** is a terminal Code Agent **purpose-built for DeepSeek prefix caching** (pure Go). It leverages DeepSeek's prefix cache mechanism — with a fixed System Prompt anchor, turn-accumulated message history, and compaction that never mutates bytes — to push context cache hit rates to **95–99%**, slashing input token costs to **1/50 ~ 1/120** of the cache-miss price.
 
-It's not a chatbot — it actually operates on your filesystem, runs commands, and modifies code. Every write and every command execution requires your consent first.
+You describe what you want in natural language. The agent reads code, analyzes logic, edits files, and executes commands — right in your terminal. Every write and command execution requires your consent first. Primary recommended models: `deepseek-v4-flash` and `deepseek-v4-pro`. OpenAI-compatible endpoints also supported.
 
 ---
 
-## What the Agent Can Do
+## Why Waveloom
 
-Waveloom has the following built-in tools that the agent invokes autonomously:
-
-| Tool | Capability |
-|------|------------|
-| `read_file` | Read file contents |
-| `write_file` | Create or overwrite files |
-| `edit_file` | Exact string-based find-and-replace in files |
-| `grep` | Search codebase for matching lines |
-| `search_file` | Find files by name pattern |
-| `ls` | List directory contents |
-| `shell` | Execute arbitrary shell commands |
-| `web_fetch` | Fetch online docs, API references |
-| `lsp_diagnostic` | Get compile errors and lint hints |
-| `lsp_definition` | Jump to symbol definition |
-| `lsp_references` | Find all references to a symbol |
-| `lsp_hover` | Get symbol type signature and documentation |
-
-Typical use cases: writing unit tests, refactoring a module, debugging an issue, explaining design intent behind a piece of code, adding new features.
+| Dimension | Waveloom's Approach | Why It Matters |
+|-----------|-------------------|----------------|
+| **Terminal-Native TUI** | Built on [Bubble Tea](https://github.com/charmbracelet/bubbletea) v2 + [Glamour](https://github.com/charmbracelet/glamour) Markdown rendering + [Lipgloss](https://github.com/charmbracelet/lipgloss) styling | Streaming rendering of thought/text/tool output with collapse/expand — not a "black box chat", fully transparent and reviewable |
+| **DeepSeek Prefix Cache Optimization** | System prompt fixed as `messages[0]`, message history accumulated across turns without reset, compacted bytes never change | Maximum common prefix stays cache-hot; cache-hit token price is **1/50 ~ 1/120** of cache-miss (V4-Flash: cache-hit ¥0.02/M, cache-miss ¥1/M; V4-Pro: cache-hit ¥0.025/M, cache-miss ¥3/M) |
+| **Four-Tier Watermark Context Compaction** | 60% → Snip (tool output truncation), 80% → Prune (reasoning removal + placeholders), 95% → Summarize (LLM incremental summary), 98% → Hard cutoff | Automatic management of million-token context window — long conversations keep what matters, drop noise, and never suffer Context Rot |
+| **Native LSP Integration** | Built-in LSP client; agent can proactively call `lsp_diagnostic` / `lsp_definition` / `lsp_references` / `lsp_hover` | Agent understands code like you do — jump to definitions, find references, inspect type signatures — not coding blind |
+| **Permission Safety Model** | Three-tier decisions (allow / deny / ask), rule engine with pattern matching like `shell(git *)`, CI `--bypass-permissions` | You always have the final say; file writes and command execution never happen silently |
+| **Single Binary Deployment** | Pure Go, zero runtime dependencies, ~15MB pre-built binary | One `curl` command to install; macOS / Linux AMD64 & ARM64 all supported |
 
 ---
 
@@ -88,6 +78,16 @@ cd waveloom && make install
 export PATH=$HOME/go/bin:$PATH
 ```
 
+### Update
+
+**Pre-built binary**: re-run the install command to overwrite the old version.
+
+**Build from source**:
+
+```sh
+cd waveloom && git pull && make install
+```
+
 ### First-time Setup
 
 ```sh
@@ -100,6 +100,29 @@ LLM_API_KEY=sk-... wvl
 ```
 
 > **One-shot mode**: `wvl "write unit tests for the HTTP server"`
+
+---
+
+## What the Agent Can Do
+
+Waveloom has the following built-in tools that the agent invokes autonomously:
+
+| Tool | Capability |
+|------|------------|
+| `read_file` | Read file contents |
+| `write_file` | Create or overwrite files |
+| `edit_file` | Exact string-based find-and-replace in files |
+| `grep` | Search codebase for matching lines |
+| `search_file` | Find files by name pattern |
+| `ls` | List directory contents |
+| `shell` | Execute arbitrary shell commands |
+| `web_fetch` | Fetch online docs, API references |
+| `lsp_diagnostic` | Get compile errors and lint hints |
+| `lsp_definition` | Jump to symbol definition |
+| `lsp_references` | Find all references to a symbol |
+| `lsp_hover` | Get symbol type signature and documentation |
+
+Typical use cases: writing unit tests, refactoring a module, debugging an issue, explaining design intent behind a piece of code, adding new features.
 
 ---
 
@@ -233,9 +256,32 @@ Priority: **CLI flags > `.waveloom/settings.json` (project) > `~/.waveloom/setti
 
 ---
 
-## Design Highlights
+## Context Management & Prefix Caching
 
-Waveloom is deeply optimized for long conversations — it uses a four-tier watermark compaction strategy to automatically manage context, preserving critical information while preventing context window overflows. Once compacted, the byte content remains stable, so DeepSeek's prefix cache continues to hit, keeping API costs under control.
+DeepSeek's prefix cache mechanism: on each request, the API compares `messages[0]` onward against the previous request, finding the longest common prefix. The cached portion is billed at the cache-hit rate; the remainder at the standard rate. **The price gap between cache-hit and cache-miss is massive** — for V4-Flash, cache-hit is ¥0.02/M tokens vs. cache-miss ¥1/M tokens, a **50×** difference; V4-Pro widens to **120×** (¥0.025 vs. ¥3/M tokens).
+
+Waveloom systematically optimizes for this:
+
+1. **System prompt fixed as `messages[0]`**: The first message never changes, no matter how long the conversation — ensuring the prefix starting point is always stable.
+2. **Message history accumulated across turns**: Each turn appends to the end rather than resetting. The first N-1 turns become the prefix for turn N's request.
+3. **Four-tier watermark compaction (Tier 0–3)**: As context utilization rises, history is compressed in stages. The key insight — **compacted byte content never changes again**. Once a message is truncated or replaced with a placeholder, it keeps the exact same byte representation in all future turns, so the prefix cache keeps hitting.
+4. **Monotonic boundary guarantee**: The decision table (`compactionDecisionSet`) + dual cursor mechanism ensures each message is compacted exactly once — never modified repeatedly, which would invalidate the cache.
+
+```
+                         context window (1M)
+  ┌──────────────────────────────────────────────────────────────────┐
+  │  ████████████████████████████░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░ │
+  │  ↑ used                       ↑ 60%   ↑ 80%   ↑ 95%            │
+  │                                Tier 1  Tier 2  Tier 3            │
+  │  Tier 0: < 60%  — do nothing                                     │
+  │  Tier 1: 60-80% — Snip: truncate tool outputs (pure local, zero API) │
+  │  Tier 2: 80-95% — Prune: clear reasoning + placeholders           │
+  │  Tier 3: ≥ 95%  — Summarize: LLM incremental summary (API call)  │
+  │  Hard limit: ≥ 98% — block further LLM calls                     │
+  └──────────────────────────────────────────────────────────────────┘
+```
+
+Cache hit rates are typically **95–99%**, meaning in a 1M-token context window, only 10K–50K tokens are billed at the standard rate. This is not luck — it's by architectural design.
 
 > See [`specs/compaction.md`](../specs/compaction.md) — complete design of context compaction.
 
