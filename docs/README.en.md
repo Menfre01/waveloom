@@ -5,10 +5,11 @@
 </p>
 
 <p align="center">
+  <img src="https://img.shields.io/github/v/release/Menfre01/waveloom?style=flat-square&color=00ADD8" alt="release"/>
   <img src="https://img.shields.io/badge/language-Go-00ADD8?style=flat-square&logo=go&logoColor=white" alt="Go"/>
   <img src="https://img.shields.io/badge/DeepSeek-native-4D6BFE?style=flat-square" alt="DeepSeek"/>
   <img src="https://img.shields.io/badge/license-Apache%202.0-8b949e?style=flat-square" alt="license"/>
-  <img src="https://img.shields.io/badge/TUI-Bubble%20Tea-5fafd7?style=flat-square" alt="Bubble Tea"/>
+  <img src="https://img.shields.io/badge/TUI-Bubble%20Tea-5faf7d?style=flat-square" alt="Bubble Tea"/>
   <img src="https://img.shields.io/badge/status-alpha-d4a76a?style=flat-square" alt="alpha"/>
 </p>
 
