@@ -307,18 +307,6 @@ Waveloom 针对这一机制做了系统性的优化：
 
 ---
 
-## Star History
-
-<a href="https://www.star-history.com/?repos=Menfre01/waveloom&type=date&legend=top-left" rel="nofollow">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=Menfre01/waveloom&type=date&theme=dark&legend=top-left">
-    <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=Menfre01/waveloom&type=date&legend=top-left">
-    <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=Menfre01/waveloom&type=date&legend=top-left" width="100%">
-  </picture>
-</a>
-
----
-
 ## 开发
 
 ```sh
