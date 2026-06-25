@@ -131,6 +131,10 @@ const maxParas = 200
 // 但完整结果已通过 agent loop 传递给 LLM，不影响上下文。
 const maxToolResultBytes = 100 * 1024 // 100 KB
 
+// ansiReset 是 ANSI SGR 全复位序列，用于在 viewport 内容末尾阻断
+// 可能向 separator / input / footer 泄漏的未关闭属性。
+const ansiReset = "\033[0m"
+
 // buildSystemPrompt 构造完整的系统提示词。
 // CWD 在会话期间固定，不存在 cd 工具。
 func buildSystemPrompt(cwd string) string {
@@ -442,6 +446,7 @@ func newTUIModel(llmClient llm.Client, registry tool.Registry, guard permission.
 	ti.Prompt = "› "
 	ti.Placeholder = "输入消息，Enter 发送..."
 	ti.CharLimit = 2048
+	ti.SetVirtualCursor(false) // 使用真实光标，由 bubbletea 定位终端光标，IME 组合窗口才能正确跟随
 
 	// 初始尺寸设 0，首个 WindowSizeMsg 后由 resizeViewport() 接管
 	vp := viewport.New(viewport.WithWidth(0), viewport.WithHeight(0))
@@ -2243,6 +2248,11 @@ func (m *model) View() tea.View {
 	// 6. 渲染 viewport
 	vpView := strings.Join(m.renderViewportAtHeight(vpHeight), "\n")
 
+	// 防止 viewport 末尾未关闭的 ANSI 属性向 footer 泄漏
+	if len(vpView) > 0 && vpView[len(vpView)-1] != '\n' {
+		vpView += ansiReset
+	}
+
 	// 7. 纵向拼接：header → viewport → [权限框] → [文件选择器] → separator → input → footer
 	parts := []string{header, "", vpView}
 	if overlayContent != "" {
@@ -2261,6 +2271,16 @@ func (m *model) View() tea.View {
 	v := tea.NewView(mainContent)
 	v.AltScreen = true
 	v.MouseMode = tea.MouseModeCellMotion
+	// 定位终端光标到输入框位置。IME 组合窗口（中文输入法候选词）依赖
+	// 终端光标位置；未设置时渲染器内部光标在 viewport 中游走，导致
+	// 预编辑文本泄漏到 viewport / footer 区域。
+	// 当 input 失焦（权限面板或 running 态）时 Cursor() 返回 nil，
+	// 光标隐藏，与不可输入状态一致。
+	if cur := m.input.Cursor(); cur != nil && m.height >= 6 {
+		cur.Position.X += 2 // styleApp 左 padding
+		cur.Position.Y = m.height - 6
+		v.Cursor = cur
+	}
 	return v
 }
 

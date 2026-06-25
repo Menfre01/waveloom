@@ -335,6 +335,57 @@ func (l *Loop) Run(ctx context.Context, messages []llm.Message) <-chan TurnEvent
 					continue
 				}
 				l.verbose("    %s\n", truncateText(contentBuf, 120))
+
+				// 无工具调用时 step 7-8（工具执行 + 压缩检查）不会执行，在此补发。
+				// 压缩检查（如有 Compactor）→ TurnStats
+				var compacted bool
+				if l.config.Compactor != nil && lastPromptTokens > 0 {
+					tick := l.config.Compactor.Compact(ctx, &state.Messages, lastPromptTokens)
+					compacted = true
+					if lastUsage != nil {
+						ch <- TurnStats{
+							Turn:             state.TurnCount,
+							Model:            lastModel,
+							PromptTokens:     lastPromptTokens,
+							CompletionTokens: lastUsage.CompletionTokens,
+							CacheHitTokens:   lastUsage.CacheHitTokens,
+							CacheMissTokens:  lastUsage.CacheMissTokens,
+							ReasoningTokens:  lastUsage.ReasoningTokens,
+							MessageCount:     len(state.Messages) - 1,
+							Compaction: CompactionInfo{
+								TokensSaved:              tick.TokensSaved,
+								Tier:                     tick.Tier,
+								SummaryDone:              tick.Tier3SummaryDone,
+								HardLimitReached:          tick.HardLimitReached,
+								HardLimitReason:           tick.HardLimitReason,
+								UsageRatio:                tick.UsageRatio,
+								Tier3ConsecutiveFailures:  tick.Tier3ConsecutiveFailures,
+							},
+						}
+					}
+					if tick.HardLimitReached {
+						ch <- LoopDone{
+							Turn:     state.TurnCount,
+							Reason:   ReasonModelError,
+							Err:      fmt.Errorf("%s", tick.HardLimitReason),
+							Messages: state.Messages,
+						}
+						return
+					}
+				}
+				if !compacted && lastUsage != nil {
+					ch <- TurnStats{
+						Turn:             state.TurnCount,
+						Model:            lastModel,
+						PromptTokens:     lastPromptTokens,
+						CompletionTokens: lastUsage.CompletionTokens,
+						CacheHitTokens:   lastUsage.CacheHitTokens,
+						CacheMissTokens:  lastUsage.CacheMissTokens,
+						ReasoningTokens:  lastUsage.ReasoningTokens,
+						MessageCount:     len(state.Messages) - 1,
+					}
+				}
+
 				ch <- LoopDone{
 					Turn:     state.TurnCount,
 					Reason:   ReasonCompleted,
