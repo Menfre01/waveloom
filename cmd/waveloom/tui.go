@@ -324,6 +324,10 @@ type model struct {
 	contextLimit     int // 上下文窗口 token 上限
 	lastPromptTokens int // ctx bar 实时值（TurnStats → API 真实值，Tier 3 完成 → 归零）
 
+	// Transcript 持久化
+	transcriptPath    string // session_id.jsonl 文件路径
+	transcriptWritten int    // 已写入 transcript 的段落数
+
 	// Bubbletea 组件
 	program        *tea.Program // 在 main 中注入，用于 goroutine → TUI 通信
 	keys           keyMap
@@ -622,16 +626,19 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// ------------------------------------------------------------------
 	case agentloop.StreamDelta:
 		m.handleStreamDelta(msg)
+		m.flushTranscript()
 		m.refreshViewportContent()
 		return m, nil
 
 	case agentloop.ToolCallStart:
 		m.handleToolStart(msg)
+		m.flushTranscript()
 		m.refreshViewportContent()
 		return m, nil
 
 	case agentloop.ToolCallResult:
 		m.handleToolResult(msg)
+		m.flushTranscript()
 		m.refreshViewportContent()
 		return m, nil
 
@@ -688,6 +695,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			})
 			m.trimParas()
 		}
+		m.flushTranscript()
 		return m, nil
 
 	case agentloop.BalanceUpdate:
@@ -699,6 +707,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case agentloop.LoopDoneWithGen:
 		m.handleLoopDone(msg.LoopDone, msg.Generation)
+		m.flushTranscript()
 		m.updateViewportContent()
 		return m, nil
 
@@ -706,6 +715,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// 不应该走到这里——所有 LoopDone 都应该被 goroutine 包装为 LoopDoneWithGen。
 		// 保留此分支作为防御（如单次模式 runner.go 直接使用 agentloop.LoopDone）。
 		m.handleLoopDone(msg, 0)
+		m.flushTranscript()
 		m.updateViewportContent()
 		return m, nil
 
@@ -1688,6 +1698,121 @@ func (m *model) handleLoopDone(ev agentloop.LoopDone, generation int) {
 }
 
 // ---------------------------------------------------------------------------
+// Transcript 持久化
+// ---------------------------------------------------------------------------
+
+// flushTranscript 将新完成的段落写入 transcript JSONL 文件。
+// 应在每次修改 m.paras 后调用。
+func (m *model) flushTranscript() {
+	if m.transcriptPath == "" {
+		return
+	}
+	for i := m.transcriptWritten; i < len(m.paras); i++ {
+		p := &m.paras[i]
+		// 跳过仍在流式中的段落（tool、assistant、thought）
+		if p.State == stateStreaming {
+			continue
+		}
+		line := paragraphToTranscriptLine(p)
+		if err := ctxpkg.AppendTranscriptLine(m.transcriptPath, line); err != nil {
+			// 静默失败：transcript 是 best-effort 增强，不应影响主流程
+			return
+		}
+		m.transcriptWritten = i + 1
+	}
+}
+
+// paragraphToTranscriptLine 将 TUI Paragraph 转为 transcript 行。
+func paragraphToTranscriptLine(p *Paragraph) ctxpkg.TranscriptLine {
+	line := ctxpkg.TranscriptLine{
+		Text:          p.Text,
+		ToolName:      p.ToolName,
+		ToolArgs:      p.ToolArgs,
+		ToolResult:    p.ToolResult,
+		ToolError:     p.ToolError,
+		ToolDurMs:     p.ToolDurMs,
+		ThoughtTokens: p.ThoughtTokens,
+	}
+	switch p.Type {
+	case paraUser:
+		line.Type = "user"
+	case paraThought:
+		line.Type = "thought"
+	case paraAssistant:
+		line.Type = "assistant"
+	case paraTool:
+		line.Type = "tool"
+	case paraSystem:
+		line.Type = "system"
+	}
+	switch p.State {
+	case stateDone:
+		line.State = "done"
+	case stateCollapsed:
+		line.State = "collapsed"
+	case stateExpanded:
+		line.State = "expanded"
+	case stateError:
+		line.State = "error"
+	}
+	return line
+}
+
+// transcriptLineToParagraph 将 transcript 行还原为 TUI Paragraph。
+func transcriptLineToParagraph(line ctxpkg.TranscriptLine) Paragraph {
+	p := Paragraph{
+		Text:          line.Text,
+		ToolName:      line.ToolName,
+		ToolArgs:      line.ToolArgs,
+		ToolResult:    line.ToolResult,
+		ToolError:     line.ToolError,
+		ToolDurMs:     line.ToolDurMs,
+		ThoughtTokens: line.ThoughtTokens,
+	}
+	switch line.Type {
+	case "user":
+		p.Type = paraUser
+	case "thought":
+		p.Type = paraThought
+	case "assistant":
+		p.Type = paraAssistant
+	case "tool":
+		p.Type = paraTool
+	case "system":
+		p.Type = paraSystem
+	}
+	switch line.State {
+	case "done":
+		p.State = stateDone
+	case "collapsed":
+		p.State = stateCollapsed
+	case "expanded":
+		p.State = stateExpanded
+	case "error":
+		p.State = stateError
+	}
+	return p
+}
+
+// replayTranscript 从 transcript 文件加载最后 N 行并还原为段落。
+// 用于 --resume 时在 viewport 中显示最近的对话历史。
+func (m *model) replayTranscript() {
+	if m.transcriptPath == "" {
+		return
+	}
+	lines, err := ctxpkg.LoadTranscriptLines(m.transcriptPath)
+	if err != nil || len(lines) == 0 {
+		return
+	}
+
+	m.paras = make([]Paragraph, 0, len(lines))
+	for _, l := range lines {
+		m.paras = append(m.paras, transcriptLineToParagraph(l))
+	}
+	m.transcriptWritten = len(m.paras)
+}
+
+// ---------------------------------------------------------------------------
 // 折叠/展开切换
 // ---------------------------------------------------------------------------
 
@@ -1720,6 +1845,14 @@ func (m *model) trimParas() {
 
 	// 淘汰旧段落
 	m.paras = append([]Paragraph{}, m.paras[remove:]...)
+
+	// 同步 transcript 写入指针
+	if m.transcriptWritten > 0 {
+		m.transcriptWritten -= remove
+		if m.transcriptWritten < 0 {
+			m.transcriptWritten = 0
+		}
+	}
 
 	// 重建 paraLineStarts：偏移后续段落的行号
 	newStarts := make([]int, len(m.paras))
@@ -1953,6 +2086,7 @@ func (m *model) doTurn(userInput string) tea.Cmd {
 		State: stateDone,
 		Text:  userInput,
 	})
+	m.flushTranscript()
 
 	m.running = true
 	m.runGeneration++
@@ -2547,7 +2681,7 @@ func (m *model) syncThemeComponents() {
 }
 
 // runTUI 启动交互式 TUI 模式。依赖由 main() 统一初始化后传入，无需重复创建。
-func runTUI(llmClient llm.Client, registry tool.Registry, guard permission.Guard, expander *reference.Expander, modelName string, theme string, verboseLog io.Writer, contextLimit int, ctxMgr *ctxpkg.ContextManager) {
+func runTUI(llmClient llm.Client, registry tool.Registry, guard permission.Guard, expander *reference.Expander, modelName string, theme string, verboseLog io.Writer, contextLimit int, ctxMgr *ctxpkg.ContextManager, isResume bool, sessionDir string) {
 	m := newTUIModel(llmClient, registry, guard, expander, modelName, theme, verboseLog, contextLimit)
 	// 用外部创建的 ContextManager 替换 newTUIModel 内部创建的
 	m.cm = ctxMgr
@@ -2556,6 +2690,26 @@ func runTUI(llmClient llm.Client, registry tool.Registry, guard permission.Guard
 	m.hudCacheMiss = ctxMgr.Stats().TotalCacheMissTokens
 	// ctx bar 初始为 0，首个 TurnStats 会用 API 精确值更新
 	m.lastPromptTokens = 0
+
+	// Transcript 路径：从 sessionPath 推导
+	if sp := ctxMgr.SessionPath(); sp != "" {
+		sid := ctxMgr.SessionID()
+		m.transcriptPath = ctxpkg.TranscriptPath(sessionDir, sid)
+	}
+
+	// Resume：重放 transcript 到 viewport
+	if isResume && m.transcriptPath != "" {
+		m.replayTranscript()
+	}
+
+	// 写入 recent.json（TUI 启动时唯一写入点）
+	if sid := ctxMgr.SessionID(); sid != "" {
+		stats := ctxMgr.Stats()
+		if err := ctxpkg.UpdateRecentSessions(sessionDir, sid, stats.MessageCount); err != nil {
+			// 静默失败
+		}
+	}
+
 	p := tea.NewProgram(m)
 	m.program = p
 	m.wireLoop()  // 注入 tuiUserResponder，此时 program 已就绪
@@ -2569,7 +2723,10 @@ func runTUI(llmClient llm.Client, registry tool.Registry, guard permission.Guard
 	// 正常退出时保存 session 并提示 session ID
 	m.cm.Save()
 	if sid := m.cm.SessionID(); sid != "" {
-		fmt.Fprintf(os.Stderr, "session: %s\n", sid)
-		fmt.Fprintf(os.Stderr, "  wvl --resume %s\n", sid)
+		// 退出时用最终统计更新 recent.json（覆盖启动时写入的初始值）
+		stats := m.cm.Stats()
+		ctxpkg.UpdateRecentSessions(sessionDir, sid, stats.MessageCount)
+		fmt.Fprintf(os.Stderr, "已保存 session: %s\n", sid)
+		fmt.Fprintf(os.Stderr, "  恢复对话: wvl --resume %s\n", sid)
 	}
 }

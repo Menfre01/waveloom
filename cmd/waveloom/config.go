@@ -20,6 +20,8 @@ type CLIConfig struct {
 	ContextLimit int    // 解析后的上下文窗口 token 数
 	Theme           string // 主题模式: auto / dark / light
 	ResumeSessionID string // 恢复指定 session ID（空 = 新建 session）
+	ContinueSession bool   // 恢复最近一个 session
+	ListSessions    bool   // 列出最近 sessions
 	BypassPerm      bool
 	Verbose      bool   // 输出 LLM / 工具执行明细到 stderr
 	SettingsPath string // settings.json 路径
@@ -41,6 +43,7 @@ func parseCLI() CLIConfig {
 	flag.StringVar(&cfg.Theme, "theme", "auto", "主题模式 (auto/dark/light)，auto 自动检测终端背景色")
 	flag.StringVar(&cfg.SettingsPath, "settings", "", "显式指定项目配置文件路径（默认: .waveloom/settings.json）")
 	flag.StringVar(&cfg.ResumeSessionID, "resume", "", "恢复指定 session ID 的对话（空 = 新建 session）")
+	flag.BoolVar(&cfg.ContinueSession, "continue", false, "恢复最近一个 session 的对话")
 	flag.BoolVar(&cfg.Verbose, "verbose", false, "输出 LLM 调用和工具执行的详细日志到 stderr")
 	flag.BoolVar(&cfg.BypassPerm, "bypass-permissions", false, "跳过权限检查（CI/测试）")
 
@@ -67,9 +70,11 @@ func parseCLI() CLIConfig {
 	// 单次模式：命令行剩余参数即 prompt
 	args := flag.Args()
 	if len(args) > 0 {
-		// "setup" 作为子命令处理，不走 oneshot
+		// "setup" 和 "ls" 作为子命令处理，不走 oneshot
 		if args[0] == "setup" {
 			cfg.Setup = true
+		} else if args[0] == "ls" {
+			cfg.ListSessions = true
 		} else {
 			cfg.OneShot = args[0]
 		}
@@ -121,6 +126,7 @@ func printHelp() {
 
 用法:
   wvl                     交互式 TUI 模式
+  wvl ls                  列出最近 sessions
   wvl setup               首次设置向导
   wvl "prompt"            单次执行模式
   wvl --help              显示帮助
@@ -138,6 +144,7 @@ func printHelp() {
   --context-limit N       上下文窗口 token 上限，支持 1M / 200k / 1048576 等格式（默认: 1M）
   --bypass-permissions    跳过权限检查（CI/测试）
   --resume ID             恢复指定 session ID 的对话
+  --continue              恢复最近一个 session 的对话
 
 配置文件（settings.json）:
   ~/.waveloom/settings.json  用户全局配置（安全基线）
