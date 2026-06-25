@@ -15,8 +15,8 @@ func TestDefaultSettings(t *testing.T) {
 	if s.Provider != "deepseek" {
 		t.Errorf("Provider = %q, want %q", s.Provider, "deepseek")
 	}
-	if s.Model != "deepseek-v4-flash" {
-		t.Errorf("Model = %q, want %q", s.Model, "deepseek-v4-flash")
+	if s.Model != "deepseek-v4-pro" {
+		t.Errorf("Model = %q, want %q", s.Model, "deepseek-v4-pro")
 	}
 	if s.BaseURL != "https://api.deepseek.com" {
 		t.Errorf("BaseURL = %q, want %q", s.BaseURL, "https://api.deepseek.com")

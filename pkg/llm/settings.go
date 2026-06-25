@@ -238,7 +238,7 @@ func NewClientFromLLMSettings(settings *LLMSettings) (Client, ClientConfig, erro
 func DefaultSettings() *LLMSettings {
 	return &LLMSettings{
 		Provider: "deepseek",
-		Model:    "deepseek-v4-flash",
+		Model:    "deepseek-v4-pro",
 		BaseURL:  "https://api.deepseek.com",
 		Timeout:  "600s",
 		Retry: &RetrySettings{
