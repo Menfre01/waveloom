@@ -31,5 +31,11 @@
         "tier3_threshold": 0.95,
         "protection_zone_tokens": "8K",
         "context_limit_tokens": "1M"
+    },
+    "environment": {
+        "tools": {
+            "go": "D:\\go\\go\\bin\\go",
+            "python": "/usr/local/bin/python3"
+        }
     }
 }

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -265,6 +266,77 @@ func TestReadFileDeviceBlocked(t *testing.T) {
 	}
 	if result.Error.Kind != ErrKindSecurityViolation {
 		t.Errorf("Error.Kind = %q, want %q", result.Error.Kind, ErrKindSecurityViolation)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// readFileWithContext — 分块读取 + context 取消
+// ---------------------------------------------------------------------------
+
+func TestReadFileWithContextSuccess(t *testing.T) {
+	dir := t.TempDir()
+	content := []byte("hello world\nline 2\nline 3\n")
+	if err := os.WriteFile(filepath.Join(dir, "test.txt"), content, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := readFileWithContext(context.Background(), filepath.Join(dir, "test.txt"))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if string(result) != string(content) {
+		t.Errorf("content mismatch:\n  got:  %q\n  want: %q", string(result), string(content))
+	}
+}
+
+func TestReadFileWithContextAlreadyCancelled(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "test.txt"), []byte("data"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err := readFileWithContext(ctx, filepath.Join(dir, "test.txt"))
+	if err == nil {
+		t.Fatal("expected error with cancelled context")
+	}
+	if err != context.Canceled {
+		t.Errorf("expected context.Canceled, got: %v", err)
+	}
+}
+
+func TestReadFileCancelledDuringStreaming(t *testing.T) {
+	// 验证大文件流式读取时 context 取消能被检测。
+	// 创建一个 1MB+ 的文件以命中 readStreaming 路径（FastPathMaxSize = 10MB，
+	// 但流式路径的选择由调用方 read_file.Execute 基于 info.Size() 决定，
+	// 这里直接调用 readStreaming 测试其内部 ctx 检查）。
+	dir := t.TempDir()
+	path := filepath.Join(dir, "large.txt")
+
+	// 生成 ~1MB 内容（每行 ~100 字节，约 10000 行），触发 ctx 检查（每 64 行）。
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 10000; i++ {
+		f.WriteString("line " + strings.Repeat("x", 90) + "\n")
+	}
+	f.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	// 启动后立即取消 — 第一次 ctx 检查在 64 行处触发，
+	// 应在 ~64 行内退出。
+	cancel()
+
+	_, _, _, err = readStreaming(ctx, path, 0, 0)
+	if err == nil {
+		t.Fatal("expected error with cancelled context during streaming")
+	}
+	if err != context.Canceled {
+		t.Errorf("expected context.Canceled, got: %v", err)
 	}
 }
 

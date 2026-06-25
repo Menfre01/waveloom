@@ -85,7 +85,8 @@ var defaultSystemPrompt = fmt.Sprintf(`You are Waveloom %s, a terminal-based cod
 - Use web_fetch to consult online docs, API references, and package registry information.
 - Make surgical, minimal edits. Do not refactor unrelated code or add unnecessary comments.
 - Prefer edit_file (with unified diff patches) over write_file for small changes.
-- When using shell, prefer rg over grep, and prefer checking exit codes over parsing output.
+- When using shell, prefer checking exit codes over parsing output.
+- If rg (ripgrep) is listed in Available tools under ## Environment, prefer it over grep for faster searches; otherwise use grep.
 - When using shell, use the working_dir parameter to set the working directory. Do NOT prepend "cd <path> &&" to the command — this breaks permission pattern matching.
 - After making changes, verify them — compile, run tests, or check diffs where applicable.
 
@@ -100,7 +101,22 @@ var defaultSystemPrompt = fmt.Sprintf(`You are Waveloom %s, a terminal-based cod
 
 - Stop and report completion when the user's request is fully satisfied.
 - If you cannot complete a task, explain the bottleneck concisely and propose next steps.
-- Do NOT loop on the same sub-task repeatedly. If stuck, ask for guidance.`, Version)
+- Do NOT loop on the same sub-task repeatedly. If stuck, ask for guidance.
+
+## Tool Error Handling
+
+- When a tool returns an error, analyze the error kind before retrying.
+- Error kinds you may encounter:
+  command_not_found — The binary is not installed. Report to user, do NOT retry.
+  command_failed — The command ran but exited non-zero. Check stderr, fix args, retry once.
+  timeout — Command exceeded time limit. Increase timeout_ms or simplify the command.
+  file_not_found — Check the path with search_file or ls; retry with corrected path.
+  invalid_args — Fix the parameter syntax and retry.
+  permission_denied — Cannot access. Use an alternative path or ask user.
+  security_violation — Fatal. The operation is blocked by policy. Do not retry.
+- command_not_found is special: it means the tool binary is absent, NOT that your command syntax was wrong. Never retry a command_not_found error with different flags or arguments — the binary itself is missing.
+- Do not retry the same operation more than twice. If a tool fails twice with the same error kind, stop and ask the user for guidance.
+- When you need a compiler, build tool, or runtime, check its availability once under ## Environment. If absent, ask the user to provide the path or install it.`, Version)
 
 // ---------------------------------------------------------------------------
 // 自定义消息类型
@@ -330,9 +346,10 @@ type model struct {
 	lastEscTime time.Time // 上次在空闲态按 Esc 的时间
 
 	// 状态
-	running   bool               // agent loop 正在执行中
-	cancelRun context.CancelFunc // 取消当前运行的 agent loop（nil 表示无运行中 loop）
-	themeMode string             // 当前主题模式: auto / dark / light
+	running       bool               // agent loop 正在执行中
+	cancelRun     context.CancelFunc // 取消当前运行的 agent loop（nil 表示无运行中 loop）
+	runGeneration int                // 每次 doTurn 递增，闭包捕获后用于 LoopDone 去重
+	themeMode     string             // 当前主题模式: auto / dark / light
 	palette   palette            // 当前配色
 	width     int
 	height    int
@@ -680,8 +697,15 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case agentloop.LoopDoneWithGen:
+		m.handleLoopDone(msg.LoopDone, msg.Generation)
+		m.updateViewportContent()
+		return m, nil
+
 	case agentloop.LoopDone:
-		m.handleLoopDone(msg)
+		// 不应该走到这里——所有 LoopDone 都应该被 goroutine 包装为 LoopDoneWithGen。
+		// 保留此分支作为防御（如单次模式 runner.go 直接使用 agentloop.LoopDone）。
+		m.handleLoopDone(msg, 0)
 		m.updateViewportContent()
 		return m, nil
 
@@ -863,11 +887,25 @@ func (m *model) handleKeyPress(msg tea.KeyPressMsg) (bool, tea.Cmd) {
 			m.input.Reset()
 			return true, m.doTurn(userInput)
 		}
-		return true, nil // running 时吞掉 enter
+
+		// running == true：用户输入优先于 agent loop。
+		// 立即中断当前 loop，将输入内容作为新任务启动。
+		userInput := strings.TrimSpace(m.input.Value())
+		if userInput == "" {
+			// 空输入 → 仅中断，不发新任务
+			if m.cancelRun != nil {
+				m.cancelRun()
+				m.cancelRun = nil
+			}
+			return true, nil
+		}
+		m.input.Reset()
+		return true, m.doTurn(userInput)
 
 	case key.Matches(msg, m.keys.Interrupt):
 		if m.running && m.cancelRun != nil {
 			m.cancelRun()
+			m.cancelRun = nil
 			return true, nil
 		}
 		// 空闲态双击 Esc → 清空输入框
@@ -1549,25 +1587,37 @@ func truncateToolResult(result string) string {
 }
 
 // handleLoopDone 处理循环终止。
-func (m *model) handleLoopDone(ev agentloop.LoopDone) {
-	m.running = false
+// generation 为 loop 启动时的 runGeneration 值。
+// generation > 0 且与当前 runGeneration 不一致 → 该 LoopDone 属于已被取代的旧 loop。
+func (m *model) handleLoopDone(ev agentloop.LoopDone, generation int) {
+	isStale := generation > 0 && generation != m.runGeneration
 
-	// 计算延迟（必须在 CompleteRun 之前，因为 CompleteRun 需要 durationMs）
-	if !m.turnStartTime.IsZero() {
-		m.hudLatMs = time.Since(m.turnStartTime).Milliseconds()
+	if !isStale {
+		m.running = false
+		m.cancelRun = nil
+
+		// 计算延迟（必须在 CompleteRun 之前，因为 CompleteRun 需要 durationMs）
+		if !m.turnStartTime.IsZero() {
+			m.hudLatMs = time.Since(m.turnStartTime).Milliseconds()
+		}
+
+		// 提交到 ContextManager（stats 累加 + 落盘；压缩已在 Loop 内完成）
+		result := m.cm.CompleteRun(ev.Messages, m.loopPrompt, m.lastTurnPrompt, m.loopCompl, m.loopCacheHit, m.loopCacheMiss, m.loopReasoning, m.hudModel, m.hudLatMs, string(ev.Reason))
+
+		// loop 级增量归零，准备下一个 loop
+		m.loopPrompt = 0
+		m.loopCompl = 0
+		m.loopCacheHit = 0
+		m.loopCacheMiss = 0
+		m.loopReasoning = 0
+		m.lastTurnPrompt = 0
+		m.lastTurnCompl = 0
+
+		// Tier 3 完成后 ctx bar 归零，等待下一个 TurnStats 用 API 真实值恢复
+		if result.Compaction.Tier3SummaryDone {
+			m.lastPromptTokens = 0
+		}
 	}
-
-	// 提交到 ContextManager（stats 累加 + 落盘；压缩已在 Loop 内完成）
-	result := m.cm.CompleteRun(ev.Messages, m.loopPrompt, m.lastTurnPrompt, m.loopCompl, m.loopCacheHit, m.loopCacheMiss, m.loopReasoning, m.hudModel, m.hudLatMs, string(ev.Reason))
-
-	// loop 级增量归零，准备下一个 loop
-	m.loopPrompt = 0
-	m.loopCompl = 0
-	m.loopCacheHit = 0
-	m.loopCacheMiss = 0
-	m.loopReasoning = 0
-	m.lastTurnPrompt = 0
-	m.lastTurnCompl = 0
 
 	// 收敛未完成的 thought → stateCollapsed（用户手动展开的保持展开）
 	for i := range m.paras {
@@ -1596,39 +1646,35 @@ func (m *model) handleLoopDone(ev agentloop.LoopDone) {
 		}
 	}
 
-	// 非正常/正常终止都追加系统提示段落
-	switch ev.Reason {
-	case agentloop.ReasonMaxTurns:
-		m.paras = append(m.paras, Paragraph{
-			Type:  paraSystem,
-			State: stateDone,
-			Text:  fmt.Sprintf("已达到最大轮次限制（%d）。输入消息继续对话。", ev.Turn),
-		})
-	case agentloop.ReasonAborted:
-		m.paras = append(m.paras, Paragraph{
-			Type:  paraSystem,
-			State: stateDone,
-			Text:  "执行被中断。",
-		})
-	case agentloop.ReasonModelError:
-		m.paras = append(m.paras, Paragraph{
-			Type:  paraSystem,
-			State: stateDone,
-			Text:  fmt.Sprintf("模型错误: %v", ev.Err),
-		})
+	// 非正常/正常终止都追加系统提示段落（仅当前 run）
+	if !isStale {
+		switch ev.Reason {
+		case agentloop.ReasonMaxTurns:
+			m.paras = append(m.paras, Paragraph{
+				Type:  paraSystem,
+				State: stateDone,
+				Text:  fmt.Sprintf("已达到最大轮次限制（%d）。输入消息继续对话。", ev.Turn),
+			})
+		case agentloop.ReasonAborted:
+			m.paras = append(m.paras, Paragraph{
+				Type:  paraSystem,
+				State: stateDone,
+				Text:  "执行被中断。",
+			})
+		case agentloop.ReasonModelError:
+			m.paras = append(m.paras, Paragraph{
+				Type:  paraSystem,
+				State: stateDone,
+				Text:  fmt.Sprintf("模型错误: %v", ev.Err),
+			})
+		}
 	}
-
-	// Tier 3 完成后 ctx bar 归零，等待下一个 TurnStats 用 API 真实值恢复
-	if result.Compaction.Tier3SummaryDone {
-		m.lastPromptTokens = 0
-	}
-	_ = result // 供上层使用
 
 	// 段落数超过上限时淘汰旧段落，防止内存无限增长
 	m.trimParas()
 
 	// 异步查询余额（不影响主流程）
-	if m.llmClient.SupportsBalance() {
+	if !isStale && m.llmClient.SupportsBalance() {
 		client := m.llmClient
 		program := m.program
 		go func() {
@@ -1909,8 +1955,15 @@ func (m *model) doTurn(userInput string) tea.Cmd {
 	})
 
 	m.running = true
+	m.runGeneration++
 	m.turnStartTime = time.Now()
 	m.updateViewportContent()
+
+	// 若已有运行中的 loop，先取消（用户中断后立即发新任务）。
+	if m.cancelRun != nil {
+		m.cancelRun()
+		m.cancelRun = nil
+	}
 
 	// 创建可取消的 context（在 goroutine 外创建，避免 race）
 	ctx, cancel := context.WithCancel(context.Background())
@@ -1918,11 +1971,17 @@ func (m *model) doTurn(userInput string) tea.Cmd {
 
 	// 3. 返回一个 tea.Cmd：在 goroutine 中消费 loop.Run() channel，
 	//    通过 p.Send 实时推送事件到 TUI Update。
+	// 注意：goroutine 仅 defer cancel() 自己的 ctx，不管理 m.cancelRun。
+	// m.cancelRun 的生命周期由 doTurn（创建）和 handleLoopDone（清除）控制。
+	gen := m.runGeneration // 闭包捕获当前代数，LoopDone 时带回比对
 	return func() tea.Msg {
 		defer cancel()
-		defer func() { m.cancelRun = nil }()
 
 		for ev := range m.loop.Run(ctx, messagesSnapshot) {
+			// 将 LoopDone 包装为 loopDoneWithGen，携带代数用于 handleLoopDone 去重。
+			if done, ok := ev.(agentloop.LoopDone); ok {
+				ev = agentloop.LoopDoneWithGen{LoopDone: done, Generation: gen}
+			}
 			// 推送事件到 TUI（goroutine-safe via buffered channel）
 			if m.program != nil {
 				m.program.Send(ev)

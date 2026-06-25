@@ -69,7 +69,7 @@ func (t *LSPDefinition) Execute(ctx context.Context, p LSPDefinitionParams) (*To
 	}
 
 	var locations []lsp.Location
-	err = LSPManager.Call(inst, "textDocument/definition", lsp.DefinitionParams{
+	err = LSPManager.Call(ctx, inst, "textDocument/definition", lsp.DefinitionParams{
 		TextDocument: lsp.TextDocumentIdentifier{URI: lsp.PathToURI(p.FilePath)},
 		Position:     lsp.Position{Line: p.Line, Character: p.Character},
 	}, &locations)

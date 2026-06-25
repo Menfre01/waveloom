@@ -79,7 +79,7 @@ func (t *LSPReferences) Execute(ctx context.Context, p LSPReferencesParams) (*To
 	}
 
 	var locations []lsp.Location
-	err = LSPManager.Call(inst, "textDocument/references", lsp.ReferencesParams{
+	err = LSPManager.Call(ctx, inst, "textDocument/references", lsp.ReferencesParams{
 		TextDocument: lsp.TextDocumentIdentifier{URI: lsp.PathToURI(p.FilePath)},
 		Position:     lsp.Position{Line: p.Line, Character: p.Character},
 		Context:      lsp.ReferencesContext{IncludeDeclaration: includeDecl},

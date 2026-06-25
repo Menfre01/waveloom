@@ -2,7 +2,9 @@ package lsp
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"os/exec"
 	"strings"
@@ -428,4 +430,195 @@ func severityString(s DiagnosticSeverity) string {
 	default:
 		return "unknown"
 	}
+}
+
+// ---------------------------------------------------------------------------
+// CallContext — context 取消与超时
+// ---------------------------------------------------------------------------
+
+func TestCallContextAlreadyCancelled(t *testing.T) {
+	if _, err := exec.LookPath("gopls"); err != nil {
+		t.Skip("gopls not found in PATH")
+	}
+
+	dir := t.TempDir()
+	if err := os.WriteFile(dir+"/go.mod", []byte("module example\n\ngo 1.21\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(dir+"/main.go", []byte("package main\nfunc main() {}\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	rootURI := "file://" + dir
+	client, err := NewClient("gopls", nil, rootURI)
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+	defer client.Close()
+
+	// 已取消的 context → 应立即返回 context.Canceled
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	start := time.Now()
+	var locations []Location
+	err = client.CallContext(ctx, "textDocument/definition", DefinitionParams{
+		TextDocument: TextDocumentIdentifier{URI: DocumentURI("file://" + dir + "/main.go")},
+		Position:     Position{Line: 0, Character: 0},
+	}, &locations)
+
+	elapsed := time.Since(start)
+
+	if err == nil {
+		t.Fatal("expected error with cancelled context, got nil")
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("expected context.Canceled, got: %v", err)
+	}
+	// 必须在 100ms 内返回（不应等待 LSP 响应）
+	if elapsed > 100*time.Millisecond {
+		t.Errorf("cancelled call took %v, expected < 100ms", elapsed)
+	}
+	t.Logf("cancelled call returned in %v: %v", elapsed, err)
+}
+
+func TestCallContextTimeout(t *testing.T) {
+	if _, err := exec.LookPath("gopls"); err != nil {
+		t.Skip("gopls not found in PATH")
+	}
+
+	dir := t.TempDir()
+	goCode := `package main
+
+import "fmt"
+
+func main() {
+	fmt.Println("hello")
+}
+`
+	if err := os.WriteFile(dir+"/main.go", []byte(goCode), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(dir+"/go.mod", []byte("module example\n\ngo 1.21\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	rootURI := "file://" + dir
+	client, err := NewClient("gopls", nil, rootURI)
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+	defer client.Close()
+
+	fileURI := "file://" + dir + "/main.go"
+	content, _ := os.ReadFile(dir + "/main.go")
+	_ = client.Notify("textDocument/didOpen", DidOpenTextDocumentParams{
+		TextDocument: TextDocumentItem{
+			URI:        DocumentURI(fileURI),
+			LanguageID: "go",
+			Version:    1,
+			Text:       string(content),
+		},
+	})
+
+	// 极短超时：gopls 通常在此时间内响应，但不保证。
+	// 无论成功或超时，都不应触发 panic 或 goroutine 泄露。
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+
+	var locations []Location
+	err = client.CallContext(ctx, "textDocument/definition", DefinitionParams{
+		TextDocument: TextDocumentIdentifier{URI: DocumentURI(fileURI)},
+		Position:     Position{Line: 5, Character: 7},
+	}, &locations)
+
+	if err != nil {
+		// 超时 → 应得到 DeadlineExceeded
+		if !errors.Is(err, context.DeadlineExceeded) && !strings.Contains(err.Error(), "context deadline exceeded") {
+			t.Errorf("unexpected error (wanted deadline exceeded or success): %v", err)
+		}
+		t.Logf("call timed out as expected: %v", err)
+	} else {
+		t.Logf("call succeeded with %d locations (gopls responded in < 50ms)", len(locations))
+	}
+}
+
+func TestCallContextCancelledDuringPending(t *testing.T) {
+	// 验证：多个并发调用中取消其中一个，不影响其他调用的响应。
+	if _, err := exec.LookPath("gopls"); err != nil {
+		t.Skip("gopls not found in PATH")
+	}
+
+	dir := t.TempDir()
+	goCode := `package main
+
+import "fmt"
+
+func main() {
+	fmt.Println("hello")
+}
+`
+	if err := os.WriteFile(dir+"/main.go", []byte(goCode), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(dir+"/go.mod", []byte("module example\n\ngo 1.21\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	rootURI := "file://" + dir
+	client, err := NewClient("gopls", nil, rootURI)
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+	defer client.Close()
+
+	fileURI := DocumentURI("file://" + dir + "/main.go")
+	content, _ := os.ReadFile(dir + "/main.go")
+	_ = client.Notify("textDocument/didOpen", DidOpenTextDocumentParams{
+		TextDocument: TextDocumentItem{
+			URI:        fileURI,
+			LanguageID: "go",
+			Version:    1,
+			Text:       string(content),
+		},
+	})
+
+	// 查询 fmt.Println 定义（line 5, char 7）
+	queryParams := DefinitionParams{
+		TextDocument: TextDocumentIdentifier{URI: fileURI},
+		Position:     Position{Line: 5, Character: 7},
+	}
+
+	// 发起一个正常的调用后立即取消 ctx，验证错误返回
+	ctx, cancel := context.WithCancel(context.Background())
+
+	// 在 goroutine 中发送取消，模拟用户按 Esc
+	go func() {
+		time.Sleep(5 * time.Millisecond)
+		cancel()
+	}()
+
+	var locs1 []Location
+	err = client.CallContext(ctx, "textDocument/definition", queryParams, &locs1)
+
+	if err == nil {
+		// gopls 在 5ms 内响应了 → 也合法
+		t.Log("call completed before cancellation")
+	} else if !errors.Is(err, context.Canceled) {
+		t.Errorf("expected context.Canceled, got: %v", err)
+	} else {
+		t.Logf("call cancelled: %v", err)
+	}
+
+	// 后续正常调用应不受影响
+	var locs2 []Location
+	err = client.CallContext(context.Background(), "textDocument/definition", queryParams, &locs2)
+
+	if err != nil {
+		t.Errorf("subsequent call failed after cancelled call: %v", err)
+	}
+	if len(locs2) == 0 {
+		t.Error("expected at least one location in subsequent call")
+	}
+	t.Logf("subsequent call: %d locations", len(locs2))
 }

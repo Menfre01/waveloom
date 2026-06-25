@@ -2,9 +2,11 @@ package tool
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 )
@@ -78,14 +80,14 @@ func (t *ReadFile) Execute(ctx context.Context, p ReadFileParams) (*ToolResult, 
 		return nil, err
 	}
 
-	// 小文件走快速路径（一次 ReadFile），大文件走流式路径
+	// 小文件走快速路径（分块读取，每块检查 ctx），大文件走流式路径
 	var content string
 	var lineCount, totalLines int
 
 	if info.Size() < FastPathMaxSize {
-		content, lineCount, totalLines, err = readFast(path, p.Offset, p.Limit)
+		content, lineCount, totalLines, err = readFast(ctx, path, p.Offset, p.Limit)
 	} else {
-		content, lineCount, totalLines, err = readStreaming(path, p.Offset, p.Limit)
+		content, lineCount, totalLines, err = readStreaming(ctx, path, p.Offset, p.Limit)
 	}
 	if err != nil {
 		return toolError(ErrorClassRecoverable, ErrKindCommandFailed,
@@ -139,11 +141,11 @@ func (t *ReadFile) fileNotFoundError(path string) *ToolResult {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Fast path — 小文件 (< 10MB)：一次 os.ReadFile + 内存 split
+// Fast path — 小文件 (< 10MB)：分块读取，每块检查 context 取消。
 // ──────────────────────────────────────────────────────────────────────────
 
-func readFast(path string, offset, limit int) (content string, lineCount int, totalLines int, err error) {
-	raw, err := os.ReadFile(path)
+func readFast(ctx context.Context, path string, offset, limit int) (content string, lineCount int, totalLines int, err error) {
+	raw, err := readFileWithContext(ctx, path)
 	if err != nil {
 		return "", 0, 0, err
 	}
@@ -166,6 +168,37 @@ func readFast(path string, offset, limit int) (content string, lineCount int, to
 	return content, len(selected), totalLines, nil
 }
 
+// readFileWithContext 分块读取文件，每 64KB 检查 ctx 是否取消。
+// 用于替代 os.ReadFile，支持 context 中断。
+func readFileWithContext(ctx context.Context, path string) ([]byte, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+
+	var buf bytes.Buffer
+	chunk := make([]byte, 64*1024) // 64KB chunks
+
+	for {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		n, readErr := f.Read(chunk)
+		if n > 0 {
+			buf.Write(chunk[:n])
+		}
+		if readErr == io.EOF {
+			break
+		}
+		if readErr != nil {
+			return nil, readErr
+		}
+	}
+
+	return buf.Bytes(), nil
+}
+
 func splitLines(text string) []string {
 	lines := strings.Split(text, "\n")
 	// 去除尾部的空行（由 trailing newline 产生）
@@ -176,10 +209,10 @@ func splitLines(text string) []string {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Streaming path — 大文件 / 非普通文件：bufio.Scanner 流式处理
+// Streaming path — 大文件 / 非普通文件：bufio.Scanner 流式处理，每行检查 context。
 // ──────────────────────────────────────────────────────────────────────────
 
-func readStreaming(path string, offset, limit int) (content string, lineCount int, totalLines int, err error) {
+func readStreaming(ctx context.Context, path string, offset, limit int) (content string, lineCount int, totalLines int, err error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return "", 0, 0, err
@@ -193,6 +226,13 @@ func readStreaming(path string, offset, limit int) (content string, lineCount in
 	reachedByteLimit := false
 
 	for scanner.Scan() {
+		// 每 64 行检查一次 context 取消，避免高频 syscall。
+		if lineIdx%64 == 0 {
+			if err := ctx.Err(); err != nil {
+				return "", 0, 0, err
+			}
+		}
+
 		text := scanner.Text()
 
 		if reachedByteLimit {

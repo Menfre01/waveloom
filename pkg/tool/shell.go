@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os/exec"
 	"regexp"
+	"runtime"
 	"strings"
 	"time"
 )
@@ -31,6 +32,9 @@ func (t *Shell) ConcurrentSafe() bool    { return false }
 func (t *Shell) Description() string {
 	return strings.Join([]string{
 		"在子进程中执行 Shell 命令。设置执行超时（默认 120s，最大 600s），捕获 stdout 和 stderr。",
+		"",
+		"Unix/macOS 使用 sh -c 执行，Windows 使用 cmd /c 执行。",
+		"命令语法应兼容目标平台（Windows 不支持 ; 分隔多命令，请用 &&）。",
 		"",
 		"优先使用专用工具而非 shell:",
 		"  - 读文件: read_file（非 cat/head/tail）",
@@ -83,9 +87,27 @@ const (
 	MaxShellTimeoutMs     = 600000
 )
 
+// ── shellInterpreter ──
+
+// shellInterpreter 根据当前 OS 返回用于执行 Shell 命令的解释器和参数。
+//
+// Unix/macOS: sh -c
+// Windows:    cmd /c（始终可用，无需额外安装）
+func shellInterpreter() (binary string, args []string) {
+	if runtime.GOOS == "windows" {
+		return "cmd", []string{"/c"}
+	}
+	return "sh", []string{"-c"}
+}
+
 // ── Execute ──
 
 func (t *Shell) Execute(ctx context.Context, p ShellParams) (*ToolResult, error) {
+	// ── Step 0: 父 context 已取消 → 提前返回 ──
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
 	// ── Step 1: 超时设置 ──
 	timeoutMs := p.TimeoutMs
 	if timeoutMs <= 0 {
@@ -106,7 +128,9 @@ func (t *Shell) Execute(ctx context.Context, p ShellParams) (*ToolResult, error)
 	}
 
 	// ── Step 3: 构造并执行命令 ──
-	cmd := exec.CommandContext(cmdCtx, "sh", "-c", normalizedCmd)
+	shellBin, shellArgs := shellInterpreter()
+	args := append(shellArgs, normalizedCmd)
+	cmd := exec.CommandContext(cmdCtx, shellBin, args...)
 	if p.WorkingDir != "" {
 		cmd.Dir = p.WorkingDir
 	}
@@ -241,16 +265,17 @@ func truncateOutput(output string, maxLines int) string {
 // classifyShellError 基于退出码和 stderr 输出确定错误 Kind。
 //
 // 规则（按优先级）：
-//  1. 退出码 127 → command_not_found（命令不存在）
+//  1. 退出码 127 → command_not_found（Unix shell 命令不存在）
 //  2. 退出码 126 → command_permission_denied（命令不可执行）
-//  3. stderr 匹配 "permission denied" / "operation not permitted" → command_permission_denied
-//  4. stderr 匹配 "no such file" / "not found" / "cannot access" → file_not_found
-//  5. 退出码 2 → invalid_args（语法/参数错误）
-//  6. 其他 → command_failed（通用命令失败）
+//  3. stderr 匹配 "permission denied" / "operation not permitted" / "access is denied" → command_permission_denied
+//  4. stderr 匹配 "no such file" / "not found" / "cannot access" / "cannot find" → file_not_found
+//  5. Windows cmd: 退出码 1 + "not recognized" → command_not_found
+//  6. 退出码 2 → invalid_args（语法/参数错误）
+//  7. 其他 → command_failed（通用命令失败）
 //
 // 不同 Kind 在 agentloop 中各自独立计数，避免不同类型错误相互累积触发 retry_limit。
 func classifyShellError(exitCode int, fallbackOutput string) string {
-	// 退出码 127: 命令未找到
+	// 退出码 127: 命令未找到（Unix shell）
 	if exitCode == 127 {
 		return ErrKindCommandNotFound
 	}
@@ -259,16 +284,25 @@ func classifyShellError(exitCode int, fallbackOutput string) string {
 		return ErrKindCommandPermission
 	}
 
-	// stderr 模式匹配
 	lower := strings.ToLower(fallbackOutput)
+
+	// Windows cmd: "not recognized as an internal or external command"
+	if runtime.GOOS == "windows" && exitCode == 1 &&
+		strings.Contains(lower, "not recognized") {
+		return ErrKindCommandNotFound
+	}
+
+	// stderr 模式匹配
 	if strings.Contains(lower, "permission denied") ||
 		strings.Contains(lower, "operation not permitted") ||
-		strings.Contains(lower, "not permitted") {
+		strings.Contains(lower, "not permitted") ||
+		strings.Contains(lower, "access is denied") {
 		return ErrKindCommandPermission
 	}
 	if strings.Contains(lower, "no such file") ||
 		strings.Contains(lower, "not found") ||
-		strings.Contains(lower, "cannot access") {
+		strings.Contains(lower, "cannot access") ||
+		strings.Contains(lower, "cannot find") {
 		return ErrKindFileNotFound
 	}
 

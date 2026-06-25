@@ -81,11 +81,11 @@ var shellSchema = json.RawMessage(`{
   "properties": {
     "command": {
       "type": "string",
-      "description": "要执行的 Shell 命令"
+      "description": "要执行的 Shell 命令。Unix/macOS 通过 sh -c 执行，Windows 通过 cmd /c 执行。Windows 不支持 ; 串联命令，请用 &&。"
     },
     "working_dir": {
       "type": "string",
-      "description": "工作目录（可选，默认项目根目录）"
+      "description": "工作目录（可选，默认项目根目录）。应在 working_dir 参数中指定，而非在 command 中使用 cd 前缀。"
     },
     "timeout_ms": {
       "type": "integer",
