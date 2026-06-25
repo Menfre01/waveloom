@@ -2,9 +2,74 @@ package tool
 
 import (
 	"context"
+	"runtime"
 	"strings"
 	"testing"
+	"time"
 )
+
+func TestShellInterpreter(t *testing.T) {
+	bin, args := shellInterpreter()
+	if bin == "" {
+		t.Error("shellInterpreter() returned empty binary")
+	}
+	if len(args) != 1 {
+		t.Fatalf("shellInterpreter() returned %d args, want 1", len(args))
+	}
+	if runtime.GOOS == "windows" {
+		if bin != "cmd" {
+			t.Errorf("Windows: expected cmd, got %s", bin)
+		}
+		if args[0] != "/c" {
+			t.Errorf("Windows: expected /c, got %s", args[0])
+		}
+	} else {
+		if bin != "sh" {
+			t.Errorf("Unix: expected sh, got %s", bin)
+		}
+		if args[0] != "-c" {
+			t.Errorf("Unix: expected -c, got %s", args[0])
+		}
+	}
+}
+
+func TestShellContextCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // 立即取消
+
+	tool := &Shell{}
+	_, err := tool.Execute(ctx, ShellParams{
+		Command: "echo hello",
+	})
+	if err == nil {
+		t.Fatal("expected error for cancelled context, got nil")
+	}
+	if err != context.Canceled {
+		t.Errorf("expected context.Canceled, got %v", err)
+	}
+}
+
+func TestShellContextTimeout(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancel()
+
+	tool := &Shell{}
+	result, err := tool.Execute(ctx, ShellParams{
+		Command:   "sleep 5",
+		TimeoutMs: 100, // 工具超时 > context 超时，确保 context 先触发
+	})
+	// 父 context 超时会传递到 cmdCtx，命令被杀死 → 返回 timeout 错误
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if result.Error == nil {
+		t.Fatal("expected error result for timed-out context")
+	}
+	// 父 context 超时 → cmdCtx 也会超时 → ErrKindTimeout
+	if result.Error.Kind != ErrKindTimeout {
+		t.Errorf("expected ErrKindTimeout, got %q", result.Error.Kind)
+	}
+}
 
 func TestShellSuccess(t *testing.T) {
 	tool := &Shell{}
@@ -29,6 +94,9 @@ func TestShellSuccess(t *testing.T) {
 }
 
 func TestShellNonZeroExit(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("false is a Unix command; Windows equivalent test uses 'cmd /c exit 1'")
+	}
 	tool := &Shell{}
 	result, err := tool.Execute(context.Background(), ShellParams{
 		Command: "false",
@@ -127,7 +195,42 @@ func TestClassifyShellError(t *testing.T) {
 	}
 }
 
+func TestClassifyShellErrorWindowsNotFound(t *testing.T) {
+	// Windows cmd: 退出码 1 + "not recognized" → command_not_found
+	// 该分类仅在 runtime.GOOS == "windows" 时生效。
+	windowsStderr := "'nonexistent' is not recognized as an internal or external command, operable program or batch file."
+	got := classifyShellError(1, windowsStderr)
+
+	if runtime.GOOS == "windows" {
+		if got != ErrKindCommandNotFound {
+			t.Errorf("Windows: classifyShellError(1, windows_not_recognized) = %q, want %q", got, ErrKindCommandNotFound)
+		}
+	} else {
+		// Unix 上该模式不匹配 → 回退到 command_failed
+		if got != ErrKindCommandFailed {
+			t.Errorf("Unix: classifyShellError(1, windows_not_recognized) = %q, want %q", got, ErrKindCommandFailed)
+		}
+	}
+}
+
+func TestClassifyShellErrorAccessDenied(t *testing.T) {
+	// Windows "Access is denied" → command_permission_denied
+	got := classifyShellError(1, "Access is denied.")
+	if got != ErrKindCommandPermission {
+		t.Errorf("expected ErrKindCommandPermission for 'Access is denied', got %q", got)
+	}
+
+	// 大小写不敏感
+	got2 := classifyShellError(5, "ACCESS IS DENIED")
+	if got2 != ErrKindCommandPermission {
+		t.Errorf("expected ErrKindCommandPermission for 'ACCESS IS DENIED', got %q", got2)
+	}
+}
+
 func TestShellTimeout(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("sleep is a Unix command; Windows equivalent uses timeout/ping")
+	}
 	tool := &Shell{}
 	result, err := tool.Execute(context.Background(), ShellParams{
 		Command:   "sleep 10",
@@ -152,6 +255,9 @@ func TestShellTimeout(t *testing.T) {
 }
 
 func TestShellWithWorkingDir(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("pwd is a Unix command; Windows equivalent uses 'cd' in cmd")
+	}
 	dir := t.TempDir()
 	tool := &Shell{}
 	result, err := tool.Execute(context.Background(), ShellParams{
@@ -170,6 +276,9 @@ func TestShellWithWorkingDir(t *testing.T) {
 }
 
 func TestShellOutputCapture(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip(">&2 is Unix shell syntax; Windows cmd uses 2>&1 or different syntax")
+	}
 	tool := &Shell{}
 	result, err := tool.Execute(context.Background(), ShellParams{
 		Command: "echo stdout_line && echo stderr_line >&2",
@@ -189,6 +298,9 @@ func TestShellOutputCapture(t *testing.T) {
 }
 
 func TestShellTimeoutClamped(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("true is a Unix command; Windows equivalent uses 'ver' or 'echo'")
+	}
 	tool := &Shell{}
 	result, err := tool.Execute(context.Background(), ShellParams{
 		Command:   "true",
@@ -245,6 +357,9 @@ func TestShellCurlPipeShellDetection(t *testing.T) {
 	// Wave 3: security warnings moved to permission.Guard.
 	// Shell.Execute no longer produces warnings — permission checks are
 	// handled by Guard before Execute is called.
+	if runtime.GOOS == "windows" {
+		t.Skip("uses sh -c which is not available on Windows")
+	}
 	tool := &Shell{}
 	result, err := tool.Execute(context.Background(), ShellParams{
 		Command: `echo curl test && true | sh -c "echo safe"`,

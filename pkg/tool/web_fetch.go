@@ -75,6 +75,11 @@ var webFetchClient = &http.Client{
 }
 
 func (t *WebFetch) Execute(ctx context.Context, p WebFetchParams) (*ToolResult, error) {
+	// ── Step 0: 父 context 已取消 → 提前返回 ──
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
 	// ── Step 1: URL 校验 ──
 	parsedURL, err := url.Parse(p.URL)
 	if err != nil || (parsedURL.Scheme != "http" && parsedURL.Scheme != "https") {
@@ -148,10 +153,13 @@ func (t *WebFetch) Execute(ctx context.Context, p WebFetchParams) (*ToolResult, 
 				contentType), nil), nil
 	}
 
-	// ── Step 7: 读取响应体（受大小限制）──
+	// ── Step 7: 读取响应体（受大小限制，分块检查 context 取消）──
 	limitedReader := io.LimitReader(resp.Body, int64(maxSize)+1)
-	bodyBytes, err := io.ReadAll(limitedReader)
+	bodyBytes, err := readHTTPBodyWithContext(reqCtx, limitedReader)
 	if err != nil {
+		if reqCtx.Err() != nil {
+			return nil, reqCtx.Err()
+		}
 		return toolError(ErrorClassRecoverable, ErrKindCommandFailed,
 			fmt.Sprintf("error reading response: %v", err), err), nil
 	}
@@ -410,6 +418,33 @@ func checkIPAllowed(ip net.IP) error {
 		}
 	}
 	return nil
+}
+
+// ── readHTTPBodyWithContext — 分块读取 HTTP 响应体，每 64KB 检查 context ──
+
+// readHTTPBodyWithContext 从 reader 分块读取数据，每 64KB 检查 ctx 是否取消。
+// 用于替代 io.ReadAll，支持 context 中断。
+func readHTTPBodyWithContext(ctx context.Context, reader io.Reader) ([]byte, error) {
+	var buf bytes.Buffer
+	chunk := make([]byte, 64*1024) // 64KB chunks
+
+	for {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		n, readErr := reader.Read(chunk)
+		if n > 0 {
+			buf.Write(chunk[:n])
+		}
+		if readErr == io.EOF {
+			break
+		}
+		if readErr != nil {
+			return nil, readErr
+		}
+	}
+
+	return buf.Bytes(), nil
 }
 
 // checkIPv4Special 检查未被子网方法覆盖的 IPv4 特殊范围。

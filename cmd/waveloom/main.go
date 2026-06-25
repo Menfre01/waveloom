@@ -1,14 +1,17 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"log"
 	"os"
 	"path/filepath"
+	"runtime"
 
 	"waveloom/pkg/compaction"
 	ctxpkg "waveloom/pkg/context"
+	"waveloom/pkg/environment"
 	"waveloom/pkg/llm"
 	"waveloom/pkg/lsp"
 	"waveloom/pkg/memory"
@@ -100,6 +103,11 @@ func main() {
 	if systemPrompt == "" {
 		systemPrompt = buildSystemPrompt(cwd)
 	}
+
+	// 注入环境探测结果：让 LLM 在首次交互前就知道系统可用工具链，
+	// 避免因命令缺失陷入探测死循环。
+	// globalPath 和 projectPath 用于加载用户配置的工具路径覆盖。
+	systemPrompt += probeEnvironment(cwd, globalPath, projectPath)
 	// 合并 compaction 配置：默认值 + settings.json 覆盖
 	compactionConfig := compaction.DefaultCompactionConfig()
 	if cs := compaction.LoadCompactionSettings(globalPath); cs != nil {
@@ -290,6 +298,35 @@ func createGuard(globalPath, projectPath string) permission.Guard {
 		opts = append(opts, permission.WithRules(rules))
 	}
 	return permission.NewGuard(opts...)
+}
+
+// probeEnvironment 探测系统环境（编译器、运行时、构建工具），
+// 返回格式化的 ## Environment 节追加到 System Prompt。
+// globalPath 和 projectPath 用于加载用户配置的工具路径覆盖（environment.tools）。
+func probeEnvironment(cwd, globalPath, projectPath string) string {
+	results := environment.RunProbes(context.Background(), environment.DefaultProbes())
+
+	// 合并工具路径覆盖：全局 + 项目，项目优先
+	overrides := make(map[string]string)
+	for k, v := range environment.LoadToolOverrides(globalPath) {
+		overrides[k] = v
+	}
+	for k, v := range environment.LoadToolOverrides(projectPath) {
+		overrides[k] = v
+	}
+
+	osName := runtime.GOOS
+
+	// 报告 shell 工具实际使用的解释器，非用户登录 shell。
+	// 这对 LLM 编写命令语法至关重要（sh ≠ zsh ≠ cmd）。
+	var shellInfo string
+	if runtime.GOOS == "windows" {
+		shellInfo = "cmd /c"
+	} else {
+		shellInfo = "sh -c"
+	}
+
+	return environment.FormatEnvironmentSection(results, osName, shellInfo, overrides)
 }
 
 

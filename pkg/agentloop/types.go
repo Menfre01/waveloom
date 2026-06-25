@@ -139,3 +139,16 @@ type LoopDone struct {
 }
 
 func (LoopDone) turnEvent() {}
+
+// ---------------------------------------------------------------------------
+// LoopDoneWithGen — 带代数标记的 LoopDone
+// ---------------------------------------------------------------------------
+
+// LoopDoneWithGen 包装 LoopDone 并携带 runGeneration。
+// 用于 TUI 层判断 LoopDone 是否属于已被取代的旧 loop，防止旧事件覆盖新 loop 状态。
+type LoopDoneWithGen struct {
+	LoopDone
+	Generation int
+}
+
+func (LoopDoneWithGen) turnEvent() {}

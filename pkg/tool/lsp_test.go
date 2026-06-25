@@ -1,6 +1,7 @@
 package tool
 
 import (
+	"context"
 	"os"
 	"os/exec"
 	"strings"
@@ -278,7 +279,7 @@ func waitForReady(t *testing.T, mgr *lsp.Manager, inst *lsp.ServerInstance, file
 	deadline := time.After(timeout)
 	for {
 		var locs []lsp.Location
-		err := mgr.Call(inst, "textDocument/definition", lsp.DefinitionParams{
+		err := mgr.Call(context.Background(), inst, "textDocument/definition", lsp.DefinitionParams{
 			TextDocument: lsp.TextDocumentIdentifier{URI: lsp.PathToURI(filePath)},
 			Position:     lsp.Position{Line: 0, Character: 0},
 		}, &locs)

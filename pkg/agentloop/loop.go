@@ -73,7 +73,23 @@ type LoopState struct {
 	// 当 LLM 连续返回无 content 且无 tool_calls 的推理专用响应时递增，
 	// 达到上限后循环终止以防止死循环。
 	ConsecutiveEmpty int
+
+	// LastErrorKind 记录上一轮工具错误的 Kind。
+	// 用于检测同类错误连续重试。
+	LastErrorKind string
+
+	// ConsecutiveSameError 记录同一 ErrorKind 连续出现的次数。
+	// 达到上限（3）后 loop 强制终止，防止探测死循环。
+	ConsecutiveSameError int
+
+	// AnyToolSucceeded 标记本轮是否有任何工具成功执行。
+	// 成功时重置 ConsecutiveSameError 计数。
+	AnyToolSucceeded bool
 }
+
+// maxConsecutiveSameError 是同类工具错误的容忍上限。
+// 达到后 loop 强制终止，避免 LLM 陷入无限重试探测。
+const maxConsecutiveSameError = 3
 
 
 
@@ -690,6 +706,11 @@ func (l *Loop) buildToolMessages(
 	var fatalReason TerminalReason
 	var fatalErr error
 
+	// 退避追踪：本轮首个 Recoverable 错误的 Kind 和是否全部同 Kind。
+	var firstRecoverableKind string
+	allRecoverableSameKind := true
+	anySuccess := false
+
 	for _, tc := range calls {
 		result, exists := results[tc.ID]
 		if !exists {
@@ -714,9 +735,18 @@ func (l *Loop) buildToolMessages(
 					fatalReason = ReasonToolFatal
 					fatalErr = fmt.Errorf("fatal tool error (%s): %s", toolErr.Kind, toolErr.Message)
 				}
+			} else {
+				// Recoverable 错误 → 退避追踪
+				if firstRecoverableKind == "" {
+					firstRecoverableKind = toolErr.Kind
+				} else if toolErr.Kind != firstRecoverableKind {
+					allRecoverableSameKind = false
+				}
 			}
 
 			content = fmt.Sprintf("Error [%s]: %s", toolErr.Kind, toolErr.Message)
+		} else if !result.IsError() {
+			anySuccess = true
 		}
 
 		messages = append(messages, llm.Message{
@@ -725,6 +755,34 @@ func (l *Loop) buildToolMessages(
 			ToolCallID: tc.ID,
 			Name:       tc.Name,
 		})
+	}
+
+	// 退避检查：同类 Recoverable 错误连续出现达到上限 → 升级为 Fatal。
+	// 若本轮有任意工具成功，重置计数（LLM 在推进任务，不是死循环）。
+	if anySuccess {
+		state.LastErrorKind = ""
+		state.ConsecutiveSameError = 0
+	} else if firstRecoverableKind != "" && allRecoverableSameKind {
+		if state.LastErrorKind == firstRecoverableKind {
+			state.ConsecutiveSameError++
+		} else {
+			state.LastErrorKind = firstRecoverableKind
+			state.ConsecutiveSameError = 1
+		}
+
+		if state.ConsecutiveSameError >= maxConsecutiveSameError {
+			if fatalErr == nil {
+				fatalReason = ReasonToolFatal
+				fatalErr = fmt.Errorf(
+					"tool error %q repeated %d times consecutively — stopping to avoid infinite retry loop",
+					firstRecoverableKind, state.ConsecutiveSameError,
+				)
+			}
+		}
+	} else {
+		// 混合错误（不同 Kind）或本轮无 Recoverable 错误 → 不触发退避
+		state.LastErrorKind = ""
+		state.ConsecutiveSameError = 0
 	}
 
 	return messages, fatalReason, fatalErr

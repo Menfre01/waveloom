@@ -2,6 +2,7 @@ package lsp
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -99,7 +100,14 @@ func NewClient(command string, args []string, rootURI string) (*Client, error) {
 
 // Call 发送 JSON-RPC 请求并等待响应。
 // result 必须是一个指针，用于 JSON 反序列化。
+// Deprecated: 使用 CallContext 以支持 context 取消和超时。
 func (c *Client) Call(method string, params, result any) error {
+	return c.CallContext(context.Background(), method, params, result)
+}
+
+// CallContext 发送 JSON-RPC 请求并等待响应，支持 context 取消。
+// result 必须是一个指针，用于 JSON 反序列化。
+func (c *Client) CallContext(ctx context.Context, method string, params, result any) error {
 	id := int(c.nextID.Add(1))
 
 	paramsJSON, err := marshal(params)
@@ -134,7 +142,7 @@ func (c *Client) Call(method string, params, result any) error {
 		return fmt.Errorf("lsp: write request: %w", err)
 	}
 
-	// 等待响应（无超时限制；上层通过 context 控制）
+	// 等待响应、context 取消或 client 关闭
 	select {
 	case raw := <-ch:
 		if raw.Error != nil {
@@ -146,6 +154,8 @@ func (c *Client) Call(method string, params, result any) error {
 			}
 		}
 		return nil
+	case <-ctx.Done():
+		return fmt.Errorf("lsp: %s: %w", method, ctx.Err())
 	case <-c.done:
 		return fmt.Errorf("lsp: client closed")
 	}

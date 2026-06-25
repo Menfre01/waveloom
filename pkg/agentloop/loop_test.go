@@ -721,8 +721,8 @@ func TestRunRecoverableError(t *testing.T) {
 }
 
 func TestRunRecoverableErrorsDoNotTerminate(t *testing.T) {
-	// 同类 Recoverable 错误不应导致循环终止 —— LLM 可以根据错误反馈自行修正。
-	// Loop 仅在 Fatal 错误、MaxTurns 或 LLM 主动停止时终止。
+	// 同类 Recoverable 错误重复 2 次不应终止 —— LLM 仍有修正机会。
+	// 第 3 次才触发退避保护（见 TestRunConsecutiveSameErrorsTerminate）。
 	fileNotFoundErr := &tool.ToolError{
 		Class:   tool.ErrorClassRecoverable,
 		Kind:    tool.ErrKindFileNotFound,
@@ -731,12 +731,10 @@ func TestRunRecoverableErrorsDoNotTerminate(t *testing.T) {
 
 	client := &mockLLMClient{
 		responses: []*llm.Response{
-			// Turn 1-4: 重复返回相同的 file_not_found tool call
+			// Turn 1-2: 重复返回相同的 file_not_found tool call（2 次不触发退避）
 			makeToolCallResponse("", makeToolCall("tc1", "read_file", `{"file_path":"/tmp/x"}`)),
 			makeToolCallResponse("", makeToolCall("tc2", "read_file", `{"file_path":"/tmp/x"}`)),
-			makeToolCallResponse("", makeToolCall("tc3", "read_file", `{"file_path":"/tmp/x"}`)),
-			makeToolCallResponse("", makeToolCall("tc4", "read_file", `{"file_path":"/tmp/x"}`)),
-			// Turn 5: LLM 看到错误后主动停止
+			// Turn 3: LLM 看到错误后主动停止
 			makeTextResponse("The file does not exist after multiple attempts."),
 		},
 	}
@@ -755,9 +753,46 @@ func TestRunRecoverableErrorsDoNotTerminate(t *testing.T) {
 	if finalEv.Reason != ReasonCompleted {
 		t.Errorf("expected ReasonCompleted, got %s", finalEv.Reason)
 	}
-	// 5 轮 LLM 调用（4 次 tool return + 1 次 final answer）
-	if finalEv.Turn != 5 {
-		t.Errorf("expected 5 turns, got %d", finalEv.Turn)
+	// 3 轮 LLM 调用（2 次 tool return + 1 次 final answer）
+	if finalEv.Turn != 3 {
+		t.Errorf("expected 3 turns, got %d", finalEv.Turn)
+	}
+}
+
+func TestRunConsecutiveSameErrorsTerminate(t *testing.T) {
+	// 同类 Recoverable 错误连续出现 3 次 → 强制终止，避免无限重试。
+	fileNotFoundErr := &tool.ToolError{
+		Class:   tool.ErrorClassRecoverable,
+		Kind:    tool.ErrKindFileNotFound,
+		Message: "file not found: /tmp/x",
+	}
+
+	client := &mockLLMClient{
+		responses: []*llm.Response{
+			makeToolCallResponse("", makeToolCall("tc1", "read_file", `{"file_path":"/tmp/x"}`)),
+			makeToolCallResponse("", makeToolCall("tc2", "read_file", `{"file_path":"/tmp/x"}`)),
+			makeToolCallResponse("", makeToolCall("tc3", "read_file", `{"file_path":"/tmp/x"}`)),
+			// 不应到达这里——第 3 次后 loop 已终止
+			makeTextResponse("unreachable"),
+		},
+	}
+	errorTool := newErrorTool("read_file", true, fileNotFoundErr)
+	registry := newTestRegistry(errorTool)
+	loop := New(client, registry, DefaultConfig())
+
+	finalEv := drainEvents(loop.Run(context.Background(), []llm.Message{
+		{Role: llm.RoleUser, Content: "find the file"},
+	}))
+
+	if finalEv.Err == nil {
+		t.Fatalf("expected error after 3 consecutive same errors, got nil")
+	}
+	if finalEv.Reason != ReasonToolFatal {
+		t.Errorf("expected ReasonToolFatal, got %s", finalEv.Reason)
+	}
+	// 3 轮 LLM 调用后终止
+	if finalEv.Turn != 3 {
+		t.Errorf("expected 3 turns, got %d", finalEv.Turn)
 	}
 }
 
@@ -827,6 +862,111 @@ func TestRunDifferentRecoverableErrors(t *testing.T) {
 	// 每种错误出现 2 次，都没有超过 3 次限制
 	if finalEv.Turn != 5 {
 		t.Errorf("expected 5 turns (5 LLM calls), got %d", finalEv.Turn)
+	}
+}
+
+func TestRunBackoffResetBySuccess(t *testing.T) {
+	// 同类错误连续出现，中间夹一个成功的工具调用 → 计数器归零。
+	// find_file(error)×2 → list_files(success) → find_file(error)×3 → 退避触发
+	fileNotFoundErr := &tool.ToolError{
+		Class:   tool.ErrorClassRecoverable,
+		Kind:    tool.ErrKindFileNotFound,
+		Message: "file not found: /tmp/x",
+	}
+
+	client := &mockLLMClient{
+		responses: []*llm.Response{
+			// Turn 1-2: find_file 错误 × 2
+			makeToolCallResponse("", makeToolCall("tc1", "find_file", `{"path":"/tmp/x"}`)),
+			makeToolCallResponse("", makeToolCall("tc2", "find_file", `{"path":"/tmp/x"}`)),
+			// Turn 3: list_files 成功（不同工具，anySuccess=true → 计数器归零）
+			makeToolCallResponse("", makeToolCall("tc3", "list_files", `{"path":"/tmp"}`)),
+			// Turn 4-6: find_file 错误 × 3 → 退避触发
+			makeToolCallResponse("", makeToolCall("tc4", "find_file", `{"path":"/tmp/x"}`)),
+			makeToolCallResponse("", makeToolCall("tc5", "find_file", `{"path":"/tmp/x"}`)),
+			makeToolCallResponse("", makeToolCall("tc6", "find_file", `{"path":"/tmp/x"}`)),
+			// 不应到达
+			makeTextResponse("unreachable"),
+		},
+	}
+
+	registry := newTestRegistry(
+		newErrorTool("find_file", true, fileNotFoundErr),
+		newSuccessTool("list_files", true, "/tmp:\n  a.txt\n  b.txt"),
+	)
+	loop := New(client, registry, DefaultConfig())
+
+	finalEv := drainEvents(loop.Run(context.Background(), []llm.Message{
+		{Role: llm.RoleUser, Content: "find the file"},
+	}))
+
+	// 成功重置后的 3 次同类错误触发退避
+	if finalEv.Err == nil {
+		t.Fatalf("expected error after 3 consecutive same errors following a success reset")
+	}
+	if finalEv.Reason != ReasonToolFatal {
+		t.Errorf("expected ReasonToolFatal, got %s", finalEv.Reason)
+	}
+	// 6 轮 LLM 调用后终止
+	if finalEv.Turn != 6 {
+		t.Errorf("expected 6 turns, got %d", finalEv.Turn)
+	}
+}
+
+func TestRunMixedErrorsSameBatchNoBackoff(t *testing.T) {
+	// 同一轮中有不同 Kind 的错误 → 不触发退避。
+	fileNotFoundErr := &tool.ToolError{
+		Class:   tool.ErrorClassRecoverable,
+		Kind:    tool.ErrKindFileNotFound,
+		Message: "file not found: /tmp/a",
+	}
+	invalidArgsErr := &tool.ToolError{
+		Class:   tool.ErrorClassRecoverable,
+		Kind:    tool.ErrKindInvalidArgs,
+		Message: "invalid regex",
+	}
+
+	client := &mockLLMClient{
+		responses: []*llm.Response{
+			// Turn 1: 同轮两个工具调用，不同 Kind 错误
+			makeToolCallResponse("",
+				makeToolCall("tc1", "read_file", `{"file_path":"/tmp/a"}`),
+				makeToolCall("tc2", "grep", `{"pattern":"["}`),
+			),
+			// Turn 2: 同上
+			makeToolCallResponse("",
+				makeToolCall("tc3", "read_file", `{"file_path":"/tmp/a"}`),
+				makeToolCall("tc4", "grep", `{"pattern":"["}`),
+			),
+			// Turn 3: 同上 — 仍不触发退避（因为每轮都是混合 Kind）
+			makeToolCallResponse("",
+				makeToolCall("tc5", "read_file", `{"file_path":"/tmp/a"}`),
+				makeToolCall("tc6", "grep", `{"pattern":"["}`),
+			),
+			// Turn 4: LLM 停止
+			makeTextResponse("Both tools consistently failed with different errors."),
+		},
+	}
+
+	registry := newTestRegistry(
+		newErrorTool("read_file", true, fileNotFoundErr),
+		newErrorTool("grep", true, invalidArgsErr),
+	)
+	loop := New(client, registry, DefaultConfig())
+
+	finalEv := drainEvents(loop.Run(context.Background(), []llm.Message{
+		{Role: llm.RoleUser, Content: "find the file and search"},
+	}))
+
+	// 同轮混合错误不触发退避，loop 应正常完成
+	if finalEv.Err != nil {
+		t.Fatalf("unexpected error: mixed errors in same batch should not trigger backoff: %v", finalEv.Err)
+	}
+	if finalEv.Reason != ReasonCompleted {
+		t.Errorf("expected ReasonCompleted, got %s", finalEv.Reason)
+	}
+	if finalEv.Turn != 4 {
+		t.Errorf("expected 4 turns, got %d", finalEv.Turn)
 	}
 }
 

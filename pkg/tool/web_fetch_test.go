@@ -348,3 +348,62 @@ func TestWebFetchUnresolvableHostRejected(t *testing.T) {
 		t.Fatal("expected error for unresolvable host")
 	}
 }
+
+// ── context 取消测试 ──
+
+func TestWebFetchContextCancelled(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/plain")
+		w.Write([]byte("Hello, world!"))
+	}))
+	defer server.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // 立即取消
+
+	tool := &WebFetch{skipHostCheck: true}
+	_, err := tool.Execute(ctx, WebFetchParams{
+		URL: server.URL + "/test.txt",
+	})
+	if err == nil {
+		t.Fatal("expected error with cancelled context")
+	}
+	if err != context.Canceled {
+		t.Errorf("expected context.Canceled, got: %v", err)
+	}
+}
+
+func TestWebFetchContextCancelledDuringRead(t *testing.T) {
+	// 服务端先写入少量数据建立响应，然后阻塞等待 context 取消。
+	// 客户端分块读取时在后续 read 上阻塞，context 取消后应退出。
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/plain")
+		// 写入初始数据块，让客户端进入 body 读取循环
+		w.Write([]byte("initial chunk\n"))
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
+		// 阻塞直到客户端 context 取消
+		<-r.Context().Done()
+	}))
+	defer server.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	// 启动 goroutine 在短延迟后取消 context
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+		cancel()
+	}()
+
+	tool := &WebFetch{skipHostCheck: true}
+	_, err := tool.Execute(ctx, WebFetchParams{
+		URL: server.URL + "/stream",
+	})
+	if err == nil {
+		t.Fatal("expected error with cancelled context during streaming read")
+	}
+	if err != context.Canceled {
+		t.Errorf("expected context.Canceled, got: %v", err)
+	}
+}

@@ -68,7 +68,7 @@ func (t *LSPHover) Execute(ctx context.Context, p LSPHoverParams) (*ToolResult, 
 	}
 
 	var hover lsp.Hover
-	err = LSPManager.Call(inst, "textDocument/hover", lsp.HoverParams{
+	err = LSPManager.Call(ctx, inst, "textDocument/hover", lsp.HoverParams{
 		TextDocument: lsp.TextDocumentIdentifier{URI: lsp.PathToURI(p.FilePath)},
 		Position:     lsp.Position{Line: p.Line, Character: p.Character},
 	}, &hover)

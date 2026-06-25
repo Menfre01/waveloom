@@ -263,7 +263,7 @@ func (m *Manager) startInstance(inst *ServerInstance) error {
 }
 
 // call 在 instance 上执行一个 LSP 请求，自动处理 didOpen。
-func (m *Manager) call(inst *ServerInstance, method string, params, result any) error {
+func (m *Manager) call(ctx context.Context, inst *ServerInstance, method string, params, result any) error {
 	inst.mu.Lock()
 	defer inst.mu.Unlock()
 
@@ -272,7 +272,7 @@ func (m *Manager) call(inst *ServerInstance, method string, params, result any) 
 	}
 
 	inst.lastUsed = time.Now()
-	return inst.client.Call(method, params, result)
+	return inst.client.CallContext(ctx, method, params, result)
 }
 
 // notify 在 instance 上发送一个 LSP 通知。
@@ -309,9 +309,9 @@ func (m *Manager) SyncFile(inst *ServerInstance, filePath string) error {
 	})
 }
 
-// Call 在指定 instance 上执行一个 LSP 请求。
-func (m *Manager) Call(inst *ServerInstance, method string, params, result any) error {
-	return m.call(inst, method, params, result)
+// Call 在指定 instance 上执行一个 LSP 请求，支持 context 取消。
+func (m *Manager) Call(ctx context.Context, inst *ServerInstance, method string, params, result any) error {
+	return m.call(ctx, inst, method, params, result)
 }
 
 // reapLoop 定期扫描并回收空闲 Server。
