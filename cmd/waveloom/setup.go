@@ -47,7 +47,7 @@ func runSetup() {
 	input = strings.TrimSpace(input)
 
 	provider := "deepseek"
-	defaultModel := "deepseek-v4-flash"
+	defaultModel := "deepseek-v4-pro"
 	defaultBaseURL := "https://api.deepseek.com"
 
 	if input == "2" {

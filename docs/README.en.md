@@ -22,10 +22,10 @@
 
 **Waveloom** is a terminal Code Agent **purpose-built for DeepSeek prefix caching** (pure Go). It leverages DeepSeek's prefix cache mechanism — with a fixed System Prompt anchor, turn-accumulated message history, and compaction that never mutates bytes — to push context cache hit rates to **95–99%**, slashing input token costs to **1/50 ~ 1/120** of the cache-miss price.
 
-You describe what you want in natural language. The agent reads code, analyzes logic, edits files, and executes commands — right in your terminal. Every write and command execution requires your consent first. Primary recommended models: `deepseek-v4-flash` and `deepseek-v4-pro`. OpenAI-compatible endpoints also supported.
+You describe what you want in natural language. The agent reads code, analyzes logic, edits files, and executes commands — right in your terminal. Every write and command execution requires your consent first. Primary recommended model: `deepseek-v4-pro`. Also compatible with `deepseek-v4-flash` and OpenAI-compatible endpoints.
 
 > [!IMPORTANT]
-> **One-shot mode**: `wvl "write unit tests for the HTTP server"` — single command execution with instant results, no interactive UI needed.
+> **Safe & Transparent**: The agent always asks for confirmation before writing files or executing commands — nothing happens silently. **API Key Required**: Get one from [DeepSeek](https://platform.deepseek.com/api_keys), then run `wvl setup`.
 
 ---
 
@@ -34,7 +34,7 @@ You describe what you want in natural language. The agent reads code, analyzes l
 | Dimension | Waveloom's Approach | Why It Matters |
 |-----------|-------------------|----------------|
 | **Terminal-Native TUI** | Built on [Bubble Tea](https://github.com/charmbracelet/bubbletea) v2 + [Glamour](https://github.com/charmbracelet/glamour) Markdown rendering + [Lipgloss](https://github.com/charmbracelet/lipgloss) styling | Streaming rendering of thought/text/tool output with collapse/expand — not a "black box chat", fully transparent and reviewable |
-| **DeepSeek Prefix Cache Optimization** | System prompt fixed as `messages[0]`, message history accumulated across turns without reset, compacted bytes never change | Maximum common prefix stays cache-hot; cache-hit token price is **1/50 ~ 1/120** of cache-miss (V4-Flash: cache-hit ¥0.02/M, cache-miss ¥1/M; V4-Pro: cache-hit ¥0.025/M, cache-miss ¥3/M) |
+| **DeepSeek Prefix Cache Optimization** | System prompt fixed as `messages[0]`, message history accumulated across turns without reset, compacted bytes never change | Maximum common prefix stays cache-hot; cache-hit token price is **1/50 ~ 1/120** of cache-miss |
 | **Four-Tier Watermark Context Compaction** | 60% → Snip (tool output truncation), 80% → Prune (reasoning removal + placeholders), 95% → Summarize (LLM incremental summary), 98% → Hard cutoff | Automatic management of million-token context window — long conversations keep what matters, drop noise, and never suffer Context Rot |
 | **Native LSP Integration** | Built-in LSP client; agent can proactively call `lsp_diagnostic` / `lsp_definition` / `lsp_references` / `lsp_hover` | Agent understands code like you do — jump to definitions, find references, inspect type signatures — not coding blind |
 | **Permission Safety Model** | Three-tier decisions (allow / deny / ask), rule engine with pattern matching like `shell(git *)`, CI `--bypass-permissions` | You always have the final say; file writes and command execution never happen silently |
@@ -110,6 +110,21 @@ wvl setup
 LLM_API_KEY=sk-... wvl
 ```
 
+### Quick Start
+
+```sh
+# 1. Install (macOS ARM64 example)
+sudo curl -fsSL https://github.com/Menfre01/waveloom/releases/latest/download/wvl_darwin_arm64.tar.gz | sudo tar -xz -C /usr/local/bin wvl
+
+# 2. First-time setup (once only)
+wvl setup
+
+# 3. Start using
+wvl "Hello, tell me about yourself"
+```
+
+> Config is saved to `~/.waveloom/settings.json`. Project-level config can be placed at `.waveloom/settings.json`, with the same fields and higher priority than the global config.
+
 ---
 
 ## What the Agent Can Do
@@ -130,6 +145,8 @@ Waveloom has the following built-in tools that the agent invokes autonomously:
 | `lsp_definition` | Jump to symbol definition |
 | `lsp_references` | Find all references to a symbol |
 | `lsp_hover` | Get symbol type signature and documentation |
+
+> **LSP Prerequisites**: LSP tools require the corresponding language server available in PATH. For Go projects, install [gopls](https://pkg.go.dev/golang.org/x/tools/gopls) (`go install golang.org/x/tools/gopls@latest`). The agent automatically starts the LSP server on first LSP tool invocation.
 
 Typical use cases: writing unit tests, refactoring a module, debugging an issue, explaining design intent behind a piece of code, adding new features.
 
@@ -178,7 +195,7 @@ The **footer status bar** shows: current model, context usage (progress bar), ca
 
 ```sh
 wvl "explain the design of pkg/llm/client.go"
-wvl --model deepseek-v4-flash "write unit tests for UserService"
+wvl --model deepseek-v4-pro "write unit tests for UserService"
 echo "review the code under pkg/llm/" | wvl
 ```
 
@@ -204,7 +221,7 @@ Before the agent performs a write operation or shell command, it goes through a 
   <img src="./permission.png" alt="Permission confirmation dialog" width="560"/>
 </p>
 
-Configure permission rules in `settings.json`:
+Configure permission rules in `settings.json` (file location: `~/.waveloom/settings.json` or project root `.waveloom/settings.json`):
 
 ```json
 {
@@ -242,7 +259,7 @@ Full `llm` configuration options (all have defaults, override as needed):
 |-------|-------------|---------|
 | `api_key` | DeepSeek API Key, falls back to `LLM_API_KEY` env var when empty | — |
 | `provider` | `deepseek` or `openai` | `deepseek` |
-| `model` | Model name | `deepseek-v4-flash` |
+| `model` | Model name | `deepseek-v4-pro` |
 | `base_url` | API endpoint | `https://api.deepseek.com` |
 | `timeout` | Request timeout | `600s` |
 | `extra_params` | Extra parameters (thinking, reasoning_effort, etc.) | Thinking mode on by default |
@@ -268,7 +285,7 @@ Priority: **CLI flags > `.waveloom/settings.json` (project) > `~/.waveloom/setti
 
 ## Context Management & Prefix Caching
 
-DeepSeek's prefix cache mechanism: on each request, the API compares `messages[0]` onward against the previous request, finding the longest common prefix. The cached portion is billed at the cache-hit rate; the remainder at the standard rate. **The price gap between cache-hit and cache-miss is massive** — for V4-Flash, cache-hit is ¥0.02/M tokens vs. cache-miss ¥1/M tokens, a **50×** difference; V4-Pro widens to **120×** (¥0.025 vs. ¥3/M tokens).
+DeepSeek's prefix cache mechanism: on each request, the API compares `messages[0]` onward against the previous request, finding the longest common prefix. The cached portion is billed at the cache-hit rate; the remainder at the standard rate. **The price gap between cache-hit and cache-miss is massive** — for V4-Flash and V4-Pro, cache-hit price is just **1/50 ~ 1/120** of the cache-miss price.
 
 Waveloom systematically optimizes for this:
 
@@ -294,6 +311,34 @@ Waveloom systematically optimizes for this:
 Cache hit rates are typically **95–99%**, meaning in a 1M-token context window, only 10K–50K tokens are billed at the standard rate. This is not luck — it's by architectural design.
 
 > See [`specs/compaction.md`](../specs/compaction.md) — complete design of context compaction.
+
+---
+
+## Troubleshooting
+
+**Q: "command not found" when running `wvl`?**
+
+The install path is not in PATH. Pre-built binaries install to `/usr/local/bin` by default — ensure it's in PATH. If installed to `~/.local/bin`, add `export PATH="$HOME/.local/bin:$PATH"` to `~/.bashrc` or `~/.zshrc`.
+
+**Q: "api_key is required" error?**
+
+No API Key detected. Run `wvl setup` to complete first-time configuration, or set the `LLM_API_KEY` environment variable. Config is written to `~/.waveloom/settings.json`.
+
+**Q: macOS "cannot verify developer"?**
+
+Run `xattr -d com.apple.quarantine /usr/local/bin/wvl` to remove the quarantine attribute.
+
+**Q: How can I verify prefix caching is working?**
+
+The TUI footer status bar shows the cache hit rate. You can also check `.waveloom/wvl.log` (requires `--verbose`) for `cache_hit_tokens` info.
+
+**Q: LSP tools not working?**
+
+Ensure the corresponding language server is installed and in PATH. For Go projects, install gopls: `go install golang.org/x/tools/gopls@latest`.
+
+**Q: Do @ file references work in one-shot mode?**
+
+`@` file references are currently only supported in TUI interactive mode. In one-shot mode, `@pkg/foo.go` is treated as plain text.
 
 ---
 

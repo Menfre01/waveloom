@@ -1,10 +1,10 @@
 {
     "llm": {
-        "api_key": "sk-your-api-key",
-        "provider": "openai",
-        "model": "gpt-4o",
-        "base_url": "https://api.openai.com/v1",
-        "timeout": "120s",
+        "api_key": "sk-your-deepseek-key",
+        "provider": "deepseek",
+        "model": "deepseek-v4-pro",
+        "base_url": "https://api.deepseek.com",
+        "timeout": "600s",
         "retry": {
             "max_retries": 3,
             "initial_backoff": "1s",
@@ -13,8 +13,8 @@
         },
         "headers": {},
         "extra_params": {
-            "temperature": 0.7,
-            "max_tokens": 4096
+            "thinking": {"type": "enabled"},
+            "reasoning_effort": "max"
         }
     },
     "permissions": {
