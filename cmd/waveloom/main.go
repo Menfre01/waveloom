@@ -53,6 +53,12 @@ func main() {
 	// 3. 解析配置文件路径（全局 + 项目）
 	globalPath, projectPath := resolveSettingsPaths(cfg.SettingsPath)
 
+	// 3.5 ls — 列出最近 sessions（无需 LLM client）
+	if cfg.ListSessions {
+		listSessions(projectPath, globalPath)
+		return
+	}
+
 	// 4. 加载 LLM Client（合并全局和项目配置，项目字段优先）
 	llmClient, llmClientCfg, err := createLLMClient(globalPath, projectPath)
 	if err != nil {
@@ -126,19 +132,29 @@ func main() {
 
 	// 9.5 计算 session 落盘路径
 	// 优先级：settings.json session.dir > WAVELOOM_SESSION_DIR 环境变量 > ~/.waveloom/<project>/sessions/
-	// --resume 指定 session ID 时恢复，否则新建
+	// --continue 恢复最近 session，--resume 指定 session ID 恢复，否则新建
 	sessionOverride := ctxpkg.LoadSessionDir(projectPath)
 	if sessionOverride == "" {
 		sessionOverride = ctxpkg.LoadSessionDir(globalPath)
 	}
 	sessionDir, dirErr := ctxpkg.ResolveSessionDir(cwd, sessionOverride)
+	isResume := false
 	if dirErr == nil {
+		if cfg.ContinueSession {
+			if sid, err := ctxpkg.ContinueSessionID(sessionDir); err == nil && sid != "" {
+				cfg.ResumeSessionID = sid
+				fmt.Fprintf(os.Stderr, "继续最近 session: %s\n", sid)
+			} else {
+				fmt.Fprintf(os.Stderr, "没有找到最近的 session，将创建新 session\n")
+			}
+		}
 		if cfg.ResumeSessionID != "" {
 			sessionPath := filepath.Join(sessionDir, cfg.ResumeSessionID+".json")
 			if !ctxMgr.LoadFromFile(sessionPath) {
 				fmt.Fprintf(os.Stderr, "Error: session '%s' not found at %s\n", cfg.ResumeSessionID, sessionPath)
 				os.Exit(1)
 			}
+			isResume = true
 			fmt.Fprintf(os.Stderr, "已恢复 session: %s\n", cfg.ResumeSessionID)
 		} else {
 			sessionPath := filepath.Join(sessionDir, ctxpkg.NewSessionID()+".json")
@@ -148,7 +164,7 @@ func main() {
 
 	// 13. 分支：无 prompt → 交互式 TUI，有 prompt → 单次执行
 	if cfg.OneShot == "" {
-		runTUI(llmClient, registry, guard, expander, cfg.Model, cfg.Theme, verboseLog, cfg.ContextLimit, ctxMgr)
+		runTUI(llmClient, registry, guard, expander, cfg.Model, cfg.Theme, verboseLog, cfg.ContextLimit, ctxMgr, isResume, sessionDir)
 		return
 	}
 
@@ -329,4 +345,38 @@ func probeEnvironment(cwd, globalPath, projectPath string) string {
 	return environment.FormatEnvironmentSection(results, osName, shellInfo, overrides)
 }
 
+// listSessions 列出最近的 sessions（wvl ls）。
+func listSessions(projectPath, globalPath string) {
+	sessionOverride := ctxpkg.LoadSessionDir(projectPath)
+	if sessionOverride == "" {
+		sessionOverride = ctxpkg.LoadSessionDir(globalPath)
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: get current directory: %v\n", err)
+		os.Exit(1)
+	}
+	sessionDir, err := ctxpkg.ResolveSessionDir(cwd, sessionOverride)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: resolve session directory: %v\n", err)
+		os.Exit(1)
+	}
+
+	entries, err := ctxpkg.LoadRecentSessions(sessionDir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: load recent sessions: %v\n", err)
+		os.Exit(1)
+	}
+	if len(entries) == 0 {
+		fmt.Println("没有找到最近的 session。")
+		return
+	}
+
+	fmt.Println("最近 sessions:")
+	for _, e := range entries {
+		fmt.Printf("  %s  (%d messages, %s)\n", e.ID, e.MessageCount, e.UpdatedAt)
+	}
+	fmt.Println()
+	fmt.Println("恢复: wvl --resume <id>  或  wvl --continue")
+}
 
