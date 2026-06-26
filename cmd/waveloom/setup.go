@@ -80,16 +80,17 @@ func runSetup() {
 
 	fmt.Println()
 
-	// 4. 模型名称（可选）
-	fmt.Printf("  Step 3/3 — 模型名称（可选）\n\n")
-	fmt.Printf("  默认: %s\n", defaultModel)
+	// 4. 模型名称
+	fmt.Printf("  Step 3/3 — 模型名称\n\n")
 	if provider == "deepseek" {
-		fmt.Println("  常用: deepseek-v4-pro")
+		fmt.Println("  可用: deepseek-v4-pro（推荐，增强推理）")
+		fmt.Println("        deepseek-v4-flash（快速推理）")
 	} else {
-		fmt.Println("  常用: gpt-4o-mini")
+		fmt.Println("  可用: gpt-4o（推荐）")
+		fmt.Println("        gpt-4o-mini（快速）")
 	}
 	fmt.Println()
-	fmt.Print("  按 Enter 使用默认值: ")
+	fmt.Printf("  输入模型名 [默认: %s]: ", defaultModel)
 
 	model, _ := reader.ReadString('\n')
 	model = strings.TrimSpace(model)
