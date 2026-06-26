@@ -274,6 +274,10 @@ Full `llm` configuration options (all have defaults, override as needed):
 
 Priority: **CLI flags > `.waveloom/settings.json` (project) > `~/.waveloom/settings.json` (global)**
 
+### Environment Tool Configuration
+
+The agent auto-detects available toolchains at startup. For tools not in PATH or to pin a specific version, configure via `environment.tools`. See [`environment.md`](./environment.en.md) for details.
+
 ### CLI Flags
 
 | Flag | Description |
