@@ -60,7 +60,7 @@ wvl setup
 wvl "Hello, tell me about yourself"
 ```
 
-> Supports macOS / Linux AMD64 & ARM64. Build from source, update, alternative install paths, etc. — see [`docs/install.md`](./install.en.md).
+> Supports macOS / Linux AMD64 & ARM64. Build from source, update, alternative install paths, etc. — see [`install.md`](./install.en.md).
 
 ---
 
@@ -99,7 +99,7 @@ wvl --continue           # Resume the most recent session
 wvl --resume <id>        # Resume a specific session
 ```
 
-In interactive mode: Enter to send, Esc to interrupt, `Ctrl+T` to expand/collapse thought, `Ctrl+O` for tool output, `Ctrl+G` to toggle theme. Type `@` for a fuzzy file picker. See [`docs/usage.md`](./usage.en.md) for details.
+In interactive mode: Enter to send, Esc to interrupt, `Ctrl+T` to expand/collapse thought, `Ctrl+O` for tool output, `Ctrl+G` to toggle theme. Type `@` for a fuzzy file picker. See [`usage.md`](./usage.en.md) for details.
 
 ---
 
@@ -162,7 +162,7 @@ Priority: **CLI flags > `.waveloom/settings.json` (project) > `~/.waveloom/setti
 
 ### Environment Tool Configuration
 
-The agent auto-detects available toolchains at startup. For tools not in PATH or to pin a specific version, configure via `environment.tools`. See [`environment.md`](./environment.en.md) for details.
+The agent auto-detects available toolchains at startup. For tools not in PATH or to pin a specific version, configure via `environment.tools`. See [`environment.en.md`](./environment.en.md) for details.
 
 ### CLI Flags
 
@@ -203,13 +203,13 @@ flowchart LR
     style stop fill:#c22,stroke:#333,color:#fff
 ```
 
-See [`docs/prefix-cache.md`](./prefix-cache.en.md) for details.
+See [`prefix-cache.en.md`](./prefix-cache.en.md) for details.
 
 ---
 
 ## Troubleshooting
 
-Common install, config, and usage issues — see [`docs/faq.md`](./faq.en.md).
+Common install, config, and usage issues — see [`faq.en.md`](./faq.en.md).
 
 ---
 
