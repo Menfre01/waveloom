@@ -294,18 +294,31 @@ Waveloom systematically optimizes for this:
 3. **Four-tier watermark compaction (Tier 0–3)**: As context utilization rises, history is compressed in stages. The key insight — **compacted byte content never changes again**. Once a message is truncated or replaced with a placeholder, it keeps the exact same byte representation in all future turns, so the prefix cache keeps hitting.
 4. **Monotonic boundary guarantee**: The decision table (`compactionDecisionSet`) + dual cursor mechanism ensures each message is compacted exactly once — never modified repeatedly, which would invalidate the cache.
 
-```
-                         context window (1M)
-  ┌──────────────────────────────────────────────────────────────────┐
-  │  ████████████████████████████░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░ │
-  │  ↑ used                       ↑ 60%   ↑ 80%   ↑ 95%            │
-  │                                Tier 1  Tier 2  Tier 3            │
-  │  Tier 0: < 60%  — do nothing                                     │
-  │  Tier 1: 60-80% — Snip: truncate tool outputs (pure local, zero API) │
-  │  Tier 2: 80-95% — Prune: clear reasoning + placeholders           │
-  │  Tier 3: ≥ 95%  — Summarize: LLM incremental summary (API call)  │
-  │  Hard limit: ≥ 98% — block further LLM calls                     │
-  └──────────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart LR
+    t0["Tier 0
+    idle
+    &lt; 60%"]
+    t1["Tier 1 · Snip
+    tool output truncation
+    60-80%"]
+    t2["Tier 2 · Prune
+    clear reasoning
+    80-95%"]
+    t3["Tier 3 · Summarize
+    LLM incremental summary
+    ≥ 95%"]
+    stop["Hard limit
+    block further LLM calls
+    ≥ 98%"]
+
+    t0 --> t1 --> t2 --> t3 --> stop
+
+    style t0 fill:#2d8,stroke:#333,color:#fff
+    style t1 fill:#5b5,stroke:#333,color:#fff
+    style t2 fill:#da5,stroke:#333,color:#000
+    style t3 fill:#e73,stroke:#333,color:#fff
+    style stop fill:#c22,stroke:#333,color:#fff
 ```
 
 Cache hit rates are typically **95–99%**, meaning in a 1M-token context window, only 10K–50K tokens are billed at the standard rate. This is not luck — it's by architectural design.
