@@ -46,18 +46,23 @@
 
 依赖：[DeepSeek API Key](https://platform.deepseek.com/api_keys)。
 
+**macOS**
+
 ```sh
-# macOS (Apple Silicon / Intel)
 sudo curl -fsSL https://github.com/Menfre01/waveloom/releases/latest/download/wvl_darwin_arm64.tar.gz | sudo tar -xz -C /usr/local/bin wvl
+```
 
-# Linux (AMD64)
+**Linux**
+
+```sh
 sudo curl -fsSL https://github.com/Menfre01/waveloom/releases/latest/download/wvl_linux_amd64.tar.gz | sudo tar -xz -C /usr/local/bin wvl
+```
 
-# 首次配置（只需一次）
-wvl setup
+**安装后**
 
-# 开始使用
-wvl "你好，介绍一下你自己"
+```sh
+wvl setup                      # 首次配置（只需一次）
+wvl "你好，介绍一下你自己"       # 开始使用
 ```
 
 > 支持 macOS / Linux AMD64 & ARM64。从源码构建、更新、备选安装路径等详见 [`docs/install.md`](./docs/install.md)。
