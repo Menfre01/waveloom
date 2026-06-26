@@ -294,6 +294,8 @@ type model struct {
 	hudBalanceAvail bool   // 账户是否有可用余额
 
 	contextLimit     int // 上下文窗口 token 上限
+	maxTurns         int // --max-turns（0 = 无限制）
+	bypassPerm       bool
 	lastPromptTokens int // ctx bar 实时值（TurnStats → API 真实值，Tier 3 完成 → 归零）
 
 	// Transcript 持久化
@@ -405,7 +407,7 @@ func colorHex(c color.Color) string {
 // ---------------------------------------------------------------------------
 
 // newTUIModel 创建 TUI model，依赖由外部注入（LLM client / tool registry / guard / expander / verboseLog）。
-func newTUIModel(llmClient llm.Client, registry tool.Registry, guard permission.Guard, expander *reference.Expander, modelName string, theme string, verboseLog io.Writer, contextLimit int) *model {
+func newTUIModel(llmClient llm.Client, registry tool.Registry, guard permission.Guard, expander *reference.Expander, modelName string, theme string, verboseLog io.Writer, contextLimit int, maxTurns int) *model {
 	if modelName == "" {
 		modelName = "deepseek-v4"
 	}
@@ -479,6 +481,7 @@ func newTUIModel(llmClient llm.Client, registry tool.Registry, guard permission.
 		verboseLog:      verboseLog,
 		hudModel:        normalizeWidth(modelName),
 		contextLimit:    contextLimit,
+		maxTurns:        maxTurns,
 		glamourRenderer: glamourR,
 		keys:            defaultKeys,
 		help:            help.New(),
@@ -498,10 +501,14 @@ func newTUIModel(llmClient llm.Client, registry tool.Registry, guard permission.
 
 // wireLoop 在 model 创建后、program 注入后调用，创建 agent loop 并注入 tuiUserResponder。
 func (m *model) wireLoop() {
+	guard := m.guard
+	if m.bypassPerm {
+		guard = permission.NewGuard(permission.WithBypassMode(true))
+	}
 	m.loop = agentloop.New(m.llmClient, m.registry, agentloop.Config{
-		MaxTurns:      0,
+		MaxTurns:      m.maxTurns,
 		SystemPrompt:  "",
-		Guard:         m.guard,
+		Guard:         guard,
 		UserResponder: &tuiUserResponder{program: m.program, cwd: m.cwd},
 		VerboseWriter: m.verboseLog,
 		Compactor:     m.cm.Compactor(),
@@ -2623,8 +2630,9 @@ func (m *model) syncThemeComponents() {
 }
 
 // runTUI 启动交互式 TUI 模式。依赖由 main() 统一初始化后传入，无需重复创建。
-func runTUI(llmClient llm.Client, registry tool.Registry, guard permission.Guard, expander *reference.Expander, modelName string, theme string, verboseLog io.Writer, contextLimit int, ctxMgr *ctxpkg.ContextManager, isResume bool, sessionDir string) {
-	m := newTUIModel(llmClient, registry, guard, expander, modelName, theme, verboseLog, contextLimit)
+func runTUI(llmClient llm.Client, registry tool.Registry, guard permission.Guard, expander *reference.Expander, modelName string, theme string, verboseLog io.Writer, contextLimit int, maxTurns int, bypassPerm bool, ctxMgr *ctxpkg.ContextManager, isResume bool, sessionDir string) {
+	m := newTUIModel(llmClient, registry, guard, expander, modelName, theme, verboseLog, contextLimit, maxTurns)
+	m.bypassPerm = bypassPerm
 	// 用外部创建的 ContextManager 替换 newTUIModel 内部创建的
 	m.cm = ctxMgr
 	// 恢复会话级 HUD 累积值

@@ -59,8 +59,8 @@ func main() {
 		return
 	}
 
-	// 4. 加载 LLM Client（合并全局和项目配置，项目字段优先）
-	llmClient, llmClientCfg, err := createLLMClient(globalPath, projectPath)
+	// 4. 加载 LLM Client（合并全局和项目配置，项目字段优先；--model 覆盖配置文件）
+	llmClient, llmClientCfg, err := createLLMClient(globalPath, projectPath, cfg.Model)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		if needsSetup() {
@@ -164,7 +164,7 @@ func main() {
 
 	// 13. 分支：无 prompt → 交互式 TUI，有 prompt → 单次执行
 	if cfg.OneShot == "" {
-		runTUI(llmClient, registry, guard, expander, cfg.Model, cfg.Theme, verboseLog, cfg.ContextLimit, ctxMgr, isResume, sessionDir)
+		runTUI(llmClient, registry, guard, expander, cfg.Model, cfg.Theme, verboseLog, cfg.ContextLimit, cfg.MaxTurns, cfg.BypassPerm, ctxMgr, isResume, sessionDir)
 		return
 	}
 
@@ -238,7 +238,8 @@ func resolveSettingsPaths(explicit string) (globalPath, projectPath string) {
 
 // createLLMClient 合并全局和项目配置创建 LLM Client。
 // 项目配置字段覆盖全局。若均无配置则生成默认项目配置。
-func createLLMClient(globalPath, projectPath string) (llm.Client, llm.ClientConfig, error) {
+// cliModel 为 --model 命令行参数，非空时覆盖配置文件中的模型名。
+func createLLMClient(globalPath, projectPath, cliModel string) (llm.Client, llm.ClientConfig, error) {
 	globalSettings, _ := llm.LoadSettingsIfExists(globalPath)
 	projectSettings, _ := llm.LoadSettingsIfExists(projectPath)
 
@@ -257,6 +258,9 @@ func createLLMClient(globalPath, projectPath string) (llm.Client, llm.ClientConf
 	}
 
 	merged := llm.MergeLLMSettings(globalSettings, projectSettings)
+	if cliModel != "" {
+		merged.Model = cliModel
+	}
 	client, cfg, err := llm.NewClientFromLLMSettings(merged)
 	if err != nil {
 		return nil, llm.ClientConfig{}, err
