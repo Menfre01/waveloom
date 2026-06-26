@@ -1,0 +1,100 @@
+<p align="center">
+  <strong>简体中文</strong>
+  &nbsp;·&nbsp;
+  <a href="./install.en.md">English</a>
+</p>
+
+---
+
+# 安装
+
+依赖：[DeepSeek API Key](https://platform.deepseek.com/api_keys)。
+
+## 预编译二进制（推荐）
+
+无需 Go 环境，下载即用。前往 [Releases](https://github.com/Menfre01/waveloom/releases/latest) 下载对应平台的 `wvl`。
+
+> `/usr/local/bin` 需要 sudo 权限，或改用 `~/.local/bin`（见下方备选方案）。
+
+**macOS (ARM64 — Apple Silicon)**
+
+```sh
+sudo curl -fsSL https://github.com/Menfre01/waveloom/releases/latest/download/wvl_darwin_arm64.tar.gz | sudo tar -xz -C /usr/local/bin wvl
+```
+
+**macOS (AMD64 — Intel)**
+
+```sh
+sudo curl -fsSL https://github.com/Menfre01/waveloom/releases/latest/download/wvl_darwin_amd64.tar.gz | sudo tar -xz -C /usr/local/bin wvl
+```
+
+**Linux (AMD64)**
+
+```sh
+sudo curl -fsSL https://github.com/Menfre01/waveloom/releases/latest/download/wvl_linux_amd64.tar.gz | sudo tar -xz -C /usr/local/bin wvl
+```
+
+**Linux (ARM64)**
+
+```sh
+sudo curl -fsSL https://github.com/Menfre01/waveloom/releases/latest/download/wvl_linux_arm64.tar.gz | sudo tar -xz -C /usr/local/bin wvl
+```
+
+> 没有 `/usr/local/bin` 写入权限？安装到 `~/.local/bin`：
+> ```sh
+> mkdir -p ~/.local/bin
+> curl -fsSL https://github.com/Menfre01/waveloom/releases/latest/download/wvl_darwin_arm64.tar.gz | tar -xz -C ~/.local/bin wvl
+> export PATH="$HOME/.local/bin:$PATH"  # 建议加到 ~/.bashrc 或 ~/.zshrc
+> ```
+>
+> macOS 首次运行若提示"无法验证开发者"，执行：
+> ```sh
+> xattr -d com.apple.quarantine /usr/local/bin/wvl
+> ```
+
+## 从源码构建
+
+前置条件：**Go 1.25+**。
+
+```sh
+git clone https://github.com/Menfre01/waveloom.git
+cd waveloom && make install
+# wvl 安装到 $HOME/go/bin，确保该路径在 PATH 中：
+export PATH=$HOME/go/bin:$PATH
+```
+
+## 更新
+
+**预编译二进制**：重新执行安装命令，覆盖旧版本即可。
+
+**从源码构建**：
+
+```sh
+cd waveloom && git pull && make install
+```
+
+## 首次配置
+
+```sh
+# 交互式引导（只需一次）
+wvl setup
+# → 选择 Provider → 输入 API Key → 选择模型 → 完成
+
+# 或跳过配置，直接用环境变量：
+LLM_API_KEY=sk-... wvl
+```
+
+## 快速开始
+
+```sh
+# 1. 安装（以 macOS ARM64 为例）
+sudo curl -fsSL https://github.com/Menfre01/waveloom/releases/latest/download/wvl_darwin_arm64.tar.gz | sudo tar -xz -C /usr/local/bin wvl
+
+# 2. 首次配置（只需一次）
+wvl setup
+
+# 3. 开始使用
+wvl "你好，介绍一下你自己"
+```
+
+> 配置保存在 `~/.waveloom/settings.json`。项目级配置可放在 `.waveloom/settings.json`，字段相同，优先级高于全局配置。
