@@ -47,8 +47,11 @@ You describe what you want in natural language. The agent reads code, analyzes l
 Requires: [DeepSeek API Key](https://platform.deepseek.com/api_keys).
 
 ```sh
-# macOS ARM64 (Apple Silicon)
+# macOS (Apple Silicon / Intel)
 sudo curl -fsSL https://github.com/Menfre01/waveloom/releases/latest/download/wvl_darwin_arm64.tar.gz | sudo tar -xz -C /usr/local/bin wvl
+
+# Linux (AMD64)
+sudo curl -fsSL https://github.com/Menfre01/waveloom/releases/latest/download/wvl_linux_amd64.tar.gz | sudo tar -xz -C /usr/local/bin wvl
 
 # First-time setup (once only)
 wvl setup
