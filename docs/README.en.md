@@ -181,7 +181,26 @@ The agent auto-detects available toolchains at startup. For tools not in PATH or
 
 ## Context Management & Prefix Caching
 
-DeepSeek's prefix cache compares requests from `messages[0]` onward to find the longest common prefix — cache-hit price is just **1/50 ~ 1/120** of cache-miss. Waveloom optimizes for this with a fixed System Prompt anchor, turn-accumulated message history, and four-tier watermark compaction (Snip → Prune → Summarize → Hard cutoff) that never mutates compacted bytes, achieving **95–99%** cache hit rates. See [`docs/prefix-cache.md`](./prefix-cache.en.md) for details.
+DeepSeek's prefix cache compares requests from `messages[0]` onward to find the longest common prefix — cache-hit price is just **1/50 ~ 1/120** of cache-miss. Waveloom optimizes for this with a fixed System Prompt anchor, turn-accumulated message history, and four-tier watermark compaction (Snip → Prune → Summarize → Hard cutoff) that never mutates compacted bytes, achieving **95–99%** cache hit rates.
+
+```mermaid
+flowchart LR
+    t0["Tier 0<br/>idle<br/>&lt; 60%"]
+    t1["Tier 1 · Snip<br/>tool output truncation<br/>60-80%"]
+    t2["Tier 2 · Prune<br/>clear reasoning<br/>80-95%"]
+    t3["Tier 3 · Summarize<br/>LLM incremental summary<br/>≥ 95%"]
+    stop["Hard limit<br/>block further LLM calls<br/>≥ 98%"]
+
+    t0 --> t1 --> t2 --> t3 --> stop
+
+    style t0 fill:#2d8,stroke:#333,color:#fff
+    style t1 fill:#5b5,stroke:#333,color:#fff
+    style t2 fill:#da5,stroke:#333,color:#000
+    style t3 fill:#e73,stroke:#333,color:#fff
+    style stop fill:#c22,stroke:#333,color:#fff
+```
+
+See [`docs/prefix-cache.md`](./prefix-cache.en.md) for details.
 
 ---
 
