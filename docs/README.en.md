@@ -199,6 +199,14 @@ wvl --model deepseek-v4-pro "write unit tests for UserService"
 echo "review the code under pkg/llm/" | wvl
 ```
 
+### Session Management
+
+```sh
+wvl ls                     # List recent sessions
+wvl --continue             # Resume the most recent session
+wvl --resume <session-id>  # Resume a specific session
+```
+
 ### @ File References
 
 Type `@` in the input to open a fuzzy file picker (prefix > substring matching). `Tab` enters subdirectories. Selected file contents are automatically injected into the message context.
@@ -278,6 +286,7 @@ Priority: **CLI flags > `.waveloom/settings.json` (project) > `~/.waveloom/setti
 | `--verbose` | Log detailed output to `.waveloom/wvl.log` |
 | `--bypass-permissions` | Skip all permission checks |
 | `--resume ID` | Resume a specific session |
+| `--continue` | Resume the most recent session |
 | `--settings PATH` | Specify config file path |
 | `--version` | Show version |
 
