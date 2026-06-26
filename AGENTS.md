@@ -77,3 +77,20 @@ fix(cli): 修复 os.IsNotExist 跨包装错误检测失败
 refactor(llm): 移除 NewClientFromEnv
 chore: 新增 Makefile
 ```
+
+## Release 规范
+
+发布 Release 时应对 commit 分类汇总，按以下粒度输出 release notes：
+
+- **新增功能** — 列出新增的特性、模块、命令
+- **修复** — 列出修复的 bug
+- **重构** — 列出重大重构的模块
+- **性能优化** — 列出性能相关优化
+
+以下类型不列入 release notes：
+
+- `docs` — 文档修改
+- `chore` — 工程杂务
+- `test` — 纯测试补充
+
+不逐条罗列 commit，以用户可感知的功能变化为描述单位。
