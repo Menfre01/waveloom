@@ -169,11 +169,7 @@ func TestStreamingIsLastOnly_MiddleStreaming(t *testing.T) {
 
 func TestTrimParas_UnderLimit(t *testing.T) {
 	paras := make([]Paragraph, 10)
-	m := &model{
-		paras:            paras,
-		paraLineStarts:   make([]int, 10),
-		cachedViewportLines: []string{"a", "b", "c"},
-	}
+	m := &model{paras: paras}
 	m.trimParas()
 	if len(m.paras) != 10 {
 		t.Errorf("expected 10 paras, got %d", len(m.paras))
@@ -181,68 +177,25 @@ func TestTrimParas_UnderLimit(t *testing.T) {
 }
 
 func TestTrimParas_OverLimit(t *testing.T) {
-	// Create maxParas + 50 paragraphs
 	n := maxParas + 50
 	paras := make([]Paragraph, n)
-	lineStarts := make([]int, n)
-	for i := range lineStarts {
-		lineStarts[i] = i * 2 // each paragraph = 2 lines
-	}
-	cachedLines := make([]string, n*2)
-	for i := range cachedLines {
-		cachedLines[i] = "x"
-	}
-
-	m := &model{
-		paras:               paras,
-		paraLineStarts:      lineStarts,
-		cachedViewportLines: cachedLines,
-	}
-	// Set a non-zero YOffset to verify it adjusts
-	m.viewport.SetYOffset(30)
-
+	m := &model{paras: paras}
 	m.trimParas()
-
 	if len(m.paras) != maxParas {
 		t.Errorf("expected %d paras after trim, got %d", maxParas, len(m.paras))
 	}
-	if len(m.paraLineStarts) != maxParas {
-		t.Errorf("expected %d lineStarts, got %d", maxParas, len(m.paraLineStarts))
-	}
-	// First paragraph should start at line 0
-	if len(m.paraLineStarts) > 0 && m.paraLineStarts[0] != 0 {
-		t.Errorf("expected first para line start = 0, got %d", m.paraLineStarts[0])
-	}
-	// Viewport lines should be trimmed by removedLines = lineStarts[50] = 100
-	expectedLines := n*2 - 100
-	if len(m.cachedViewportLines) != expectedLines {
-		t.Errorf("expected %d cached lines, got %d", expectedLines, len(m.cachedViewportLines))
-	}
-	// YOffset should be adjusted
-	if m.viewport.YOffset() != 0 {
-		t.Errorf("expected YOffset adjusted to 0, got %d", m.viewport.YOffset())
-	}
 }
 
-func TestTrimParas_ViewportYOffsetClamp(t *testing.T) {
+func TestTrimParas_TranscriptWrittenSync(t *testing.T) {
 	n := maxParas + 10
 	paras := make([]Paragraph, n)
-	lineStarts := make([]int, n)
-	for i := range lineStarts {
-		lineStarts[i] = i * 3
-	}
-
 	m := &model{
-		paras:               paras,
-		paraLineStarts:      lineStarts,
-		cachedViewportLines: make([]string, n*3),
+		paras:            paras,
+		transcriptWritten: n,
 	}
-	m.viewport.SetYOffset(5) // small offset, should drop to 0 after trim
-
 	m.trimParas()
-
-	if m.viewport.YOffset() != 0 {
-		t.Errorf("expected YOffset=0, got %d", m.viewport.YOffset())
+	if m.transcriptWritten != maxParas {
+		t.Errorf("expected transcriptWritten=%d, got %d", maxParas, m.transcriptWritten)
 	}
 }
 

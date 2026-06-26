@@ -39,7 +39,6 @@ import (
 	"charm.land/bubbles/v2/progress"
 	"charm.land/bubbles/v2/spinner"
 	"charm.land/bubbles/v2/textinput"
-	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/glamour/v2"
 	"charm.land/glamour/v2/ansi"
@@ -131,10 +130,6 @@ const maxParas = 200
 // 但完整结果已通过 agent loop 传递给 LLM，不影响上下文。
 const maxToolResultBytes = 100 * 1024 // 100 KB
 
-// ansiReset 是 ANSI SGR 全复位序列，用于在 viewport 内容末尾阻断
-// 可能向 separator / input / footer 泄漏的未关闭属性。
-const ansiReset = "\033[0m"
-
 // buildSystemPrompt 构造完整的系统提示词。
 // CWD 在会话期间固定，不存在 cd 工具。
 func buildSystemPrompt(cwd string) string {
@@ -152,27 +147,6 @@ All file paths are resolved relative to this directory unless a working_dir is s
 - To operate in a different directory, use the working_dir parameter: {"command":"ls", "working_dir":"/tmp"}
 - Never prefix commands with "cd <path> &&" — this breaks permission pattern matching and is unnecessary.`, cwd)
 	return defaultSystemPrompt + cwdInfo
-}
-
-// viewportKeyMap 返回 viewport 的按键映射，去掉与打字冲突的单字母键。
-// 仅保留方向键和组合键作为 viewport 导航：
-//
-//	↑/↓       逐行滚动
-//	PgUp/PgDn 翻页
-//	Ctrl+U/D  半页滚动
-func viewportKeyMap() viewport.KeyMap {
-	km := viewport.DefaultKeyMap()
-	// 禁用单字母导航键（j/k/u/d/h/l），否则在 input 中键入这些字符时
-	// viewport 也会收到并触发滚动，导致界面抖动。
-	km.Up = key.NewBinding(key.WithKeys("up"), key.WithHelp("↑", "line up"))
-	km.Down = key.NewBinding(key.WithKeys("down"), key.WithHelp("↓", "line down"))
-	km.Left = key.NewBinding()
-	km.Right = key.NewBinding()
-	km.HalfPageUp = key.NewBinding(key.WithKeys("ctrl+u"), key.WithHelp("ctrl+u", "½ page up"))
-	km.HalfPageDown = key.NewBinding(key.WithKeys("ctrl+d"), key.WithHelp("ctrl+d", "½ page down"))
-	km.PageUp = key.NewBinding(key.WithKeys("pgup"), key.WithHelp("PgUp", "page up"))
-	km.PageDown = key.NewBinding(key.WithKeys("pgdown"), key.WithHelp("PgDn", "page down"))
-	return km
 }
 
 // keyMap 定义所有快捷键绑定。
@@ -274,14 +248,8 @@ type model struct {
 	verboseLog io.Writer // --verbose 日志输出（nil = 不记录）
 	loop       *agentloop.Loop
 
-	// 段落模型（viewport 内容的数据源）
+	// 段落模型（消息内容的数据源）
 	paras []Paragraph
-
-	// 段落行号索引（paraLineStarts[i] = 段落 i 在 viewport 内容中的起始行号）
-	paraLineStarts []int
-
-	// viewport 内容的缓存（避免 renderShrunkViewport 重复 build）
-	cachedViewportLines []string
 
 	// Glamour markdown 渲染器
 	glamourRenderer *glamour.TermRenderer
@@ -341,9 +309,7 @@ type model struct {
 	spThought      spinner.Model  // thought 流式前缀动画
 	spTool         spinner.Model  // tool 执行中前缀动画
 	ctxProgress    progress.Model // ctx 窗口进度条（bubbles progress 组件）
-	lastRenderTime time.Time      // 上次 viewport 渲染时间，用于流式节流
 	input          textinput.Model
-	viewport       viewport.Model
 
 	// 输入历史
 	inputHistory []string // 已提交的输入，最新在前
@@ -361,6 +327,11 @@ type model struct {
 	palette   palette            // 当前配色
 	width     int
 	height    int
+
+	// 滚动状态
+	scrollTop      int  // body 内容区第一可见行在 lines 中的索引
+	pinnedToBottom bool // 是否锁定在底部（自动跟随最新内容）
+	bodyHeight     int  // 上次渲染时 body 区域可用高度（行数），用于翻页计算
 }
 
 // ---------------------------------------------------------------------------
@@ -446,11 +417,10 @@ func newTUIModel(llmClient llm.Client, registry tool.Registry, guard permission.
 	ti.Prompt = "› "
 	ti.Placeholder = "输入消息，Enter 发送..."
 	ti.CharLimit = 2048
-	ti.SetVirtualCursor(false) // 使用真实光标，由 bubbletea 定位终端光标，IME 组合窗口才能正确跟随
-
-	// 初始尺寸设 0，首个 WindowSizeMsg 后由 resizeViewport() 接管
-	vp := viewport.New(viewport.WithWidth(0), viewport.WithHeight(0))
-	vp.KeyMap = viewportKeyMap()
+	ti.SetVirtualCursor(false) // real cursor 避免 virtual cursor 反色 ANSI 泄漏
+	styles := ti.Styles()
+	styles.Cursor.Blink = true
+	ti.SetStyles(styles)
 
 	// 初始化 bubbles spinner 组件（通用 HUD）
 	sp := spinner.New()
@@ -518,11 +488,11 @@ func newTUIModel(llmClient llm.Client, registry tool.Registry, guard permission.
 		spTool:          spTool,
 		ctxProgress:     cp,
 		input:           ti,
-		viewport:        vp,
 		historyPos:      -1,
 		overlay:         overlayNone,
 		themeMode:       theme,
 		palette:         darkPalette, // 默认，initTheme 覆盖
+		pinnedToBottom:  true,
 	}
 }
 
@@ -565,20 +535,9 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = msg.Height
 		contentWidth := max(msg.Width-4, 20)
 
-		headerLines, bottomLines := m.measureLayout()
-		vpHeight := m.height - 1 - headerLines - 1 - bottomLines // padTop + header + gap(1)
-		if vpHeight < 5 {
-			vpHeight = 5
-		}
-
-		m.viewport.SetWidth(contentWidth)
-		m.viewport.SetHeight(vpHeight)
-		m.setViewportContent(m.viewport.AtBottom())
-
 		m.input.SetWidth(contentWidth - 4)
 
 		// 重建 Glamour renderer 以适配新宽度
-		// 实际可用文本宽度 = viewport 宽度(m.width-4) - 前缀宽度(2) = m.width-6
 		if m.glamourRenderer != nil {
 			m.glamourRenderer.Close()
 		}
@@ -590,6 +549,19 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.glamourRenderer = glamourR
 		}
 
+		return m, nil
+
+	// ------------------------------------------------------------------
+	// 鼠标 — 滚轮仅用于 viewport 滚动，不触发输入历史导航
+	// ------------------------------------------------------------------
+	case tea.MouseMsg:
+		mouse := msg.Mouse()
+		switch mouse.Button {
+		case tea.MouseWheelUp:
+			m.scrollUp(3)
+		case tea.MouseWheelDown:
+			m.scrollDown(3)
+		}
 		return m, nil
 
 	// ------------------------------------------------------------------
@@ -618,12 +590,6 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.spTool, cmd = m.spTool.Update(msg)
 		cmds = append(cmds, cmd)
 
-		// 任意段落处于流式时，每次 tick 都重建 viewport 内容以刷新 spinner
-		// 帧。保持滚动位置不动，避免打断用户阅读。
-		if m.hasStreamingPara() {
-			m.refreshViewportContent()
-		}
-
 		return m, tea.Batch(cmds...)
 
 	// ------------------------------------------------------------------
@@ -632,19 +598,16 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case agentloop.StreamDelta:
 		m.handleStreamDelta(msg)
 		m.flushTranscript()
-		m.refreshViewportContent()
 		return m, nil
 
 	case agentloop.ToolCallStart:
 		m.handleToolStart(msg)
 		m.flushTranscript()
-		m.refreshViewportContent()
 		return m, nil
 
 	case agentloop.ToolCallResult:
 		m.handleToolResult(msg)
 		m.flushTranscript()
-		m.refreshViewportContent()
 		return m, nil
 
 	case agentloop.TurnStats:
@@ -713,7 +676,6 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case agentloop.LoopDoneWithGen:
 		m.handleLoopDone(msg.LoopDone, msg.Generation)
 		m.flushTranscript()
-		m.updateViewportContent()
 		return m, nil
 
 	case agentloop.LoopDone:
@@ -721,7 +683,6 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// 保留此分支作为防御（如单次模式 runner.go 直接使用 agentloop.LoopDone）。
 		m.handleLoopDone(msg, 0)
 		m.flushTranscript()
-		m.updateViewportContent()
 		return m, nil
 
 	// ------------------------------------------------------------------
@@ -798,14 +759,6 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 
-	// viewport 更新：正常模式始终更新；权限面板活跃时同样更新以便滚动上下文
-	switch m.overlay {
-	case overlayNone, overlayPermission:
-		var cmd tea.Cmd
-		m.viewport, cmd = m.viewport.Update(msg)
-		cmds = append(cmds, cmd)
-	}
-
 	return m, tea.Batch(cmds...)
 }
 
@@ -840,15 +793,6 @@ func (m *model) handleKeyPress(msg tea.KeyPressMsg) (bool, tea.Cmd) {
 	case key.Matches(msg, m.keys.ToggleTheme):
 		m.toggleTheme()
 		return true, nil
-
-	case key.Matches(msg, m.keys.JumpBottom):
-		m.viewport.GotoBottom()
-		return true, nil
-
-	case key.Matches(msg, m.keys.PageUp),
-		key.Matches(msg, m.keys.PageDown):
-		// 导航键始终传给 viewport，不传给 input
-		return false, nil
 	}
 
 	// =====================================================================
@@ -895,7 +839,6 @@ func (m *model) handleKeyPress(msg tea.KeyPressMsg) (bool, tea.Cmd) {
 					State: stateDone,
 					Text:  msg,
 				})
-				m.updateViewportContent()
 				return true, nil
 			}
 
@@ -936,22 +879,40 @@ func (m *model) handleKeyPress(msg tea.KeyPressMsg) (bool, tea.Cmd) {
 		return false, nil
 
 	case key.Matches(msg, m.keys.Up):
-		// 空闲态 ↑ → 输入历史导航；否则传给 viewport
+		// 空闲态 ↑ → 输入历史导航（仅在未处于历史导航中时尝试）
 		if !m.running && m.overlay == overlayNone && !m.pickerVisible {
-			if m.navigateHistoryUp() {
-				return true, nil
+			if m.historyPos == -1 || m.historyPos < len(m.inputHistory)-1 {
+				if m.navigateHistoryUp() {
+					return true, nil
+				}
 			}
 		}
-		return false, nil
+		// 未消费 → 向上滚动
+		m.scrollUp(1)
+		return true, nil
 
 	case key.Matches(msg, m.keys.Down):
-		// 空闲态 ↓ → 输入历史导航；否则传给 viewport
+		// 空闲态 ↓ → 输入历史导航
 		if !m.running && m.overlay == overlayNone && !m.pickerVisible {
 			if m.navigateHistoryDown() {
 				return true, nil
 			}
 		}
-		return false, nil
+		// 未消费 → 向下滚动
+		m.scrollDown(1)
+		return true, nil
+
+	case key.Matches(msg, m.keys.PageUp):
+		m.scrollUp(m.bodyHeight)
+		return true, nil
+
+	case key.Matches(msg, m.keys.PageDown):
+		m.scrollDown(m.bodyHeight)
+		return true, nil
+
+	case key.Matches(msg, m.keys.JumpBottom):
+		m.scrollToBottom()
+		return true, nil
 
 	case key.Matches(msg, m.keys.Paste):
 		// 仅在空闲态且无覆盖层时粘贴
@@ -989,7 +950,7 @@ func (m *model) handlePermKey(key string) (bool, tea.Cmd) {
 		return true, nil
 	}
 
-	// 其他按键（PgUp/PgDn/Tab/Ctrl+O 等）透传给 viewport，允许权限框显示时滚动查看上下文
+	// 未处理的按键忽略
 	return false, nil
 }
 
@@ -1381,8 +1342,12 @@ func parseSearchFileOutput(content string) []string {
 		if line == "" {
 			continue
 		}
-		// 跳过摘要头和警告行
-		if strings.HasPrefix(line, "Found ") || strings.HasPrefix(line, "⚠️") || strings.HasPrefix(line, "No files") || strings.HasPrefix(line, "Searched under") {
+		// 跳过摘要头、截断警告和空行
+		if strings.HasPrefix(line, "Found ") ||
+			strings.HasPrefix(line, "Results truncated") ||
+			strings.HasPrefix(line, "⚠️") ||
+			strings.HasPrefix(line, "No files") ||
+			strings.HasPrefix(line, "Searched under") {
 			continue
 		}
 		files = append(files, line)
@@ -1832,21 +1797,12 @@ func (m *model) hasStreamingPara() bool {
 	return false
 }
 
-// trimParas 当段落数超过 maxParas 时从头部淘汰旧段落，
-// 同步清理 viewport 行缓存、段落行号索引和滚动偏移。
+// trimParas 当段落数超过 maxParas 时从头部淘汰旧段落。
 func (m *model) trimParas() {
 	if len(m.paras) <= maxParas {
 		return
 	}
 	remove := len(m.paras) - maxParas
-
-	// 计算被淘汰段落在 viewport 中占的行数
-	removedLines := 0
-	if remove < len(m.paraLineStarts) {
-		removedLines = m.paraLineStarts[remove]
-	} else if len(m.paraLineStarts) > 0 {
-		removedLines = len(m.cachedViewportLines)
-	}
 
 	// 淘汰旧段落
 	m.paras = append([]Paragraph{}, m.paras[remove:]...)
@@ -1858,29 +1814,6 @@ func (m *model) trimParas() {
 			m.transcriptWritten = 0
 		}
 	}
-
-	// 重建 paraLineStarts：偏移后续段落的行号
-	newStarts := make([]int, len(m.paras))
-	for i := range newStarts {
-		if i+remove < len(m.paraLineStarts) {
-			newStarts[i] = m.paraLineStarts[i+remove] - removedLines
-		}
-	}
-	m.paraLineStarts = newStarts
-
-	// 从 viewport 行缓存头部切除
-	if removedLines <= len(m.cachedViewportLines) {
-		m.cachedViewportLines = m.cachedViewportLines[removedLines:]
-	} else {
-		m.cachedViewportLines = nil
-	}
-
-	// 调整滚动偏移，防止视口跳变
-	yOff := m.viewport.YOffset() - removedLines
-	if yOff < 0 {
-		yOff = 0
-	}
-	m.viewport.SetYOffset(yOff)
 }
 
 // toggleLastTool 切换最后一个 tool 段落的折叠/展开状态。
@@ -1903,7 +1836,6 @@ func (m *model) toggleLastTool() {
 		return // 流式或其他状态不允许切换
 	}
 	p.renderDirty = true
-	m.setViewportContent(false)
 }
 
 // toggleLastThought 切换最后一个 thought 段落的折叠/展开状态。
@@ -1922,132 +1854,9 @@ func (m *model) toggleLastThought() {
 		return // 流式或其他状态不允许切换
 	}
 	p.renderDirty = true
-	m.setViewportContent(false)
 }
 
-// ---------------------------------------------------------------------------
-// Viewport 内容更新
-// ---------------------------------------------------------------------------
-
-// renderViewportAtHeight 从缓存的 viewport 内容行中取可见切片，返回精准 vpHeight 行。
-// 直接切片 m.cachedViewportLines，不再经过临时 bubbles viewport，确保行数完全确定。
-func (m *model) renderViewportAtHeight(vpHeight int) []string {
-	if vpHeight < 1 {
-		vpHeight = 1
-	}
-
-	totalLines := len(m.cachedViewportLines)
-	if totalLines == 0 {
-		return make([]string, vpHeight)
-	}
-
-	yOff := m.viewport.YOffset()
-	if m.viewport.AtBottom() {
-		yOff = max(0, totalLines-vpHeight)
-	} else if yOff > totalLines-vpHeight {
-		yOff = max(0, totalLines-vpHeight)
-	}
-
-	end := yOff + vpHeight
-	if end > totalLines {
-		end = totalLines
-	}
-
-	lines := make([]string, vpHeight)
-	copy(lines, m.cachedViewportLines[yOff:end])
-	return lines
-}
-
-// setViewportContent 从段落列表重建 viewport 内容，gotoBottom 控制是否跟底。
-// 调用方负责决定是否跟底——流式刷新应传 atBottom，用户操作应传 true/false。
-func (m *model) setViewportContent(gotoBottom bool) {
-	lines, lineStarts := buildViewportContent(m.paras, m.viewportCtx(), len(m.cachedViewportLines))
-	m.cachedViewportLines = lines
-	m.viewport.SetContentLines(lines)
-	if gotoBottom {
-		m.viewport.GotoBottom()
-	}
-	m.paraLineStarts = lineStarts
-}
-
-// updateViewportContent 从段落列表重建 viewport 并滚到底部。
-func (m *model) updateViewportContent() {
-	m.setViewportContent(true)
-}
-
-// refreshViewportContent 从段落列表重建 viewport，但仅在用户处于底部时才跟底，
-// 避免打断上滚阅读。流式期间节流至 ~30ms 避免高频重建。
-//
-// 快速路径：仅最后一个段落处于流式时，增量更新该段落行而不重建全部缓存，
-// 将每帧开销从 O(总段落数) 降至 O(1)。
-func (m *model) refreshViewportContent() {
-	// 流式期间节流：距上次渲染不足 30ms 则跳过，spinner tick 兜底刷新
-	if m.hasStreamingPara() {
-		elapsed := time.Since(m.lastRenderTime)
-		if elapsed < 30*time.Millisecond {
-			return
-		}
-	}
-	m.lastRenderTime = time.Now()
-
-	// 快速路径：仅最后一个段落流式 → 增量拼接尾部段落
-	// 需要 paraLineStarts 与 paras 长度一致（新增段落时可能尚未同步）
-	if m.streamingIsLastOnly() && len(m.paraLineStarts) == len(m.paras) {
-		atBottom := m.viewport.AtBottom()
-		m.spliceLastParagraph()
-		if atBottom {
-			m.viewport.GotoBottom()
-		}
-		return
-	}
-
-	m.setViewportContent(m.viewport.AtBottom())
-}
-
-// streamingIsLastOnly 返回是否仅最后一个段落处于流式状态。
-func (m *model) streamingIsLastOnly() bool {
-	if len(m.paras) == 0 {
-		return false
-	}
-	last := m.paras[len(m.paras)-1]
-	return last.State == stateStreaming
-}
-
-// spliceLastParagraph 仅重建最后一个段落的渲染行并拼接到 viewport 缓存尾部，
-// 避免 buildViewportContent 的全量复制。仅在 streamingIsLastOnly() 为 true 时调用。
-func (m *model) spliceLastParagraph() {
-	lastIdx := len(m.paras) - 1
-	oldStart := m.paraLineStarts[lastIdx]
-
-	// 渲染最后一个段落为行数组
-	ctx := m.viewportCtx()
-	newLines := renderSingleParagraph(&m.paras[lastIdx], ctx)
-
-	// 计算旧段落行数
-	oldEnd := len(m.cachedViewportLines)
-	if lastIdx+1 < len(m.paraLineStarts) {
-		oldEnd = m.paraLineStarts[lastIdx+1]
-	}
-	oldLen := oldEnd - oldStart
-	delta := len(newLines) - oldLen
-
-	// 原地拼接：头 + 新行 + 尾
-	total := len(m.cachedViewportLines) + delta
-	merged := make([]string, total)
-	copy(merged, m.cachedViewportLines[:oldStart])
-	copy(merged[oldStart:], newLines)
-	copy(merged[oldStart+len(newLines):], m.cachedViewportLines[oldEnd:])
-	m.cachedViewportLines = merged
-
-	// 偏移后续段落的行号索引
-	for i := lastIdx + 1; i < len(m.paraLineStarts); i++ {
-		m.paraLineStarts[i] += delta
-	}
-
-	m.viewport.SetContentLines(m.cachedViewportLines)
-}
-
-// viewportCtx 返回 viewport 渲染所需的上下文（spinners + Glamour renderer）。
+// viewportCtx 返回段落渲染所需的上下文（spinners + Glamour renderer）。
 func (m *model) viewportCtx() ViewportCtx {
 	contentWidth := max(m.width-4, 20)
 	return ViewportCtx{
@@ -2057,6 +1866,15 @@ func (m *model) viewportCtx() ViewportCtx {
 		Glamour: m.glamourRenderer,
 		Width:   contentWidth,
 	}
+}
+
+// streamingIsLastOnly 返回是否仅最后一个段落处于流式状态。
+func (m *model) streamingIsLastOnly() bool {
+	if len(m.paras) == 0 {
+		return false
+	}
+	last := m.paras[len(m.paras)-1]
+	return last.State == stateStreaming
 }
 
 // ---------------------------------------------------------------------------
@@ -2096,7 +1914,7 @@ func (m *model) doTurn(userInput string) tea.Cmd {
 	m.running = true
 	m.runGeneration++
 	m.turnStartTime = time.Now()
-	m.updateViewportContent()
+	m.scrollToBottom() // 用户输入新消息 → 滚动到底部
 
 	// 若已有运行中的 loop，先取消（用户中断后立即发新任务）。
 	if m.cancelRun != nil {
@@ -2190,96 +2008,202 @@ func (m *model) navigateHistoryDown() bool {
 }
 
 // ---------------------------------------------------------------------------
+// 滚动控制
+// ---------------------------------------------------------------------------
+
+// scrollUp 向上滚动 delta 行（查看更早的内容）。
+func (m *model) scrollUp(delta int) {
+	if delta <= 0 {
+		return
+	}
+	m.pinnedToBottom = false
+	m.scrollTop -= delta
+	if m.scrollTop < 0 {
+		m.scrollTop = 0
+	}
+}
+
+// scrollDown 向下滚动 delta 行（查看更新的内容）。
+func (m *model) scrollDown(delta int) {
+	if delta <= 0 {
+		return
+	}
+	m.scrollTop += delta
+}
+
+// scrollToBottom 滚动到底部并锁定自动跟随。
+func (m *model) scrollToBottom() {
+	m.scrollTop = 0
+	m.pinnedToBottom = true
+}
+
+// ---------------------------------------------------------------------------
 // 视图
 // ---------------------------------------------------------------------------
 
-// measureLayout 测量 header 和底部固定区域的实际显示行数。
-// header/footer 均不以 \n 结尾，实际行数 = lipgloss.Height + 1。
-func (m *model) measureLayout() (headerLines, bottomLines int) {
-	header := m.renderHeader()
-	footer := m.renderFooter()
-	headerLines = lipgloss.Height(header) + 1
-	footerLines := lipgloss.Height(footer) + 1
-	// 底部固定块：分隔线(1) + 输入框(1) + 间距(1) + footer
-	bottomLines = 1 + 1 + 1 + footerLines
-	return
+// visibleOffset 计算 textinput 水平滚动后在可视范围内光标的起始偏移量。
+// textinput 内容超出可视宽度时内部维护 offset（未公开），通过从光标位置
+// 反向扫描累积显示宽度到等于输入框宽度来确定可视起点。
+func visibleOffset(value string, pos int, maxWidth int) int {
+	runes := []rune(value)
+	if pos > len(runes) {
+		pos = len(runes)
+	}
+	if maxWidth <= 0 {
+		return 0
+	}
+
+	width := 0
+	offset := pos
+	for offset > 0 {
+		w := lipgloss.Width(string(runes[offset-1]))
+		if width+w > maxWidth {
+			break
+		}
+		width += w
+		offset--
+	}
+	return offset
 }
 
 func (m *model) View() tea.View {
+	if m.height < 10 {
+		// 终端太小，无法正常布局，返回空视图
+		v := tea.NewView("")
+		v.AltScreen = true
+		v.MouseMode = tea.MouseModeCellMotion
+		return v
+	}
+
 	contentWidth := max(m.width-4, 20)
 
-	// 1. 渲染固定元素
-	header := m.renderHeader()
-	separator := lipgloss.NewStyle().
-		Foreground(colorMuted).
-		Render(strings.Repeat("─", contentWidth))
-	inputView := styleInput.Render(m.input.View())
-	footer := m.renderFooter()
+	// 1. 渲染段落内容（全量，后续根据滚动偏移裁剪可见区域）
+	ctx := m.viewportCtx()
+	allLines, _ := buildViewportContent(m.paras, ctx, 0)
 
-	// 2. 渲染权限确认覆盖层（如有，占用 viewport 空间）
+	// 2. 渲染覆盖层
 	var overlayContent string
-	var overlayHeight int
 	if m.overlay == overlayPermission && m.permReq != nil {
 		boxWidth := contentWidth
 		if boxWidth > 70 {
 			boxWidth = 70
 		}
 		overlayContent = m.renderPermOverlay(boxWidth)
-		overlayHeight = strings.Count(overlayContent, "\n") + 1
 	}
-
-	// 4. 渲染文件选择器下拉列表（如有），并计算其高度
 	var pickerContent string
-	var pickerHeight int
 	if m.pickerVisible {
 		pickerContent = m.renderPickerDropdown(contentWidth)
-		pickerHeight = strings.Count(pickerContent, "\n") + 1
 	}
 
-	// 5. 计算 viewport 高度（扣除 header / 权限框 / 文件选择器 / 底部固定区域）
-	headerLines, bottomLines := m.measureLayout()
-	vpHeight := m.height - 1 - headerLines - 1 - bottomLines // padTop + header + gap(1)
-	vpHeight -= overlayHeight                                // 权限覆盖层
-	vpHeight -= pickerHeight                                 // 文件选择器下拉
-	if vpHeight < 5 {
-		vpHeight = 5
+	overlayLines := 0
+	if overlayContent != "" {
+		overlayLines = strings.Count(overlayContent, "\n") + 1
+	}
+	pickerLines := 0
+	if pickerContent != "" {
+		pickerLines = strings.Count(pickerContent, "\n") + 1
 	}
 
-	// 6. 渲染 viewport
-	vpView := strings.Join(m.renderViewportAtHeight(vpHeight), "\n")
+	// 3. 计算固定区域高度
+	header := m.renderHeader()
+	headerHeight := lipgloss.Height(header) + 1 // +1 是 header 后的空行
 
-	// 防止 viewport 末尾未关闭的 ANSI 属性向 footer 泄漏
-	if len(vpView) > 0 && vpView[len(vpView)-1] != '\n' {
-		vpView += ansiReset
+	footer := m.renderFooter()
+	footerHeight := lipgloss.Height(footer) // 3 行
+
+	// 固定底部元素（在 styleApp 内）：
+	// separator(1) + input(1) + gap(1) + footer(footerHeight) + 显式底部边距(1)
+	fixedBottomHeight := 1 + 1 + 1 + footerHeight + 1
+
+	// styleApp 上下 padding 各 1 行，内区可用高度 = m.height - 2
+	innerHeight := m.height - 2
+	bodyHeight := innerHeight - headerHeight - fixedBottomHeight - overlayLines - pickerLines
+	if bodyHeight < 1 {
+		bodyHeight = 1
+	}
+	m.bodyHeight = bodyHeight
+
+	// 4. 根据滚动偏移裁剪可见内容
+	totalLines := len(allLines)
+	maxScrollTop := max(0, totalLines-bodyHeight)
+
+	if m.pinnedToBottom {
+		m.scrollTop = maxScrollTop
+	} else {
+		// 内容增长时 scrollTop 可能超出新的 maxScrollTop
+		if m.scrollTop > maxScrollTop {
+			m.scrollTop = maxScrollTop
+		}
+		if m.scrollTop < 0 {
+			m.scrollTop = 0
+		}
+		// 用户已滚动到底部 → 重新锁定
+		if m.scrollTop >= maxScrollTop {
+			m.pinnedToBottom = true
+			m.scrollTop = maxScrollTop
+		}
 	}
 
-	// 7. 纵向拼接：header → viewport → [权限框] → [文件选择器] → separator → input → footer
-	parts := []string{header, "", vpView}
+	var visibleLines []string
+	if totalLines > 0 {
+		end := m.scrollTop + bodyHeight
+		if end > totalLines {
+			end = totalLines
+		}
+		visibleLines = allLines[m.scrollTop:end]
+	}
+
+	// 5. 构建 parts：header + body(刚好 bodyHeight 行) + overlays + 固定底部
+	separator := lipgloss.NewStyle().
+		Foreground(colorMuted).
+		Render(strings.Repeat("─", contentWidth))
+	inputView := lipgloss.NewStyle().Width(contentWidth).Render(m.input.View())
+
+	parts := []string{header, ""}
+	parts = append(parts, visibleLines...)
+
+	// 用空行补足 body 区域到 bodyHeight 行，确保 footer 位置固定
+	padLines := bodyHeight - len(visibleLines)
+	for i := 0; i < padLines; i++ {
+		parts = append(parts, "")
+	}
+
 	if overlayContent != "" {
 		parts = append(parts, overlayContent)
 	}
 	if pickerContent != "" {
 		parts = append(parts, pickerContent)
 	}
-	parts = append(parts, separator, inputView, "", footer)
-	mainBody := lipgloss.JoinVertical(lipgloss.Left, parts...)
+	parts = append(parts, separator, inputView, "", footer, "")
 
-	// 7. 应用外边距，去除 styleApp 底部 padding 的尾随换行
+	mainBody := lipgloss.JoinVertical(lipgloss.Left, parts...)
 	mainContent := styleApp.Render(mainBody)
-	mainContent = strings.TrimRight(mainContent, "\n")
 
 	v := tea.NewView(mainContent)
 	v.AltScreen = true
 	v.MouseMode = tea.MouseModeCellMotion
-	// 定位终端光标到输入框位置。IME 组合窗口（中文输入法候选词）依赖
-	// 终端光标位置；未设置时渲染器内部光标在 viewport 中游走，导致
-	// 预编辑文本泄漏到 viewport / footer 区域。
-	// 当 input 失焦（权限面板或 running 态）时 Cursor() 返回 nil，
-	// 光标隐藏，与不可输入状态一致。
-	if cur := m.input.Cursor(); cur != nil && m.height >= 6 {
-		cur.Position.X += 2 // styleApp 左 padding
-		cur.Position.Y = m.height - 6
-		v.Cursor = cur
+
+	// real cursor 模式：定位输入光标
+	if m.overlay == overlayNone {
+		if cur := m.input.Cursor(); cur != nil {
+			value := m.input.Value()
+			pos := m.input.Position()
+			offset := visibleOffset(value, pos, m.input.Width())
+			visibleBeforeCursor := string([]rune(value)[offset:pos])
+			cursorX := lipgloss.Width(m.input.Prompt) + lipgloss.Width(visibleBeforeCursor)
+			cur.Position.X = cursorX + 2 // styleApp 左 padding
+			if cur.Position.X > m.width-2 {
+				cur.Position.X = m.width - 2
+			}
+			// 在 alt screen 下，header + body + overlays + separator 之后是 input 行
+			// input 行在终端中的 Y 坐标（0-based）：
+			//   styleApp top(1) + headerHeight + bodyHeight + overlayLines + pickerLines + separator(1)
+			cur.Position.Y = 1 + headerHeight + bodyHeight + overlayLines + pickerLines + 1
+			if cur.Position.Y >= m.height {
+				cur.Position.Y = m.height - 1
+			}
+			v.Cursor = cur
+		}
 	}
 	return v
 }
@@ -2665,6 +2589,7 @@ func (m *model) syncThemeComponents() {
 	inputStyles.Blurred.Prompt = lipgloss.NewStyle().Foreground(colorUser).Bold(true)
 	inputStyles.Focused.Placeholder = lipgloss.NewStyle().Foreground(colorMuted)
 	inputStyles.Blurred.Placeholder = lipgloss.NewStyle().Foreground(colorMuted)
+	inputStyles.Cursor.Blink = true
 	m.input.SetStyles(inputStyles)
 
 	// 同步 permList delegate 样式（若已构建）
@@ -2694,10 +2619,6 @@ func (m *model) syncThemeComponents() {
 		m.paras[i].renderDirty = true
 		m.paras[i].renderedCache = ""
 	}
-	m.cachedViewportLines = nil
-
-	// 从段落列表重建 viewport，否则 View() 中发现缓存为空会返回空白行。
-	m.setViewportContent(false)
 }
 
 // runTUI 启动交互式 TUI 模式。依赖由 main() 统一初始化后传入，无需重复创建。
