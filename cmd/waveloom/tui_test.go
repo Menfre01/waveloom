@@ -334,7 +334,7 @@ func TestHardLimitGuard_BlocksEnterWhenReached(t *testing.T) {
 	if lastPara.Type != paraSystem || lastPara.State != stateDone {
 		t.Errorf("expected system/done paragraph, got type=%v state=%v", lastPara.Type, lastPara.State)
 	}
-	if !strings.Contains(lastPara.Text, "已被阻止") {
+	if !strings.Contains(lastPara.Text, "/reset") {
 		t.Errorf("expected block message, got %q", lastPara.Text)
 	}
 }
