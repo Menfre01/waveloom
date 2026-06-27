@@ -221,26 +221,38 @@ func DecisionSetToList(ds compactionDecisionSet) []CompactionDecision {
 
 // truncationStrategy 定义一个工具的截断参数。
 // maxLines 为 0 表示不截断。
+// maxLineChars 为 0 表示不限制单行长度。
+// maxTotalChars 为 0 表示不限制总字符数。
 type truncationStrategy struct {
-	maxLines  int
-	headLines int
-	tailLines int
+	maxLines      int
+	headLines     int
+	tailLines     int
+	maxLineChars  int // 单行最大字符数，超出则截断该行
+	maxTotalChars int // 总内容最大字符数，超出则整体截断
 }
 
 // toolTruncationStrategies 定义所有已知工具的 Tier 1 截断策略。
 var toolTruncationStrategies = map[string]truncationStrategy{
-	"read_file": {200, 150, 10},
-	"shell":     {60, 20, 30},
-	"grep":      {60, 50, 0},
-	"web_fetch": {200, 150, 10},
+	"read_file":      {200, 150, 10, 4000, 30000},
+	"shell":          {60, 20, 30, 2000, 12000},
+	"grep":           {60, 50, 0, 2000, 15000},
+	"web_fetch":      {200, 150, 10, 4000, 30000},
+	"ls":             {100, 80, 10, 2000, 10000},
+	"search_file":    {80, 60, 10, 2000, 10000},
+	"lsp_diagnostic": {60, 40, 10, 2000, 8000},
+	"lsp_references": {60, 40, 10, 2000, 8000},
 }
 
 // truncatableTools Tier 2 中可替换为占位符的工具集合。
 var truncatableTools = map[string]bool{
-	"read_file": true,
-	"shell":     true,
-	"grep":      true,
-	"web_fetch": true,
+	"read_file":      true,
+	"shell":          true,
+	"grep":           true,
+	"web_fetch":      true,
+	"ls":             true,
+	"search_file":    true,
+	"lsp_diagnostic": true,
+	"lsp_references": true,
 }
 
 // ---------------------------------------------------------------------------
@@ -391,6 +403,7 @@ func applyTier1(
 }
 
 // truncateByStrategy 按截断策略处理内容。
+// 三级截断：行数截断 → 总字符截断 → 单行字符截断。
 // 返回截断后的内容和是否实际触发截断。
 func truncateByStrategy(content string, s truncationStrategy) (string, bool) {
 	if content == "" {
@@ -398,26 +411,53 @@ func truncateByStrategy(content string, s truncationStrategy) (string, bool) {
 	}
 
 	lines := strings.Split(content, "\n")
-	if len(lines) <= s.maxLines {
-		return content, false
-	}
 
-	// 接近阈值时不过度裁剪
-	if len(lines) <= s.headLines+s.tailLines+10 {
-		return content, false
-	}
+	// 1. 行数截断（优先，最语义化）
+	if s.maxLines > 0 && len(lines) > s.maxLines && len(lines) > s.headLines+s.tailLines+10 {
+		head := strings.Join(lines[:s.headLines], "\n")
+		omitted := len(lines) - s.headLines - s.tailLines
 
-	head := strings.Join(lines[:s.headLines], "\n")
-	omitted := len(lines) - s.headLines - s.tailLines
+		if s.tailLines > 0 {
+			tail := strings.Join(lines[len(lines)-s.tailLines:], "\n")
+			result := fmt.Sprintf("%s\n\n[... 省略 %d 行 — 完整结果已由 Agent 处理]\n\n%s", head, omitted, tail)
+			return result, true
+		}
 
-	if s.tailLines > 0 {
-		tail := strings.Join(lines[len(lines)-s.tailLines:], "\n")
-		result := fmt.Sprintf("%s\n\n[... 省略 %d 行 — 完整结果已由 Agent 处理]\n\n%s", head, omitted, tail)
+		result := fmt.Sprintf("%s\n\n[... 省略 %d 行]\n", head, omitted)
 		return result, true
 	}
 
-	result := fmt.Sprintf("%s\n\n[... 省略 %d 行]\n", head, omitted)
-	return result, true
+	// 2. 总字符截断 — 在换行边界处切断以保持可读性
+	if s.maxTotalChars > 0 && len(content) > s.maxTotalChars {
+		cutPoint := s.maxTotalChars
+		if idx := strings.LastIndex(content[:cutPoint], "\n"); idx > cutPoint/2 {
+			cutPoint = idx
+		}
+		content = content[:cutPoint] + fmt.Sprintf(
+			"\n[... 内容截断: %d → %d 字符 — 完整结果已由 Agent 处理]",
+			len(content), cutPoint,
+		)
+		return content, true
+	}
+
+	// 3. 单行字符截断 — 处理超长单行（如 minified JSON、base64 blob）
+	didTruncate := false
+	if s.maxLineChars > 0 {
+		for i, line := range lines {
+			if len(line) > s.maxLineChars {
+				lines[i] = line[:s.maxLineChars] + fmt.Sprintf(
+					"... [行截断: %d → %d 字符]", len(line), s.maxLineChars,
+				)
+				didTruncate = true
+			}
+		}
+	}
+
+	if didTruncate {
+		return strings.Join(lines, "\n"), true
+	}
+
+	return content, false
 }
 
 // ---------------------------------------------------------------------------
@@ -524,18 +564,22 @@ func applyTier2(
 // formatToolPlaceholder 为已被压缩的 tool 结果生成占位符。
 func formatToolPlaceholder(toolName, originalContent string) string {
 	lines := strings.Count(originalContent, "\n") + 1
+	chars := len(originalContent)
 	tokens := estimatedTokensFromContent(originalContent)
-	return fmt.Sprintf("[tool call 输出已被压缩] 工具 %s 的输出已被压缩（原始: %d 行, ~%d tokens）",
-		toolName, lines, tokens)
+	return fmt.Sprintf("[tool call 输出已被压缩] 工具 %s 的输出已被压缩（原始: %d 行, %d 字符, ~%d tokens）",
+		toolName, lines, chars, tokens)
 }
 
-// compressUserCodeBlocks 压缩 user 消息中 >50 行的 code fence 内容。
+// compressUserCodeBlocks 压缩 user 消息中 >50 行的 code fence 内容，
+// 以及 code fence 中单行超过 maxCodeLineChars 的超长行。
 // 返回压缩后的内容和是否实际发生了压缩。
 func compressUserCodeBlocks(content string) (string, bool) {
 	// 快速路径：无 code fence
 	if !strings.Contains(content, "```") {
 		return content, false
 	}
+
+	const maxCodeLineChars = 2000
 
 	var result strings.Builder
 	result.Grow(len(content))
@@ -570,8 +614,15 @@ func compressUserCodeBlocks(content string) (string, bool) {
 		if inFence {
 			fenceLines++
 			if fenceLines <= 50 {
-				result.WriteString(line)
-				result.WriteString("\n")
+				if len(line) > maxCodeLineChars {
+					result.WriteString(line[:maxCodeLineChars])
+					result.WriteString(fmt.Sprintf("... [单行截断: %d → %d 字符]", len(line), maxCodeLineChars))
+					result.WriteString("\n")
+					didCompress = true
+				} else {
+					result.WriteString(line)
+					result.WriteString("\n")
+				}
 			} else if fenceLines == 51 {
 				// 插入占位符，跳过后续 fence 行
 				result.WriteString("[粘贴的内容已被压缩（原始: >50 行）]\n")
