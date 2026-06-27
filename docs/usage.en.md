@@ -17,7 +17,7 @@ wvl
 Once in the TUI, type like a chat and press Enter to send. The agent autonomously invokes tools to read files, search code, edit, and run tests.
 
 <p align="center">
-  <img src="./tui.png" alt="Waveloom screenshot" width="720"/>
+  <img src="../assets/tui.png" alt="Waveloom screenshot" width="720"/>
 </p>
 
 The prefix character at the beginning of each line tells you **who is speaking**:

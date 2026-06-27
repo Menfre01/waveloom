@@ -17,7 +17,7 @@ wvl
 进入 TUI 后，像聊天一样打字，Enter 发送。Agent 会自主调用工具来读文件、搜代码、编辑、跑测试。
 
 <p align="center">
-  <img src="./tui.png" alt="Waveloom 截图" width="720"/>
+  <img src="../assets/tui.png" alt="Waveloom 截图" width="720"/>
 </p>
 
 每行开头的字符告诉你**谁在说话**：
