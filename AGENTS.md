@@ -1,5 +1,30 @@
 # Waveloom
 
+终端编码代理（Go 实现），帮助用户编写、重构、调试和探索代码。
+
+## 项目概要
+
+- **语言**：Go 1.25+
+- **LLM**：DeepSeek V4（默认）/ OpenAI，通过 `llm.Client` 接口适配
+- **TUI**：Bubble Tea v2 + Glamour Markdown 渲染 + Lipgloss 样式
+- **LSP**：gopls（Go 语言服务器），支持 diagnostic / definition / references / hover
+- **构建**：`make build` / `make test` / `make run`
+
+```
+cmd/waveloom/    CLI 入口（main, config, runner, tui）
+pkg/
+  agentloop/     Think-Act-Observe 循环（Run → <-chan TurnEvent）
+  llm/           LLM Client（DeepSeek + OpenAI 适配、流式、重试）
+  tool/          工具系统（12 个内置工具，TypedTool[P] 泛型接口）
+  permission/    权限守门人（规则引擎、路径/命令安全）
+  context/       跨轮次消息历史（PrepareRun / CompleteRun）
+  compaction/    四级水位线上下文压缩（Snip/Prune/Summarize）
+  lsp/           LSP Client
+  environment/   工具链探测
+  memory/        AGENTS.md 层级加载
+  reference/     @ 文件引用展开
+specs/           各组件规格书（修改前先阅读）
+```
 
 ## 编码规范
 
@@ -8,6 +33,37 @@
 - 命名清晰，避免缩写
 - 错误统一处理，不外泄堆栈到客户端
 - 查询 API 时优先使用 `go doc` 命令，避免凭记忆猜测接口签名
+
+## Agent 操作规范
+
+执行代码修改任务时，必须遵守以下操作顺序，减少试错。
+
+### 修改前（MUST DO）
+
+1. **定位**：用 `search_file` 定位目标文件，用 `grep` 定位具体符号
+2. **确认**：用 `read_file` 阅读当前文件内容（即使刚读过，编辑前必须重新确认行号和内容，尤其是缩进）
+3. **基线**：用 `lsp_diagnostic` 查看文件现有诊断，建立错误/警告基线
+
+### 修改后（MUST DO）
+
+1. **诊断**：用 `lsp_diagnostic` 检查是否引入新错误
+2. **编译**：涉及 Go 项目时运行 `make build`
+3. **测试**：涉及 `pkg/` 代码时运行 `make test`
+
+### 重构前（MUST DO）
+
+1. `lsp_references` 确认所有引用点
+2. `lsp_hover` 确认类型签名
+3. 评估影响范围后再动手
+
+### 工具调用原则
+
+- **并行优先**：多个独立只读操作（read_file、grep、search_file、lsp_*）应在同一轮并行发起，减少等待
+- **串行必须**：写操作（write_file、edit_file、shell）必须串行，且不与写操作同轮混合
+- **优先专用工具**：能用 read_file/grep/search_file/ls 的场景，禁止用 shell 替代
+- **edit_file 优先**：对现有文件做局部修改用 edit_file，只有创建新文件或完全覆写时才用 write_file
+- `no_match` 时不要盲目重试 — 先用 read_file 重新确认 old_string 的精确内容（含缩进和空白符）
+- `security_violation` 是致命错误，停止当前路径，不要尝试绕过
 
 ## 开发流程
 
