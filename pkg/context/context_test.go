@@ -1,9 +1,11 @@
 package context
 
 import (
+	"os"
 	"sync"
 	"testing"
 
+	"waveloom/pkg/compaction"
 	"waveloom/pkg/llm"
 )
 
@@ -422,5 +424,252 @@ func TestInjectUserInstructions_ResetPreservesInstructions(t *testing.T) {
 	}
 	if msgs[1].Content != "AGENTS.md content reloaded" {
 		t.Fatalf("instructions not reloaded: %q", msgs[1].Content)
+	}
+}
+
+func TestInjectUserInstructions_Idempotent(t *testing.T) {
+	cm := New("system")
+	cm.InjectUserInstructions("first injection")
+	cm.InjectUserInstructions("second injection")
+
+	msgs := cm.PrepareRun("hello")
+	if len(msgs) != 3 {
+		t.Fatalf("expected 3 messages, got %d", len(msgs))
+	}
+	// 第二次注入应被忽略
+	if msgs[1].Content != "first injection" {
+		t.Fatalf("expected first injection preserved, got %q", msgs[1].Content)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// NewWithCompaction / Compactor
+// ---------------------------------------------------------------------------
+
+func TestNewWithCompaction_WithSystemPrompt(t *testing.T) {
+	cm := NewWithCompaction("system", compaction.DefaultCompactionConfig(), nil)
+	if cm.Stats().MessageCount != 1 {
+		t.Fatalf("expected 1 message, got %d", cm.Stats().MessageCount)
+	}
+}
+
+func TestNewWithCompaction_WithoutSystemPrompt(t *testing.T) {
+	cm := NewWithCompaction("", compaction.DefaultCompactionConfig(), nil)
+	if cm.Stats().MessageCount != 0 {
+		t.Fatalf("expected 0 messages, got %d", cm.Stats().MessageCount)
+	}
+}
+
+func TestCompactor_ReturnsNonNil(t *testing.T) {
+	cm := New("system")
+	if cm.Compactor() == nil {
+		t.Fatal("Compactor() returned nil")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Session path
+// ---------------------------------------------------------------------------
+
+func TestSetSessionPath_SessionPath(t *testing.T) {
+	cm := New("system")
+	if cm.SessionPath() != "" {
+		t.Fatalf("expected empty path, got %q", cm.SessionPath())
+	}
+
+	cm.SetSessionPath("/tmp/test-session.json")
+	if cm.SessionPath() != "/tmp/test-session.json" {
+		t.Fatalf("expected /tmp/test-session.json, got %q", cm.SessionPath())
+	}
+
+	// 清空
+	cm.SetSessionPath("")
+	if cm.SessionPath() != "" {
+		t.Fatalf("expected empty path after clear, got %q", cm.SessionPath())
+	}
+}
+
+func TestSessionID_FromPath(t *testing.T) {
+	cm := New("system")
+	cm.SetSessionPath("/tmp/sessions/abc-123-def.json")
+	id := cm.SessionID()
+	if id != "abc-123-def" {
+		t.Fatalf("expected abc-123-def, got %q", id)
+	}
+}
+
+func TestSessionID_EmptyPath(t *testing.T) {
+	cm := New("system")
+	if cm.SessionID() != "" {
+		t.Fatalf("expected empty session ID, got %q", cm.SessionID())
+	}
+}
+
+func TestSessionID_NoExtension(t *testing.T) {
+	cm := New("system")
+	cm.SetSessionPath("/tmp/sessions/noext")
+	id := cm.SessionID()
+	if id != "noext" {
+		t.Fatalf("expected 'noext', got %q", id)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Save / LoadFromFile / RemoveSession
+// ---------------------------------------------------------------------------
+
+func TestSave_WithoutPath(t *testing.T) {
+	cm := New("system")
+	cm.PrepareRun("hello")
+	// 未设置 path 的 Save 应静默返回，不 panic
+	cm.Save()
+}
+
+func TestSave_WithPath(t *testing.T) {
+	dir := t.TempDir()
+	path := dir + "/session.json"
+	cm := New("system")
+	cm.PrepareRun("hello")
+	cm.CompleteRun([]llm.Message{
+		{Role: llm.RoleSystem, Content: "system"},
+		{Role: llm.RoleUser, Content: "hello"},
+		{Role: llm.RoleAssistant, Content: "hi"},
+	}, 10, 10, 5, 0, 10, 0, "", 0, "")
+
+	cm.SetSessionPath(path)
+	cm.Save()
+
+	// 验证文件存在
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		t.Fatal("session file not created")
+	}
+}
+
+func TestLoadFromFile_RoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	path := dir + "/session.json"
+
+	// 创建并保存
+	cm1 := New("system prompt")
+	cm1.InjectUserInstructions("AGENTS.md rules")
+	cm1.PrepareRun("hello")
+	cm1.CompleteRun([]llm.Message{
+		{Role: llm.RoleSystem, Content: "system prompt"},
+		{Role: llm.RoleUser, Content: "AGENTS.md rules"},
+		{Role: llm.RoleUser, Content: "hello"},
+		{Role: llm.RoleAssistant, Content: "hi there"},
+	}, 50, 50, 30, 40, 10, 0, "", 100, "done")
+
+	cm1.SetSessionPath(path)
+	cm1.Save()
+
+	// 加载到新 CM
+	cm2 := New("unused")
+	if !cm2.LoadFromFile(path) {
+		t.Fatal("LoadFromFile returned false")
+	}
+
+	if cm2.SessionPath() != path {
+		t.Fatalf("session path not set after load: %q", cm2.SessionPath())
+	}
+
+	s := cm2.Stats()
+	if s.TotalTurns != 1 {
+		t.Fatalf("expected TotalTurns=1, got %d", s.TotalTurns)
+	}
+	if s.TotalPromptTokens != 50 {
+		t.Fatalf("expected TotalPromptTokens=50, got %d", s.TotalPromptTokens)
+	}
+	if s.MessageCount != 4 {
+		t.Fatalf("expected MessageCount=4, got %d", s.MessageCount)
+	}
+}
+
+func TestLoadFromFile_NotFound(t *testing.T) {
+	cm := New("system")
+	if cm.LoadFromFile("/nonexistent/path.json") {
+		t.Fatal("LoadFromFile should return false for nonexistent file")
+	}
+}
+
+func TestLoadFromFile_InvalidJSON(t *testing.T) {
+	dir := t.TempDir()
+	path := dir + "/bad.json"
+	if err := os.WriteFile(path, []byte("not json"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cm := New("system")
+	if cm.LoadFromFile(path) {
+		t.Fatal("LoadFromFile should return false for invalid JSON")
+	}
+}
+
+func TestLoadFromFile_EmptyFile(t *testing.T) {
+	dir := t.TempDir()
+	path := dir + "/empty.json"
+	if err := os.WriteFile(path, []byte{}, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cm := New("system")
+	if cm.LoadFromFile(path) {
+		t.Fatal("LoadFromFile should return false for empty file")
+	}
+}
+
+func TestRemoveSession(t *testing.T) {
+	dir := t.TempDir()
+	path := dir + "/session.json"
+	cm := New("system")
+	cm.PrepareRun("hello")
+	cm.CompleteRun([]llm.Message{
+		{Role: llm.RoleSystem, Content: "system"},
+		{Role: llm.RoleUser, Content: "hello"},
+		{Role: llm.RoleAssistant, Content: "hi"},
+	}, 10, 10, 5, 0, 10, 0, "", 0, "")
+
+	cm.SetSessionPath(path)
+	cm.Save()
+
+	// 确认文件存在
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		t.Fatal("session file not created before remove")
+	}
+
+	cm.RemoveSession()
+
+	// 确认路径已清空
+	if cm.SessionPath() != "" {
+		t.Fatal("session path not cleared after remove")
+	}
+
+	// 确认文件已删除
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatal("session file still exists after remove")
+	}
+}
+
+func TestRemoveSession_NoPath(t *testing.T) {
+	cm := New("system")
+	// 无 path 的 RemoveSession 不应 panic
+	cm.RemoveSession()
+}
+
+func TestCompleteRun_AutoSave(t *testing.T) {
+	dir := t.TempDir()
+	path := dir + "/autosave.json"
+	cm := New("system")
+	cm.SetSessionPath(path)
+	cm.PrepareRun("hello")
+
+	cm.CompleteRun([]llm.Message{
+		{Role: llm.RoleSystem, Content: "system"},
+		{Role: llm.RoleUser, Content: "hello"},
+		{Role: llm.RoleAssistant, Content: "hi"},
+	}, 10, 10, 5, 0, 10, 0, "", 0, "")
+
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		t.Fatal("session file not auto-saved on CompleteRun")
 	}
 }
