@@ -28,7 +28,7 @@ type SearchFileParams struct {
 type SearchFile struct{}
 
 func (t *SearchFile) Name() string            { return "search_file" }
-func (t *SearchFile) Description() string     { return "基于模式匹配（glob）搜索文件名。支持 ** 递归匹配（如 **/*.go, src/**/*_test.go）。结果最多返回 100 个文件。" }
+func (t *SearchFile) Description() string     { return "Search for file names using glob patterns. Supports ** recursive matching (e.g. **/*.go, src/**/*_test.go). Returns up to 100 files." }
 func (t *SearchFile) Schema() json.RawMessage { return searchFileSchema }
 func (t *SearchFile) ConcurrentSafe() bool    { return true }
 

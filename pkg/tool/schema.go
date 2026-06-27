@@ -3,7 +3,7 @@ package tool
 import "encoding/json"
 
 // ---------------------------------------------------------------------------
-// 所有工具的 JSON Schema 常量定义
+// JSON Schema constants for all tools
 // ---------------------------------------------------------------------------
 
 var readFileSchema = json.RawMessage(`{
@@ -11,19 +11,19 @@ var readFileSchema = json.RawMessage(`{
   "properties": {
     "file_path": {
       "type": "string",
-      "description": "文件绝对路径"
+      "description": "Absolute file path"
     },
     "offset": {
       "type": "integer",
-      "description": "起始行号（0-based，0 为第一行，可选）"
+      "description": "Starting line number (0-based, 0 = first line, optional)"
     },
     "limit": {
       "type": "integer",
-      "description": "读取行数（可选，默认全部）"
+      "description": "Number of lines to read (optional, default: all)"
     },
     "working_dir": {
       "type": "string",
-      "description": "工作目录（可选，默认项目根目录）。file_path 为相对路径时基于此目录解析"
+      "description": "Working directory (optional, default: project root). Resolves relative file_path against this directory"
     }
   },
   "required": ["file_path"]
@@ -34,15 +34,15 @@ var writeFileSchema = json.RawMessage(`{
   "properties": {
     "file_path": {
       "type": "string",
-      "description": "文件绝对路径"
+      "description": "Absolute file path"
     },
     "content": {
       "type": "string",
-      "description": "要写入的文件内容"
+      "description": "File content to write"
     },
     "working_dir": {
       "type": "string",
-      "description": "工作目录（可选，默认项目根目录）。file_path 为相对路径时基于此目录解析"
+      "description": "Working directory (optional, default: project root). Resolves relative file_path against this directory"
     }
   },
   "required": ["file_path", "content"]
@@ -53,24 +53,24 @@ var editFileSchema = json.RawMessage(`{
   "properties": {
     "file_path": {
       "type": "string",
-      "description": "文件绝对路径"
+      "description": "Absolute file path"
     },
     "old_string": {
       "type": "string",
-      "description": "要替换的文本（必须精确匹配原始内容，含缩进）"
+      "description": "Text to replace (must exactly match original content, including indentation)"
     },
     "new_string": {
       "type": "string",
-      "description": "替换后的文本"
+      "description": "Replacement text"
     },
     "replace_all": {
       "type": "boolean",
-      "description": "是否替换所有匹配项（默认 false，只替换第一个）",
+      "description": "Replace all occurrences (default: false, first match only)",
       "default": false
     },
     "working_dir": {
       "type": "string",
-      "description": "工作目录（可选，默认项目根目录）。file_path 为相对路径时基于此目录解析"
+      "description": "Working directory (optional, default: project root). Resolves relative file_path against this directory"
     }
   },
   "required": ["file_path", "old_string", "new_string"]
@@ -81,15 +81,15 @@ var shellSchema = json.RawMessage(`{
   "properties": {
     "command": {
       "type": "string",
-      "description": "要执行的 Shell 命令。Unix/macOS 通过 sh -c 执行，Windows 通过 cmd /c 执行。Windows 不支持 ; 串联命令，请用 &&。"
+      "description": "Shell command to execute. Unix/macOS uses sh -c, Windows uses cmd /c. Windows does not support ; for multi-command, use &&."
     },
     "working_dir": {
       "type": "string",
-      "description": "工作目录（可选，默认项目根目录）。应在 working_dir 参数中指定，而非在 command 中使用 cd 前缀。"
+      "description": "Working directory (optional, default: project root). Specify via this parameter, never prefix commands with cd."
     },
     "timeout_ms": {
       "type": "integer",
-      "description": "超时时间（毫秒，默认 120000，最大 600000）"
+      "description": "Timeout in milliseconds (default: 120000, max: 600000)"
     }
   },
   "required": ["command"]
@@ -100,11 +100,11 @@ var searchFileSchema = json.RawMessage(`{
   "properties": {
     "pattern": {
       "type": "string",
-      "description": "Glob 模式（如 **/*.go, *.md, src/**/*_test.go）"
+      "description": "Glob pattern (e.g. **/*.go, *.md, src/**/*_test.go)"
     },
     "working_dir": {
       "type": "string",
-      "description": "搜索起始目录（可选，默认项目根目录）"
+      "description": "Search root directory (optional, default: project root)"
     }
   },
   "required": ["pattern"]
@@ -115,24 +115,24 @@ var grepSchema = json.RawMessage(`{
   "properties": {
     "pattern": {
       "type": "string",
-      "description": "正则表达式（RE2 语法）"
+      "description": "Regular expression (RE2 syntax)"
     },
     "include": {
       "type": "string",
-      "description": "Glob 模式过滤文件（可选，如 *.go）"
+      "description": "Glob pattern to filter files (optional, e.g. *.go)"
     },
     "working_dir": {
       "type": "string",
-      "description": "搜索起始目录（可选）"
+      "description": "Search root directory (optional)"
     },
     "case_insensitive": {
       "type": "boolean",
-      "description": "忽略大小写（默认 false）",
+      "description": "Case-insensitive matching (default: false)",
       "default": false
     },
     "context_lines": {
       "type": "integer",
-      "description": "匹配行上下文的行数（可选，default 0）"
+      "description": "Number of context lines around matches (optional, default 0)"
     }
   },
   "required": ["pattern"]
@@ -143,16 +143,16 @@ var lsSchema = json.RawMessage(`{
   "properties": {
     "path": {
       "type": "string",
-      "description": "目录路径（可选，默认项目根目录）"
+      "description": "Directory path (optional, default: project root)"
     },
     "depth": {
       "type": "integer",
-      "description": "递归深度（可选，默认 1）",
+      "description": "Recursion depth (optional, default: 1)",
       "default": 1
     },
     "working_dir": {
       "type": "string",
-      "description": "工作目录（可选，默认项目根目录）。path 为相对路径时基于此目录解析"
+      "description": "Working directory (optional, default: project root). Resolves relative path against this directory"
     }
   },
   "required": []
@@ -163,15 +163,15 @@ var webFetchSchema = json.RawMessage(`{
   "properties": {
     "url": {
       "type": "string",
-      "description": "要获取的 URL（仅支持 http/https）"
+      "description": "URL to fetch (http/https only)"
     },
     "max_size": {
       "type": "integer",
-      "description": "最大响应字节数（可选，默认 1MB，最大 5MB）"
+      "description": "Maximum response size in bytes (optional, default: 1MB, max: 5MB)"
     },
     "timeout_ms": {
       "type": "integer",
-      "description": "超时时间（毫秒，可选，默认 30000，最大 120000）"
+      "description": "Timeout in milliseconds (optional, default: 30000, max: 120000)"
     }
   },
   "required": ["url"]

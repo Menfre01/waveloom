@@ -457,27 +457,26 @@ func parseExitCode(output string) int {
 }
 
 // parseDiagnosticSummary 从 lsp_diagnostic 输出首行提取诊断计数。
-// 格式: "诊断结果：N 条 (E 错误, W 警告, I 信息, H 提示)"
-// 无诊断时为 "✓ 无诊断信息"，返回 -1。
+// 格式: "N diagnostics (E errors, W warnings, I info, H hints)"
+// 无诊断时为 "✓ No diagnostics"，返回 -1。
 func parseDiagnosticSummary(output string) (total, errors, warnings, infos, hints int) {
 	firstLine := strings.SplitN(output, "\n", 2)[0]
-	if strings.Contains(firstLine, "无诊断信息") {
+	if strings.Contains(firstLine, "No diagnostics") {
 		return -1, 0, 0, 0, 0
 	}
 	// 提取总数
 	total = -1
-	if idx := strings.Index(firstLine, "："); idx >= 0 {
-		after := firstLine[idx+len("："):]
-		totalStr := takeDigits(strings.TrimSpace(after))
+	if idx := strings.Index(firstLine, " diagnostics"); idx >= 0 {
+		totalStr := takeDigits(strings.TrimSpace(firstLine[:idx]))
 		if totalStr != "" {
 			total = atoi(totalStr)
 		}
 	}
 	// 提取分类计数
-	errors = extractParenInt(firstLine, "错误")
-	warnings = extractParenInt(firstLine, "警告")
-	infos = extractParenInt(firstLine, "信息")
-	hints = extractParenInt(firstLine, "提示")
+	errors = extractParenInt(firstLine, "errors")
+	warnings = extractParenInt(firstLine, "warnings")
+	infos = extractParenInt(firstLine, "info")
+	hints = extractParenInt(firstLine, "hints")
 	return
 }
 

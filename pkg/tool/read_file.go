@@ -25,7 +25,7 @@ type ReadFileParams struct {
 type ReadFile struct{}
 
 func (t *ReadFile) Name() string         { return "read_file" }
-func (t *ReadFile) Description() string  { return "读取文件内容，返回带行号的文本。支持 offset 和 limit 参数读取部分内容。" }
+func (t *ReadFile) Description() string  { return "Read a file with line numbers. Supports offset and limit parameters to read partial content." }
 func (t *ReadFile) Schema() json.RawMessage { return readFileSchema }
 func (t *ReadFile) ConcurrentSafe() bool { return true }
 
