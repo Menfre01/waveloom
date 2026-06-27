@@ -28,7 +28,7 @@ type LsParams struct {
 type Ls struct{}
 
 func (t *Ls) Name() string            { return "ls" }
-func (t *Ls) Description() string     { return "列出目录中的文件和子目录。目录以 / 后缀标识，支持递归深度控制（depth 参数，默认 1）。" }
+func (t *Ls) Description() string     { return "List files and subdirectories in a directory. Directories are suffixed with /. Supports recursive depth control (depth parameter, default 1)." }
 func (t *Ls) Schema() json.RawMessage { return lsSchema }
 func (t *Ls) ConcurrentSafe() bool    { return true }
 

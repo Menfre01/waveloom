@@ -41,13 +41,13 @@ func (t *WebFetch) ConcurrentSafe() bool { return true }
 
 func (t *WebFetch) Description() string {
 	return strings.Join([]string{
-		"获取指定 URL 的内容并返回文本。用于查阅在线文档、API 参考、包注册信息等。",
+		"Fetch content from a URL and return text. Use for consulting online docs, API references, package registries, etc.",
 		"",
-		"仅支持文本类内容（text/*, application/json, application/xml, application/javascript）。",
-		"HTML 页面会自动提取文本内容。",
-		"二进制内容（图片、视频等）会被拒绝。",
+		"Only text-based content is supported (text/*, application/json, application/xml, application/javascript).",
+		"HTML pages are automatically stripped to plain text.",
+		"Binary content (images, videos, etc.) is rejected.",
 		"",
-		"注意：此工具仅发起 GET 请求，不会修改任何远程资源。",
+		"Note: this tool only makes GET requests, and does not modify any remote resources.",
 	}, " ")
 }
 
