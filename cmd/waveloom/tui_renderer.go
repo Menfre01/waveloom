@@ -541,6 +541,7 @@ func parseWebFetchBody(output string) string {
 // renderLSPDiagnosticFull 渲染 lsp_diagnostic 的展开态输出。
 // 首行摘要着色，后续条目按严重级别着色（error=红, warning=金, info=灰, hint=弱）。
 func renderLSPDiagnosticFull(sb *strings.Builder, result string, textWidth int, indent string) {
+	wrapped := 0
 	lines := strings.Split(result, "\n")
 	for i, line := range lines {
 		styled := line
@@ -556,9 +557,16 @@ func renderLSPDiagnosticFull(sb *strings.Builder, result string, textWidth int, 
 			styled = styleToolPreview.Render(line)
 		}
 		for _, wl := range wrapLine(styled, textWidth) {
+			if wrapped >= maxExpandedWrapped {
+				sb.WriteString(indent)
+				sb.WriteString(styleToolPreviewHint.Render(fmt.Sprintf("... (truncated to %d lines)", maxExpandedWrapped)))
+				sb.WriteString("\n")
+				return
+			}
 			sb.WriteString(indent)
 			sb.WriteString(wl)
 			sb.WriteString("\n")
+			wrapped++
 		}
 	}
 }
@@ -566,6 +574,7 @@ func renderLSPDiagnosticFull(sb *strings.Builder, result string, textWidth int, 
 // renderLSPLocationFull 渲染 lsp_definition / lsp_references 的展开态输出。
 // 首行总结着色，后续条目中等亮度。
 func renderLSPLocationFull(sb *strings.Builder, result string, textWidth int, indent string) {
+	wrapped := 0
 	lines := strings.Split(result, "\n")
 	for i, line := range lines {
 		styled := line
@@ -573,36 +582,57 @@ func renderLSPLocationFull(sb *strings.Builder, result string, textWidth int, in
 			styled = styleHeaderAccent.Render(line)
 		}
 		for _, wl := range wrapLine(styled, textWidth) {
+			if wrapped >= maxExpandedWrapped {
+				sb.WriteString(indent)
+				sb.WriteString(styleToolPreviewHint.Render(fmt.Sprintf("... (truncated to %d lines)", maxExpandedWrapped)))
+				sb.WriteString("\n")
+				return
+			}
 			sb.WriteString(indent)
 			sb.WriteString(wl)
 			sb.WriteString("\n")
+			wrapped++
 		}
 	}
 }
 
 // renderLSPHoverFull 渲染 lsp_hover 的展开态输出（Markdown 类型签名 + 文档）。
 func renderLSPHoverFull(sb *strings.Builder, result string, textWidth int, indent string) {
+	wrapped := 0
 	lines := strings.Split(result, "\n")
 	for _, line := range lines {
 		for _, wl := range wrapLine(line, textWidth) {
+			if wrapped >= maxExpandedWrapped {
+				sb.WriteString(indent)
+				sb.WriteString(styleToolPreviewHint.Render(fmt.Sprintf("... (truncated to %d lines)", maxExpandedWrapped)))
+				sb.WriteString("\n")
+				return
+			}
 			sb.WriteString(indent)
 			sb.WriteString(styleToolExpanded.Render(wl))
 			sb.WriteString("\n")
+			wrapped++
 		}
 	}
 }
 
 // renderWebFetchFull 渲染 web_fetch 的展开态输出。头部元数据着色，正文默认样式。
 func renderWebFetchFull(sb *strings.Builder, result string, textWidth int, indent string) {
+	wrapped := 0
+
 	// 分离头部与正文
 	parts := strings.SplitN(result, "\n\n", 2)
 	headerLines := strings.Split(parts[0], "\n")
 	for _, line := range headerLines {
 		styled := styleHeaderAccent.Render(line)
 		for _, wl := range wrapLine(styled, textWidth) {
+			if wrapped >= maxExpandedWrapped {
+				goto truncate
+			}
 			sb.WriteString(indent)
 			sb.WriteString(wl)
 			sb.WriteString("\n")
+			wrapped++
 		}
 	}
 	// 空行分隔
@@ -612,25 +642,24 @@ func renderWebFetchFull(sb *strings.Builder, result string, textWidth int, inden
 	if len(parts) > 1 {
 		body := strings.TrimSpace(parts[1])
 		bodyLines := strings.Split(body, "\n")
-		maxLines := 500
-		truncated := false
-		if len(bodyLines) > maxLines {
-			bodyLines = bodyLines[:maxLines]
-			truncated = true
-		}
 		for _, line := range bodyLines {
 			for _, wl := range wrapLine(line, textWidth) {
+				if wrapped >= maxExpandedWrapped {
+					goto truncate
+				}
 				sb.WriteString(indent)
 				sb.WriteString(wl)
 				sb.WriteString("\n")
+				wrapped++
 			}
 		}
-		if truncated {
-			sb.WriteString(indent)
-			sb.WriteString(styleToolPreviewHint.Render(fmt.Sprintf("... (truncated to %d lines)", maxLines)))
-			sb.WriteString("\n")
-		}
 	}
+	return
+
+truncate:
+	sb.WriteString(indent)
+	sb.WriteString(styleToolPreviewHint.Render(fmt.Sprintf("... (truncated to %d lines)", maxExpandedWrapped)))
+	sb.WriteString("\n")
 }
 
 // ---------------------------------------------------------------------------
@@ -1194,6 +1223,10 @@ func renderToolPara(sb *strings.Builder, p *Paragraph, ctx ViewportCtx) {
 	}
 }
 
+// maxPreviewWrapped 是折叠预览的最大包装后行数。限制 wrapLine 膨胀后的实际显示行数，
+// 防止单条超长行（如 100KB 无换行 JSON）撑满折叠预览。
+const maxPreviewWrapped = 5
+
 // renderToolPreview 渲染工具输出的默认预览行（折叠态）。indent 由上层传入以对齐摘要行前缀。
 func renderToolPreview(sb *strings.Builder, p *Paragraph, textWidth int, indent string) {
 	result := stripToolStatusHeader(p.ToolResult)
@@ -1207,13 +1240,27 @@ func renderToolPreview(sb *strings.Builder, p *Paragraph, textWidth int, indent 
 		contentWidth = 1
 	}
 
+	// writeWrappedPreview 将 line 包装后写入 sb，受 wrapped 计数器限制。
+	// 返回是否因达到上限而截断。
+	writeWrappedPreview := func(line string, lineStyle lipgloss.Style, wrapped *int) (truncated bool) {
+		for _, wl := range wrapLine(line, contentWidth) {
+			if *wrapped >= maxPreviewWrapped {
+				return true
+			}
+			sb.WriteString(indent)
+			sb.WriteString(lineStyle.Render("│ " + wl))
+			sb.WriteString("\n")
+			*wrapped++
+		}
+		return false
+	}
+
+	wrapped := 0
+	truncated := false
+
 	switch p.ToolName {
 	case "write_file", "edit_file":
 		lines := strings.Split(result, "\n")
-		maxPreview := 3
-		if len(lines) > maxPreview {
-			lines = lines[:maxPreview]
-		}
 		for _, line := range lines {
 			lineStyle := styleToolPreview
 			if strings.HasPrefix(line, "+") && !strings.HasPrefix(line, "+++") {
@@ -1221,60 +1268,37 @@ func renderToolPreview(sb *strings.Builder, p *Paragraph, textWidth int, indent 
 			} else if strings.HasPrefix(line, "-") && !strings.HasPrefix(line, "---") {
 				lineStyle = styleDiffDel
 			}
-			for _, wl := range wrapLine(line, contentWidth) {
-				sb.WriteString(indent)
-				sb.WriteString(lineStyle.Render("│ " + wl))
-				sb.WriteString("\n")
+			if writeWrappedPreview(line, lineStyle, &wrapped) {
+				truncated = true
+				break
 			}
 		}
-
 
 	case "shell":
 		lines := strings.Split(result, "\n")
-		maxPreview := 5
-		if len(lines) > maxPreview {
-			lines = lines[:maxPreview]
-		}
 		for _, line := range lines {
-			// shell 输出自带 5 空格缩进，去除后由 TUI 统一控制对齐
 			line = strings.TrimLeft(line, " ")
-			for _, wl := range wrapLine(line, contentWidth) {
-				sb.WriteString(indent)
-				sb.WriteString(styleToolPreview.Render("│ " + wl))
-				sb.WriteString("\n")
+			if writeWrappedPreview(line, styleToolPreview, &wrapped) {
+				truncated = true
+				break
 			}
-		}
-		if len(strings.Split(result, "\n")) > maxPreview {
-			sb.WriteString(indent)
-			sb.WriteString(styleToolPreviewHint.Render("... (Ctrl+O 展开全部)"))
-			sb.WriteString("\n")
 		}
 
 	// read_file, grep, search_file, ls — 不显示预览
 	case "lsp_diagnostic":
 		lines := strings.Split(result, "\n")
-		// 跳过首行摘要
 		start := 1
 		if len(lines) > 0 && strings.HasPrefix(lines[0], "诊断结果") {
 			start = 1
 		}
-		count := 0
-		maxPreview := 3
 		for _, line := range lines[start:] {
-			if line == "" || count >= maxPreview {
+			if line == "" {
+				continue
+			}
+			if writeWrappedPreview(line, styleToolPreview, &wrapped) {
+				truncated = true
 				break
 			}
-			for _, wl := range wrapLine(line, contentWidth) {
-				sb.WriteString(indent)
-				sb.WriteString(styleToolPreview.Render("│ " + wl))
-				sb.WriteString("\n")
-			}
-			count++
-		}
-		if len(lines[start:]) > maxPreview {
-			sb.WriteString(indent)
-			sb.WriteString(styleToolPreviewHint.Render("... (Ctrl+O 展开全部)"))
-			sb.WriteString("\n")
 		}
 	case "lsp_definition", "lsp_references":
 		lines := strings.Split(result, "\n")
@@ -1285,61 +1309,49 @@ func renderToolPreview(sb *strings.Builder, p *Paragraph, textWidth int, indent 
 				continue
 			}
 			if i >= start && strings.TrimSpace(line) != "" {
-				for _, wl := range wrapLine(line, contentWidth) {
-					sb.WriteString(indent)
-					sb.WriteString(styleToolPreview.Render("│ " + wl))
-					sb.WriteString("\n")
+				if writeWrappedPreview(line, styleToolPreview, &wrapped) {
+					truncated = true
+					break
 				}
 			}
 		}
 	case "lsp_hover":
 		lines := strings.Split(result, "\n")
-		maxPreview := 4
-		for i, line := range lines {
-			if i >= maxPreview {
-				break
-			}
+		for _, line := range lines {
 			if line == "" {
 				continue
 			}
-			for _, wl := range wrapLine(line, contentWidth) {
-				sb.WriteString(indent)
-				sb.WriteString(styleToolPreview.Render("│ " + wl))
-				sb.WriteString("\n")
+			if writeWrappedPreview(line, styleToolPreview, &wrapped) {
+				truncated = true
+				break
 			}
-		}
-		if len(lines) > maxPreview {
-			sb.WriteString(indent)
-			sb.WriteString(styleToolPreviewHint.Render("... (Ctrl+O 展开全部)"))
-			sb.WriteString("\n")
 		}
 	case "web_fetch":
 		body := parseWebFetchBody(result)
 		lines := strings.Split(body, "\n")
-		maxPreview := 5
-		for i, line := range lines {
-			if i >= maxPreview {
-				break
-			}
+		for _, line := range lines {
 			if line == "" {
 				continue
 			}
-			for _, wl := range wrapLine(line, contentWidth) {
-				sb.WriteString(indent)
-				sb.WriteString(styleToolPreview.Render("│ " + wl))
-				sb.WriteString("\n")
+			if writeWrappedPreview(line, styleToolPreview, &wrapped) {
+				truncated = true
+				break
 			}
-		}
-		if len(lines) > maxPreview {
-			sb.WriteString(indent)
-			sb.WriteString(styleToolPreviewHint.Render("... (Ctrl+O 展开全部)"))
-			sb.WriteString("\n")
 		}
 	default:
 		// 无预览
 	}
+
+	if truncated {
+		sb.WriteString(indent)
+		sb.WriteString(styleToolPreviewHint.Render("... (Ctrl+O 展开全部)"))
+		sb.WriteString("\n")
+	}
 }
 
+
+// maxExpandedWrapped 是展开态的最大包装后行数。防止单条超长行在展开时产生海量 viewport 行。
+const maxExpandedWrapped = 2000
 
 // renderToolFullOutput 渲染工具的完整输出（展开态）。indent 由上层传入以对齐摘要行前缀。
 func renderToolFullOutput(sb *strings.Builder, p *Paragraph, textWidth int, indent string) {
@@ -1352,6 +1364,9 @@ func renderToolFullOutput(sb *strings.Builder, p *Paragraph, textWidth int, inde
 		return
 	}
 
+	wrapped := 0
+	truncated := false
+
 	switch p.ToolName {
 	case "read_file":
 		codeTextWidth := textWidth - 9
@@ -1361,8 +1376,12 @@ func renderToolFullOutput(sb *strings.Builder, p *Paragraph, textWidth int, inde
 		lines := strings.Split(result, "\n")
 		for i, line := range lines {
 			lineNum := styleMuted.Render(fmt.Sprintf("%4d │", i+1))
-			wrapped := wrapLine(line, codeTextWidth)
-			for j, wl := range wrapped {
+			wlines := wrapLine(line, codeTextWidth)
+			for j, wl := range wlines {
+				if wrapped >= maxExpandedWrapped {
+					truncated = true
+					break
+				}
 				sb.WriteString(indent)
 				if j == 0 {
 					sb.WriteString(lineNum)
@@ -1372,12 +1391,21 @@ func renderToolFullOutput(sb *strings.Builder, p *Paragraph, textWidth int, inde
 				sb.WriteString(" ")
 				sb.WriteString(styleMDCode.Render(wl))
 				sb.WriteString("\n")
+				wrapped++
+			}
+			if truncated {
+				break
 			}
 		}
 
 	case "write_file", "edit_file":
 		for _, line := range strings.Split(result, "\n") {
-			for _, wl := range wrapLine(line, textWidth) {
+			wlines := wrapLine(line, textWidth)
+			for _, wl := range wlines {
+				if wrapped >= maxExpandedWrapped {
+					truncated = true
+					break
+				}
 				sb.WriteString(indent)
 				if strings.HasPrefix(wl, "@@") {
 					sb.WriteString(styleHeaderAccent.Render(wl))
@@ -1389,55 +1417,76 @@ func renderToolFullOutput(sb *strings.Builder, p *Paragraph, textWidth int, inde
 					sb.WriteString(styleToolExpanded.Render(wl))
 				}
 				sb.WriteString("\n")
+				wrapped++
+			}
+			if truncated {
+				break
 			}
 		}
 
 	case "shell":
 		rawLines := strings.Split(result, "\n")
-		maxExpanded := 500 // shell 展开态最大显示行数
-		truncated := false
-		if len(rawLines) > maxExpanded {
-			rawLines = rawLines[:maxExpanded]
-			truncated = true
-		}
 		for _, line := range rawLines {
-			// shell 输出自带 5 空格缩进，去除后由 TUI 统一控制对齐
 			line = strings.TrimLeft(line, " ")
-			for _, wl := range wrapLine(line, textWidth) {
+			wlines := wrapLine(line, textWidth)
+			for _, wl := range wlines {
+				if wrapped >= maxExpandedWrapped {
+					truncated = true
+					break
+				}
 				sb.WriteString(indent)
 				sb.WriteString(wl)
 				sb.WriteString("\n")
+				wrapped++
 			}
-		}
-		if truncated {
-			sb.WriteString(indent)
-			sb.WriteString(styleToolPreviewHint.Render(fmt.Sprintf("... (truncated to %d lines)", maxExpanded)))
-			sb.WriteString("\n")
+			if truncated {
+				break
+			}
 		}
 
 	case "grep", "search_file", "ls":
 
 	case "lsp_diagnostic":
 		renderLSPDiagnosticFull(sb, result, textWidth, indent)
+		return
 	case "lsp_definition", "lsp_references":
 		renderLSPLocationFull(sb, result, textWidth, indent)
+		return
 	case "lsp_hover":
 		renderLSPHoverFull(sb, result, textWidth, indent)
+		return
 	case "web_fetch":
 		renderWebFetchFull(sb, result, textWidth, indent)
+		return
 
 	default:
 		for _, line := range strings.Split(result, "\n") {
-			for _, wl := range wrapLine(line, textWidth) {
+			wlines := wrapLine(line, textWidth)
+			for _, wl := range wlines {
+				if wrapped >= maxExpandedWrapped {
+					truncated = true
+					break
+				}
 				sb.WriteString(indent)
 				sb.WriteString(wl)
 				sb.WriteString("\n")
+				wrapped++
+			}
+			if truncated {
+				break
 			}
 		}
 	}
+
+	if truncated {
+		sb.WriteString(indent)
+		sb.WriteString(styleToolPreviewHint.Render(fmt.Sprintf("... (truncated to %d lines)", maxExpandedWrapped)))
+		sb.WriteString("\n")
+	}
 }
 
-// renderDiffPreview 渲染 diff 的折叠预览（前 3 行）。
+// renderDiffPreview 渲染 diff 的折叠预览。受 maxPreviewWrapped 约束，
+// 防止单条超长行撑满预览。
 func renderDiffPreview(sb *strings.Builder, hunks []tool.DiffHunk, textWidth int, indent string) {
 	if len(hunks) == 0 {
 		return
@@ -1448,30 +1497,40 @@ func renderDiffPreview(sb *strings.Builder, hunks []tool.DiffHunk, textWidth int
 		contentWidth = 1
 	}
 
-	shown := 0
-	maxPreview := 3
+	wrapped := 0
+	truncated := false
 	for _, h := range hunks {
 		for _, l := range h.Lines {
-			if shown >= maxPreview {
-				sb.WriteString(indent)
-				sb.WriteString(styleToolPreviewHint.Render("... (Ctrl+O 展开全部)"))
-				sb.WriteString("\n")
-				return
-			}
 			style := lineStyle(l.Kind)
 			prefix := linePrefix(l.Kind)
 			line := prefix + l.Content
 			for _, wl := range wrapLine(line, contentWidth) {
+				if wrapped >= maxPreviewWrapped {
+					truncated = true
+					break
+				}
 				sb.WriteString(indent)
 				sb.WriteString(style.Render("│ " + wl))
 				sb.WriteString("\n")
+				wrapped++
 			}
-			shown++
+			if truncated {
+				break
+			}
 		}
+		if truncated {
+			break
+		}
+	}
+	if truncated {
+		sb.WriteString(indent)
+		sb.WriteString(styleToolPreviewHint.Render("... (Ctrl+O 展开全部)"))
+		sb.WriteString("\n")
 	}
 }
 
 // renderDiffView 渲染完整的统一 diff 视图（展开态），带行号列和背景着色。
+// 受 maxExpandedWrapped 约束，防止超长行导致海量输出。
 func renderDiffView(sb *strings.Builder, hunks []tool.DiffHunk, textWidth int, indent string) {
 	if len(hunks) == 0 {
 		return
@@ -1488,6 +1547,9 @@ func renderDiffView(sb *strings.Builder, hunks []tool.DiffHunk, textWidth int, i
 			numWidth = w
 		}
 	}
+
+	wrapped := 0
+	truncated := false
 
 	for hi, h := range hunks {
 		// hunk 之间空行分隔，第一个前不加空行
@@ -1512,8 +1574,12 @@ func renderDiffView(sb *strings.Builder, hunks []tool.DiffHunk, textWidth int, i
 			if codeWidth < 1 {
 				codeWidth = 1
 			}
-			wrapped := wrapLine(l.Content, codeWidth)
-			for wi, wl := range wrapped {
+			wlines := wrapLine(l.Content, codeWidth)
+			for wi, wl := range wlines {
+				if wrapped >= maxExpandedWrapped {
+					truncated = true
+					break
+				}
 				sb.WriteString(indent)
 				if wi == 0 {
 					// 首行：行号 + 前缀 + 内容
@@ -1533,8 +1599,21 @@ func renderDiffView(sb *strings.Builder, hunks []tool.DiffHunk, textWidth int, i
 					sb.WriteString(styleContent.Render("  " + wl))
 				}
 				sb.WriteString("\n")
+				wrapped++
+			}
+			if truncated {
+				break
 			}
 		}
+		if truncated {
+			break
+		}
+	}
+
+	if truncated {
+		sb.WriteString(indent)
+		sb.WriteString(styleToolPreviewHint.Render(fmt.Sprintf("... (truncated to %d lines)", maxExpandedWrapped)))
+		sb.WriteString("\n")
 	}
 }
 
