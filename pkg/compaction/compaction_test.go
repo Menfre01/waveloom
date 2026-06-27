@@ -104,7 +104,7 @@ func TestDecisionSetToList_RoundTrip(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestTruncateByStrategy_ShortContent(t *testing.T) {
-	s := truncationStrategy{maxLines: 100, headLines: 50, tailLines: 10}
+	s := truncationStrategy{maxLines: 100, headLines: 50, tailLines: 10, maxLineChars: 2000, maxTotalChars: 20000}
 	content := "line1\nline2\nline3"
 	result, did := truncateByStrategy(content, s)
 	if did {
@@ -116,7 +116,7 @@ func TestTruncateByStrategy_ShortContent(t *testing.T) {
 }
 
 func TestTruncateByStrategy_LongContent(t *testing.T) {
-	s := truncationStrategy{maxLines: 60, headLines: 20, tailLines: 30}
+	s := truncationStrategy{maxLines: 60, headLines: 20, tailLines: 30, maxLineChars: 2000, maxTotalChars: 20000}
 	lines := make([]string, 200)
 	for i := range lines {
 		lines[i] = "line"
@@ -131,8 +131,64 @@ func TestTruncateByStrategy_LongContent(t *testing.T) {
 	}
 }
 
+func TestTruncateByStrategy_SingleLongLine(t *testing.T) {
+	// 单行内容未超过行数限制，但单行字符数超限 → 应触发行截断
+	s := truncationStrategy{maxLines: 200, headLines: 150, tailLines: 10, maxLineChars: 100, maxTotalChars: 0}
+	content := strings.Repeat("x", 5000)
+	result, did := truncateByStrategy(content, s)
+	if !did {
+		t.Fatal("should truncate single long line")
+	}
+	if !strings.Contains(result, "行截断") {
+		t.Fatalf("expected line truncation marker, got: %s", result[:200])
+	}
+	if len(result) >= len(content) {
+		t.Fatal("result should be shorter than original")
+	}
+}
+
+func TestTruncateByStrategy_TotalChars(t *testing.T) {
+	// 多行内容，行数和单行长度均未超限，但总字符数超限 → 应触发总字符截断
+	s := truncationStrategy{maxLines: 200, headLines: 150, tailLines: 10, maxLineChars: 2000, maxTotalChars: 500}
+	lines := make([]string, 30)
+	for i := range lines {
+		lines[i] = strings.Repeat("x", 100)
+	}
+	content := strings.Join(lines, "\n")
+	result, did := truncateByStrategy(content, s)
+	if !did {
+		t.Fatal("should truncate by total chars")
+	}
+	if !strings.Contains(result, "内容截断") {
+		t.Fatalf("expected total truncation marker, got: %s", result)
+	}
+	if len(result) >= len(content) {
+		t.Fatal("result should be shorter than original")
+	}
+}
+
+func TestTruncateByStrategy_TotalCharsAtNewline(t *testing.T) {
+	// 总字符截断应在换行边界处切断
+	s := truncationStrategy{maxLines: 200, headLines: 150, tailLines: 10, maxLineChars: 2000, maxTotalChars: 500}
+	// 构造内容使 cutPoint 落在行中间
+	lines := make([]string, 20)
+	for i := range lines {
+		lines[i] = strings.Repeat("x", 60) // 每行 61 字符（含 \n）= 1220 总
+	}
+	content := strings.Join(lines, "\n")
+	result, did := truncateByStrategy(content, s)
+	if !did {
+		t.Fatal("should truncate")
+	}
+	// 截断点应在换行处
+	truncatedPart := result[:strings.Index(result, "[... 内容截断")]
+	if strings.Count(truncatedPart, "\n") == 0 {
+		t.Fatal("expected truncation at newline boundary")
+	}
+}
+
 func TestTruncateByStrategy_Empty(t *testing.T) {
-	s := truncationStrategy{maxLines: 10, headLines: 5, tailLines: 2}
+	s := truncationStrategy{maxLines: 10, headLines: 5, tailLines: 2, maxLineChars: 100, maxTotalChars: 500}
 	result, did := truncateByStrategy("", s)
 	if did {
 		t.Fatal("should not truncate empty content")
@@ -143,7 +199,7 @@ func TestTruncateByStrategy_Empty(t *testing.T) {
 }
 
 func TestTruncateByStrategy_NoTail(t *testing.T) {
-	s := truncationStrategy{maxLines: 60, headLines: 50, tailLines: 0}
+	s := truncationStrategy{maxLines: 60, headLines: 50, tailLines: 0, maxLineChars: 2000, maxTotalChars: 20000}
 	lines := make([]string, 100)
 	for i := range lines {
 		lines[i] = "line"
@@ -155,6 +211,28 @@ func TestTruncateByStrategy_NoTail(t *testing.T) {
 	}
 	if strings.Contains(result, "完整结果") {
 		t.Fatal("tail=0 should not include '完整结果' text")
+	}
+}
+
+func TestTruncateByStrategy_MixedLongAndManyLines(t *testing.T) {
+	// 行数超限 + 某行超长 → 行数截断优先（更语义化）
+	s := truncationStrategy{maxLines: 60, headLines: 20, tailLines: 30, maxLineChars: 50, maxTotalChars: 50000}
+	lines := make([]string, 200)
+	for i := range lines {
+		if i == 10 {
+			lines[i] = strings.Repeat("LONG", 500) // 2000 字符，远超 maxLineChars
+		} else {
+			lines[i] = "normal line"
+		}
+	}
+	content := strings.Join(lines, "\n")
+	result, did := truncateByStrategy(content, s)
+	if !did {
+		t.Fatal("should truncate")
+	}
+	// 行数截断优先，应包含 "省略" 而非 "行截断"
+	if !strings.Contains(result, "省略") {
+		t.Fatalf("line-count truncation should take priority: %s", result[:300])
 	}
 }
 

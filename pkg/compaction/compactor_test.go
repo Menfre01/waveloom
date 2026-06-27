@@ -607,6 +607,25 @@ func TestCompressUserCodeBlocks_MultipleFences(t *testing.T) {
 	}
 }
 
+func TestCompressUserCodeBlocks_SingleLongLine(t *testing.T) {
+	// fence 内只有一行但超过 2000 字符 → 应触发单行截断
+	longLine := strings.Repeat("x", 5000)
+	content := "before\n```\n" + longLine + "\n```\nafter"
+	result, did := compressUserCodeBlocks(content)
+	if !did {
+		t.Fatal("expected compression for fence with single super-long line")
+	}
+	if !strings.Contains(result, "单行截断") {
+		t.Fatalf("expected line truncation marker, got: %s", result[:200])
+	}
+	if strings.Contains(result, longLine) {
+		t.Fatal("long line should be truncated")
+	}
+	if !strings.Contains(result, "before") || !strings.Contains(result, "after") {
+		t.Fatal("expected surrounding text preserved")
+	}
+}
+
 // ---------------------------------------------------------------------------
 // countLeadingBackticks
 // ---------------------------------------------------------------------------
