@@ -88,6 +88,8 @@ var defaultSystemPrompt = fmt.Sprintf(`You are Waveloom %s, a terminal-based cod
 - If rg (ripgrep) is listed in Available tools under ## Environment, prefer it over grep for faster searches; otherwise use grep.
 - When using shell, use the working_dir parameter to set the working directory. Do NOT prepend "cd <path> &&" to the command — this breaks permission pattern matching.
 - After making changes, verify them — compile, run tests, or check diffs where applicable.
+- Before calling any binary via shell, check ## Environment: if it is listed under "Not found", do NOT attempt to call it — use a built-in tool or ask the user to install it.
+- When you have multiple independent read-only operations (read_file, grep, search_file, lsp_*), batch them in a single response as parallel tool calls.
 
 ## Coding standards
 
@@ -657,16 +659,16 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.paras = append(m.paras, Paragraph{
 				Type:      paraSystem,
 				State:     stateDone,
-				Text:      "上下文压缩完成：Tier 3 摘要已生成",
+				Text:      "压缩完成。",
 				NotifKind: notifInfo,
 			})
 			m.trimParas()
 		}
 		if msg.Compaction.HardLimitReached {
-			msgText := "上下文已达上限（98%），后续 LLM 调用已被阻止。使用 /reset 重建会话。"
+			msgText := "上下文已满（98%）。/reset 重建。"
 			msgKind := notifWarn
 			if msg.Compaction.HardLimitReason == "tier3_failures" {
-				msgText = "Tier 3 摘要连续失败已达上限，后续 LLM 调用已被阻止。使用 /reset 重建会话。"
+				msgText = "摘要连续失败。/reset 重建。"
 				msgKind = notifError
 			}
 			m.paras = append(m.paras, Paragraph{
@@ -857,10 +859,10 @@ func (m *model) handleKeyPress(msg tea.KeyPressMsg) (bool, tea.Cmd) {
 			// 硬临界值阻断：上下文已达上限时直接拒绝新 prompt
 			if m.cm.Compactor().LastResult().HardLimitReached {
 				reason := m.cm.Compactor().LastResult().HardLimitReason
-				msg := "上下文已达上限（98%），后续 LLM 调用已被阻止。使用 /reset 重建会话。"
+				msg := "上下文已满（98%）。/reset 重建。"
 				msgKind := notifWarn
 				if reason == "tier3_failures" {
-					msg = "Tier 3 摘要连续失败已达上限，后续 LLM 调用已被阻止。使用 /reset 重建会话。"
+					msg = "摘要连续失败。/reset 重建。"
 					msgKind = notifError
 				}
 				m.paras = append(m.paras, Paragraph{
@@ -1638,7 +1640,7 @@ func (m *model) handleLoopDone(ev agentloop.LoopDone, generation int) {
 			m.hudLatMs = elapsedMs
 		}
 
-		// 捕获 loop 级 token 增量（System 通知需要，归零前保存）
+		// 捕获 loop 级 token 增量
 		loopIn = m.loopPrompt
 		loopOut = m.loopCompl
 
@@ -1695,35 +1697,35 @@ func (m *model) handleLoopDone(ev agentloop.LoopDone, generation int) {
 			m.paras = append(m.paras, Paragraph{
 				Type:      paraSystem,
 				State:     stateDone,
-				Text:      fmt.Sprintf("任务完成（%d轮, %s, ↑%s, ↓%s）", ev.Turn, elapsedStr, shortTokens(loopIn), shortTokens(loopOut)),
+				Text:      fmt.Sprintf("完成（%d轮, %s, ↑%s, ↓%s）", ev.Turn, elapsedStr, shortTokens(loopIn), shortTokens(loopOut)),
 				NotifKind: notifInfo,
 			})
 		case agentloop.ReasonMaxTurns:
 			m.paras = append(m.paras, Paragraph{
 				Type:      paraSystem,
 				State:     stateDone,
-				Text:      fmt.Sprintf("已达到最大轮次限制（%d, %s, ↑%s, ↓%s），输入消息继续对话", ev.Turn, elapsedStr, shortTokens(loopIn), shortTokens(loopOut)),
+				Text:      fmt.Sprintf("已达最大轮次（%d轮, %s, ↑%s, ↓%s）。继续对话。", ev.Turn, elapsedStr, shortTokens(loopIn), shortTokens(loopOut)),
 				NotifKind: notifInfo,
 			})
 		case agentloop.ReasonAborted:
 			m.paras = append(m.paras, Paragraph{
 				Type:      paraSystem,
 				State:     stateDone,
-				Text:      fmt.Sprintf("执行被中断（%s）", elapsedStr),
+				Text:      fmt.Sprintf("已中断（%s）", elapsedStr),
 				NotifKind: notifInfo,
 			})
 		case agentloop.ReasonModelError:
 			m.paras = append(m.paras, Paragraph{
 				Type:      paraSystem,
 				State:     stateDone,
-				Text:      fmt.Sprintf("模型错误（%s）: %v", elapsedStr, ev.Err),
+				Text:      fmt.Sprintf("模型错误（%s, %v）", elapsedStr, ev.Err),
 				NotifKind: notifError,
 			})
 		case agentloop.ReasonToolFatal:
 			m.paras = append(m.paras, Paragraph{
 				Type:      paraSystem,
 				State:     stateDone,
-				Text:      fmt.Sprintf("工具致命错误（%s）: %v", elapsedStr, ev.Err),
+				Text:      fmt.Sprintf("工具错误（%s, %v）", elapsedStr, ev.Err),
 				NotifKind: notifError,
 			})
 		}
@@ -2590,14 +2592,14 @@ func (m *model) renderFooter() string {
 	line1Parts := []string{modelPart, ctxPart}
 	line1 := styleFooter.Width(contentWidth).Render(strings.Join(line1Parts, sep))
 
-	// Line 2: cache + turns + messages + balance + latency
+	// Line 2: cache + turns + messages + latency + balance
 	compactingPart := m.renderCacheRate()
 	turnsPart := styleFooterLabel.Render("Loop") + " " + styleFooterValue.Render(fmt.Sprintf("%d", m.hudTurns))
 	messagesPart := styleFooterLabel.Render("M") + " " + styleFooterValue.Render(fmt.Sprintf("%d", m.hudMessages))
-	balancePart := m.renderBalance()
 	latencyPart := m.renderLatency()
+	balancePart := m.renderBalance()
 
-	line2Parts := []string{compactingPart, turnsPart, messagesPart, balancePart, latencyPart}
+	line2Parts := []string{compactingPart, turnsPart, messagesPart, latencyPart, balancePart}
 	line2Content := strings.Join(line2Parts, sep)
 	line2 := styleFooter.Width(contentWidth).Render(line2Content)
 
