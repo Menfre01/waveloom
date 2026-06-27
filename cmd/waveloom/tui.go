@@ -24,6 +24,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"image/color"
 	"io"
@@ -297,6 +298,8 @@ type model struct {
 
 	contextLimit     int // 上下文窗口 token 上限
 	maxTurns         int // --max-turns（0 = 无限制）
+	toolTimeout      time.Duration // --tool-timeout（0 = 无限制）
+	toolTimeoutSource string      // 超时配置来源（CLI / settings.json / 默认）
 	bypassPerm       bool
 	lastPromptTokens int // ctx bar 实时值（TurnStats → API 真实值，Tier 3 完成 → 归零）
 
@@ -410,7 +413,7 @@ func colorHex(c color.Color) string {
 // ---------------------------------------------------------------------------
 
 // newTUIModel 创建 TUI model，依赖由外部注入（LLM client / tool registry / guard / expander / verboseLog）。
-func newTUIModel(llmClient llm.Client, registry tool.Registry, guard permission.Guard, expander *reference.Expander, modelName string, theme string, verboseLog io.Writer, contextLimit int, maxTurns int) *model {
+func newTUIModel(llmClient llm.Client, registry tool.Registry, guard permission.Guard, expander *reference.Expander, modelName string, theme string, verboseLog io.Writer, contextLimit int, maxTurns int, toolTimeout time.Duration, toolTimeoutSource string) *model {
 	if modelName == "" {
 		modelName = "deepseek-v4"
 	}
@@ -485,6 +488,8 @@ func newTUIModel(llmClient llm.Client, registry tool.Registry, guard permission.
 		hudModel:        normalizeWidth(modelName),
 		contextLimit:    contextLimit,
 		maxTurns:        maxTurns,
+		toolTimeout:     toolTimeout,
+		toolTimeoutSource: toolTimeoutSource,
 		glamourRenderer: glamourR,
 		keys:            defaultKeys,
 		help:            help.New(),
@@ -516,6 +521,7 @@ func (m *model) wireLoop() {
 		UserResponder: &tuiUserResponder{program: m.program, cwd: m.cwd},
 		VerboseWriter: m.verboseLog,
 		Compactor:     m.cm.Compactor(),
+		ToolTimeout:   m.toolTimeout,
 	})
 }
 
@@ -1708,11 +1714,17 @@ func (m *model) handleLoopDone(ev agentloop.LoopDone, generation int) {
 				NotifKind: notifInfo,
 			})
 		case agentloop.ReasonAborted:
+			abortText := fmt.Sprintf("已中断（%s）", elapsedStr)
+			abortKind := notifInfo
+			if m.toolTimeout > 0 && isTimeoutError(ev.Err) {
+				abortText = fmt.Sprintf("工具执行超时（%s %s）%s", m.toolTimeoutSource, formatDuration(m.toolTimeout.Milliseconds()), elapsedStr)
+				abortKind = notifError
+			}
 			m.paras = append(m.paras, Paragraph{
 				Type:      paraSystem,
 				State:     stateDone,
-				Text:      fmt.Sprintf("已中断（%s）", elapsedStr),
-				NotifKind: notifInfo,
+				Text:      abortText,
+				NotifKind: abortKind,
 			})
 		case agentloop.ReasonModelError:
 			m.paras = append(m.paras, Paragraph{
@@ -1722,10 +1734,14 @@ func (m *model) handleLoopDone(ev agentloop.LoopDone, generation int) {
 				NotifKind: notifError,
 			})
 		case agentloop.ReasonToolFatal:
+			text := fmt.Sprintf("工具错误（%s, %v）", elapsedStr, ev.Err)
+			if m.toolTimeout > 0 && isTimeoutError(ev.Err) {
+				text = fmt.Sprintf("工具执行超时（%s %s）%s", m.toolTimeoutSource, formatDuration(m.toolTimeout.Milliseconds()), elapsedStr)
+			}
 			m.paras = append(m.paras, Paragraph{
 				Type:      paraSystem,
 				State:     stateDone,
-				Text:      fmt.Sprintf("工具错误（%s, %v）", elapsedStr, ev.Err),
+				Text:      text,
 				NotifKind: notifError,
 			})
 		}
@@ -1746,6 +1762,17 @@ func (m *model) handleLoopDone(ev agentloop.LoopDone, generation int) {
 			}
 		}()
 	}
+}
+
+// isTimeoutError 判断错误是否为超时引起（context deadline exceeded 或包含 deadline exceeded 字样）。
+func isTimeoutError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	return strings.Contains(err.Error(), "deadline exceeded")
 }
 
 // ---------------------------------------------------------------------------
@@ -2863,8 +2890,8 @@ func (m *model) syncThemeComponents() {
 }
 
 // runTUI 启动交互式 TUI 模式。依赖由 main() 统一初始化后传入，无需重复创建。
-func runTUI(llmClient llm.Client, registry tool.Registry, guard permission.Guard, expander *reference.Expander, modelName string, theme string, verboseLog io.Writer, contextLimit int, maxTurns int, bypassPerm bool, ctxMgr *ctxpkg.ContextManager, isResume bool, sessionDir string) {
-	m := newTUIModel(llmClient, registry, guard, expander, modelName, theme, verboseLog, contextLimit, maxTurns)
+func runTUI(llmClient llm.Client, registry tool.Registry, guard permission.Guard, expander *reference.Expander, modelName string, theme string, verboseLog io.Writer, contextLimit int, maxTurns int, toolTimeout time.Duration, toolTimeoutSource string, bypassPerm bool, ctxMgr *ctxpkg.ContextManager, isResume bool, sessionDir string) {
+	m := newTUIModel(llmClient, registry, guard, expander, modelName, theme, verboseLog, contextLimit, maxTurns, toolTimeout, toolTimeoutSource)
 	m.bypassPerm = bypassPerm
 	// 用外部创建的 ContextManager 替换 newTUIModel 内部创建的
 	m.cm = ctxMgr

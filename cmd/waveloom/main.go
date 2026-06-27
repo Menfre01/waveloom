@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"runtime"
 
+	"waveloom/pkg/agentloop"
 	"waveloom/pkg/compaction"
 	ctxpkg "waveloom/pkg/context"
 	"waveloom/pkg/environment"
@@ -135,6 +136,24 @@ func main() {
 	if cs := compaction.LoadCompactionSettings(projectPath); cs != nil {
 		cs.ApplyToConfig(&compactionConfig)
 	}
+
+	// 合并工具超时：优先级 CLI > project settings.json > global settings.json > 默认 10m
+	if cfg.ToolTimeout == 0 {
+		if d, ok, _ := agentloop.LoadToolTimeout(projectPath); ok {
+			cfg.ToolTimeout = d
+			cfg.ToolTimeoutSource = "settings.json"
+		}
+	}
+	if cfg.ToolTimeout == 0 {
+		if d, ok, _ := agentloop.LoadToolTimeout(globalPath); ok {
+			cfg.ToolTimeout = d
+			cfg.ToolTimeoutSource = "~/.waveloom/settings.json"
+		}
+	}
+	if cfg.ToolTimeout == 0 {
+		cfg.ToolTimeout = agentloop.DefaultToolTimeout
+		cfg.ToolTimeoutSource = "默认"
+	}
 	ctxMgr := ctxpkg.NewWithCompaction(systemPrompt, compactionConfig, compaction.NewCompactionSummarizer(summarizerClient, 0))
 
 	// 13. 将 AGENTS.md 作为 user 消息注入（对标 Codex UserInstructions fragment）
@@ -174,7 +193,7 @@ func main() {
 
 	// 15. 分支：无 prompt → 交互式 TUI，有 prompt → 单次执行
 	if cfg.OneShot == "" {
-		runTUI(llmClient, registry, guard, expander, cfg.Model, cfg.Theme, verboseLog, cfg.ContextLimit, cfg.MaxTurns, cfg.BypassPerm, ctxMgr, isResume, sessionDir)
+		runTUI(llmClient, registry, guard, expander, cfg.Model, cfg.Theme, verboseLog, cfg.ContextLimit, cfg.MaxTurns, cfg.ToolTimeout, cfg.ToolTimeoutSource, cfg.BypassPerm, ctxMgr, isResume, sessionDir)
 		return
 	}
 
