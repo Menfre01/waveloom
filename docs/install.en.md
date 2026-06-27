@@ -14,42 +14,35 @@ Requires: [DeepSeek API Key](https://platform.deepseek.com/api_keys).
 
 No Go required. Grab the right binary from [Releases](https://github.com/Menfre01/waveloom/releases/latest).
 
-> `/usr/local/bin` requires sudo. Or use `~/.local/bin` instead (see fallback below).
+> Installs to `~/.local/bin` — no sudo needed. If the directory isn't in PATH, run `export PATH="$HOME/.local/bin:$PATH"` and add to `~/.bashrc` or `~/.zshrc`.
 
 **macOS (ARM64 — Apple Silicon)**
 
 ```sh
-sudo curl -fsSL https://github.com/Menfre01/waveloom/releases/latest/download/wvl_darwin_arm64.tar.gz | sudo tar -xz -C /usr/local/bin wvl
+mkdir -p ~/.local/bin && curl -fsSL https://github.com/Menfre01/waveloom/releases/latest/download/wvl_darwin_arm64.tar.gz | tar -xz -C ~/.local/bin wvl
 ```
 
 **macOS (AMD64 — Intel)**
 
 ```sh
-sudo curl -fsSL https://github.com/Menfre01/waveloom/releases/latest/download/wvl_darwin_amd64.tar.gz | sudo tar -xz -C /usr/local/bin wvl
+mkdir -p ~/.local/bin && curl -fsSL https://github.com/Menfre01/waveloom/releases/latest/download/wvl_darwin_amd64.tar.gz | tar -xz -C ~/.local/bin wvl
 ```
 
 **Linux (AMD64)**
 
 ```sh
-sudo curl -fsSL https://github.com/Menfre01/waveloom/releases/latest/download/wvl_linux_amd64.tar.gz | sudo tar -xz -C /usr/local/bin wvl
+mkdir -p ~/.local/bin && curl -fsSL https://github.com/Menfre01/waveloom/releases/latest/download/wvl_linux_amd64.tar.gz | tar -xz -C ~/.local/bin wvl
 ```
 
 **Linux (ARM64)**
 
 ```sh
-sudo curl -fsSL https://github.com/Menfre01/waveloom/releases/latest/download/wvl_linux_arm64.tar.gz | sudo tar -xz -C /usr/local/bin wvl
+mkdir -p ~/.local/bin && curl -fsSL https://github.com/Menfre01/waveloom/releases/latest/download/wvl_linux_arm64.tar.gz | tar -xz -C ~/.local/bin wvl
 ```
 
-> No write permission for `/usr/local/bin`? Install to `~/.local/bin`:
-> ```sh
-> mkdir -p ~/.local/bin
-> curl -fsSL https://github.com/Menfre01/waveloom/releases/latest/download/wvl_darwin_arm64.tar.gz | tar -xz -C ~/.local/bin wvl
-> export PATH="$HOME/.local/bin:$PATH"  # add to ~/.bashrc or ~/.zshrc
-> ```
->
 > macOS Gatekeeper? Allow it with:
 > ```sh
-> xattr -d com.apple.quarantine /usr/local/bin/wvl
+> xattr -d com.apple.quarantine ~/.local/bin/wvl
 > ```
 
 ## Build from Source
@@ -88,7 +81,7 @@ LLM_API_KEY=sk-... wvl
 
 ```sh
 # 1. Install (macOS ARM64 example)
-sudo curl -fsSL https://github.com/Menfre01/waveloom/releases/latest/download/wvl_darwin_arm64.tar.gz | sudo tar -xz -C /usr/local/bin wvl
+mkdir -p ~/.local/bin && curl -fsSL https://github.com/Menfre01/waveloom/releases/latest/download/wvl_darwin_arm64.tar.gz | tar -xz -C ~/.local/bin wvl
 
 # 2. First-time setup (once only)
 wvl setup

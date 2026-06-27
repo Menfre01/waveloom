@@ -54,13 +54,13 @@ Requires: [DeepSeek API Key](https://platform.deepseek.com/api_keys).
 Apple Silicon (M1/M2/M3):
 
 ```sh
-curl -fsSL https://github.com/Menfre01/waveloom/releases/latest/download/wvl_darwin_arm64.tar.gz | sudo tar -xz -C /usr/local/bin wvl
+mkdir -p ~/.local/bin && curl -fsSL https://github.com/Menfre01/waveloom/releases/latest/download/wvl_darwin_arm64.tar.gz | tar -xz -C ~/.local/bin wvl
 ```
 
 Intel Mac:
 
 ```sh
-curl -fsSL https://github.com/Menfre01/waveloom/releases/latest/download/wvl_darwin_amd64.tar.gz | sudo tar -xz -C /usr/local/bin wvl
+mkdir -p ~/.local/bin && curl -fsSL https://github.com/Menfre01/waveloom/releases/latest/download/wvl_darwin_amd64.tar.gz | tar -xz -C ~/.local/bin wvl
 ```
 
 **Linux**
@@ -68,13 +68,13 @@ curl -fsSL https://github.com/Menfre01/waveloom/releases/latest/download/wvl_dar
 x86_64:
 
 ```sh
-curl -fsSL https://github.com/Menfre01/waveloom/releases/latest/download/wvl_linux_amd64.tar.gz | sudo tar -xz -C /usr/local/bin wvl
+mkdir -p ~/.local/bin && curl -fsSL https://github.com/Menfre01/waveloom/releases/latest/download/wvl_linux_amd64.tar.gz | tar -xz -C ~/.local/bin wvl
 ```
 
 ARM64:
 
 ```sh
-curl -fsSL https://github.com/Menfre01/waveloom/releases/latest/download/wvl_linux_arm64.tar.gz | sudo tar -xz -C /usr/local/bin wvl
+mkdir -p ~/.local/bin && curl -fsSL https://github.com/Menfre01/waveloom/releases/latest/download/wvl_linux_arm64.tar.gz | tar -xz -C ~/.local/bin wvl
 ```
 
 **After install**
@@ -85,7 +85,7 @@ wvl                      # Launch interactive TUI
 wvl "explain this code"  # Or run a one-shot query
 ```
 
-> Supports macOS / Linux AMD64 & ARM64. Unsure of your architecture? Run `uname -m`: `x86_64` → amd64, `arm64` / `aarch64` → arm64. To upgrade, re-run the install command. From source: `git pull && make install`. Details in [`install.md`](./install.en.md).
+> Supports macOS / Linux AMD64 & ARM64. Installs to `~/.local/bin` — no sudo needed. If that directory isn't in PATH, run `export PATH="$HOME/.local/bin:$PATH"` and add to `~/.bashrc` or `~/.zshrc`. To upgrade, re-run the install command. From source: `git pull && make install`. Details in [`install.md`](./install.en.md).
 
 ### Agent One-Shot Install
 
@@ -100,8 +100,8 @@ Install waveloom on this machine:
    - macOS amd64: `wvl_darwin_amd64.tar.gz`
    - Linux amd64: `wvl_linux_amd64.tar.gz`
    - Linux arm64: `wvl_linux_arm64.tar.gz`
-3. Extract and install to /usr/local/bin (use sudo if needed):
-   `curl -fsSL <URL> | sudo tar -xz -C /usr/local/bin wvl`
+3. Extract and install to ~/.local/bin:
+   `mkdir -p ~/.local/bin && curl -fsSL <URL> | tar -xz -C ~/.local/bin wvl`
 4. Verify: `wvl --version`
 5. Remind the user to run `wvl setup` to configure their DeepSeek API Key.
 ````

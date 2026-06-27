@@ -10,7 +10,7 @@
 
 **Q: "command not found" when running `wvl`?**
 
-The install path is not in PATH. Pre-built binaries install to `/usr/local/bin` by default — ensure it's in PATH. If installed to `~/.local/bin`, add `export PATH="$HOME/.local/bin:$PATH"` to `~/.bashrc` or `~/.zshrc`.
+The install path is not in PATH. Pre-built binaries install to `~/.local/bin` — ensure it's in PATH: `export PATH="$HOME/.local/bin:$PATH"` and add to `~/.bashrc` or `~/.zshrc`.
 
 **Q: "api_key is required" error?**
 
@@ -18,7 +18,7 @@ No API Key detected. Run `wvl setup` to complete first-time configuration, or se
 
 **Q: macOS "cannot verify developer"?**
 
-Run `xattr -d com.apple.quarantine /usr/local/bin/wvl` to remove the quarantine attribute.
+Run `xattr -d com.apple.quarantine ~/.local/bin/wvl` to remove the quarantine attribute.
 
 **Q: How can I verify prefix caching is working?**
 

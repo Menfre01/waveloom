@@ -10,7 +10,7 @@
 
 **Q: 运行 `wvl` 提示 "command not found"？**
 
-安装路径不在 PATH 中。预编译二进制默认安装到 `/usr/local/bin`，确认该路径在 PATH 中。若安装到 `~/.local/bin`，需 `export PATH="$HOME/.local/bin:$PATH"` 并写入 `~/.bashrc` 或 `~/.zshrc`。
+安装路径不在 PATH 中。预编译二进制安装到 `~/.local/bin`，确认该路径在 PATH 中：`export PATH="$HOME/.local/bin:$PATH"` 并写入 `~/.bashrc` 或 `~/.zshrc`。
 
 **Q: 提示 "api_key is required"？**
 
@@ -18,7 +18,7 @@
 
 **Q: macOS 提示 "无法验证开发者"？**
 
-执行 `xattr -d com.apple.quarantine /usr/local/bin/wvl` 移除隔离标记。
+执行 `xattr -d com.apple.quarantine ~/.local/bin/wvl` 移除隔离标记。
 
 **Q: 如何确认前缀缓存正在生效？**
 

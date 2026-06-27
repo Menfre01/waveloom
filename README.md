@@ -54,13 +54,13 @@
 Apple Silicon（M1/M2/M3）：
 
 ```sh
-curl -fsSL https://github.com/Menfre01/waveloom/releases/latest/download/wvl_darwin_arm64.tar.gz | sudo tar -xz -C /usr/local/bin wvl
+mkdir -p ~/.local/bin && curl -fsSL https://github.com/Menfre01/waveloom/releases/latest/download/wvl_darwin_arm64.tar.gz | tar -xz -C ~/.local/bin wvl
 ```
 
 Intel Mac：
 
 ```sh
-curl -fsSL https://github.com/Menfre01/waveloom/releases/latest/download/wvl_darwin_amd64.tar.gz | sudo tar -xz -C /usr/local/bin wvl
+mkdir -p ~/.local/bin && curl -fsSL https://github.com/Menfre01/waveloom/releases/latest/download/wvl_darwin_amd64.tar.gz | tar -xz -C ~/.local/bin wvl
 ```
 
 **Linux**
@@ -68,13 +68,13 @@ curl -fsSL https://github.com/Menfre01/waveloom/releases/latest/download/wvl_dar
 x86_64：
 
 ```sh
-curl -fsSL https://github.com/Menfre01/waveloom/releases/latest/download/wvl_linux_amd64.tar.gz | sudo tar -xz -C /usr/local/bin wvl
+mkdir -p ~/.local/bin && curl -fsSL https://github.com/Menfre01/waveloom/releases/latest/download/wvl_linux_amd64.tar.gz | tar -xz -C ~/.local/bin wvl
 ```
 
 ARM64：
 
 ```sh
-curl -fsSL https://github.com/Menfre01/waveloom/releases/latest/download/wvl_linux_arm64.tar.gz | sudo tar -xz -C /usr/local/bin wvl
+mkdir -p ~/.local/bin && curl -fsSL https://github.com/Menfre01/waveloom/releases/latest/download/wvl_linux_arm64.tar.gz | tar -xz -C ~/.local/bin wvl
 ```
 
 **安装后**
@@ -85,7 +85,7 @@ wvl                      # 启动交互式 TUI
 wvl "解释这段代码"         # 或单次执行模式
 ```
 
-> 支持 macOS / Linux AMD64 & ARM64。不确定架构？运行 `uname -m`：`x86_64` → amd64，`arm64` / `aarch64` → arm64。升级只需重新执行安装命令；从源码构建：`git pull && make install`。详见 [`docs/install.md`](./docs/install.md)。
+> 支持 macOS / Linux AMD64 & ARM64。安装到 `~/.local/bin`，无需 sudo。若该路径不在 PATH 中，执行 `export PATH="$HOME/.local/bin:$PATH"` 并写入 `~/.bashrc` 或 `~/.zshrc`。升级只需重新执行安装命令；从源码构建：`git pull && make install`。详见 [`docs/install.md`](./docs/install.md)。
 
 ### Agent 一键安装
 
@@ -100,8 +100,8 @@ Install waveloom on this machine:
    - macOS amd64: `wvl_darwin_amd64.tar.gz`
    - Linux amd64: `wvl_linux_amd64.tar.gz`
    - Linux arm64: `wvl_linux_arm64.tar.gz`
-3. Extract and install to /usr/local/bin (use sudo if needed):
-   `curl -fsSL <URL> | sudo tar -xz -C /usr/local/bin wvl`
+3. Extract and install to ~/.local/bin:
+   `mkdir -p ~/.local/bin && curl -fsSL <URL> | tar -xz -C ~/.local/bin wvl`
 4. Verify: `wvl --version`
 5. Remind the user to run `wvl setup` to configure their DeepSeek API Key.
 ````
