@@ -70,3 +70,19 @@ wvl --resume <session-id>  # 恢复指定会话
 ```
 帮我优化 @pkg/auth/login.go 的错误处理逻辑
 ```
+
+### AGENTS.md 自动加载
+
+Waveloom 启动时会自动发现并加载 `AGENTS.md`（查找路径：`~/.waveloom/AGENTS.md` → 项目根 `.git` 所在目录 → CWD），按"由外到内"顺序拼接，作为第一条 user 消息注入上下文。Agent 在对话中自动遵循其中的项目约定、编码规范和操作流程。
+
+### AGENTS.md 内 @ 展开
+
+`AGENTS.md` 内部同样支持 `@` 引用语法，可用于将大型约定文档拆分为多个文件：
+
+```
+# AGENTS.md
+@docs/coding-style.md
+@docs/release-process.md
+```
+
+Waveloom 在加载 AGENTS.md 后会自动展开其中的 `@` 引用，多个引用按出现顺序展开，同一文件自动去重。

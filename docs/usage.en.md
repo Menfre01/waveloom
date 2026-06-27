@@ -70,3 +70,19 @@ Type `@` in the input to open a fuzzy file picker (prefix > substring matching).
 ```
 help me optimize the error handling in @pkg/auth/login.go
 ```
+
+### AGENTS.md Auto-loading
+
+On startup, Waveloom discovers and loads `AGENTS.md` (search path: `~/.waveloom/AGENTS.md` → project root where `.git` lives → CWD), concatenating them from outer to inner as the first user message. The agent automatically follows project conventions, coding standards, and workflows defined therein.
+
+### @ Expansion Inside AGENTS.md
+
+`AGENTS.md` files also support `@` reference syntax, useful for splitting large convention docs into multiple files:
+
+```
+# AGENTS.md
+@docs/coding-style.md
+@docs/release-process.md
+```
+
+Waveloom expands `@` references within loaded AGENTS.md files. Multiple refs are expanded in order, with deduplication by path.

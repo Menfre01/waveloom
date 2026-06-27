@@ -223,6 +223,14 @@ Adjust the four-tier watermark parameters via the `compaction` block (all have d
 | `protection_zone_tokens` | Protection zone token count, supports `"8K"` / `8000` | `8000` |
 | `context_limit_tokens` | Model context limit, supports `"1M"` / `1000000` | `1000000` |
 
+### Tool Timeout Configuration
+
+Use the `tool_timeout` field to cap the maximum execution time for a single tool, preventing tools from blocking the loop indefinitely if they fail to respond to cancellation (priority: CLI > project > global, default 10 minutes):
+
+| Field | Description | Default |
+|-------|-------------|---------|
+| `tool_timeout` | Single tool execution timeout (Go Duration format, e.g. `"10m"` / `"600s"` / `"0s"`, 0 to disable) | `"10m"` |
+
 ### CLI Flags
 
 | Flag | Description | Default |
@@ -234,6 +242,7 @@ Adjust the four-tier watermark parameters via the `compaction` block (all have d
 | `--theme auto/dark/light` | Theme, auto detects terminal background | `auto` |
 | `--verbose` | Log detailed output to `.waveloom/wvl.log` | Off |
 | `--bypass-permissions` | Skip all permission checks | Off |
+| `--tool-timeout D` | Single tool execution timeout (Go Duration format, e.g. `10m` / `600s` / `0s`, 0 to disable) | `10m` |
 | `--resume ID` | Resume a specific session | — |
 | `--continue` | Resume the most recent session | — |
 | `--settings PATH` | Specify config file path | `.waveloom/settings.json` |
@@ -248,6 +257,8 @@ Adjust the four-tier watermark parameters via the `compaction` block (all have d
 | Toggle theme | `Ctrl+G` cycles through dark / light / auto (auto follows terminal background) |
 | Select text | `Shift + mouse drag` to select any text in the terminal, even across TUI panels |
 | Quick file refs | Type `@path/to/file` to inline file contents, or `@` for a fuzzy file picker; `Tab` to enter subdirectories |
+| Project conventions | `AGENTS.md` is auto-loaded at startup (global → project root → CWD, layered) and injected as the first user message |
+| AGENTS.md sub-files | Use `@path/to/file` inside `AGENTS.md` to pull in other files; content is expanded and merged (multiple refs, auto dedup) |
 | Resume sessions | `wvl --continue` resumes the last session, `wvl --resume <id>` resumes a specific one, `wvl ls` lists available IDs |
 | Inspect logs | Start with `wvl --verbose`; logs at `.waveloom/wvl.log`, run `tail -f` in another terminal |
 
