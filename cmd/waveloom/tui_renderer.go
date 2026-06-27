@@ -1611,7 +1611,11 @@ func renderDiffView(sb *strings.Builder, hunks []tool.DiffHunk, textWidth int, i
 					// 首行：行号 + 前缀 + 内容
 					numStr := ""
 					switch l.Kind {
-					case tool.DiffDel, tool.DiffCtx:
+					case tool.DiffDel:
+						numStr = fmt.Sprintf("%*d  ", numWidth, l.OldNum)
+					case tool.DiffAdd:
+						numStr = fmt.Sprintf("%*d  ", numWidth, l.NewNum)
+					case tool.DiffCtx:
 						numStr = fmt.Sprintf("%*d  ", numWidth, l.OldNum)
 					default:
 						numStr = fmt.Sprintf("%*s  ", numWidth, "")
