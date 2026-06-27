@@ -187,6 +187,33 @@ The agent auto-detects available toolchains at startup. For tools not in PATH or
 
 ---
 
+## Upgrade
+
+Upgrading a pre-built binary is just re-running the install command to overwrite the old version:
+
+```sh
+# macOS ARM64
+sudo curl -fsSL https://github.com/Menfre01/waveloom/releases/latest/download/wvl_darwin_arm64.tar.gz | sudo tar -xz -C /usr/local/bin wvl
+```
+
+Replace with the file for your platform. From source: `cd waveloom && git pull && make install`.
+
+> Follow [Releases](https://github.com/Menfre01/waveloom/releases) for the latest version.
+
+---
+
+## Tips
+
+| Tip | How |
+|-----|-----|
+| Toggle theme | `Ctrl+G` cycles through dark / light / auto (auto follows terminal background) |
+| Select text | `Shift + mouse drag` to select any text in the terminal, even across TUI panels |
+| Quick file refs | Type `@` for a fuzzy file picker; `Tab` to enter subdirectories |
+| Resume sessions | `wvl --continue` resumes the last session, `wvl --resume <id>` resumes a specific one |
+| Inspect logs | Start with `wvl --verbose`; logs at `.waveloom/wvl.log`, run `tail -f` in another terminal |
+
+---
+
 ## Context Management & Prefix Caching
 
 DeepSeek's prefix cache compares requests from `messages[0]` onward to find the longest common prefix — cache-hit price is just **1/50 ~ 1/120** of cache-miss. Waveloom optimizes for this with a fixed System Prompt anchor, turn-accumulated message history, and four-tier watermark compaction (Snip → Prune → Summarize → Hard cutoff) that never mutates compacted bytes, achieving **95–99%** cache hit rates.
