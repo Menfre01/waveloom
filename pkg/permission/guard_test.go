@@ -622,3 +622,232 @@ func TestGuard_Check_FilePathRelativeTargetWithAbsoluteRule(t *testing.T) {
 		t.Errorf("absolute pattern should match relative path: Decision = %s (%s), want %s", result.Decision, result.Message, DecisionAllow)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// WithProjectConfigPath
+// ---------------------------------------------------------------------------
+
+func TestWithProjectConfigPath(t *testing.T) {
+	g := NewGuard(WithProjectConfigPath("/test/settings.json"))
+	if g.projectConfigPath != "/test/settings.json" {
+		t.Errorf("expected /test/settings.json, got %q", g.projectConfigPath)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// SessionMemory / ClearSession / SessionMemoryLen
+// ---------------------------------------------------------------------------
+
+func TestSessionMemory(t *testing.T) {
+	g := NewGuard()
+	sm := g.SessionMemory()
+	if sm == nil {
+		t.Fatal("SessionMemory returned nil")
+	}
+}
+
+func TestClearSession(t *testing.T) {
+	g := NewGuard()
+	// 直接向 SessionMemory 添加条目
+	sm := g.SessionMemory()
+	sm.Remember("read_file", "*.go", DecisionAllow)
+	if g.SessionMemoryLen() == 0 {
+		t.Error("session memory should have entries after Remember")
+	}
+	g.ClearSession()
+	if g.SessionMemoryLen() != 0 {
+		t.Errorf("session memory should be empty after ClearSession, got %d", g.SessionMemoryLen())
+	}
+}
+
+func TestSessionMemoryLen_Empty(t *testing.T) {
+	g := NewGuard()
+	if g.SessionMemoryLen() != 0 {
+		t.Errorf("expected 0, got %d", g.SessionMemoryLen())
+	}
+}
+
+// ---------------------------------------------------------------------------
+// PersistRule / PersistRuleToConfig / containsRule
+// ---------------------------------------------------------------------------
+
+func TestPersistRule_NoConfigPath(t *testing.T) {
+	g := NewGuard()
+	err := g.PersistRule(Rule{Behavior: RuleAllow, ToolName: "shell"})
+	if err != nil {
+		t.Errorf("PersistRule without config path should return nil, got %v", err)
+	}
+}
+
+func TestPersistRuleToConfig_NewFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "settings.json")
+
+	err := PersistRuleToConfig(path, Rule{Behavior: RuleAllow, ToolName: "read_file", Pattern: "*.go"})
+	if err != nil {
+		t.Fatalf("PersistRuleToConfig: %v", err)
+	}
+
+	// 验证文件存在
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal("config file not created")
+	}
+	if len(data) == 0 {
+		t.Error("config file is empty")
+	}
+}
+
+func TestPersistRuleToConfig_Append(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "settings.json")
+
+	// 第一次写入
+	if err := PersistRuleToConfig(path, Rule{Behavior: RuleAllow, ToolName: "read_file"}); err != nil {
+		t.Fatal(err)
+	}
+	// 第二次写入（不同规则）
+	if err := PersistRuleToConfig(path, Rule{Behavior: RuleDeny, ToolName: "shell", Pattern: "rm -rf *"}); err != nil {
+		t.Fatal(err)
+	}
+
+	// 验证文件包含两条规则
+	data, _ := os.ReadFile(path)
+	content := string(data)
+	if !containsSubstr(content, "read_file") || !containsSubstr(content, "shell") {
+		t.Error("config should contain both rules")
+	}
+}
+
+func TestPersistRuleToConfig_Duplicate(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "settings.json")
+
+	// 写入相同规则两次
+	PersistRuleToConfig(path, Rule{Behavior: RuleAllow, ToolName: "read_file"})
+	err := PersistRuleToConfig(path, Rule{Behavior: RuleAllow, ToolName: "read_file"})
+	if err != nil {
+		t.Fatalf("duplicate PersistRuleToConfig should be silent no-op: %v", err)
+	}
+}
+
+func TestContainsRule_ToolLevel(t *testing.T) {
+	rules := []string{"read_file"}
+	if !containsRule(rules, "read_file", "") {
+		t.Error("tool-level rule should match any pattern")
+	}
+	if !containsRule(rules, "read_file", "*.go") {
+		t.Error("tool-level rule should match with pattern too")
+	}
+}
+
+func TestContainsRule_ExactMatch(t *testing.T) {
+	rules := []string{"shell(git *)"}
+	if !containsRule(rules, "shell", "git *") {
+		t.Error("exact match should return true")
+	}
+	if containsRule(rules, "shell", "rm *") {
+		t.Error("non-matching pattern should return false")
+	}
+}
+
+func TestContainsRule_EmptyList(t *testing.T) {
+	if containsRule(nil, "shell", "") {
+		t.Error("empty list should return false")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// LoadRulesFromConfigFiles / ruleEntryKey
+// ---------------------------------------------------------------------------
+
+func TestLoadRulesFromConfigFiles_EmptyPaths(t *testing.T) {
+	rules, err := LoadRulesFromConfigFiles("", "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(rules) != 0 {
+		t.Errorf("expected 0 rules, got %d", len(rules))
+	}
+}
+
+func TestLoadRulesFromConfigFiles_ProjectOverridesGlobal(t *testing.T) {
+	dir := t.TempDir()
+	globalPath := filepath.Join(dir, "global.json")
+	projectPath := filepath.Join(dir, "project.json")
+
+	// 全局：allow shell(git *) 
+	os.WriteFile(globalPath, []byte(`{"permissions": {"allow": ["shell(git *)"]}}`), 0o644)
+	// 项目：allow shell(git *) → 同键，覆盖（相同规则无实际变化，但验证合并逻辑不报错）
+	os.WriteFile(projectPath, []byte(`{"permissions": {"allow": ["shell(git *)"], "deny": ["shell(rm *)"]}}`), 0o644)
+
+	rules, err := LoadRulesFromConfigFiles(globalPath, projectPath)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// 应有 2 条规则：allow shell(git *) + deny shell(rm *)
+	if len(rules) != 2 {
+		t.Errorf("expected 2 rules, got %d", len(rules))
+	}
+}
+
+func TestRuleEntryKey(t *testing.T) {
+	e := RuleEntry{Rule: Rule{Behavior: RuleAllow, ToolName: "shell", Pattern: "git *"}}
+	key := ruleEntryKey(e)
+	if key == "" {
+		t.Error("ruleEntryKey should not be empty")
+	}
+	// 不同 Behavior 应产生不同 key
+	e2 := RuleEntry{Rule: Rule{Behavior: RuleDeny, ToolName: "shell", Pattern: "git *"}}
+	key2 := ruleEntryKey(e2)
+	if key == key2 {
+		t.Error("different behaviors should produce different keys")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// ExtractPattern partial
+// ---------------------------------------------------------------------------
+
+func TestExtractPattern_UnknownTool(t *testing.T) {
+	// 未知工具名走 default 分支：尝试从 input 提取文件路径
+	pattern := ExtractPattern("unknown_tool", json.RawMessage(`{"file_path": "/tmp/test.go"}`))
+	if pattern == "" {
+		t.Error("unknown tool with file_path should return resolved path")
+	}
+}
+
+func TestExtractPattern_UnknownToolEmptyInput(t *testing.T) {
+	pattern := ExtractPattern("unknown_tool", json.RawMessage(`{}`))
+	if pattern != "" {
+		t.Errorf("expected empty for empty input, got %q", pattern)
+	}
+}
+
+func TestExtractPattern_WebFetch(t *testing.T) {
+	pattern := ExtractPattern("web_fetch", json.RawMessage(`{"url": "https://example.com"}`))
+	if pattern != "https://example.com" {
+		t.Errorf("expected https://example.com, got %q", pattern)
+	}
+}
+
+func TestExtractPattern_WebFetchEmptyURL(t *testing.T) {
+	pattern := ExtractPattern("web_fetch", json.RawMessage(`{"url": ""}`))
+	if pattern != "" {
+		t.Errorf("expected empty for empty URL, got %q", pattern)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// helpers
+// ---------------------------------------------------------------------------
+
+func containsSubstr(s, sub string) bool {
+	for i := 0; i <= len(s)-len(sub); i++ {
+		if s[i:i+len(sub)] == sub {
+			return true
+		}
+	}
+	return false
+}

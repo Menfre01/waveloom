@@ -1044,3 +1044,187 @@ func TestE2EExpandAndReplace(t *testing.T) {
 		t.Fatalf("user instruction text should be preserved: %s", expanded)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// languageForPath
+// ---------------------------------------------------------------------------
+
+func TestLanguageForPath_Go(t *testing.T) {
+	if got := languageForPath("main.go"); got != "go" {
+		t.Errorf("expected go, got %q", got)
+	}
+}
+
+func TestLanguageForPath_Python(t *testing.T) {
+	if got := languageForPath("script.py"); got != "python" {
+		t.Errorf("expected python, got %q", got)
+	}
+}
+
+func TestLanguageForPath_JavaScript(t *testing.T) {
+	if got := languageForPath("app.js"); got != "javascript" {
+		t.Errorf("expected javascript, got %q", got)
+	}
+}
+
+func TestLanguageForPath_TypeScript(t *testing.T) {
+	if got := languageForPath("component.tsx"); got != "typescript" {
+		t.Errorf("expected typescript, got %q", got)
+	}
+}
+
+func TestLanguageForPath_Rust(t *testing.T) {
+	if got := languageForPath("lib.rs"); got != "rust" {
+		t.Errorf("expected rust, got %q", got)
+	}
+}
+
+func TestLanguageForPath_Java(t *testing.T) {
+	if got := languageForPath("Main.java"); got != "java" {
+		t.Errorf("expected java, got %q", got)
+	}
+}
+
+func TestLanguageForPath_C(t *testing.T) {
+	if got := languageForPath("main.c"); got != "c" {
+		t.Errorf("expected c, got %q", got)
+	}
+	if got := languageForPath("header.h"); got != "c" {
+		t.Errorf("expected c for .h, got %q", got)
+	}
+}
+
+func TestLanguageForPath_CPP(t *testing.T) {
+	if got := languageForPath("main.cpp"); got != "cpp" {
+		t.Errorf("expected cpp, got %q", got)
+	}
+	if got := languageForPath("main.cc"); got != "cpp" {
+		t.Errorf("expected cpp for .cc, got %q", got)
+	}
+}
+
+func TestLanguageForPath_Shell(t *testing.T) {
+	if got := languageForPath("script.sh"); got != "bash" {
+		t.Errorf("expected bash, got %q", got)
+	}
+	if got := languageForPath("script.bash"); got != "bash" {
+		t.Errorf("expected bash for .bash, got %q", got)
+	}
+}
+
+func TestLanguageForPath_YAML(t *testing.T) {
+	if got := languageForPath("config.yaml"); got != "yaml" {
+		t.Errorf("expected yaml, got %q", got)
+	}
+	if got := languageForPath("config.yml"); got != "yaml" {
+		t.Errorf("expected yaml for .yml, got %q", got)
+	}
+}
+
+func TestLanguageForPath_JSON(t *testing.T) {
+	if got := languageForPath("data.json"); got != "json" {
+		t.Errorf("expected json, got %q", got)
+	}
+}
+
+func TestLanguageForPath_TOML(t *testing.T) {
+	if got := languageForPath("Cargo.toml"); got != "toml" {
+		t.Errorf("expected toml, got %q", got)
+	}
+}
+
+func TestLanguageForPath_Markdown(t *testing.T) {
+	if got := languageForPath("README.md"); got != "markdown" {
+		t.Errorf("expected markdown, got %q", got)
+	}
+	if got := languageForPath("page.mdx"); got != "markdown" {
+		t.Errorf("expected markdown for .mdx, got %q", got)
+	}
+}
+
+func TestLanguageForPath_SQL(t *testing.T) {
+	if got := languageForPath("query.sql"); got != "sql" {
+		t.Errorf("expected sql, got %q", got)
+	}
+}
+
+func TestLanguageForPath_CSS(t *testing.T) {
+	if got := languageForPath("style.css"); got != "css" {
+		t.Errorf("expected css, got %q", got)
+	}
+	if got := languageForPath("style.scss"); got != "css" {
+		t.Errorf("expected css for .scss, got %q", got)
+	}
+}
+
+func TestLanguageForPath_Dockerfile(t *testing.T) {
+	if got := languageForPath("Dockerfile"); got != "dockerfile" {
+		t.Errorf("expected dockerfile, got %q", got)
+	}
+}
+
+func TestLanguageForPath_Makefile(t *testing.T) {
+	if got := languageForPath("Makefile"); got != "makefile" {
+		t.Errorf("expected makefile, got %q", got)
+	}
+}
+
+func TestLanguageForPath_Unknown(t *testing.T) {
+	if got := languageForPath("config.xyz"); got != "" {
+		t.Errorf("expected empty for unknown extension, got %q", got)
+	}
+}
+
+func TestLanguageForPath_NoExtension(t *testing.T) {
+	if got := languageForPath("README"); got != "" {
+		t.Errorf("expected empty for no extension, got %q", got)
+	}
+}
+
+func TestLanguageForPath_Proto(t *testing.T) {
+	if got := languageForPath("service.proto"); got != "protobuf" {
+		t.Errorf("expected protobuf, got %q", got)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// relativePath
+// ---------------------------------------------------------------------------
+
+func TestRelativePath_SubDir(t *testing.T) {
+	cwd := "/home/user/project"
+	absPath := "/home/user/project/pkg/auth/login.go"
+	rel := relativePath(absPath, cwd)
+	if rel != "pkg/auth/login.go" {
+		t.Errorf("expected 'pkg/auth/login.go', got %q", rel)
+	}
+}
+
+func TestRelativePath_SameDir(t *testing.T) {
+	cwd := "/home/user/project"
+	absPath := "/home/user/project/main.go"
+	rel := relativePath(absPath, cwd)
+	if rel != "main.go" {
+		t.Errorf("expected 'main.go', got %q", rel)
+	}
+}
+
+func TestRelativePath_Outside(t *testing.T) {
+	cwd := "/home/user/project"
+	absPath := "/home/user/other/file.go"
+	rel := relativePath(absPath, cwd)
+	if rel != "/home/user/other/file.go" {
+		t.Errorf("expected absolute path when outside, got %q", rel)
+	}
+}
+
+func TestRelativePath_AlreadyRelative(t *testing.T) {
+	// relativePath is called with absolute paths from resolvePath
+	// Testing with CWD == absPath prefix
+	cwd := "/tmp"
+	absPath := "/tmp/file.go"
+	rel := relativePath(absPath, cwd)
+	if rel != "file.go" {
+		t.Errorf("expected 'file.go', got %q", rel)
+	}
+}

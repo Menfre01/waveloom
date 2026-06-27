@@ -193,3 +193,32 @@ func TestRemoveTranscript(t *testing.T) {
 		t.Fatalf("RemoveTranscriptFile on nonexistent: %v", err)
 	}
 }
+
+func TestTranscriptLoad_CorruptedLines(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "corrupt.jsonl")
+
+	// 写入混合数据：有效行 + 损坏行 + 有效行
+	data := []byte(
+		`{"type":"user","state":"done","text":"line1"}` + "\n" +
+			`this is not json` + "\n" +
+			`{"type":"assistant","state":"done","text":"line3"}` + "\n",
+	)
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	lines, err := LoadTranscriptLines(path)
+	if err != nil {
+		t.Fatalf("LoadTranscriptLines: %v", err)
+	}
+	if len(lines) != 2 {
+		t.Fatalf("expected 2 valid lines (corrupt skipped), got %d", len(lines))
+	}
+	if lines[0].Text != "line1" {
+		t.Errorf("line0 text = %q, want %q", lines[0].Text, "line1")
+	}
+	if lines[1].Text != "line3" {
+		t.Errorf("line1 text = %q, want %q", lines[1].Text, "line3")
+	}
+}

@@ -109,7 +109,8 @@ func (l *Loop) Run(ctx context.Context, messages []Message) <-chan TurnEvent
 | **状态** | ✅ 已实现 |
 | **职责** | 工具注册/发现、参数校验、执行调度、结果格式化 |
 
-**内置工具（7 个，全部已实现）：**
+**内置工具（12 个，全部已实现）：**
+
 | 工具 | 并发安全 | 说明 |
 |------|---------|------|
 | `read_file` | 🟢 是 | 读取文件，支持 offset/limit，含二进制检测 |
@@ -119,12 +120,16 @@ func (l *Loop) Run(ctx context.Context, messages []Message) <-chan TurnEvent
 | `search_file` | 🟢 是 | Glob 文件搜索 |
 | `grep` | 🟢 是 | 正则内容搜索，支持 context_lines |
 | `ls` | 🟢 是 | 列出目录，支持递归深度 |
+| `web_fetch` | 🟢 是 | 获取在线文档、API 参考 |
+| `lsp_diagnostic` | 🟢 是 | 获取文件编译错误和 lint 提示 |
+| `lsp_definition` | 🟢 是 | 跳转到符号定义 |
+| `lsp_references` | 🟢 是 | 查找符号的所有引用位置 |
+| `lsp_hover` | 🟢 是 | 获取符号类型签名和文档 |
 
 **扩展工具（P2，后续 Wave）：**
 | 工具 | 参考 |
 |------|------|
-| `lsp_*` | Claude Code `LSPTool` |
-| `web_search` / `web_fetch` | Claude Code `WebSearchTool` |
+| `web_search` | Claude Code `WebSearchTool` |
 | `task` | Claude Code `TaskCreate` |
 | `notebook` | Claude Code `NotebookEdit` |
 
@@ -164,15 +169,116 @@ func (l *Loop) Run(ctx context.Context, messages []Message) <-chan TurnEvent
 
 **已实现功能：**
 - `PrepareRun(userInput)` → 返回完整历史副本
-- `CompleteRun(messages, stats)` → 提交 Loop 产出
+- `CompleteRun(messages, stats)` → 提交 Loop 产出，自动触发四级水位线压缩
 - `Reset()` → 清空历史保留 system prompt
 - `Stats()` → 累计 Token 统计
+- Session 持久化（`Save` / `LoadFromFile` / `RemoveSession`）
+- `InjectUserInstructions` → 注入 AGENTS.md 内容
+- `NewWithCompaction` → 集成 CompactionConfig + Summarizer
 
 详见 `specs/context-manager.md`。
 
 ---
 
-### 6. Server / Protocol（原 CLI / Server）
+### 6. Compaction（四级水位线上下文压缩）
+
+| 属性 | 值 |
+|------|-----|
+| **优先级** | P1——长对话必须控制上下文成本 |
+| **状态** | ✅ 已实现 |
+| **职责** | 在跨轮次对话中自动压缩上下文，保持 DeepSeek 前缀缓存命中率 |
+
+**四级水位线：**
+| 级别 | 阈值 | 操作 | 说明 |
+|------|------|------|------|
+| Tier 0 | < 60% | 无操作 | 什么都不做 |
+| Tier 1 | 60-80% | Snip | 工具结果差分截断（纯本地，零 API 调用） |
+| Tier 2 | 80-95% | Prune | reasoning 清除 + 占位符替换 + 用户代码块压缩（纯本地） |
+| Tier 3 | ≥ 95% | Summarize | LLM 增量摘要（需 API 调用） |
+| 硬临界 | ≥ 98% | 阻止 | 拒绝后续 LLM 调用 |
+
+**核心保证：** 单调边界 — 一旦对某条消息做出压缩决策，该决策在本次 session 的所有后续轮次中永远不变。
+
+详见 `specs/compaction.md`。
+
+---
+
+### 7. LSP Client
+
+| 属性 | 值 |
+|------|-----|
+| **优先级** | P1——Agent 需要像人一样理解代码 |
+| **状态** | ✅ 已实现 |
+| **职责** | LSP 协议客户端：Server 生命周期管理、代码诊断、定义跳转、引用查找、类型签名 |
+
+**已实现功能：**
+- 多 Server 管理（`Manager`），按文件扩展名自动匹配
+- `gopls` 内置默认配置，支持通过 settings.json 覆盖 Server 路径和参数
+- 四类查询：`lsp_diagnostic`、`lsp_definition`、`lsp_references`、`lsp_hover`
+- Server 空闲超时自动回收、JSON-RPC over stdio
+- 文件同步（`textDocument/didOpen`、`didChange`、`didClose`）
+
+详见 `specs/lsp-tools.md`。
+
+---
+
+### 8. Environment（工具链探测）
+
+| 属性 | 值 |
+|------|-----|
+| **优先级** | P1——避免 Agent 因命令缺失陷入探测死循环 |
+| **状态** | ✅ 已实现 |
+| **职责** | 启动时自动探测系统可用工具链，注入 System Prompt |
+
+**已实现功能：**
+- 内置探针列表：`go`, `node`, `npm`, `python3`, `rustc`, `cargo`, `gcc`, `g++`, `java`, `mvn`, `make`, `cmake`, `git`, `docker`
+- 输出格式化为 `## Environment` 节追加到 System Prompt
+- 支持 settings.json 中 `environment.tools` 路径覆盖（全局 + 项目合并，项目优先）
+
+详见 `docs/environment.md`。
+
+---
+
+### 9. Reference（@ 文件引用展开）
+
+| 属性 | 值 |
+|------|-----|
+| **优先级** | P1——方便引用项目文件 |
+| **状态** | ✅ 已实现 |
+| **职责** | 解析用户输入中的 `@` 引用，将文件内容注入消息上下文 |
+
+**已实现功能：**
+- `@` 符号触发文件引用，支持模糊匹配
+- TUI 中集成文件选择器（Picker），输入 `@` 弹出下拉列表
+- 与 Guard 集成，引用前检查文件读取权限
+
+详见 `specs/reference-context.md`。
+
+---
+
+### 10. TUI（终端交互界面）
+
+| 属性 | 值 |
+|------|-----|
+| **优先级** | P0——用户入口 |
+| **状态** | ✅ 已实现（one-shot + 交互式） |
+| **职责** | 终端用户界面：流式渲染、多面板布局、权限确认、@ 文件选择 |
+
+**已实现功能：**
+- 基于 Bubble Tea v2 + Glamour Markdown 渲染 + Lipgloss 样式
+- 流式渲染 thought / text / tool 输出，支持折叠展开（`Ctrl+T` / `Ctrl+O`）
+- 权限确认弹框（allow / deny / ask）
+- @ 文件选择器，模糊匹配
+- 暗色/亮色/自动主题切换（`Ctrl+G`）
+- IME 输入支持（CJK 等宽渲染）
+- `--continue` / `--resume` session 恢复
+- `wvl ls` 列出最近 sessions
+
+详见 `specs/tui.md`。
+
+---
+
+### 11. Server / Protocol（原 CLI / Server）
 
 | 属性 | 值 |
 |------|-----|
@@ -224,7 +330,7 @@ cmd/waveloom/config.go    — CLI 参数解析
 
 ---
 
-### 7. Event Stream / ObserverBus
+### 12. Event Stream / ObserverBus
 
 | 属性 | 值 |
 |------|-----|
@@ -238,21 +344,30 @@ cmd/waveloom/config.go    — CLI 参数解析
 
 ---
 
-### 8. Memory & Persistence
+### 13. Memory & Persistence
 
 | 属性 | 值 |
 |------|-----|
 | **优先级** | P1——记住项目知识和用户偏好 |
-| **状态** | ⬜ 待实施 |
-| **职责** | 项目级知识存储（CLAUDE.md）、用户偏好记忆、会话持久化、对话历史恢复 |
+| **状态** | ✅ 已实现（AGENTS.md 层级加载 + session 持久化） |
+| **职责** | 项目级知识存储（AGENTS.md）、会话持久化（session 落盘/恢复/列出） |
+
+**已实现功能：**
+- AGENTS.md 层级发现与加载（home → CWD → 项目根，根→叶序拼接）
+- Session 持久化（JSON 落盘到 `~/.waveloom/<project>/sessions/`）
+- `--resume <id>` 恢复指定 session，`--continue` 恢复最近 session
+- `wvl ls` 列出最近 sessions
+- Transcript 回放（以文本格式记录对话，含行级时间戳）
 
 **参考：**
 - Claude Code: `memory/` — `SessionMemory`, `extractMemories`
 - Codex CLI: `core/src/session/` — session state persistence
 
+详见 `specs/agents-md-memory.md`。
+
 ---
 
-### 9. Task Planner
+### 14. Task Planner
 
 | 属性 | 值 |
 |------|-----|
@@ -262,7 +377,7 @@ cmd/waveloom/config.go    — CLI 参数解析
 
 ---
 
-### 10. MCP Client
+### 15. MCP Client
 
 | 属性 | 值 |
 |------|-----|
@@ -272,7 +387,7 @@ cmd/waveloom/config.go    — CLI 参数解析
 
 ---
 
-### 11. Sub-Agent Orchestrator
+### 16. Sub-Agent Orchestrator
 
 | 属性 | 值 |
 |------|-----|
@@ -287,13 +402,18 @@ cmd/waveloom/config.go    — CLI 参数解析
 ```
 ✅ LLM Client          — 流式/非流式、DeepSeek+OpenAI、重试退避
 ✅ Agent Loop          — Think-Act-Observe、channel 事件流、并发/串行工具执行
-✅ Tool System         — 7 个内置工具、泛型+类型擦除、ConcurrentSafe 分流
+✅ Tool System         — 12 个内置工具、泛型+类型擦除、ConcurrentSafe 分流
 ✅ Permission & Safety — Guard 接口、规则引擎、路径/命令安全、session 记忆
 ✅ Context Manager     — PrepareRun/CompleteRun、前缀缓存优化
+✅ Compaction          — 四级水位线、Snip/Prune/Summarize、单调边界保证
+✅ LSP Client          — gopls 等 Server 自动启动、四类 LSP 查询
+✅ Memory              — AGENTS.md 层级加载、session 落盘/恢复/列出
+✅ TUI                 — Bubble Tea v2 流式渲染、Markdown、@ 文件选择器
+✅ Environment         — 工具链自动探测、settings.json 路径覆盖
+✅ Reference           — @ 文件引用展开
 ──────────────────────────────────────────────────  ← 🎯 最小可用 Agent 分界线
 🔶 Server / Protocol   — one-shot CLI 就绪，daemon + JSON-RPC over HTTP+SSE 设计中
 🔶 Event Stream        — 基础 TurnEvent channel 就绪，ObserverBus 待建
-⬜ Memory & Persistence
 ⬜ Task Planner
 ⬜ MCP Client
 ⬜ Sub-Agent Orchestrator
@@ -318,19 +438,26 @@ cmd/waveloom/config.go    — CLI 参数解析
        ┌──────────┐     ┌──────────────┐   ┌──────────────┐
        │  Tool    │     │  Permission  │   │   Context    │
        │  System  │     │  & Safety    │   │   Manager    │
-       └────┬─────┘     └──────────────┘   └──────────────┘
-            │
-            ▼
-    ┌──────────────┐      ┌──────────────┐
-    │   Server +   │      │   Memory &   │
-    │   Protocol   │      │  Persistence │
-    └──────┬───────┘      └──────────────┘
-           │
-    ┌──────┴───────┐
-    ▼              ▼
-┌────────┐   ┌──────────┐
-│  ink   │   │  mobile  │
-└────────┘   └──────────┘
+       └────┬─────┘     └──────┬───────┘   └──────┬───────┘
+            │                  │                   │
+            ▼                  │                   ▼
+    ┌───────────────┐          │          ┌──────────────┐
+    │  LSP Client   │          │          │  Compaction  │
+    │  Environment  │          │          │  (四级水位线) │
+    └───────────────┘          │          └──────────────┘
+                               │
+            ┌──────────────────┼──────────────────┐
+            ▼                  ▼                  ▼
+    ┌──────────────┐  ┌──────────────┐  ┌──────────────┐
+    │   Memory &   │  │   Server +   │  │  Reference   │
+    │  Persistence │  │   Protocol   │  │  (@ 展开)    │
+    └──────────────┘  └──────┬───────┘  └──────────────┘
+                             │
+                      ┌──────┴───────┐
+                      ▼              ▼
+              ┌────────────┐ ┌──────────────┐
+              │  ink (TUI) │ │  mobile app  │
+              └────────────┘ └──────────────┘
 ```
 
 ### 依赖层次
@@ -339,8 +466,10 @@ cmd/waveloom/config.go    — CLI 参数解析
 Layer 0 — 通信基础       │  LLM Client
 Layer 1 — 编排核心       │  Agent Loop  ←── Event Stream
 Layer 2 — 能力+安全+状态  │  Tool System  │  Permission  │  Context Manager
+                         │  LSP Client   │  Compaction  │  Environment
                          │                              ← 🎯 最小可用 Agent
 Layer 3 — 接入层          │  Server + Protocol (JSON-RPC over HTTP+SSE)
+                         │  TUI (Bubble Tea v2)  │  Reference
 Layer 4 — 体验增强       │  Memory & Persistence
 Layer 5 — 生态扩展       │  Task Planner  │  MCP Client
 Layer 6 — 协作规模       │  Sub-Agent Orchestrator
@@ -354,11 +483,11 @@ Layer 6 — 协作规模       │  Sub-Agent Orchestrator
 
 **核心原则：尽快交付一个可用的、安全的 code agent，然后通过 C/S 架构开放给多端客户端。**
 
-1. **Layer 0-2（LLM Client + Agent Loop + Tool System + Permission + Context Manager）** ✅ 已完成：最小能力单元。Agent 能"想"和"做"，受权限系统保护，消息历史跨轮次累积。
+1. **Layer 0-2（LLM Client + Agent Loop + Tool System + Permission + Context Manager + Compaction + LSP Client + Environment）** ✅ 已完成：最小能力单元。Agent 能"想"和"做"，受权限系统保护，消息历史跨轮次累积，支持四级水位线压缩、LSP 代码理解和环境工具链探测。TUI 提供终端交互界面，Reference 支持 @ 引用展开。
 
 2. **Layer 3（Server / Protocol）** 🔶 进行中：将 Go 核心拆分为 daemon server，通过 JSON-RPC over HTTP+SSE 协议对外开放。ink (TUI) 和移动端通过同一协议接入。Session 隔离、权限确认、流式输出全部走标准 JSON-RPC 语义。
 
-3. **Layer 4（Memory & Persistence）**：体验增强。项目知识和用户偏好跨会话保留。
+3. **Layer 4（Memory & Persistence）** ✅ 已实现：AGENTS.md 层级加载（home → CWD → 项目根），session 落盘/恢复/列出。
 
 4. **Layer 5-6（Task + MCP + Sub-Agent）**：生态和规模。解锁复杂任务、外部工具和多 Agent 协作。
 
