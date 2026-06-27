@@ -42,6 +42,8 @@ The prefix character at the beginning of each line tells you **who is speaking**
 | `Ctrl+G` | Toggle theme (dark / light / auto) |
 | `Ctrl+V` | Paste |
 | `Ctrl+C` | Quit |
+| `Ctrl+E` / `End` | Jump to bottom |
+| `Shift + mouse drag` | Select text in terminal |
 
 The **footer status bar** shows: current model, context usage (progress bar), cache hit rate, loop count, latency, balance.
 
