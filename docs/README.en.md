@@ -65,7 +65,7 @@ wvl setup                           # First-time setup (once only)
 wvl "Hello, tell me about yourself"  # Start using
 ```
 
-> Supports macOS / Linux AMD64 & ARM64. Build from source, update, alternative install paths, etc. — see [`install.md`](./install.en.md).
+> Supports macOS / Linux AMD64 & ARM64. To upgrade, simply re-run the install command. From source: `git pull && make install`. Details in [`install.md`](./install.en.md).
 
 ---
 
@@ -184,21 +184,6 @@ The agent auto-detects available toolchains at startup. For tools not in PATH or
 | `--continue` | Resume the most recent session |
 | `--settings PATH` | Specify config file path |
 | `--version` | Show version |
-
----
-
-## Upgrade
-
-Upgrading a pre-built binary is just re-running the install command to overwrite the old version:
-
-```sh
-# macOS ARM64
-sudo curl -fsSL https://github.com/Menfre01/waveloom/releases/latest/download/wvl_darwin_arm64.tar.gz | sudo tar -xz -C /usr/local/bin wvl
-```
-
-Replace with the file for your platform. From source: `cd waveloom && git pull && make install`.
-
-> Follow [Releases](https://github.com/Menfre01/waveloom/releases) for the latest version.
 
 ---
 
