@@ -51,19 +51,29 @@ Requires: [DeepSeek API Key](https://platform.deepseek.com/api_keys).
 
 **macOS**
 
+Apple Silicon (M1/M2/M3):
+
 ```sh
-# Apple Silicon (M1/M2/M3)
 curl -fsSL https://github.com/Menfre01/waveloom/releases/latest/download/wvl_darwin_arm64.tar.gz | sudo tar -xz -C /usr/local/bin wvl
-# Intel Mac
+```
+
+Intel Mac:
+
+```sh
 curl -fsSL https://github.com/Menfre01/waveloom/releases/latest/download/wvl_darwin_amd64.tar.gz | sudo tar -xz -C /usr/local/bin wvl
 ```
 
 **Linux**
 
+x86_64:
+
 ```sh
-# x86_64
 curl -fsSL https://github.com/Menfre01/waveloom/releases/latest/download/wvl_linux_amd64.tar.gz | sudo tar -xz -C /usr/local/bin wvl
-# ARM64 (Raspberry Pi 4/5, AWS Graviton, etc.)
+```
+
+ARM64:
+
+```sh
 curl -fsSL https://github.com/Menfre01/waveloom/releases/latest/download/wvl_linux_arm64.tar.gz | sudo tar -xz -C /usr/local/bin wvl
 ```
 
