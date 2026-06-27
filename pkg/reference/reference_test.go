@@ -1046,6 +1046,430 @@ func TestE2EExpandAndReplace(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// AGENTS.md 上下文展开测试
+// 对标 Claude Code 的 CLAUDE.md 子文件拆分模式：
+// AGENTS.md 中可以通过 @ 引用其他文件，展开后注入为 messages[1]。
+// ---------------------------------------------------------------------------
+
+// TestAgentsMdExpand_SingleFile 模拟 AGENTS.md 中引用单个文件。
+func TestAgentsMdExpand_SingleFile(t *testing.T) {
+	dir := t.TempDir()
+	f := makeFile(t, dir, "docs/coding-style.md", "# 编码规范\n\n- 遵循 Go 惯例\n- 错误统一处理")
+
+	reg := newMockRegistry()
+	reg.setExecute("read_file", f, "", &tool.ToolResult{
+		Content: "# 编码规范\n\n- 遵循 Go 惯例\n- 错误统一处理",
+		Meta:    tool.ToolMeta{ByteCount: 52},
+	}, nil)
+
+	guard := newMockGuard()
+	expander := New(reg, guard)
+
+	agentsMdText := "# AGENTS.md instructions for /project\n\n<INSTRUCTIONS>\n\n## /project/AGENTS.md\n基础规范 @docs/coding-style.md\n\n</INSTRUCTIONS>"
+	expanded, refs, err := expander.Expand(context.Background(), agentsMdText, dir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(refs) != 1 {
+		t.Fatalf("expected 1 ref, got %d", len(refs))
+	}
+	if !strings.Contains(expanded, "@@ docs/coding-style.md (file)") {
+		t.Fatalf("expected expanded file block, got: %s", expanded)
+	}
+	if !strings.Contains(expanded, "## /project/AGENTS.md") {
+		t.Fatalf("AGENTS.md structure should be preserved: %s", expanded)
+	}
+	if strings.Contains(expanded, "@docs/coding-style.md") {
+		t.Fatalf("raw @ref should be replaced: %s", expanded)
+	}
+}
+
+// TestAgentsMdExpand_NoRefPassthrough AGENTS.md 中没有 @ 引用时直接透传。
+func TestAgentsMdExpand_NoRefPassthrough(t *testing.T) {
+	dir := t.TempDir()
+	reg := newMockRegistry()
+	guard := newMockGuard()
+	expander := New(reg, guard)
+
+	agentsMdText := "# AGENTS.md instructions for /project\n\n<INSTRUCTIONS>\n\n## /project/AGENTS.md\n纯文本规范，没有任何引用。\n\n</INSTRUCTIONS>"
+	expanded, refs, err := expander.Expand(context.Background(), agentsMdText, dir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(refs) != 0 {
+		t.Fatalf("expected 0 refs, got %d", len(refs))
+	}
+	if expanded != agentsMdText {
+		t.Fatalf("expected identical passthrough when no refs, got: %s", expanded)
+	}
+}
+
+// TestAgentsMdExpand_FileNotFound AGENTS.md 中 @ 引用的文件不存在时，ref 携带错误信息且输出包含 [not found] 标记。
+func TestAgentsMdExpand_FileNotFound(t *testing.T) {
+	dir := t.TempDir()
+	missing := filepath.Join(dir, "nonexistent.md")
+
+	reg := newMockRegistry()
+	reg.setExecute("read_file", missing, "", &tool.ToolResult{
+		Error: &tool.ToolError{
+			Class:   tool.ErrorClassRecoverable,
+			Kind:    tool.ErrKindFileNotFound,
+			Message: "file not found",
+		},
+	}, nil)
+
+	guard := newMockGuard()
+	expander := New(reg, guard)
+
+	agentsMdText := "# AGENTS.md instructions\n\n<INSTRUCTIONS>\n\n@nonexistent.md\n\n</INSTRUCTIONS>"
+	expanded, refs, err := expander.Expand(context.Background(), agentsMdText, dir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(refs) != 1 {
+		t.Fatalf("expected 1 ref, got %d", len(refs))
+	}
+	// 展开后的 ref 应包含错误详情
+	if refs[0].Error == "" {
+		t.Fatalf("ref should have error for missing file")
+	}
+	if !strings.Contains(expanded, "[not found]") {
+		t.Fatalf("expected 'not found' marker for missing file, got: %s", expanded)
+	}
+	// AGENTS.md 剩余文本应保留
+	if !strings.Contains(expanded, "# AGENTS.md instructions") {
+		t.Fatalf("AGENTS.md preamble should be preserved: %s", expanded)
+	}
+}
+
+// TestAgentsMdExpand_RelativePath AGENTS.md 中的相对路径 @ 引用基于 cwd 解析。
+func TestAgentsMdExpand_RelativePath(t *testing.T) {
+	dir := t.TempDir()
+	f := makeFile(t, dir, "sub/dir/rules.md", "# 子目录规范")
+
+	reg := newMockRegistry()
+	reg.setExecute("read_file", f, "", &tool.ToolResult{
+		Content: "# 子目录规范",
+		Meta:    tool.ToolMeta{ByteCount: 18},
+	}, nil)
+
+	guard := newMockGuard()
+	expander := New(reg, guard)
+
+	agentsMdText := "# AGENTS.md\n\n<INSTRUCTIONS>\n\n引用 @sub/dir/rules.md\n\n</INSTRUCTIONS>"
+	expanded, refs, err := expander.Expand(context.Background(), agentsMdText, dir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(refs) != 1 {
+		t.Fatalf("expected 1 ref, got %d", len(refs))
+	}
+	if !strings.Contains(expanded, "@@ sub/dir/rules.md (file)") {
+		t.Fatalf("relative path should resolve: %s", expanded)
+	}
+}
+
+// TestAgentsMdExpand_AbsolutePath AGENTS.md 中的绝对路径引用应直接定位。
+func TestAgentsMdExpand_AbsolutePath(t *testing.T) {
+	dir := t.TempDir()
+	f := makeFile(t, dir, "global-rules.md", "# 全局规范")
+
+	reg := newMockRegistry()
+	reg.setExecute("read_file", f, "", &tool.ToolResult{
+		Content: "# 全局规范",
+		Meta:    tool.ToolMeta{ByteCount: 15},
+	}, nil)
+
+	guard := newMockGuard()
+	expander := New(reg, guard)
+
+	agentsMdText := "# AGENTS.md\n\n<INSTRUCTIONS>\n\n引用 @" + f + "\n\n</INSTRUCTIONS>"
+	expanded, refs, err := expander.Expand(context.Background(), agentsMdText, dir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(refs) != 1 {
+		t.Fatalf("expected 1 ref, got %d", len(refs))
+	}
+	if refs[0].Error != "" {
+		t.Fatalf("unexpected ref error for absolute path: %q", refs[0].Error)
+	}
+	if !strings.Contains(expanded, "@@ ") {
+		t.Fatalf("expected @@ block for valid absolute path ref, got: %s", expanded)
+	}
+}
+
+// TestAgentsMdExpand_MarkdownFile AGENTS.md 中引用 .md 文件应获得 ```markdown 语言标签。
+func TestAgentsMdExpand_MarkdownFile(t *testing.T) {
+	dir := t.TempDir()
+	f := makeFile(t, dir, "docs/project-overview.md", "# 项目概览\n\nWaveloom 是一个终端编码代理。")
+
+	reg := newMockRegistry()
+	reg.setExecute("read_file", f, "", &tool.ToolResult{
+		Content: "# 项目概览\n\nWaveloom 是一个终端编码代理。",
+		Meta:    tool.ToolMeta{ByteCount: 40},
+	}, nil)
+
+	guard := newMockGuard()
+	expander := New(reg, guard)
+
+	agentsMdText := "# AGENTS.md\n\n<INSTRUCTIONS>\n\n@docs/project-overview.md\n\n</INSTRUCTIONS>"
+	expanded, refs, err := expander.Expand(context.Background(), agentsMdText, dir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(refs) != 1 {
+		t.Fatalf("expected 1 ref, got %d", len(refs))
+	}
+	if !strings.Contains(expanded, "```markdown") {
+		t.Fatalf("expected ```markdown language tag for .md file, got: %s", expanded)
+	}
+}
+
+// TestAgentsMdExpand_MultipleMixedRefs AGENTS.md 中同时引用文件和目录。
+func TestAgentsMdExpand_MultipleMixedRefs(t *testing.T) {
+	dir := t.TempDir()
+	f := makeFile(t, dir, "specs/agent-loop.md", "# Agent Loop 规格")
+	d := makeDir(t, dir, "pkg/agentloop")
+
+	reg := newMockRegistry()
+	reg.setExecute("read_file", f, "", &tool.ToolResult{
+		Content: "# Agent Loop 规格",
+		Meta:    tool.ToolMeta{ByteCount: 20},
+	}, nil)
+	reg.setExecute("ls", "", d, &tool.ToolResult{
+		Content: "loop.go\ntypes.go",
+		Meta:    tool.ToolMeta{ByteCount: 18},
+	}, nil)
+
+	guard := newMockGuard()
+	expander := New(reg, guard)
+
+	agentsMdText := "# AGENTS.md\n\n<INSTRUCTIONS>\n\n规格见 @specs/agent-loop.md\n代码见 @pkg/agentloop\n\n</INSTRUCTIONS>"
+	expanded, refs, err := expander.Expand(context.Background(), agentsMdText, dir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(refs) != 2 {
+		t.Fatalf("expected 2 refs, got %d", len(refs))
+	}
+	if !strings.Contains(expanded, "@@ specs/agent-loop.md (file)") {
+		t.Fatalf("expected file block: %s", expanded)
+	}
+	if !strings.Contains(expanded, "@@ pkg/agentloop (directory)") {
+		t.Fatalf("expected directory block: %s", expanded)
+	}
+}
+
+// TestAgentsMdExpand_PermissionDenied AGENTS.md 中引用被权限规则拒绝的文件时，
+// refs 列表中包含 "permission denied" 错误详情，输出中显示 [not found] 标记。
+func TestAgentsMdExpand_PermissionDenied(t *testing.T) {
+	dir := t.TempDir()
+	f := makeFile(t, dir, "secret.md", "# 机密文档")
+
+	reg := newMockRegistry()
+	reg.setExecute("read_file", f, "", &tool.ToolResult{
+		Content: "# 机密文档",
+		Meta:    tool.ToolMeta{ByteCount: 15},
+	}, nil)
+
+	guard := newMockGuard()
+	guard.setDecision("read_file", permission.DecisionDeny)
+
+	expander := New(reg, guard)
+
+	agentsMdText := "# AGENTS.md\n\n<INSTRUCTIONS>\n\n@secret.md\n\n</INSTRUCTIONS>"
+	expanded, refs, err := expander.Expand(context.Background(), agentsMdText, dir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(refs) != 1 {
+		t.Fatalf("expected 1 ref, got %d", len(refs))
+	}
+	if !strings.Contains(refs[0].Error, "permission denied") {
+		t.Fatalf("ref error should contain 'permission denied', got: %q", refs[0].Error)
+	}
+	if !strings.Contains(expanded, "[not found]") {
+		t.Fatalf("expanded text should contain 'not found' marker, got: %s", expanded)
+	}
+}
+
+// TestAgentsMdExpand_PartialFailure 一个 @ 引用成功、另一个失败时，成功的内容仍保留，失败的显示错误。
+func TestAgentsMdExpand_PartialFailure(t *testing.T) {
+	dir := t.TempDir()
+	f := makeFile(t, dir, "docs/readme.md", "# 说明")
+	missing := filepath.Join(dir, "docs", "changelog.md")
+
+	reg := newMockRegistry()
+	reg.setExecute("read_file", f, "", &tool.ToolResult{
+		Content: "# 说明",
+		Meta:    tool.ToolMeta{ByteCount: 10},
+	}, nil)
+	reg.setExecute("read_file", missing, "", &tool.ToolResult{
+		Error: &tool.ToolError{
+			Class:   tool.ErrorClassRecoverable,
+			Kind:    tool.ErrKindFileNotFound,
+			Message: "file not found",
+		},
+	}, nil)
+
+	guard := newMockGuard()
+	expander := New(reg, guard)
+
+	agentsMdText := "# AGENTS.md\n\n<INSTRUCTIONS>\n\n@docs/readme.md\n@docs/changelog.md\n\n</INSTRUCTIONS>"
+	expanded, refs, err := expander.Expand(context.Background(), agentsMdText, dir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(refs) != 2 {
+		t.Fatalf("expected 2 refs, got %d", len(refs))
+	}
+	if !strings.Contains(expanded, "# 说明") {
+		t.Fatalf("successful ref content should be present: %s", expanded)
+	}
+	if !strings.Contains(expanded, "[not found]") {
+		t.Fatalf("failed ref should show error marker: %s", expanded)
+	}
+}
+
+// TestAgentsMdExpand_FuzzyMatch AGENTS.md 中的 @ 引用支持模糊前缀匹配。
+func TestAgentsMdExpand_FuzzyMatch(t *testing.T) {
+	dir := t.TempDir()
+	f := makeFile(t, dir, "specs/reference-context.md", "# 引用上下文")
+
+	reg := newMockRegistry()
+	reg.setExecute("read_file", f, "", &tool.ToolResult{
+		Content: "# 引用上下文",
+		Meta:    tool.ToolMeta{ByteCount: 18},
+	}, nil)
+
+	guard := newMockGuard()
+	expander := New(reg, guard)
+
+	agentsMdText := "# AGENTS.md\n\n<INSTRUCTIONS>\n\n@specs/reference-c\n\n</INSTRUCTIONS>"
+	expanded, _, err := expander.Expand(context.Background(), agentsMdText, dir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(expanded, "@@ specs/reference-context.md (file)") {
+		t.Fatalf("fuzzy match should resolve, got: %s", expanded)
+	}
+}
+
+// TestAgentsMdExpand_ContentAboveRefs AGENTS.md 中的 @ 引用展开后，非引用文本应保留在下方。
+func TestAgentsMdExpand_ContentAboveRefs(t *testing.T) {
+	dir := t.TempDir()
+	f := makeFile(t, dir, "specs/agent-loop.md", "# Agent Loop")
+
+	reg := newMockRegistry()
+	reg.setExecute("read_file", f, "", &tool.ToolResult{
+		Content: "# Agent Loop",
+		Meta:    tool.ToolMeta{ByteCount: 12},
+	}, nil)
+
+	guard := newMockGuard()
+	expander := New(reg, guard)
+
+	agentsMdText := "# AGENTS.md instructions for /project\n\n<INSTRUCTIONS>\n\n## /project/AGENTS.md\n\n项目基础规范，详见 @specs/agent-loop.md\n\n更多细节请参考团队 Wiki。\n\n</INSTRUCTIONS>"
+	expanded, _, err := expander.Expand(context.Background(), agentsMdText, dir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// @@ 块应该在顶部（引用内容），指令文本在下方
+	if !strings.Contains(expanded, "@@ specs/agent-loop.md (file)") {
+		t.Fatalf("@@ block missing: %s", expanded)
+	}
+	if !strings.Contains(expanded, "项目基础规范") {
+		t.Fatalf("instruction text should be preserved: %s", expanded)
+	}
+	if !strings.Contains(expanded, "更多细节请参考团队 Wiki") {
+		t.Fatalf("trailing text should be preserved: %s", expanded)
+	}
+	// 引用内容块应在用户指令文本之前
+	blockPos := strings.Index(expanded, "@@ specs/agent-loop.md (file)")
+	instrPos := strings.Index(expanded, "项目基础规范")
+	if blockPos > instrPos {
+		t.Fatalf("@@ blocks should appear before instruction text")
+	}
+}
+
+// TestAgentsMdExpand_Empty 空 AGENTS.md 内容无引用，不报错。
+func TestAgentsMdExpand_Empty(t *testing.T) {
+	dir := t.TempDir()
+	reg := newMockRegistry()
+	guard := newMockGuard()
+	expander := New(reg, guard)
+
+	expanded, refs, err := expander.Expand(context.Background(), "", dir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(refs) != 0 {
+		t.Fatalf("expected 0 refs for empty input, got %d", len(refs))
+	}
+	if expanded != "" {
+		t.Fatalf("expected empty passthrough, got %q", expanded)
+	}
+}
+
+// TestAgentsMdExpand_TotalByteLimit AGENTS.md 展开后总大小超过 128KB 时应截断。
+func TestAgentsMdExpand_TotalByteLimit(t *testing.T) {
+	dir := t.TempDir()
+	f1 := makeFile(t, dir, "big.md", strings.Repeat("# 大文件\n", 20000)) // ~140KB
+
+	reg := newMockRegistry()
+	reg.setExecute("read_file", f1, "", &tool.ToolResult{
+		Content: strings.Repeat("# 大文件\n", 20000),
+		Meta:    tool.ToolMeta{ByteCount: 140 * 1024},
+	}, nil)
+
+	guard := newMockGuard()
+	expander := New(reg, guard)
+
+	agentsMdText := "# AGENTS.md\n\n<INSTRUCTIONS>\n\n@big.md\n\n</INSTRUCTIONS>"
+	expanded, refs, err := expander.Expand(context.Background(), agentsMdText, dir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(refs) != 1 {
+		t.Fatalf("expected 1 ref, got %d", len(refs))
+	}
+	if len(expanded) > 140*1024 {
+		t.Fatalf("expanded content should be truncated, got %d bytes", len(expanded))
+	}
+}
+
+// TestAgentsMdExpand_DirectoryRef AGENTS.md 中 @ 引用目录时展开为文件列表。
+func TestAgentsMdExpand_DirectoryRef(t *testing.T) {
+	dir := t.TempDir()
+	d := makeDir(t, dir, "docs/specs")
+
+	reg := newMockRegistry()
+	reg.setExecute("ls", "", d, &tool.ToolResult{
+		Content: "agent-loop.md\nreference.md\ncompaction.md",
+		Meta:    tool.ToolMeta{ByteCount: 38},
+	}, nil)
+
+	guard := newMockGuard()
+	expander := New(reg, guard)
+
+	agentsMdText := "# AGENTS.md\n\n<INSTRUCTIONS>\n\n@docs/specs\n\n</INSTRUCTIONS>"
+	expanded, refs, err := expander.Expand(context.Background(), agentsMdText, dir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(refs) != 1 {
+		t.Fatalf("expected 1 ref, got %d", len(refs))
+	}
+	if !strings.Contains(expanded, "@@ docs/specs (directory)") {
+		t.Fatalf("expected directory block: %s", expanded)
+	}
+	if !strings.Contains(expanded, "agent-loop.md") {
+		t.Fatalf("expected directory listing content: %s", expanded)
+	}
+}
+
+// ---------------------------------------------------------------------------
 // languageForPath
 // ---------------------------------------------------------------------------
 
