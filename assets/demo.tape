@@ -24,7 +24,7 @@ Type "用一句话解释 pkg/compaction/compactor.go 中四级水位线的工作
 Enter
 
 # 等待 thought + 回答流式输出
-Sleep 20s
+Sleep 25s
 
 # Tab 聚焦 thought → Enter 展开 thought 面板，展示 reasoning 内容
 Tab
