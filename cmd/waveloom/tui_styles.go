@@ -178,7 +178,6 @@ var (
 	styleFooterLabel       lipgloss.Style
 	styleFooterValue       lipgloss.Style
 	styleFooterValueMuted  lipgloss.Style
-	styleFooterLatGreen    lipgloss.Style
 	styleFooterLatGold     lipgloss.Style
 	styleFooterLatRed      lipgloss.Style
 	styleCtxBarGreenFg     lipgloss.Style
@@ -186,11 +185,16 @@ var (
 	styleCtxBarRedFg       lipgloss.Style
 	styleCacheGreen        lipgloss.Style
 	styleCacheGold         lipgloss.Style
-	styleSystemPara        lipgloss.Style
+	styleSystemInfo   lipgloss.Style // 系统通知：完成/中断
+	styleSystemWarn   lipgloss.Style // 系统通知：警告
+	styleSystemError  lipgloss.Style // 系统通知：错误
+	styleSystemPrefixInfo  lipgloss.Style
+	styleSystemPrefixWarn  lipgloss.Style
+	styleSystemPrefixError lipgloss.Style
 	styleToolArgs          lipgloss.Style
-	styleSystemPrefix       lipgloss.Style
 	styleAsstPrefixDone     lipgloss.Style
 	styleThoughtPrefixDone  lipgloss.Style
+	styleFocusIndicator     lipgloss.Style
 )
 
 // ---------------------------------------------------------------------------
@@ -232,7 +236,7 @@ func applyTheme(p palette) {
 	styleHeader = lipgloss.NewStyle().Foreground(colorHeaderFg).Width(0)
 	styleHeaderAccent = lipgloss.NewStyle().Foreground(colorHeaderAccent).Bold(true)
 	styleFooter = lipgloss.NewStyle().Foreground(colorFooterFg).Width(0)
-	styleApp = lipgloss.NewStyle().Padding(1, 2)
+	styleApp = lipgloss.NewStyle().Padding(1, 2, 0, 2) // top(1) right(2) bottom(0) left(2)
 	styleInput = lipgloss.NewStyle().Width(0)
 
 	// 覆盖层样式
@@ -262,7 +266,6 @@ func applyTheme(p palette) {
 	styleFooterLabel = lipgloss.NewStyle().Foreground(colorGray)
 	styleFooterValue = lipgloss.NewStyle().Foreground(colorFooterValue)
 	styleFooterValueMuted = lipgloss.NewStyle().Foreground(colorGray)
-	styleFooterLatGreen = lipgloss.NewStyle().Foreground(colorOK)
 	styleFooterLatGold = lipgloss.NewStyle().Foreground(colorAccentGold)
 	styleFooterLatRed = lipgloss.NewStyle().Foreground(colorErr)
 
@@ -275,16 +278,22 @@ func applyTheme(p palette) {
 	styleCacheGreen = lipgloss.NewStyle().Foreground(colorOK)
 	styleCacheGold = lipgloss.NewStyle().Foreground(colorAccentGold)
 
-	// 系统提示段落文本样式
-	styleSystemPara = lipgloss.NewStyle().Foreground(colorAccentGold)
+	// 系统提示段落 — 按通知类型着色
+	styleSystemInfo  = lipgloss.NewStyle().Foreground(colorGray)
+	styleSystemWarn  = lipgloss.NewStyle().Foreground(colorAccentGold)
+	styleSystemError = lipgloss.NewStyle().Foreground(colorErr)
+
+	styleSystemPrefixInfo  = lipgloss.NewStyle().Foreground(colorGray).Bold(true)
+	styleSystemPrefixWarn  = lipgloss.NewStyle().Foreground(colorAccentGold).Bold(true)
+	styleSystemPrefixError = lipgloss.NewStyle().Foreground(colorErr).Bold(true)
 
 	// 工具参数代码色（仅前景，行内使用不设背景）
 	styleToolArgs = lipgloss.NewStyle().Foreground(colorToolCode)
 
 	// 前缀符号预定义样式（热路径，避免每次渲染 NewStyle）
-	styleSystemPrefix = lipgloss.NewStyle().Foreground(colorAccentGold).Bold(true)
 	styleAsstPrefixDone = lipgloss.NewStyle().Foreground(colorGray)
 	styleThoughtPrefixDone = lipgloss.NewStyle().Foreground(colorGray)
+	styleFocusIndicator = lipgloss.NewStyle().Foreground(colorAccentGold).Bold(true)
 }
 
 // ---------------------------------------------------------------------------
@@ -324,9 +333,28 @@ func listItemStyles() list.DefaultItemStyles {
 // 前缀渲染辅助函数（spinner 驱动动画）
 // ---------------------------------------------------------------------------
 
-// systemPrefix 返回系统 ⚙ 前缀（琥珀色）。
-func systemPrefix() string {
-	return styleSystemPrefix.Render("⚙")
+// systemPrefix 返回系统 ◼ 前缀，按通知类型着色。
+func systemPrefix(kind systemNotifKind) string {
+	switch kind {
+	case notifWarn:
+		return styleSystemPrefixWarn.Render("◼")
+	case notifError:
+		return styleSystemPrefixError.Render("◼")
+	default:
+		return styleSystemPrefixInfo.Render("◼")
+	}
+}
+
+// systemTextStyle 返回系统通知文本的样式，按通知类型着色。
+func systemTextStyle(kind systemNotifKind) lipgloss.Style {
+	switch kind {
+	case notifWarn:
+		return styleSystemWarn
+	case notifError:
+		return styleSystemError
+	default:
+		return styleSystemInfo
+	}
 }
 
 // userPrefix 返回蓝色的小右箭号前缀。

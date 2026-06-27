@@ -91,7 +91,7 @@ func TestWrapLine_PrefersSpaceBreak(t *testing.T) {
 
 func TestBuildViewportContent_EmptyParagraphs(t *testing.T) {
 	ctx := ViewportCtx{Width: 80}
-	lines, starts := buildViewportContent(nil, ctx, 0)
+	lines, starts := buildViewportContent(nil, ctx, -1, 0)
 	if len(lines) != 0 {
 		t.Errorf("expected 0 lines, got %d", len(lines))
 	}
@@ -105,7 +105,7 @@ func TestBuildViewportContent_UserParagraph(t *testing.T) {
 		{Type: paraUser, State: stateDone, Text: "hello"},
 	}
 	ctx := ViewportCtx{Width: 80}
-	lines, starts := buildViewportContent(paras, ctx, 0)
+	lines, starts := buildViewportContent(paras, ctx, -1, 0)
 
 	if len(starts) != 1 {
 		t.Fatalf("expected 1 lineStart, got %d", len(starts))
@@ -131,7 +131,7 @@ func TestBuildViewportContent_StreamingThought(t *testing.T) {
 		},
 	}
 	ctx := ViewportCtx{Width: 80, Thought: sp}
-	lines, _ := buildViewportContent(paras, ctx, 0)
+	lines, _ := buildViewportContent(paras, ctx, -1, 0)
 
 	// 渲染末尾有换行符，split 后末尾多一个空串，实际内容 ≥3 行
 	nonEmpty := 0
@@ -156,7 +156,7 @@ func TestBuildViewportContent_CollapsedThought(t *testing.T) {
 		},
 	}
 	ctx := ViewportCtx{Width: 80}
-	lines, _ := buildViewportContent(paras, ctx, 0)
+	lines, _ := buildViewportContent(paras, ctx, -1, 0)
 
 	foundToken := false
 	for _, l := range lines {
@@ -181,7 +181,7 @@ func TestBuildViewportContent_ToolStreaming(t *testing.T) {
 		},
 	}
 	ctx := ViewportCtx{Width: 80, Tool: sp}
-	lines, _ := buildViewportContent(paras, ctx, 0)
+	lines, _ := buildViewportContent(paras, ctx, -1, 0)
 
 	if len(lines) < 1 {
 		t.Fatal("expected at least 1 line for tool")
@@ -203,7 +203,7 @@ func TestBuildViewportContent_ToolDone(t *testing.T) {
 		},
 	}
 	ctx := ViewportCtx{Width: 80}
-	lines, _ := buildViewportContent(paras, ctx, 0)
+	lines, _ := buildViewportContent(paras, ctx, -1, 0)
 
 	if len(lines) < 1 {
 		t.Fatal("expected at least 1 line for done tool")
@@ -235,7 +235,7 @@ func TestBuildViewportContent_ToolError(t *testing.T) {
 		},
 	}
 	ctx := ViewportCtx{Width: 80}
-	lines, _ := buildViewportContent(paras, ctx, 0)
+	lines, _ := buildViewportContent(paras, ctx, -1, 0)
 
 	hasError := false
 	for _, l := range lines {
@@ -254,7 +254,7 @@ func TestBuildViewportContent_SystemParagraph(t *testing.T) {
 		{Type: paraSystem, State: stateDone, Text: "执行被中断。"},
 	}
 	ctx := ViewportCtx{Width: 80}
-	lines, _ := buildViewportContent(paras, ctx, 0)
+	lines, _ := buildViewportContent(paras, ctx, -1, 0)
 
 	if len(lines) < 1 {
 		t.Fatal("expected at least 1 line for system")
@@ -280,7 +280,7 @@ func TestBuildViewportContent_UsesCache(t *testing.T) {
 		},
 	}
 	ctx := ViewportCtx{Width: 80}
-	lines, _ := buildViewportContent(paras, ctx, 0)
+	lines, _ := buildViewportContent(paras, ctx, -1, 0)
 
 	if len(lines) != 1 || lines[0] != "› hello" {
 		t.Errorf("expected cached line, got %v", lines)
@@ -299,7 +299,7 @@ func TestBuildViewportContent_DiscardsCacheOnWidthChange(t *testing.T) {
 		},
 	}
 	ctx := ViewportCtx{Width: 40} // different width → cache invalid
-	lines, _ := buildViewportContent(paras, ctx, 0)
+	lines, _ := buildViewportContent(paras, ctx, -1, 0)
 
 	// Should re-render; the cached line won't be used
 	if len(lines) < 1 {
@@ -319,7 +319,7 @@ func TestBuildViewportContent_DiscardsCacheWhenDirty(t *testing.T) {
 		},
 	}
 	ctx := ViewportCtx{Width: 80}
-	lines, _ := buildViewportContent(paras, ctx, 0)
+	lines, _ := buildViewportContent(paras, ctx, -1, 0)
 
 	if len(lines) < 1 {
 		t.Fatal("expected at least 1 line")
@@ -337,7 +337,7 @@ func TestBuildViewportContent_LineHintPreAlloc(t *testing.T) {
 	}
 	ctx := ViewportCtx{Width: 80}
 	// Large hint should be fine
-	lines, _ := buildViewportContent(paras, ctx, 10000)
+	lines, _ := buildViewportContent(paras, ctx, -1, 10000)
 	if len(lines) == 0 {
 		t.Fatal("expected lines")
 	}
@@ -354,7 +354,7 @@ func TestBuildViewportContent_LineStarts(t *testing.T) {
 		{Type: paraUser, State: stateDone, Text: "third"},
 	}
 	ctx := ViewportCtx{Width: 80}
-	lines, starts := buildViewportContent(paras, ctx, 0)
+	lines, starts := buildViewportContent(paras, ctx, -1, 0)
 
 	if len(starts) != 3 {
 		t.Fatalf("expected 3 starts, got %d", len(starts))

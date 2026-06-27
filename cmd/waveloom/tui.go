@@ -15,8 +15,8 @@
 //	↑/↓      浏览输入历史（空闲态）；滚动消息历史（无历史导航时）
 //	PgUp/PgDn  滚动消息历史
 //	Ctrl+E / End  跳到底部
-//	Ctrl+O   展开/折叠最后一个 tool 输出
-//	Ctrl+T   展开/折叠最后一个 thought
+//	Tab / Shift+Tab  聚焦可交互段落（thought、shell/web_fetch 输出）
+//	Enter    展开/折叠当前聚焦的段落
 //	Ctrl+G   切换主题
 //	Ctrl+C   退出
 package main
@@ -126,7 +126,7 @@ var defaultSystemPrompt = fmt.Sprintf(`You are Waveloom %s, a terminal-based cod
 const maxParas = 200
 
 // maxToolResultBytes 是单个工具结果的最大存储字节数。
-// 超出部分截断，展开时通过 Ctrl+O 无法看到被截断内容，
+// 超出部分截断，展开时被截断内容不可见，
 // 但完整结果已通过 agent loop 传递给 LLM，不影响上下文。
 const maxToolResultBytes = 100 * 1024 // 100 KB
 
@@ -154,8 +154,8 @@ type keyMap struct {
 	Enter         key.Binding
 	Interrupt     key.Binding
 	Quit          key.Binding
-	ToggleTool    key.Binding
-	ToggleThought key.Binding
+	FocusNext     key.Binding
+	FocusPrev     key.Binding
 	Up            key.Binding
 	Down          key.Binding
 	PageUp        key.Binding
@@ -177,8 +177,8 @@ var defaultKeys = keyMap{
 	Enter:         key.NewBinding(key.WithKeys("enter"), key.WithHelp("Enter", "发送消息")),
 	Interrupt:     key.NewBinding(key.WithKeys("esc"), key.WithHelp("Esc", "中断 agent loop")),
 	Quit:          key.NewBinding(key.WithKeys("ctrl+c"), key.WithHelp("Ctrl+C", "退出")),
-	ToggleTool:    key.NewBinding(key.WithKeys("ctrl+o"), key.WithHelp("Ctrl+O", "展开/折叠 shell 输出")),
-	ToggleThought: key.NewBinding(key.WithKeys("ctrl+t"), key.WithHelp("Ctrl+T", "展开/折叠 thought")),
+	FocusNext:     key.NewBinding(key.WithKeys("tab"), key.WithHelp("Tab", "聚焦下一个可交互段落")),
+	FocusPrev:     key.NewBinding(key.WithKeys("shift+tab"), key.WithHelp("Shift+Tab", "聚焦上一个可交互段落")),
 	Up:            key.NewBinding(key.WithKeys("up"), key.WithHelp("↑", "向上滚动")),
 	Down:          key.NewBinding(key.WithKeys("down"), key.WithHelp("↓", "向下滚动")),
 	PageUp:        key.NewBinding(key.WithKeys("pgup"), key.WithHelp("PgUp", "向上翻页")),
@@ -278,7 +278,6 @@ type model struct {
 	hudMessages   int
 	hudCacheHit   int
 	hudCacheMiss  int
-	hudLatMs      int64
 	turnStartTime time.Time // 本轮启动时间，用于计算延迟
 
 	// loop 级增量（透传给 CompleteRun → cm.stats，loop 结束归零）
@@ -307,6 +306,7 @@ type model struct {
 	keys           keyMap
 	help           help.Model
 	spinner        spinner.Model  // 通用 spinner（HUD 加载指示）
+	focusIndex     int            // 段落焦点：-1 = 输入框，>=0 = 段落索引
 	spAsst         spinner.Model  // assistant 流式前缀动画
 	spThought      spinner.Model  // thought 流式前缀动画
 	spTool         spinner.Model  // tool 执行中前缀动画
@@ -417,7 +417,7 @@ func newTUIModel(llmClient llm.Client, registry tool.Registry, guard permission.
 
 	ti := textinput.New()
 	ti.Prompt = "› "
-	ti.Placeholder = "输入消息，Enter 发送..."
+	ti.Placeholder = "输入消息, Enter 发送 · @ 选择文件 · Esc 中断"
 	ti.CharLimit = 2048
 	ti.SetVirtualCursor(false) // real cursor 避免 virtual cursor 反色 ANSI 泄漏
 	styles := ti.Styles()
@@ -495,6 +495,7 @@ func newTUIModel(llmClient llm.Client, registry tool.Registry, guard permission.
 		overlay:         overlayNone,
 		themeMode:       theme,
 		palette:         darkPalette, // 默认，initTheme 覆盖
+		focusIndex:      -1,
 		pinnedToBottom:  true,
 	}
 }
@@ -653,21 +654,25 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// 压缩通知段落
 		if msg.Compaction.SummaryDone {
 			m.paras = append(m.paras, Paragraph{
-				Type:  paraSystem,
-				State: stateDone,
-				Text:  "上下文压缩完成：Tier 3 摘要已生成",
+				Type:      paraSystem,
+				State:     stateDone,
+				Text:      "上下文压缩完成：Tier 3 摘要已生成",
+				NotifKind: notifInfo,
 			})
 			m.trimParas()
 		}
 		if msg.Compaction.HardLimitReached {
 			msgText := "上下文已达上限（98%），后续 LLM 调用已被阻止。使用 /reset 重建会话。"
+			msgKind := notifWarn
 			if msg.Compaction.HardLimitReason == "tier3_failures" {
 				msgText = "Tier 3 摘要连续失败已达上限，后续 LLM 调用已被阻止。使用 /reset 重建会话。"
+				msgKind = notifError
 			}
 			m.paras = append(m.paras, Paragraph{
-				Type:  paraSystem,
-				State: stateDone,
-				Text:  msgText,
+				Type:      paraSystem,
+				State:     stateDone,
+				Text:      msgText,
+				NotifKind: msgKind,
 			})
 			m.trimParas()
 		}
@@ -778,7 +783,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // handled=false 表示 key 未被消费，调用方应传给 input / viewport。
 //
 // 路由优先级：
-//  1. 全局快捷键（所有状态/覆盖层下生效）：Quit, ToggleTool, ToggleThought, ToggleTheme, JumpBottom, PageUp/Down
+//  1. 全局快捷键（所有状态/覆盖层下生效）：Quit, ToggleTheme, JumpBottom, PageUp/Down
 //  2. 文件选择器活跃 → handlePickerKey
 //  3. 权限面板活跃 → permList 导航 + handlePermKey
 //  4. 正常模式快捷键
@@ -789,14 +794,6 @@ func (m *model) handleKeyPress(msg tea.KeyPressMsg) (bool, tea.Cmd) {
 	switch {
 	case key.Matches(msg, m.keys.Quit):
 		return true, tea.Quit
-
-	case key.Matches(msg, m.keys.ToggleTool):
-		m.toggleLastTool()
-		return true, nil
-
-	case key.Matches(msg, m.keys.ToggleThought):
-		m.toggleLastThought()
-		return true, nil
 
 	case key.Matches(msg, m.keys.ToggleTheme):
 		m.toggleTheme()
@@ -828,24 +825,48 @@ func (m *model) handleKeyPress(msg tea.KeyPressMsg) (bool, tea.Cmd) {
 	// 4. 正常模式快捷键
 	// =====================================================================
 	switch {
+	// 段落焦点导航（Tab / Shift+Tab），仅在空闲态生效
+	case key.Matches(msg, m.keys.FocusNext):
+		if m.running || m.overlay != overlayNone || m.pickerVisible {
+			return false, nil
+		}
+		return true, m.focusNext()
+
+	case key.Matches(msg, m.keys.FocusPrev):
+		if m.running || m.overlay != overlayNone || m.pickerVisible {
+			return false, nil
+		}
+		return true, m.focusPrev()
+
 	case key.Matches(msg, m.keys.Enter):
+		// 焦点在段落上 → 展开/折叠
+		if m.focusIndex >= 0 && m.focusIndex < len(m.paras) {
+			m.toggleParagraphFocus()
+			return true, nil
+		}
 		if !m.running {
 			userInput := strings.TrimSpace(m.input.Value())
 			if userInput == "" {
 				return true, nil
+			}
+			if strings.EqualFold(userInput, "exit") {
+				return true, tea.Quit
 			}
 
 			// 硬临界值阻断：上下文已达上限时直接拒绝新 prompt
 			if m.cm.Compactor().LastResult().HardLimitReached {
 				reason := m.cm.Compactor().LastResult().HardLimitReason
 				msg := "上下文已达上限（98%），后续 LLM 调用已被阻止。使用 /reset 重建会话。"
+				msgKind := notifWarn
 				if reason == "tier3_failures" {
 					msg = "Tier 3 摘要连续失败已达上限，后续 LLM 调用已被阻止。使用 /reset 重建会话。"
+					msgKind = notifError
 				}
 				m.paras = append(m.paras, Paragraph{
-					Type:  paraSystem,
-					State: stateDone,
-					Text:  msg,
+					Type:      paraSystem,
+					State:     stateDone,
+					Text:      msg,
+					NotifKind: msgKind,
 				})
 				return true, nil
 			}
@@ -869,6 +890,11 @@ func (m *model) handleKeyPress(msg tea.KeyPressMsg) (bool, tea.Cmd) {
 		return true, m.doTurn(userInput)
 
 	case key.Matches(msg, m.keys.Interrupt):
+		// 焦点在段落上 → 归位到输入框
+		if m.focusIndex >= 0 {
+			m.focusIndex = -1
+			return true, m.exitFocusMode()
+		}
 		if m.running && m.cancelRun != nil {
 			m.cancelRun()
 			m.cancelRun = nil
@@ -887,6 +913,10 @@ func (m *model) handleKeyPress(msg tea.KeyPressMsg) (bool, tea.Cmd) {
 		return false, nil
 
 	case key.Matches(msg, m.keys.Up):
+		// 焦点在段落上 → 移到上一个可交互段落
+		if m.focusIndex >= 0 {
+			return true, m.focusPrev()
+		}
 		// 空闲态 ↑ → 输入历史导航（仅在未处于历史导航中时尝试）
 		if !m.running && m.overlay == overlayNone && !m.pickerVisible {
 			if m.historyPos == -1 || m.historyPos < len(m.inputHistory)-1 {
@@ -900,6 +930,10 @@ func (m *model) handleKeyPress(msg tea.KeyPressMsg) (bool, tea.Cmd) {
 		return true, nil
 
 	case key.Matches(msg, m.keys.Down):
+		// 焦点在段落上 → 移到下一个可交互段落
+		if m.focusIndex >= 0 {
+			return true, m.focusNext()
+		}
 		// 空闲态 ↓ → 输入历史导航
 		if !m.running && m.overlay == overlayNone && !m.pickerVisible {
 			if m.navigateHistoryDown() {
@@ -1566,6 +1600,15 @@ func (m *model) handleToolResult(ev agentloop.ToolCallResult) {
 }
 
 // truncateToolResult 将超长工具结果截断到 maxToolResultBytes，末尾追加截断提示。
+// shortTokens 将 token 数格式化为短格式（≥1000 时用 k 后缀，保留一位小数）。
+func shortTokens(n int) string {
+	if n < 1000 {
+		return fmt.Sprintf("%d", n)
+	}
+	v := float64(n) / 1000
+	return fmt.Sprintf("%.1fk", v)
+}
+
 // 完整结果已通过 agent loop 传递给 LLM，截断仅影响 TUI 展示。
 func truncateToolResult(result string) string {
 	if len(result) <= maxToolResultBytes {
@@ -1579,18 +1622,26 @@ func truncateToolResult(result string) string {
 // generation > 0 且与当前 runGeneration 不一致 → 该 LoopDone 属于已被取代的旧 loop。
 func (m *model) handleLoopDone(ev agentloop.LoopDone, generation int) {
 	isStale := generation > 0 && generation != m.runGeneration
+	var loopIn, loopOut int
+	var elapsedMs int64
 
 	if !isStale {
 		m.running = false
+		m.focusIndex = -1
+		m.input.Placeholder = "输入消息, Enter 发送 · @ 选择文件 · Esc 中断"
 		m.cancelRun = nil
 
 		// 计算延迟（必须在 CompleteRun 之前，因为 CompleteRun 需要 durationMs）
 		if !m.turnStartTime.IsZero() {
-			m.hudLatMs = time.Since(m.turnStartTime).Milliseconds()
+			elapsedMs = time.Since(m.turnStartTime).Milliseconds()
 		}
 
+		// 捕获 loop 级 token 增量（System 通知需要，归零前保存）
+		loopIn = m.loopPrompt
+		loopOut = m.loopCompl
+
 		// 提交到 ContextManager（stats 累加 + 落盘；压缩已在 Loop 内完成）
-		result := m.cm.CompleteRun(ev.Messages, m.loopPrompt, m.lastTurnPrompt, m.loopCompl, m.loopCacheHit, m.loopCacheMiss, m.loopReasoning, m.hudModel, m.hudLatMs, string(ev.Reason))
+		result := m.cm.CompleteRun(ev.Messages, m.loopPrompt, m.lastTurnPrompt, m.loopCompl, m.loopCacheHit, m.loopCacheMiss, m.loopReasoning, m.hudModel, elapsedMs, string(ev.Reason))
 
 		// loop 级增量归零，准备下一个 loop
 		m.loopPrompt = 0
@@ -1634,26 +1685,44 @@ func (m *model) handleLoopDone(ev agentloop.LoopDone, generation int) {
 		}
 	}
 
-	// 非正常/正常终止都追加系统提示段落（仅当前 run）
+	// 所有终止原因都追加系统提示段落（仅当前 run）
 	if !isStale {
+		elapsedStr := formatDuration(elapsedMs)
 		switch ev.Reason {
+		case agentloop.ReasonCompleted:
+			m.paras = append(m.paras, Paragraph{
+				Type:      paraSystem,
+				State:     stateDone,
+				Text:      fmt.Sprintf("任务完成（%d轮, %s, ↑%s, ↓%s）", ev.Turn, elapsedStr, shortTokens(loopIn), shortTokens(loopOut)),
+				NotifKind: notifInfo,
+			})
 		case agentloop.ReasonMaxTurns:
 			m.paras = append(m.paras, Paragraph{
-				Type:  paraSystem,
-				State: stateDone,
-				Text:  fmt.Sprintf("已达到最大轮次限制（%d）。输入消息继续对话。", ev.Turn),
+				Type:      paraSystem,
+				State:     stateDone,
+				Text:      fmt.Sprintf("已达到最大轮次限制（%d, %s, ↑%s, ↓%s），输入消息继续对话", ev.Turn, elapsedStr, shortTokens(loopIn), shortTokens(loopOut)),
+				NotifKind: notifInfo,
 			})
 		case agentloop.ReasonAborted:
 			m.paras = append(m.paras, Paragraph{
-				Type:  paraSystem,
-				State: stateDone,
-				Text:  "执行被中断。",
+				Type:      paraSystem,
+				State:     stateDone,
+				Text:      fmt.Sprintf("执行被中断（%s）", elapsedStr),
+				NotifKind: notifInfo,
 			})
 		case agentloop.ReasonModelError:
 			m.paras = append(m.paras, Paragraph{
-				Type:  paraSystem,
-				State: stateDone,
-				Text:  fmt.Sprintf("模型错误: %v", ev.Err),
+				Type:      paraSystem,
+				State:     stateDone,
+				Text:      fmt.Sprintf("模型错误（%s）: %v", elapsedStr, ev.Err),
+				NotifKind: notifError,
+			})
+		case agentloop.ReasonToolFatal:
+			m.paras = append(m.paras, Paragraph{
+				Type:      paraSystem,
+				State:     stateDone,
+				Text:      fmt.Sprintf("工具致命错误（%s）: %v", elapsedStr, ev.Err),
+				NotifKind: notifError,
 			})
 		}
 	}
@@ -1711,6 +1780,14 @@ func paragraphToTranscriptLine(p *Paragraph) ctxpkg.TranscriptLine {
 		ToolDurMs:     p.ToolDurMs,
 		ThoughtTokens: p.ThoughtTokens,
 	}
+	switch p.NotifKind {
+	case notifWarn:
+		line.NotifKind = "warn"
+	case notifError:
+		line.NotifKind = "error"
+	default:
+		line.NotifKind = "info"
+	}
 	switch p.Type {
 	case paraUser:
 		line.Type = "user"
@@ -1746,6 +1823,14 @@ func transcriptLineToParagraph(line ctxpkg.TranscriptLine) Paragraph {
 		ToolError:     line.ToolError,
 		ToolDurMs:     line.ToolDurMs,
 		ThoughtTokens: line.ThoughtTokens,
+	}
+	switch line.NotifKind {
+	case "warn":
+		p.NotifKind = notifWarn
+	case "error":
+		p.NotifKind = notifError
+	default:
+		p.NotifKind = notifInfo
 	}
 	switch line.Type {
 	case "user":
@@ -1815,6 +1900,15 @@ func (m *model) trimParas() {
 	// 淘汰旧段落
 	m.paras = append([]Paragraph{}, m.paras[remove:]...)
 
+	// 焦点索引跟随偏移
+	if m.focusIndex >= 0 {
+		m.focusIndex -= remove
+		if m.focusIndex < 0 {
+			m.focusIndex = -1
+			m.exitFocusMode() // cmd 无法传播，仅重置状态
+		}
+	}
+
 	// 同步 transcript 写入指针
 	if m.transcriptWritten > 0 {
 		m.transcriptWritten -= remove
@@ -1824,42 +1918,171 @@ func (m *model) trimParas() {
 	}
 }
 
-// toggleLastTool 切换最后一个 tool 段落的折叠/展开状态。
-func (m *model) toggleLastTool() {
-	idx := findLastTool(m.paras)
-	if idx < 0 {
-		return
+// isExpandable 判断段落是否可通过焦点 Enter 展开/折叠。
+// contentWidth 用于计算内容换行后的行数，避免将未溢出预览区的段落标记为可交互。
+func isExpandable(p *Paragraph, contentWidth int) bool {
+	switch p.Type {
+	case paraThought:
+		if p.State != stateCollapsed && p.State != stateExpanded {
+			return false
+		}
+		// 计算折叠预览是否真的需要展开：折叠态仅展示前 2 行，
+		// 若全部内容换行后 ≤ 2 行则无需展开，直接跳过。
+		if p.State == stateCollapsed {
+			return countWrappedLines(p.Text, contentWidth-2) > 2
+		}
+		return true
+	case paraTool:
+		// 仅 shell 和 web_fetch 的输出值得展开/折叠，其他工具的输出
+		// 或为结构化摘要（grep/ls/search_file/lsp_*）或通过预览行已传达完整信息。
+		switch p.ToolName {
+		case "shell", "web_fetch":
+			if p.State != stateDone && p.State != stateCollapsed && p.State != stateExpanded {
+				return false
+			}
+			// 折叠预览至多展示 maxPreviewWrapped 行，若全部输出未溢出则无需展开。
+			// 阈值与 renderToolPreview 中 writeWrappedPreview 的截断条件保持一致。
+			if p.State == stateDone || p.State == stateCollapsed {
+				body := stripToolStatusHeader(p.ToolResult)
+				if p.ToolName == "web_fetch" {
+					// web_fetch 预览跳过空行，计数时也跳过
+					body = parseWebFetchBody(p.ToolResult)
+					return countWrappedLinesNonEmpty(body, contentWidth-2) >= maxPreviewWrapped
+				}
+				return countWrappedLines(body, contentWidth-2) >= maxPreviewWrapped
+			}
+			return true
+		}
+		return false
 	}
-	p := &m.paras[idx]
-	// 仅 shell 支持展开/折叠；diff 视图始终展开
-	if p.ToolName != "shell" {
-		return
-	}
-	switch p.State {
-	case stateExpanded:
-		p.State = stateDone // 回到折叠预览
-	case stateDone:
-		p.State = stateExpanded
-	default:
-		return // 流式或其他状态不允许切换
-	}
-	p.renderDirty = true
+	return false
 }
 
-// toggleLastThought 切换最后一个 thought 段落的折叠/展开状态。
-func (m *model) toggleLastThought() {
-	idx := findLastThought(m.paras)
-	if idx < 0 {
+// countWrappedLines 计算文本在指定宽度下换行后的总行数。
+func countWrappedLines(text string, width int) int {
+	if width < 1 {
+		width = 1
+	}
+	total := 0
+	for _, line := range strings.Split(text, "\n") {
+		total += len(wrapLine(line, width))
+	}
+	return total
+}
+
+// countWrappedLinesNonEmpty 同 countWrappedLines，但跳过空行。
+// 用于 web_fetch 预览行数估算，与 renderToolPreview 跳过空行的行为保持一致。
+func countWrappedLinesNonEmpty(text string, width int) int {
+	if width < 1 {
+		width = 1
+	}
+	total := 0
+	for _, line := range strings.Split(text, "\n") {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		total += len(wrapLine(line, width))
+	}
+	return total
+}
+
+// enterFocusMode 进入段落焦点模式：输入框失焦、placeholder 提示退出方式。
+func (m *model) enterFocusMode() {
+	m.input.Blur()
+	m.input.Placeholder = "段落已聚焦 · Enter 展开/折叠 · Esc 回到输入"
+}
+
+// exitFocusMode 退出段落焦点模式：输入框恢复焦点、placeholder 恢复默认。
+// 返回 Focus 的 tea.Cmd（光标闪烁），调用方应将其合并到 Update 返回值中。
+func (m *model) exitFocusMode() tea.Cmd {
+	// Prompt 在 New() 中默认设为 "> "，零值 Model 为空字符串，
+	// 借此区分测试中未初始化的 input，避免 virtualCursor.Blink 空指针。
+	if m.input.Prompt != "" {
+		cmd := m.input.Focus()
+		m.input.Placeholder = "输入消息, Enter 发送 · @ 选择文件 · Esc 中断"
+		return cmd
+	}
+	m.input.Placeholder = "输入消息, Enter 发送 · @ 选择文件 · Esc 中断"
+	return nil
+}
+
+// focusIndexForViewport 返回当前聚焦段落对应的 viewport 行号，-1 表示未聚焦或不可见。
+// 由 View() 调用以计算滚动偏移，将聚焦段落拉入可见区域。
+
+// focusNext 将焦点移到下一个可交互段落（环形），无可交互段落时焦点归位。
+func (m *model) focusNext() tea.Cmd {
+	if len(m.paras) == 0 {
+		m.focusIndex = -1
+		return m.exitFocusMode()
+	}
+
+	contentWidth := max(m.width-4, 20)
+	wasFocused := m.focusIndex >= 0
+	start := m.focusIndex + 1
+	if start < 0 {
+		start = 0
+	}
+	for i := 0; i < len(m.paras); i++ {
+		idx := (start + i) % len(m.paras)
+		if isExpandable(&m.paras[idx], contentWidth) {
+			m.focusIndex = idx
+			if !wasFocused {
+				m.enterFocusMode()
+			}
+			return nil
+		}
+	}
+	// 无可交互段落
+	m.focusIndex = -1
+	return m.exitFocusMode()
+}
+
+// focusPrev 将焦点移到上一个可交互段落（环形），无可交互段落时焦点归位。
+func (m *model) focusPrev() tea.Cmd {
+	if len(m.paras) == 0 {
+		m.focusIndex = -1
+		return m.exitFocusMode()
+	}
+
+	contentWidth := max(m.width-4, 20)
+	wasFocused := m.focusIndex >= 0
+	start := m.focusIndex - 1
+	if start < 0 {
+		start = len(m.paras) - 1
+	}
+	for i := 0; i < len(m.paras); i++ {
+		idx := (start - i + len(m.paras)) % len(m.paras)
+		if isExpandable(&m.paras[idx], contentWidth) {
+			m.focusIndex = idx
+			if !wasFocused {
+				m.enterFocusMode()
+			}
+			return nil
+		}
+	}
+	m.focusIndex = -1
+	return m.exitFocusMode()
+}
+
+// toggleParagraphFocus 切换当前聚焦段落的展开/折叠状态。
+func (m *model) toggleParagraphFocus() {
+	if m.focusIndex < 0 || m.focusIndex >= len(m.paras) {
 		return
 	}
-	p := &m.paras[idx]
-	switch p.State {
-	case stateExpanded:
-		p.State = stateCollapsed
-	case stateCollapsed:
-		p.State = stateExpanded
-	default:
-		return // 流式或其他状态不允许切换
+	p := &m.paras[m.focusIndex]
+	switch p.Type {
+	case paraThought:
+		if p.State == stateCollapsed {
+			p.State = stateExpanded
+		} else if p.State == stateExpanded {
+			p.State = stateCollapsed
+		}
+	case paraTool:
+		if p.State == stateDone || p.State == stateCollapsed {
+			p.State = stateExpanded
+		} else if p.State == stateExpanded {
+			p.State = stateDone
+		}
 	}
 	p.renderDirty = true
 }
@@ -1920,6 +2143,8 @@ func (m *model) doTurn(userInput string) tea.Cmd {
 	m.flushTranscript()
 
 	m.running = true
+	m.focusIndex = -1
+	m.input.Placeholder = "Agent 执行中... Esc 中断"
 	m.runGeneration++
 	m.turnStartTime = time.Now()
 	m.scrollToBottom() // 用户输入新消息 → 滚动到底部
@@ -1928,6 +2153,13 @@ func (m *model) doTurn(userInput string) tea.Cmd {
 	if m.cancelRun != nil {
 		m.cancelRun()
 		m.cancelRun = nil
+		// 旧 loop 的 TurnStats 可能已累加到 loop 级计数器，
+		// 其 LoopDone 将以 isStale 到达（不会归零），需显式清理。
+		m.loopPrompt = 0
+		m.loopCompl = 0
+		m.loopCacheHit = 0
+		m.loopCacheMiss = 0
+		m.loopReasoning = 0
 	}
 
 	// 创建可取消的 context（在 goroutine 外创建，避免 race）
@@ -2087,7 +2319,7 @@ func (m *model) View() tea.View {
 
 	// 1. 渲染段落内容（全量，后续根据滚动偏移裁剪可见区域）
 	ctx := m.viewportCtx()
-	allLines, _ := buildViewportContent(m.paras, ctx, 0)
+	allLines, _ := buildViewportContent(m.paras, ctx, m.focusIndex, 0)
 
 	// 2. 渲染覆盖层
 	var overlayContent string
@@ -2117,14 +2349,14 @@ func (m *model) View() tea.View {
 	headerHeight := lipgloss.Height(header) + 1 // +1 是 header 后的空行
 
 	footer := m.renderFooter()
-	footerHeight := lipgloss.Height(footer) // 3 行
+	footerHeight := lipgloss.Height(footer) // 2 行
 
 	// 固定底部元素（在 styleApp 内）：
-	// separator(1) + input(1) + gap(1) + footer(footerHeight) + 显式底部边距(1)
-	fixedBottomHeight := 1 + 1 + 1 + footerHeight + 1
+	// separator(1) + input(1) + 空行(1) + footer(footerHeight)
+	fixedBottomHeight := 1 + 1 + 1 + footerHeight
 
-	// styleApp 上下 padding 各 1 行，内区可用高度 = m.height - 2
-	innerHeight := m.height - 2
+	// styleApp 顶部 padding 1 行，底部 0；内区可用高度 = m.height - 1
+	innerHeight := m.height - 1
 	bodyHeight := innerHeight - headerHeight - fixedBottomHeight - overlayLines - pickerLines
 	if bodyHeight < 1 {
 		bodyHeight = 1
@@ -2162,9 +2394,7 @@ func (m *model) View() tea.View {
 	}
 
 	// 5. 构建 parts：header + body(刚好 bodyHeight 行) + overlays + 固定底部
-	separator := lipgloss.NewStyle().
-		Foreground(colorMuted).
-		Render(strings.Repeat("─", contentWidth))
+	separator := m.renderInputSeparator(contentWidth)
 	inputView := lipgloss.NewStyle().Width(contentWidth).Render(m.input.View())
 
 	parts := []string{header, ""}
@@ -2182,7 +2412,7 @@ func (m *model) View() tea.View {
 	if pickerContent != "" {
 		parts = append(parts, pickerContent)
 	}
-	parts = append(parts, separator, inputView, "", footer, "")
+	parts = append(parts, separator, inputView, "", footer)
 
 	mainBody := lipgloss.JoinVertical(lipgloss.Left, parts...)
 	mainContent := styleApp.Render(mainBody)
@@ -2229,6 +2459,29 @@ var asciiArt = []string{
 	`╚███╔███╔╝██║  ██║ ╚████╔╝ ███████╗███████╗╚██████╔╝╚██████╔╝██║ ╚═╝ ██║`,
 	` ╚══╝╚══╝ ╚═╝  ╚═╝  ╚═══╝  ╚══════╝╚══════╝ ╚═════╝  ╚═════╝ ╚═╝     ╚═╝`,
 }
+
+// renderInputSeparator 渲染输入框上方的分隔行。
+// 焦点模式下嵌入段落聚焦提示，正常模式为纯横线。
+func (m *model) renderInputSeparator(contentWidth int) string {
+	if m.focusIndex >= 0 {
+		hint := " ◆ 段落已聚焦  Enter 展开/折叠  Esc 退出焦点模式 ◆ "
+		hintStyle := lipgloss.NewStyle().Foreground(colorAccentGold)
+		lineStyle := lipgloss.NewStyle().Foreground(colorMuted)
+		// hint 居中，两侧用 ─ 补齐
+		pad := contentWidth - lipgloss.Width(hint)
+		if pad < 2 {
+			pad = 2
+		}
+		left := strings.Repeat("─", pad/2)
+		right := strings.Repeat("─", pad-pad/2)
+		return lineStyle.Render(left) + hintStyle.Render(hint) + lineStyle.Render(right)
+	}
+	return lipgloss.NewStyle().
+		Foreground(colorMuted).
+		Render(strings.Repeat("─", contentWidth))
+}
+
+// ---------------------------------------------------------------------------
 
 func (m *model) renderHeader() string {
 	contentWidth := max(m.width-4, 20)
@@ -2329,40 +2582,23 @@ func (m *model) renderFooter() string {
 	if m.running {
 		indicator = m.spinner.View() + " "
 	}
-	indicatorWidth := lipgloss.Width(indicator)
 	modelPart := indicator + styleFooterModel.Render(m.hudModel)
 	ctxPart := m.renderCtxBarCompact()
 
 	line1Parts := []string{modelPart, ctxPart}
 	line1 := styleFooter.Width(contentWidth).Render(strings.Join(line1Parts, sep))
 
-	// Line 2: cache + turns + messages + latency + balance（前导空格对齐 line1 spinner 缩进）
+	// Line 2: cache + turns + messages + balance
 	compactingPart := m.renderCacheRate()
 	turnsPart := styleFooterLabel.Render("Loop") + " " + styleFooterValue.Render(fmt.Sprintf("%d", m.hudTurns))
 	messagesPart := styleFooterLabel.Render("M") + " " + styleFooterValue.Render(fmt.Sprintf("%d", m.hudMessages))
-	latPart := m.renderLatency()
 	balancePart := m.renderBalance()
 
-	line2Parts := []string{compactingPart, turnsPart, messagesPart, latPart, balancePart}
-	line2Content := strings.Repeat(" ", indicatorWidth) + strings.Join(line2Parts, sep)
+	line2Parts := []string{compactingPart, turnsPart, messagesPart, balancePart}
+	line2Content := strings.Join(line2Parts, sep)
 	line2 := styleFooter.Width(contentWidth).Render(line2Content)
 
-	// Line 3: 快捷键提示（bubbles/help 自动按宽度省略）
-	// 权限面板活跃时面板内已有快捷键提示，footer 不重复显示
-	m.help.SetWidth(contentWidth)
-	var helpKeys []key.Binding
-	switch {
-	case m.overlay == overlayPermission:
-		helpKeys = nil // 面板内已有 permKeys，不重复
-	default:
-		helpKeys = []key.Binding{
-			m.keys.Enter, m.keys.Picker, m.keys.Interrupt,
-			m.keys.ToggleTool, m.keys.ToggleThought, m.keys.ToggleTheme, m.keys.Quit,
-		}
-	}
-	line3 := styleFooter.Width(contentWidth).Render(m.help.ShortHelpView(helpKeys))
-
-	return line1 + "\n" + line2 + "\n" + line3
+	return line1 + "\n" + line2
 }
 
 // renderCtxBarCompact 渲染固定宽度的上下文窗口进度条（barWidth=20，每格 5%，ratio < 5% 时进度条留空）。
@@ -2386,20 +2622,20 @@ func (m *model) renderCtxBarCompact() string {
 	m.ctxProgress.SetWidth(barWidth)
 	barStr := m.ctxProgress.ViewAs(displayRatio)
 
-	var pctStyle lipgloss.Style
+	var tokenStyle lipgloss.Style
 	switch {
 	case pct < 50:
-		pctStyle = styleCtxBarGreenFg
+		tokenStyle = styleCtxBarGreenFg
 	case pct < 80:
-		pctStyle = styleCtxBarGoldFg
+		tokenStyle = styleCtxBarGoldFg
 	default:
-		pctStyle = styleCtxBarRedFg
+		tokenStyle = styleCtxBarRedFg
 	}
 
-	pctStr := pctStyle.Render(fmt.Sprintf("%.1f%% · %s/%s", pct,
+	tokenStr := tokenStyle.Render(fmt.Sprintf("%s/%s",
 		formatTokens(currentTokens), formatTokens(m.contextLimit)))
 
-	return styleFooterLabel.Render("ctx") + " " + barStr + " " + pctStr
+	return styleFooterLabel.Render("ctx") + " " + barStr + " " + tokenStr
 }
 
 // renderBalance 渲染余额信息。
@@ -2440,35 +2676,7 @@ func (m *model) renderCacheRate() string {
 	return label + " " + valStyle.Render(fmt.Sprintf("%d%%", pct))
 }
 
-// renderLatency 渲染延迟。
-func (m *model) renderLatency() string {
-	label := styleFooterLabel.Render("elap")
 
-	// 运行中显示实时耗时
-	if m.running {
-		if m.turnStartTime.IsZero() {
-			return label + " " + styleFooterValueMuted.Render("--")
-		}
-		elapsed := time.Since(m.turnStartTime).Milliseconds()
-		return label + " " + styleFooterValue.Render(formatDuration(elapsed))
-	}
-
-	if m.hudLatMs == 0 {
-		return label + " " + styleFooterValueMuted.Render("--")
-	}
-
-	var valStyle lipgloss.Style
-	switch {
-	case m.hudLatMs < 500:
-		valStyle = styleFooterLatGreen
-	case m.hudLatMs < 2000:
-		valStyle = styleFooterLatGold
-	default:
-		valStyle = styleFooterLatRed
-	}
-
-	return label + " " + valStyle.Render(formatDuration(m.hudLatMs))
-}
 
 // ---------------------------------------------------------------------------
 // tuiUserResponder — 权限确认的 TUI 实现

@@ -24,7 +24,7 @@ const (
 	paraAssistant                      // * assistant 回复（含 markdown）
 	paraThought                        // ~ 思考过程
 	paraTool                           // ● 工具调用
-	paraSystem                         // ⚙ 系统提示（终止原因、状态通知等）
+	paraSystem                         // ◼ 系统提示（终止原因、状态通知等）
 )
 
 // paraStateEnum 标识段落的渲染状态。
@@ -36,6 +36,15 @@ const (
 	stateCollapsed                       // 折叠态（thought 收敛为一行 / tool 默认摘要+预览）
 	stateExpanded                        // 展开态（thought 完整内容外框 / tool 完整输出）
 	stateError                           // 错误态（tool 红色）
+)
+
+// systemNotifKind 区分系统通知的类型，用于着色。
+type systemNotifKind int
+
+const (
+	notifInfo  systemNotifKind = iota // 完成/中断 — gray
+	notifWarn                         // 警告 — amber gold
+	notifError                        // 错误 — red
 )
 
 // ---------------------------------------------------------------------------
@@ -60,6 +69,9 @@ type Paragraph struct {
 	// Thought 专用字段
 	ThoughtTokens int // 完成后的 token 数
 
+	// System 专用字段
+	NotifKind systemNotifKind // 通知类型（仅 paraSystem 有效）
+
 	// 渲染缓存（避免每次 buildViewportContent 时重复 Glamour 渲染）
 	renderedCache string
 	cacheWidth    int // 缓存时的 viewport 宽度，宽度变化时失效
@@ -69,6 +81,7 @@ type Paragraph struct {
 	renderDirty    bool
 	cachedLines    []string // 缓存的渲染后行（含前缀/缩进/换行）
 	cachedWidth    int      // 缓存时的 viewport 宽度
+	cachedFocused  bool     // 缓存时的焦点状态
 }
 
 // ---------------------------------------------------------------------------
@@ -81,26 +94,6 @@ func lastPara(paras []Paragraph) *Paragraph {
 		return nil
 	}
 	return &paras[len(paras)-1]
-}
-
-// findLastTool 返回最后一个 tool 段落的索引，-1 表示不存在。
-func findLastTool(paras []Paragraph) int {
-	for i := len(paras) - 1; i >= 0; i-- {
-		if paras[i].Type == paraTool {
-			return i
-		}
-	}
-	return -1
-}
-
-// findLastThought 返回最后一个 thought 段落的索引，-1 表示不存在。
-func findLastThought(paras []Paragraph) int {
-	for i := len(paras) - 1; i >= 0; i-- {
-		if paras[i].Type == paraThought {
-			return i
-		}
-	}
-	return -1
 }
 
 // ---------------------------------------------------------------------------
@@ -675,6 +668,7 @@ type ViewportCtx struct {
 	Tool     spinner.Model
 	Glamour  *glamour.TermRenderer // nil 时回退到纯文本
 	Width    int                   // viewport 内容宽度（终端宽度 - 4）
+	Focused  bool                  // 当前段落是否处于焦点态
 }
 
 // renderSingleParagraph 渲染单个段落到行数组，用于 spliceLastParagraph 增量更新。
@@ -700,7 +694,7 @@ func renderSingleParagraph(p *Paragraph, ctx ViewportCtx) []string {
 // 对未变更（!renderDirty）且宽度匹配的段落复用缓存渲染，大幅降低流式刷新开销。
 // 返回 []string 而非单一字符串，调用方应使用 SetContentLines 避免不必要的 Split。
 // lineHint 用于预分配 lines 容量（通常传上次缓存的 len），避免 append 多次扩容。
-func buildViewportContent(paras []Paragraph, ctx ViewportCtx, lineHint int) (lines []string, lineStarts []int) {
+func buildViewportContent(paras []Paragraph, ctx ViewportCtx, focusIndex int, lineHint int) (lines []string, lineStarts []int) {
 	lineStarts = make([]int, len(paras))
 
 	// 预分配：优先用 hint，否则用段落数 × 5 粗略估算
@@ -716,8 +710,11 @@ func buildViewportContent(paras []Paragraph, ctx ViewportCtx, lineHint int) (lin
 		p := &paras[i]
 		lineStarts[i] = currentLine
 
+		// 设置当前段落的焦点状态
+		ctx.Focused = (i == focusIndex)
+
 		// 尝试复用段落级渲染缓存（行数组形式，零分配）
-		if !p.renderDirty && p.cachedLines != nil && p.cachedWidth == ctx.Width {
+		if !p.renderDirty && p.cachedLines != nil && p.cachedWidth == ctx.Width && p.cachedFocused == ctx.Focused {
 			lines = append(lines, p.cachedLines...)
 			currentLine += len(p.cachedLines)
 			continue
@@ -745,6 +742,7 @@ func buildViewportContent(paras []Paragraph, ctx ViewportCtx, lineHint int) (lin
 		if p.State != stateStreaming {
 			p.cachedLines = renderedLines
 			p.cachedWidth = ctx.Width
+			p.cachedFocused = ctx.Focused
 			p.renderDirty = false
 		}
 
@@ -755,15 +753,18 @@ func buildViewportContent(paras []Paragraph, ctx ViewportCtx, lineHint int) (lin
 	return lines, lineStarts
 }
 
-// renderSystemPara 渲染系统提示段落（⚙ 琥珀色前缀，用于终止原因、状态通知等）。
+// renderSystemPara 渲染系统提示段落。
+// 前缀和文字按 NotifKind 着色：完成/中断 → gray，警告 → amber gold，错误 → red。
 func renderSystemPara(sb *strings.Builder, p *Paragraph, ctx ViewportCtx) {
-	prefixStr := systemPrefix() + " "
+	prefixStr := systemPrefix(p.NotifKind) + " "
 	prefixWidth := lipgloss.Width(prefixStr)
 	indentStr := strings.Repeat(" ", prefixWidth)
 	textWidth := ctx.Width - prefixWidth
 	if textWidth < 1 {
 		textWidth = 1
 	}
+
+	textStyle := systemTextStyle(p.NotifKind)
 
 	lines := strings.Split(p.Text, "\n")
 	for i, line := range lines {
@@ -774,7 +775,7 @@ func renderSystemPara(sb *strings.Builder, p *Paragraph, ctx ViewportCtx) {
 			} else {
 				sb.WriteString(indentStr)
 			}
-			sb.WriteString(styleSystemPara.Render(wl))
+			sb.WriteString(textStyle.Render(wl))
 			sb.WriteString("\n")
 		}
 	}
@@ -868,6 +869,9 @@ func renderThoughtPara(sb *strings.Builder, p *Paragraph, ctx ViewportCtx) {
 	// 前缀：流式时 spinner 动画，done 时静态灰色 ·，始终保持锚点宽度
 	streaming := p.State == stateStreaming
 	prefix := thoughtPrefix(ctx.Thought, streaming)
+	if ctx.Focused {
+		prefix = styleFocusIndicator.Render(prefix)
+	}
 	prefixStr := prefix + " "
 	prefixWidth := lipgloss.Width(prefixStr)
 	indentStr := strings.Repeat(" ", prefixWidth)
@@ -943,7 +947,7 @@ func renderThoughtPara(sb *strings.Builder, p *Paragraph, ctx ViewportCtx) {
 		if len(visible) == 0 {
 			sb.WriteString(prefixStr)
 			sb.WriteString(styleThoughtCollapsed.Render(
-				fmt.Sprintf("思考完成 (%d tokens) · Ctrl+T 展开", p.ThoughtTokens)))
+				fmt.Sprintf("▶ 思考完成 (%d tokens) · Enter 展开", p.ThoughtTokens)))
 			sb.WriteString("\n")
 			return
 		}
@@ -966,7 +970,7 @@ func renderThoughtPara(sb *strings.Builder, p *Paragraph, ctx ViewportCtx) {
 		if totalWrapped > 2 {
 			sb.WriteString(indentStr)
 			sb.WriteString(styleThoughtExpandHint.Render(
-				fmt.Sprintf("··· 展开全部 (%d tokens) · Ctrl+T 展开", p.ThoughtTokens)))
+				fmt.Sprintf("··· Enter 展开 (%d tokens)", p.ThoughtTokens)))
 			sb.WriteString("\n")
 		}
 
@@ -986,6 +990,10 @@ func renderThoughtPara(sb *strings.Builder, p *Paragraph, ctx ViewportCtx) {
 				sb.WriteString("\n")
 			}
 		}
+		// 折叠提示
+		sb.WriteString(indentStr)
+		sb.WriteString(styleThoughtExpandHint.Render("▼ Enter 折叠"))
+		sb.WriteString("\n")
 
 	default:
 		// fallback: 完整内容渲染（兼容旧 stateDone 等状态）
@@ -1165,6 +1173,9 @@ func renderToolPara(sb *strings.Builder, p *Paragraph, ctx ViewportCtx) {
 	}
 
 	prefix := toolPrefix(ctx.Tool, toolState)
+	if ctx.Focused {
+		prefix = styleFocusIndicator.Render(prefix)
+	}
 	prefixStr := prefix + " "
 	prefixWidth := lipgloss.Width(prefixStr)
 	indentStr := strings.Repeat(" ", prefixWidth)
@@ -1284,7 +1295,7 @@ func renderToolPreview(sb *strings.Builder, p *Paragraph, textWidth int, indent 
 			}
 		}
 
-	// read_file, grep, search_file, ls — 不显示预览
+	// 仅 read_file, grep, search_file, ls — 不显示预览
 	case "lsp_diagnostic":
 		lines := strings.Split(result, "\n")
 		start := 1
@@ -1344,7 +1355,14 @@ func renderToolPreview(sb *strings.Builder, p *Paragraph, textWidth int, indent 
 
 	if truncated {
 		sb.WriteString(indent)
-		sb.WriteString(styleToolPreviewHint.Render("... (Ctrl+O 展开全部)"))
+		// 仅可段落聚焦的工具展示 Enter 提示（shell / web_fetch），
+		// write_file / edit_file 等不可聚焦的工具仅显示截断标记。
+		switch p.ToolName {
+		case "shell", "web_fetch":
+			sb.WriteString(styleToolPreviewHint.Render("··· Enter 展开全部"))
+		default:
+			sb.WriteString(styleToolPreviewHint.Render("··· (truncated)"))
+		}
 		sb.WriteString("\n")
 	}
 }
@@ -1483,10 +1501,18 @@ func renderToolFullOutput(sb *strings.Builder, p *Paragraph, textWidth int, inde
 		sb.WriteString(styleToolPreviewHint.Render(fmt.Sprintf("... (truncated to %d lines)", maxExpandedWrapped)))
 		sb.WriteString("\n")
 	}
+
+	// 折叠提示 — 仅可段落聚焦的工具（shell / web_fetch）展示 Enter 提示
+	switch p.ToolName {
+	case "shell", "web_fetch":
+		sb.WriteString(indent)
+		sb.WriteString(styleToolPreviewHint.Render("▼ Enter 折叠"))
+		sb.WriteString("\n")
+	}
 }
 
 // renderDiffPreview 渲染 diff 的折叠预览。受 maxPreviewWrapped 约束，
-// 防止单条超长行撑满预览。
+// 防止单条超长行撑满预览。edit_file 不参与段落聚焦，截断时仅显示标记。
 func renderDiffPreview(sb *strings.Builder, hunks []tool.DiffHunk, textWidth int, indent string) {
 	if len(hunks) == 0 {
 		return
@@ -1524,7 +1550,7 @@ func renderDiffPreview(sb *strings.Builder, hunks []tool.DiffHunk, textWidth int
 	}
 	if truncated {
 		sb.WriteString(indent)
-		sb.WriteString(styleToolPreviewHint.Render("... (Ctrl+O 展开全部)"))
+		sb.WriteString(styleToolPreviewHint.Render("··· (truncated)"))
 		sb.WriteString("\n")
 	}
 }
@@ -1615,6 +1641,7 @@ func renderDiffView(sb *strings.Builder, hunks []tool.DiffHunk, textWidth int, i
 		sb.WriteString(styleToolPreviewHint.Render(fmt.Sprintf("... (truncated to %d lines)", maxExpandedWrapped)))
 		sb.WriteString("\n")
 	}
+
 }
 
 // lineStyle 根据 DiffLineKind 返回对应的前景色样式。
