@@ -77,6 +77,25 @@ wvl "解释这段代码"         # 或单次执行模式
 
 > 支持 macOS / Linux AMD64 & ARM64。不确定架构？运行 `uname -m`：`x86_64` → amd64，`arm64` / `aarch64` → arm64。升级只需重新执行安装命令；从源码构建：`git pull && make install`。详见 [`docs/install.md`](./docs/install.md)。
 
+### Agent 一键安装
+
+将以下 prompt 粘贴到任意 Coding Agent 中，Agent 会自动完成安装：
+
+````markdown
+Install waveloom on this machine:
+
+1. Detect OS and architecture (`uname -sm`).
+2. Download the latest binary from https://github.com/Menfre01/waveloom/releases/latest based on architecture:
+   - macOS arm64: `wvl_darwin_arm64.tar.gz`
+   - macOS amd64: `wvl_darwin_amd64.tar.gz`
+   - Linux amd64: `wvl_linux_amd64.tar.gz`
+   - Linux arm64: `wvl_linux_arm64.tar.gz`
+3. Extract and install to /usr/local/bin (use sudo if needed):
+   `curl -fsSL <URL> | sudo tar -xz -C /usr/local/bin wvl`
+4. Verify: `wvl --version`
+5. Remind the user to run `wvl setup` to configure their DeepSeek API Key.
+````
+
 ---
 
 ## Agent 能做什么
@@ -115,7 +134,7 @@ wvl --continue           # 恢复最近一次会话
 wvl --resume <id>        # 恢复指定会话
 ```
 
-交互模式下 Enter 发送、Esc 中断、`Ctrl+T` 展开/折叠 thought、`Ctrl+O` 展开/折叠工具输出、`Ctrl+G` 切换主题。输入 `@` 弹出文件选择器，支持模糊匹配。详见 [`docs/usage.md`](./docs/usage.md)。
+交互模式下 Enter 发送、Esc 中断、`Tab` / `Shift+Tab` 聚焦可交互段落、Enter 展开/折叠、`Ctrl+G` 切换主题。输入 `@` 弹出文件选择器，支持模糊匹配。详见 [`docs/usage.md`](./docs/usage.md)。
 
 ---
 

@@ -89,7 +89,9 @@ type LoopState struct {
 
 // maxConsecutiveSameError 是同类工具错误的容忍上限。
 // 达到后 loop 强制终止，避免 LLM 陷入无限重试探测。
-const maxConsecutiveSameError = 3
+// 阈值设为 5 轮：给 LLM 充分的自主纠错空间，同时保留兜底防护，
+// 防止 LLM 在不可恢复的错误上无限重试。
+const maxConsecutiveSameError = 5
 
 
 

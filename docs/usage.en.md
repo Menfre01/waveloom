@@ -26,26 +26,26 @@ The prefix character at the beginning of each line tells you **who is speaking**
 |--------|------|---------|
 | `›` | You | Your message, in blue |
 | `·` / spinner | Assistant | AI reply, in green, Markdown rendered |
-| `·` / spinner | Thought | AI's reasoning, in gray, collapsed to one line when done (`Ctrl+T` to expand) |
+| `·` / spinner | Thought | AI's reasoning, in gray, collapsed to one line when done (`Tab` to focus + `Enter` to expand) |
 | `•` / spinner | Tool | AI's actions (read, write, run), green = success / red = failure |
 
 **Keyboard shortcuts**:
 
 | Key | Action |
 |-----|--------|
-| `Enter` | Send message |
+| `Enter` | Send message; type `exit` and Enter to quit |
 | `Esc` | Interrupt running agent |
+| `Esc+Esc` | Clear the input |
 | `↑` `↓` / `PgUp` `PgDn` | Scroll conversation history |
 | `Ctrl+E` / `End` | Jump to bottom |
-| `Ctrl+T` | Expand/collapse the most recent thought |
-| `Ctrl+O` | Expand/collapse the most recent tool output |
+| `Tab` | Focus next interactive paragraph (thought / tool output) |
+| `Shift+Tab` | Focus previous interactive paragraph |
+| `Enter` | Expand/collapse the currently focused paragraph |
 | `Ctrl+G` | Toggle theme (dark / light / auto) |
-| `Ctrl+V` | Paste |
 | `Ctrl+C` | Quit |
-| `Ctrl+E` / `End` | Jump to bottom |
 | `Shift + mouse drag` | Select text in terminal |
 
-The **footer status bar** shows: current model, context usage (progress bar), cache hit rate, loop count, latency, balance.
+The **footer status bar** shows: current model, context usage (progress bar), cache hit rate, loop count, balance.
 
 ## One-shot
 

@@ -369,3 +369,337 @@ func TestHardLimitGuard_AllowsEnterWhenNotReached(t *testing.T) {
 		t.Errorf("expected user paragraph, got type=%v", m.paras[len(m.paras)-1].Type)
 	}
 }
+
+// ── 段落焦点导航测试 ──
+
+func TestIsExpandable(t *testing.T) {
+	const contentWidth = 80
+
+	tests := []struct {
+		name string
+		p    Paragraph
+		want bool
+	}{
+		{"thought collapsed short", Paragraph{Type: paraThought, State: stateCollapsed, Text: "short"}, false},
+		{"thought collapsed long", Paragraph{Type: paraThought, State: stateCollapsed, Text: strings.Repeat("a ", 100)}, true},
+		{"thought expanded", Paragraph{Type: paraThought, State: stateExpanded, Text: "any"}, true},
+		{"thought streaming", Paragraph{Type: paraThought, State: stateStreaming}, false},
+		{"shell done short", Paragraph{Type: paraTool, State: stateDone, ToolName: "shell", ToolResult: "ok"}, false},
+		{"shell done long", Paragraph{Type: paraTool, State: stateDone, ToolName: "shell", ToolResult: strings.Repeat("line\n", 10)}, true},
+		{"shell expanded", Paragraph{Type: paraTool, State: stateExpanded, ToolName: "shell"}, true},
+		{"web_fetch done short", Paragraph{Type: paraTool, State: stateDone, ToolName: "web_fetch", ToolResult: "short"}, false},
+		{"web_fetch done long", Paragraph{Type: paraTool, State: stateDone, ToolName: "web_fetch", ToolResult: "Fetched url\n\n" + strings.Repeat("line\n", 10)}, true},
+		{"web_fetch expanded", Paragraph{Type: paraTool, State: stateExpanded, ToolName: "web_fetch"}, true},
+		{"tool streaming", Paragraph{Type: paraTool, State: stateStreaming}, false},
+		{"tool error", Paragraph{Type: paraTool, State: stateError}, false},
+		{"read_file done", Paragraph{Type: paraTool, State: stateDone, ToolName: "read_file"}, false},
+		{"edit_file done", Paragraph{Type: paraTool, State: stateDone, ToolName: "edit_file"}, false},
+		{"write_file done", Paragraph{Type: paraTool, State: stateDone, ToolName: "write_file"}, false},
+		{"lsp_diagnostic done", Paragraph{Type: paraTool, State: stateDone, ToolName: "lsp_diagnostic"}, false},
+		{"lsp_definition done", Paragraph{Type: paraTool, State: stateDone, ToolName: "lsp_definition"}, false},
+		{"lsp_references done", Paragraph{Type: paraTool, State: stateDone, ToolName: "lsp_references"}, false},
+		{"lsp_hover done", Paragraph{Type: paraTool, State: stateDone, ToolName: "lsp_hover"}, false},
+		{"grep done", Paragraph{Type: paraTool, State: stateDone, ToolName: "grep"}, false},
+		{"search_file done", Paragraph{Type: paraTool, State: stateDone, ToolName: "search_file"}, false},
+		{"ls done", Paragraph{Type: paraTool, State: stateDone, ToolName: "ls"}, false},
+		{"user any", Paragraph{Type: paraUser, State: stateDone}, false},
+		{"assistant any", Paragraph{Type: paraAssistant, State: stateDone}, false},
+		{"system any", Paragraph{Type: paraSystem, State: stateDone}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := isExpandable(&tt.p, contentWidth); got != tt.want {
+				t.Errorf("isExpandable() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestFocusNext_EmptyParas(t *testing.T) {
+	m := &model{paras: nil, focusIndex: -1}
+	_ = m.focusNext()
+	if m.focusIndex != -1 {
+		t.Errorf("expected focusIndex=-1 for empty paras, got %d", m.focusIndex)
+	}
+}
+
+func TestFocusNext_NoExpandable(t *testing.T) {
+	m := &model{
+		paras: []Paragraph{
+			{Type: paraUser, State: stateDone},
+			{Type: paraAssistant, State: stateDone},
+			{Type: paraSystem, State: stateDone},
+		},
+		focusIndex: -1,
+		width:      120,
+	}
+	_ = m.focusNext()
+	if m.focusIndex != -1 {
+		t.Errorf("expected focusIndex=-1 with no expandable, got %d", m.focusIndex)
+	}
+}
+
+func TestFocusNext_CyclicRing(t *testing.T) {
+	paras := []Paragraph{
+		{Type: paraThought, State: stateCollapsed, ThoughtTokens: 100, Text: strings.Repeat("long text ", 50)},   // 可展开（溢出）
+		{Type: paraAssistant, State: stateDone},
+		{Type: paraTool, State: stateDone, ToolName: "shell", ToolResult: strings.Repeat("line\n", 10)}, // 可展开（溢出）
+		{Type: paraThought, State: stateExpanded, ThoughtTokens: 200, Text: "expanded"},                // 可展开（已展开）
+	}
+	m := &model{paras: paras, focusIndex: -1, width: 120}
+
+	// -1 → first expandable (index 0)
+	_ = m.focusNext()
+	if m.focusIndex != 0 {
+		t.Errorf("first focus: expected 0, got %d", m.focusIndex)
+	}
+	// 0 → 2
+	_ = m.focusNext()
+	if m.focusIndex != 2 {
+		t.Errorf("second focus: expected 2, got %d", m.focusIndex)
+	}
+	// 2 → 3
+	_ = m.focusNext()
+	if m.focusIndex != 3 {
+		t.Errorf("third focus: expected 3, got %d", m.focusIndex)
+	}
+	// 3 → 0 (wrap)
+	_ = m.focusNext()
+	if m.focusIndex != 0 {
+		t.Errorf("wrap focus: expected 0, got %d", m.focusIndex)
+	}
+}
+
+func TestFocusPrev_CyclicRing(t *testing.T) {
+	paras := []Paragraph{
+		{Type: paraThought, State: stateCollapsed, ThoughtTokens: 100, Text: strings.Repeat("long text ", 50)},   // 可展开（溢出）
+		{Type: paraAssistant, State: stateDone},
+		{Type: paraTool, State: stateDone, ToolName: "shell", ToolResult: strings.Repeat("line\n", 10)}, // 可展开（溢出）
+	}
+	m := &model{paras: paras, focusIndex: -1, width: 120}
+
+	// -1 → last expandable (index 2)
+	_ = m.focusPrev()
+	if m.focusIndex != 2 {
+		t.Errorf("first focus: expected 2, got %d", m.focusIndex)
+	}
+	// 2 → 0
+	_ = m.focusPrev()
+	if m.focusIndex != 0 {
+		t.Errorf("second focus: expected 0, got %d", m.focusIndex)
+	}
+	// 0 → 2 (wrap)
+	_ = m.focusPrev()
+	if m.focusIndex != 2 {
+		t.Errorf("wrap focus: expected 2, got %d", m.focusIndex)
+	}
+}
+
+func TestToggleParagraphFocus_Thought(t *testing.T) {
+	m := &model{
+		paras: []Paragraph{
+			{Type: paraThought, State: stateCollapsed, ThoughtTokens: 100},
+		},
+		focusIndex: 0,
+	}
+
+	// Collapsed → Expanded
+	m.toggleParagraphFocus()
+	if m.paras[0].State != stateExpanded {
+		t.Errorf("expected expanded, got %v", m.paras[0].State)
+	}
+	if !m.paras[0].renderDirty {
+		t.Error("expected renderDirty=true after toggle")
+	}
+
+	// Expanded → Collapsed
+	m.toggleParagraphFocus()
+	if m.paras[0].State != stateCollapsed {
+		t.Errorf("expected collapsed, got %v", m.paras[0].State)
+	}
+}
+
+func TestToggleParagraphFocus_Tool(t *testing.T) {
+	m := &model{
+		paras: []Paragraph{
+			{Type: paraTool, State: stateDone, ToolName: "shell"},
+		},
+		focusIndex: 0,
+	}
+
+	// Done → Expanded
+	m.toggleParagraphFocus()
+	if m.paras[0].State != stateExpanded {
+		t.Errorf("expected expanded, got %v", m.paras[0].State)
+	}
+
+	// Expanded → Done
+	m.toggleParagraphFocus()
+	if m.paras[0].State != stateDone {
+		t.Errorf("expected done, got %v", m.paras[0].State)
+	}
+}
+
+func TestToggleParagraphFocus_InvalidIndex(t *testing.T) {
+	m := &model{
+		paras: []Paragraph{
+			{Type: paraThought, State: stateCollapsed},
+		},
+		focusIndex: -1, // 未聚焦
+	}
+	// 不应 panic
+	m.toggleParagraphFocus()
+	if m.paras[0].State != stateCollapsed {
+		t.Error("state should not change when focusIndex=-1")
+	}
+
+	m.focusIndex = 5 // 越界
+	m.toggleParagraphFocus()
+	if m.paras[0].State != stateCollapsed {
+		t.Error("state should not change when focusIndex out of bounds")
+	}
+}
+
+func TestFocusEsc_ReturnsToInput(t *testing.T) {
+	m := &model{
+		paras: []Paragraph{
+			{Type: paraThought, State: stateCollapsed},
+		},
+		focusIndex: 0,
+		keys:       defaultKeys,
+		width:      120,
+		height:     40,
+	}
+
+	handled, _ := m.handleKeyPress(tea.KeyPressMsg(tea.Key{Code: tea.KeyEsc}))
+	if !handled {
+		t.Error("expected Esc handled when focused")
+	}
+	if m.focusIndex != -1 {
+		t.Errorf("expected focusIndex=-1 after Esc, got %d", m.focusIndex)
+	}
+}
+
+func TestFocusEnter_Toggle(t *testing.T) {
+	m := &model{
+		paras: []Paragraph{
+			{Type: paraThought, State: stateCollapsed, ThoughtTokens: 100},
+		},
+		focusIndex: 0,
+		keys:       defaultKeys,
+		width:      120,
+		height:     40,
+	}
+
+	handled, _ := m.handleKeyPress(tea.KeyPressMsg(tea.Key{Code: tea.KeyEnter}))
+	if !handled {
+		t.Error("expected Enter handled when focused")
+	}
+	if m.paras[0].State != stateExpanded {
+		t.Errorf("expected expanded after Enter, got %v", m.paras[0].State)
+	}
+}
+
+func TestFocusTab_FromInput(t *testing.T) {
+	paras := []Paragraph{
+		{Type: paraThought, State: stateCollapsed, ThoughtTokens: 100, Text: strings.Repeat("long thought content that overflows the collapsed preview ", 10)},
+	}
+	m := &model{
+		paras:      paras,
+		focusIndex: -1,
+		keys:       defaultKeys,
+		width:      120,
+		height:     40,
+	}
+
+	handled, _ := m.handleKeyPress(tea.KeyPressMsg(tea.Key{Code: tea.KeyTab}))
+	if !handled {
+		t.Error("expected Tab handled")
+	}
+	if m.focusIndex != 0 {
+		t.Errorf("expected focusIndex=0 after Tab, got %d", m.focusIndex)
+	}
+}
+
+func TestFocusTab_NoOpWhenRunning(t *testing.T) {
+	m := &model{
+		paras: []Paragraph{
+			{Type: paraThought, State: stateCollapsed, Text: strings.Repeat("overflowing ", 50)},
+		},
+		focusIndex: -1,
+		running:    true, // 运行中
+		keys:       defaultKeys,
+		width:      120,
+		height:     40,
+	}
+
+	handled, _ := m.handleKeyPress(tea.KeyPressMsg(tea.Key{Code: tea.KeyTab}))
+	if handled {
+		t.Error("Tab should not be handled when running")
+	}
+}
+
+func TestFocusUpDown_Navigation(t *testing.T) {
+	paras := []Paragraph{
+		{Type: paraThought, State: stateCollapsed, ThoughtTokens: 100, Text: strings.Repeat("overflowing thought content ", 30)},
+		{Type: paraAssistant, State: stateDone},
+		{Type: paraTool, State: stateDone, ToolName: "shell", ToolResult: strings.Repeat("line\n", 10)},
+	}
+	m := &model{
+		paras:      paras,
+		focusIndex: 0, // 聚焦第一个
+		keys:       defaultKeys,
+		width:      120,
+		height:     40,
+	}
+
+	// ↓ → 下一个可交互段落到 focusIndex 2
+	handled, _ := m.handleKeyPress(tea.KeyPressMsg(tea.Key{Code: tea.KeyDown}))
+	if !handled {
+		t.Error("expected Down handled when focused")
+	}
+	if m.focusIndex != 2 {
+		t.Errorf("expected focusIndex=2 after Down, got %d", m.focusIndex)
+	}
+
+	// ↑ → 回到 focusIndex 0
+	handled, _ = m.handleKeyPress(tea.KeyPressMsg(tea.Key{Code: tea.KeyUp}))
+	if !handled {
+		t.Error("expected Up handled when focused")
+	}
+	if m.focusIndex != 0 {
+		t.Errorf("expected focusIndex=0 after Up, got %d", m.focusIndex)
+	}
+}
+
+func TestTrimParas_AdjustsFocusIndex(t *testing.T) {
+	paras := make([]Paragraph, maxParas+5)
+	for i := range paras {
+		paras[i] = Paragraph{Type: paraThought, State: stateCollapsed, ThoughtTokens: i}
+	}
+	m := &model{paras: paras, focusIndex: 10} // 聚焦第 10 个
+
+	m.trimParas()
+
+	// 淘汰了前 5 个，focusIndex 应从 10 → 5
+	if m.focusIndex != 5 {
+		t.Errorf("expected focusIndex=5 after trim, got %d", m.focusIndex)
+	}
+	if len(m.paras) != maxParas {
+		t.Errorf("expected %d paras after trim, got %d", maxParas, len(m.paras))
+	}
+}
+
+func TestTrimParas_FocusBecomesNegative(t *testing.T) {
+	paras := make([]Paragraph, maxParas+5)
+	for i := range paras {
+		paras[i] = Paragraph{Type: paraThought, State: stateCollapsed, ThoughtTokens: i}
+	}
+	m := &model{paras: paras, focusIndex: 2} // focusIndex < remove(5) → 归位
+
+	m.trimParas()
+
+	if m.focusIndex != -1 {
+		t.Errorf("expected focusIndex=-1 after trim eviction, got %d", m.focusIndex)
+	}
+}

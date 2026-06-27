@@ -28,6 +28,7 @@ type TranscriptLine struct {
 	ToolError     string `json:"error,omitempty"`         // 工具错误
 	ToolDurMs     int64  `json:"dur_ms,omitempty"`        // 工具耗时
 	ThoughtTokens int    `json:"thought_tokens,omitempty"` // thought token 数
+	NotifKind     string `json:"notif,omitempty"`          // 系统通知类型: info / warn / error
 }
 
 // TranscriptPath 返回给定 session 对应的 transcript 文件路径。

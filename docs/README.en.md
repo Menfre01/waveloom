@@ -77,6 +77,25 @@ wvl "explain this code"  # Or run a one-shot query
 
 > Supports macOS / Linux AMD64 & ARM64. Unsure of your architecture? Run `uname -m`: `x86_64` → amd64, `arm64` / `aarch64` → arm64. To upgrade, re-run the install command. From source: `git pull && make install`. Details in [`install.md`](./install.en.md).
 
+### Agent One-Shot Install
+
+Paste the following prompt into any Coding Agent, and it will install waveloom automatically:
+
+````markdown
+Install waveloom on this machine:
+
+1. Detect OS and architecture (`uname -sm`).
+2. Download the latest binary from https://github.com/Menfre01/waveloom/releases/latest based on architecture:
+   - macOS arm64: `wvl_darwin_arm64.tar.gz`
+   - macOS amd64: `wvl_darwin_amd64.tar.gz`
+   - Linux amd64: `wvl_linux_amd64.tar.gz`
+   - Linux arm64: `wvl_linux_arm64.tar.gz`
+3. Extract and install to /usr/local/bin (use sudo if needed):
+   `curl -fsSL <URL> | sudo tar -xz -C /usr/local/bin wvl`
+4. Verify: `wvl --version`
+5. Remind the user to run `wvl setup` to configure their DeepSeek API Key.
+````
+
 ---
 
 ## What the Agent Can Do
@@ -115,7 +134,7 @@ wvl --continue           # Resume the most recent session
 wvl --resume <id>        # Resume a specific session
 ```
 
-In interactive mode: Enter to send, Esc to interrupt, `Ctrl+T` to expand/collapse thought, `Ctrl+O` for tool output, `Ctrl+G` to toggle theme. Type `@` for a fuzzy file picker. See [`usage.md`](./usage.en.md) for details.
+In interactive mode: Enter to send, Esc to interrupt, `Tab` / `Shift+Tab` to focus interactive paragraphs, Enter to expand/collapse, `Ctrl+G` to toggle theme. Type `@` for a fuzzy file picker. See [`usage.md`](./usage.en.md) for details.
 
 ---
 
