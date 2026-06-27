@@ -90,7 +90,10 @@ func main() {
 	// 8. 获取 CWD
 	cwd, _ := os.Getwd()
 
-	// 9. 加载 AGENTS.md 持久记忆（对标 Codex agents_md.rs）
+	// 9. 创建 @ 引用展开器（用于 AGENTS.md 和用户输入中的 @ 引用展开）
+	expander := reference.New(registry, guard)
+
+	// 10. 加载 AGENTS.md 持久记忆（对标 Codex agents_md.rs）
 	var agentsMdText string
 	if homeDir, err := os.UserHomeDir(); err == nil {
 		loader := memory.NewLoader(cwd, homeDir)
@@ -104,7 +107,17 @@ func main() {
 		agentsMdText = text
 	}
 
-	// 10. 创建 Context Manager（跨 Loop 调用累积消息历史，启用 DeepSeek 前缀缓存）
+	// 11. 展开 AGENTS.md 中的 @ 引用（对标 Claude Code 子文件拆分模式）
+	if agentsMdText != "" {
+		expanded, _, expandErr := expander.Expand(context.Background(), agentsMdText, cwd)
+		if expandErr != nil {
+			fmt.Fprintf(os.Stderr, "Warning: AGENTS.md @ 引用展开失败: %v\n", expandErr)
+		} else {
+			agentsMdText = expanded
+		}
+	}
+
+	// 12. 创建 Context Manager（跨 Loop 调用累积消息历史，启用 DeepSeek 前缀缓存）
 	systemPrompt := cfg.SystemPrompt
 	if systemPrompt == "" {
 		systemPrompt = buildSystemPrompt(cwd)
@@ -124,13 +137,10 @@ func main() {
 	}
 	ctxMgr := ctxpkg.NewWithCompaction(systemPrompt, compactionConfig, compaction.NewCompactionSummarizer(summarizerClient, 0))
 
-	// 11. 将 AGENTS.md 作为 user 消息注入（对标 Codex UserInstructions fragment）
+	// 13. 将 AGENTS.md 作为 user 消息注入（对标 Codex UserInstructions fragment）
 	ctxMgr.InjectUserInstructions(agentsMdText)
 
-	// 12. 创建 @ 引用展开器
-	expander := reference.New(registry, guard)
-
-	// 9.5 计算 session 落盘路径
+	// 14. 计算 session 落盘路径
 	// 优先级：settings.json session.dir > WAVELOOM_SESSION_DIR 环境变量 > ~/.waveloom/<project>/sessions/
 	// --continue 恢复最近 session，--resume 指定 session ID 恢复，否则新建
 	sessionOverride := ctxpkg.LoadSessionDir(projectPath)
@@ -162,7 +172,7 @@ func main() {
 		}
 	}
 
-	// 13. 分支：无 prompt → 交互式 TUI，有 prompt → 单次执行
+	// 15. 分支：无 prompt → 交互式 TUI，有 prompt → 单次执行
 	if cfg.OneShot == "" {
 		runTUI(llmClient, registry, guard, expander, cfg.Model, cfg.Theme, verboseLog, cfg.ContextLimit, cfg.MaxTurns, cfg.BypassPerm, ctxMgr, isResume, sessionDir)
 		return
