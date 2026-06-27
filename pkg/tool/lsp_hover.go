@@ -13,19 +13,19 @@ var lspHoverSchema = json.RawMessage(`{
   "properties": {
     "file_path": {
       "type": "string",
-      "description": "文件绝对路径"
+      "description": "Absolute file path"
     },
     "line": {
       "type": "integer",
-      "description": "行号（0-based）"
+      "description": "Line number (0-based)"
     },
     "character": {
       "type": "integer",
-      "description": "列号（0-based）"
+      "description": "Column number (0-based)"
     },
     "working_dir": {
       "type": "string",
-      "description": "工作目录（可选）"
+      "description": "Working directory (optional)"
     }
   },
   "required": ["file_path", "line", "character"]
@@ -47,24 +47,24 @@ func (t *LSPHover) Schema() json.RawMessage { return lspHoverSchema }
 func (t *LSPHover) ConcurrentSafe() bool    { return true }
 
 func (t *LSPHover) Description() string {
-	return "获取光标位置符号的类型签名、文档注释（Markdown 格式）。用于快速查看 API 使用方式。"
+	return "Get the type signature and documentation (Markdown) for a symbol at the cursor position. Use for quickly viewing API usage."
 }
 
 func (t *LSPHover) Execute(ctx context.Context, p LSPHoverParams) (*ToolResult, error) {
 	if LSPManager == nil {
 		return toolError(ErrorClassRecoverable, ErrKindCommandNotFound,
-			"LSP 未初始化", nil), nil
+			"LSP not initialized", nil), nil
 	}
 
 	inst, err := LSPManager.GetOrCreate(p.FilePath)
 	if err != nil {
 		return toolError(ErrorClassRecoverable, ErrKindCommandNotFound,
-			fmt.Sprintf("无法启动 LSP Server: %s", err.Error()), err), nil
+			fmt.Sprintf("failed to start LSP server: %s", err.Error()), err), nil
 	}
 
 	if err := LSPManager.SyncFile(inst, p.FilePath); err != nil {
 		return toolError(ErrorClassRecoverable, ErrKindCommandFailed,
-			fmt.Sprintf("LSP 文件同步失败: %s", err.Error()), err), nil
+			fmt.Sprintf("LSP file sync failed: %s", err.Error()), err), nil
 	}
 
 	var hover lsp.Hover
@@ -78,7 +78,7 @@ func (t *LSPHover) Execute(ctx context.Context, p LSPHoverParams) (*ToolResult, 
 	}
 
 	if hover.Contents.Value == "" {
-		return &ToolResult{Content: "无悬浮信息"}, nil
+		return &ToolResult{Content: "No hover information"}, nil
 	}
 
 	return &ToolResult{Content: hover.Contents.Value}, nil

@@ -566,7 +566,7 @@ func formatToolPlaceholder(toolName, originalContent string) string {
 	lines := strings.Count(originalContent, "\n") + 1
 	chars := len(originalContent)
 	tokens := estimatedTokensFromContent(originalContent)
-	return fmt.Sprintf("[tool call 输出已被压缩] 工具 %s 的输出已被压缩（原始: %d 行, %d 字符, ~%d tokens）",
+	return fmt.Sprintf("[tool call output compressed] Output of tool %s has been compressed (original: %d lines, %d chars, ~%d tokens)",
 		toolName, lines, chars, tokens)
 }
 
@@ -625,7 +625,7 @@ func compressUserCodeBlocks(content string) (string, bool) {
 				}
 			} else if fenceLines == 51 {
 				// 插入占位符，跳过后续 fence 行
-				result.WriteString("[粘贴的内容已被压缩（原始: >50 行）]\n")
+				result.WriteString("[pasted content compressed (original: >50 lines)]\n")
 			}
 			// fenceLines > 51: 跳过，不写入
 		} else {

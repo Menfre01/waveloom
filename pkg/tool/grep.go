@@ -33,7 +33,7 @@ type GrepParams struct {
 type Grep struct{}
 
 func (t *Grep) Name() string            { return "grep" }
-func (t *Grep) Description() string     { return "在文件中搜索匹配正则表达式的行。支持 glob 文件过滤、上下文行。最多返回 250 个匹配。" }
+func (t *Grep) Description() string     { return "Search for lines matching a regular expression. Supports glob file filtering and context lines. Returns up to 250 matches." }
 func (t *Grep) Schema() json.RawMessage { return grepSchema }
 func (t *Grep) ConcurrentSafe() bool    { return true }
 

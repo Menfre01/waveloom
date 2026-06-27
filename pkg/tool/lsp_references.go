@@ -14,24 +14,24 @@ var lspReferencesSchema = json.RawMessage(`{
   "properties": {
     "file_path": {
       "type": "string",
-      "description": "文件绝对路径"
+      "description": "Absolute file path"
     },
     "line": {
       "type": "integer",
-      "description": "行号（0-based）"
+      "description": "Line number (0-based)"
     },
     "character": {
       "type": "integer",
-      "description": "列号（0-based）"
+      "description": "Column number (0-based)"
     },
     "include_declaration": {
       "type": "boolean",
-      "description": "是否包含定义位置（默认 true）",
+      "description": "Include the definition location (default: true)",
       "default": true
     },
     "working_dir": {
       "type": "string",
-      "description": "工作目录（可选）"
+      "description": "Working directory (optional)"
     }
   },
   "required": ["file_path", "line", "character"]
@@ -54,7 +54,7 @@ func (t *LSPReferences) Schema() json.RawMessage { return lspReferencesSchema }
 func (t *LSPReferences) ConcurrentSafe() bool    { return true }
 
 func (t *LSPReferences) Description() string {
-	return "查找符号的所有引用位置（包括定义）。返回文件路径、行号、列号列表。用于追踪依赖、影响范围分析。"
+	return "Find all references to a symbol (including its definition). Returns a list of file paths, lines, and columns. Use for tracing dependencies and impact analysis."
 }
 
 func (t *LSPReferences) Execute(ctx context.Context, p LSPReferencesParams) (*ToolResult, error) {
@@ -64,18 +64,18 @@ func (t *LSPReferences) Execute(ctx context.Context, p LSPReferencesParams) (*To
 	}
 	if LSPManager == nil {
 		return toolError(ErrorClassRecoverable, ErrKindCommandNotFound,
-			"LSP 未初始化", nil), nil
+			"LSP not initialized", nil), nil
 	}
 
 	inst, err := LSPManager.GetOrCreate(p.FilePath)
 	if err != nil {
 		return toolError(ErrorClassRecoverable, ErrKindCommandNotFound,
-			fmt.Sprintf("无法启动 LSP Server: %s", err.Error()), err), nil
+			fmt.Sprintf("failed to start LSP server: %s", err.Error()), err), nil
 	}
 
 	if err := LSPManager.SyncFile(inst, p.FilePath); err != nil {
 		return toolError(ErrorClassRecoverable, ErrKindCommandFailed,
-			fmt.Sprintf("LSP 文件同步失败: %s", err.Error()), err), nil
+			fmt.Sprintf("LSP file sync failed: %s", err.Error()), err), nil
 	}
 
 	var locations []lsp.Location
@@ -90,7 +90,7 @@ func (t *LSPReferences) Execute(ctx context.Context, p LSPReferencesParams) (*To
 	}
 
 	if len(locations) == 0 {
-		return &ToolResult{Content: "未找到引用"}, nil
+		return &ToolResult{Content: "No references found"}, nil
 	}
 
 	// 限制输出最多 100 条

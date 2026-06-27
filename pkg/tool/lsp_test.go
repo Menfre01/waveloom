@@ -46,7 +46,7 @@ func main() {
 		t.Fatalf("Execute: %v", err)
 	}
 	t.Logf("diagnostics: %s", result.Content)
-	if !strings.Contains(result.Content, "无诊断信息") {
+	if !strings.Contains(result.Content, "No diagnostics") {
 		t.Errorf("expected no diagnostics, got: %s", result.Content)
 	}
 }
