@@ -14,42 +14,35 @@
 
 无需 Go 环境，下载即用。前往 [Releases](https://github.com/Menfre01/waveloom/releases/latest) 下载对应平台的 `wvl`。
 
-> `/usr/local/bin` 需要 sudo 权限，或改用 `~/.local/bin`（见下方备选方案）。
+> 安装到 `~/.local/bin`，无需 sudo。若该路径不在 PATH 中，执行 `export PATH="$HOME/.local/bin:$PATH"` 并写入 `~/.bashrc` 或 `~/.zshrc`。
 
 **macOS (ARM64 — Apple Silicon)**
 
 ```sh
-sudo curl -fsSL https://github.com/Menfre01/waveloom/releases/latest/download/wvl_darwin_arm64.tar.gz | sudo tar -xz -C /usr/local/bin wvl
+mkdir -p ~/.local/bin && curl -fsSL https://github.com/Menfre01/waveloom/releases/latest/download/wvl_darwin_arm64.tar.gz | tar -xz -C ~/.local/bin wvl
 ```
 
 **macOS (AMD64 — Intel)**
 
 ```sh
-sudo curl -fsSL https://github.com/Menfre01/waveloom/releases/latest/download/wvl_darwin_amd64.tar.gz | sudo tar -xz -C /usr/local/bin wvl
+mkdir -p ~/.local/bin && curl -fsSL https://github.com/Menfre01/waveloom/releases/latest/download/wvl_darwin_amd64.tar.gz | tar -xz -C ~/.local/bin wvl
 ```
 
 **Linux (AMD64)**
 
 ```sh
-sudo curl -fsSL https://github.com/Menfre01/waveloom/releases/latest/download/wvl_linux_amd64.tar.gz | sudo tar -xz -C /usr/local/bin wvl
+mkdir -p ~/.local/bin && curl -fsSL https://github.com/Menfre01/waveloom/releases/latest/download/wvl_linux_amd64.tar.gz | tar -xz -C ~/.local/bin wvl
 ```
 
 **Linux (ARM64)**
 
 ```sh
-sudo curl -fsSL https://github.com/Menfre01/waveloom/releases/latest/download/wvl_linux_arm64.tar.gz | sudo tar -xz -C /usr/local/bin wvl
+mkdir -p ~/.local/bin && curl -fsSL https://github.com/Menfre01/waveloom/releases/latest/download/wvl_linux_arm64.tar.gz | tar -xz -C ~/.local/bin wvl
 ```
 
-> 没有 `/usr/local/bin` 写入权限？安装到 `~/.local/bin`：
-> ```sh
-> mkdir -p ~/.local/bin
-> curl -fsSL https://github.com/Menfre01/waveloom/releases/latest/download/wvl_darwin_arm64.tar.gz | tar -xz -C ~/.local/bin wvl
-> export PATH="$HOME/.local/bin:$PATH"  # 建议加到 ~/.bashrc 或 ~/.zshrc
-> ```
->
 > macOS 首次运行若提示"无法验证开发者"，执行：
 > ```sh
-> xattr -d com.apple.quarantine /usr/local/bin/wvl
+> xattr -d com.apple.quarantine ~/.local/bin/wvl
 > ```
 
 ## 从源码构建
@@ -88,7 +81,7 @@ LLM_API_KEY=sk-... wvl
 
 ```sh
 # 1. 安装（以 macOS ARM64 为例）
-sudo curl -fsSL https://github.com/Menfre01/waveloom/releases/latest/download/wvl_darwin_arm64.tar.gz | sudo tar -xz -C /usr/local/bin wvl
+mkdir -p ~/.local/bin && curl -fsSL https://github.com/Menfre01/waveloom/releases/latest/download/wvl_darwin_arm64.tar.gz | tar -xz -C ~/.local/bin wvl
 
 # 2. 首次配置（只需一次）
 wvl setup
