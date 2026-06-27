@@ -142,6 +142,9 @@ func findAllMatches(s, old string) []int {
 }
 
 // buildDiffHunks 基于原文、匹配位置和 old/new 字符串，生成带上下文的统一 diff 块列表。
+//
+// 对于 replace_all 场景，会合并重叠的 hunk 窗口并正确计算累积行号偏移，
+// 确保生成与标准 unified diff 语义一致的输出。
 func buildDiffHunks(original string, positions []int, oldStr, newStr string, contextLines int) []DiffHunk {
 	if len(positions) == 0 {
 		return nil
@@ -154,80 +157,118 @@ func buildDiffHunks(original string, positions []int, oldStr, newStr string, con
 	newLineCount := len(newLines)
 	totalLines := len(origLines)
 
-	// 预计算每行的起始字节偏移 + 行号到偏移的映射，用于定位
 	lineStarts := buildLineStarts(original)
 
-	hunks := make([]DiffHunk, 0, len(positions))
-	for _, pos := range positions {
-		// 定位匹配在原文中的行号（0-based）
-		matchLine := lineForOffset(lineStarts, pos)
-
-		// 上下文范围（1-based 行号）
-		ctxStart := matchLine - contextLines + 1
-		if ctxStart < 1 {
-			ctxStart = 1
+	// ── Step 1: 将所有匹配位置转为行号，计算 hunk 窗口（1-based）──
+	type matchSpan struct {
+		matchLine int // 0-based，匹配起始行
+		ctxStart  int // 1-based，含上下文窗口起始
+		ctxEnd    int // 1-based，含上下文窗口结束（inclusive）
+	}
+	spans := make([]matchSpan, len(positions))
+	for i, pos := range positions {
+		ml := lineForOffset(lineStarts, pos)
+		cs := ml - contextLines + 1
+		if cs < 1 {
+			cs = 1
 		}
-		ctxEnd := matchLine + oldLineCount + contextLines
-		if ctxEnd > totalLines {
-			ctxEnd = totalLines
+		ce := ml + oldLineCount + contextLines
+		if ce > totalLines {
+			ce = totalLines
+		}
+		spans[i] = matchSpan{matchLine: ml, ctxStart: cs, ctxEnd: ce}
+	}
+
+	// ── Step 2: 合并重叠的 hunk 窗口 ──
+	merged := make([]matchSpan, 0, len(spans))
+	for _, s := range spans {
+		if len(merged) == 0 {
+			merged = append(merged, s)
+			continue
+		}
+		last := &merged[len(merged)-1]
+		if s.ctxStart <= last.ctxEnd {
+			// 窗口重叠或相邻 → 合并
+			if s.ctxEnd > last.ctxEnd {
+				last.ctxEnd = s.ctxEnd
+			}
+			// 保留第一个匹配行作为 heading 定位
+		} else {
+			merged = append(merged, s)
+		}
+	}
+
+	// ── Step 3: 对每个合并后的窗口生成 DiffHunk ──
+	hunks := make([]DiffHunk, 0, len(merged))
+	cumulativeShift := 0 // 之前所有 hunk 产生的行数净变化（删除 − 新增）
+
+	for _, mw := range merged {
+		// 收集当前窗口内所有的匹配起始行
+		var windowMatches []int
+		for _, s := range spans {
+			if s.matchLine >= mw.ctxStart-1 && s.matchLine+oldLineCount-1 < mw.ctxEnd {
+				windowMatches = append(windowMatches, s.matchLine)
+			}
 		}
 
 		hunk := DiffHunk{
-			OldStart: ctxStart,
-			OldCount: ctxEnd - ctxStart + 1,
-			NewStart: ctxStart,
-			NewCount: ctxEnd - ctxStart + 1 - oldLineCount + newLineCount,
-			Heading:  extractHeading(origLines, matchLine),
+			OldStart: mw.ctxStart,
+			OldCount: mw.ctxEnd - mw.ctxStart + 1,
+			NewStart: mw.ctxStart - cumulativeShift,
+			Heading:  extractHeading(origLines, mw.matchLine),
 		}
 
-		// 上下文前
-		for i := ctxStart - 1; i < matchLine; i++ {
-			if i >= 0 && i < totalLines {
+		hunkAdded := 0
+		hunkDeleted := 0
+		matchIdx := 0 // windowMatches 的游标
+
+		lineIdx := mw.ctxStart - 1 // 0-based
+		for lineIdx < mw.ctxEnd {
+			if matchIdx < len(windowMatches) && lineIdx == windowMatches[matchIdx] {
+				// ── 变更区域：先输出删除行，再输出新增行 ──
+				for i := 0; i < oldLineCount; i++ {
+					oldNum := lineIdx + i + 1
+					hunk.Lines = append(hunk.Lines, DiffLine{
+						Kind:    DiffDel,
+						Content: oldLines[i],
+						OldNum:  oldNum,
+						NewNum:  0,
+					})
+				}
+				hunkDeleted += oldLineCount
+
+				newBase := lineIdx + 1 - cumulativeShift
+				for i := 0; i < newLineCount; i++ {
+					hunk.Lines = append(hunk.Lines, DiffLine{
+						Kind:    DiffAdd,
+						Content: newLines[i],
+						OldNum:  0,
+						NewNum:  newBase + i,
+					})
+				}
+				hunkAdded += newLineCount
+
+				lineIdx += oldLineCount
+				matchIdx++
+			} else {
+				// ── 上下文行 ──
 				hunk.Lines = append(hunk.Lines, DiffLine{
 					Kind:    DiffCtx,
-					Content: origLines[i],
-					OldNum:  i + 1,
-					NewNum:  i + 1,
+					Content: origLines[lineIdx],
+					OldNum:  lineIdx + 1,
+					NewNum:  lineIdx + 1 - cumulativeShift,
 				})
+				lineIdx++
 			}
 		}
 
-		// 删除行
-		for i := 0; i < oldLineCount; i++ {
-			ln := matchLine + i
-			hunk.Lines = append(hunk.Lines, DiffLine{
-				Kind:    DiffDel,
-				Content: oldLines[i],
-				OldNum:  ln + 1,
-				NewNum:  0,
-			})
-		}
-
-		// 新增行
-		for i := 0; i < newLineCount; i++ {
-			hunk.Lines = append(hunk.Lines, DiffLine{
-				Kind:    DiffAdd,
-				Content: newLines[i],
-				OldNum:  0,
-				NewNum:  ctxStart + (matchLine - ctxStart + 1) + i,
-			})
-		}
-
-		// 上下文后：行号偏移 = newLineCount - oldLineCount
-		shift := newLineCount - oldLineCount
-		for i := matchLine + oldLineCount; i < ctxEnd; i++ {
-			if i >= 0 && i < totalLines {
-				hunk.Lines = append(hunk.Lines, DiffLine{
-					Kind:    DiffCtx,
-					Content: origLines[i],
-					OldNum:  i + 1,
-					NewNum:  i + 1 + shift,
-				})
-			}
-		}
-
+		hunk.NewCount = hunk.OldCount - hunkDeleted + hunkAdded
 		hunks = append(hunks, hunk)
+
+		// 累加此 hunk 产生的行号偏移（删除行数 − 新增行数）
+		cumulativeShift += hunkDeleted - hunkAdded
 	}
+
 	return hunks
 }
 

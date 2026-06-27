@@ -348,6 +348,7 @@ func world() {
 func TestEditFileDiffHunksReplaceAll(t *testing.T) {
 	dir := t.TempDir()
 	filePath := filepath.Join(dir, "code.go")
+	// 两个匹配间隔仅 1 行，默认 contextLines=3 下窗口重叠，应合并为一个 hunk
 	content := `line 1
 foo
 line 3
@@ -372,13 +373,109 @@ line 5
 		t.Fatalf("Execute() result.Error = %v", result.Error)
 	}
 
+	// 窗口重叠 → 合并为 1 个 hunk（与 git diff -U3 行为一致）
+	if len(result.Meta.DiffHunks) != 1 {
+		t.Fatalf("DiffHunks count = %d, want 1 (merged due to overlapping windows)", len(result.Meta.DiffHunks))
+	}
+
+	h := result.Meta.DiffHunks[0]
+	added, removed := h.Stats()
+	if added != 2 || removed != 2 {
+		t.Errorf("merged hunk stats = (+%d -%d), want (+2 -2)", added, removed)
+	}
+
+	// 验证 hunk 头正确
+	if h.OldStart != 1 || h.NewStart != 1 {
+		t.Errorf("hunk start = (%d, %d), want (1, 1)", h.OldStart, h.NewStart)
+	}
+
+	// 验证所有变更行都在 hunk 内
+	var foundFirst, foundSecond bool
+	for _, l := range h.Lines {
+		if l.Kind == DiffAdd && l.Content == "bar" {
+			if l.NewNum == 2 {
+				foundFirst = true
+			}
+			if l.NewNum == 4 {
+				foundSecond = true
+			}
+		}
+	}
+	if !foundFirst || !foundSecond {
+		t.Error("merged hunk should contain both bar additions")
+	}
+}
+
+// TestEditFileDiffHunksReplaceAllShift 验证 replace_all 时不同行数替换的累积偏移。
+func TestEditFileDiffHunksReplaceAllShift(t *testing.T) {
+	dir := t.TempDir()
+	filePath := filepath.Join(dir, "shift.go")
+	// 两处匹配间隔足够大（> 2*contextLines + oldLineCount），窗口不重叠
+	content := "line 1\nline 2\nAAA\nBBB\nline 5\nline 6\nline 7\nline 8\nline 9\nline 10\nline 11\nAAA\nBBB\nline 14\n"
+	if err := os.WriteFile(filePath, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	tool := &EditFile{}
+	result, err := tool.Execute(context.Background(), EditFileParams{
+		FilePath:   filePath,
+		OldString:  "AAA\nBBB",
+		NewString:  "XXX",
+		ReplaceAll: true,
+	})
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if result.Error != nil {
+		t.Fatalf("Execute() result.Error = %v", result.Error)
+	}
+
 	if len(result.Meta.DiffHunks) != 2 {
-		t.Fatalf("DiffHunks count = %d, want 2 (one per match)", len(result.Meta.DiffHunks))
+		t.Fatalf("DiffHunks count = %d, want 2 (non-overlapping)", len(result.Meta.DiffHunks))
+	}
+
+	h1 := result.Meta.DiffHunks[0]
+	h2 := result.Meta.DiffHunks[1]
+
+	// Hunk 1: 第一次替换，无累积偏移
+	if h1.NewStart != h1.OldStart {
+		t.Errorf("Hunk1 NewStart = %d, want %d (no prior shift)", h1.NewStart, h1.OldStart)
+	}
+	a1, r1 := h1.Stats()
+	if a1 != 1 || r1 != 2 {
+		t.Errorf("Hunk1 stats = (+%d -%d), want (+1 -2)", a1, r1)
+	}
+
+	// Hunk 2: 第二次替换，累积偏移 = r1 - a1 = 2 - 1 = 1
+	// NewStart 应比 OldStart 小 1（前面删 2 增 1，净删 1 行，新文件行号前移 1）
+	if h2.NewStart != h2.OldStart-1 {
+		t.Errorf("Hunk2 NewStart = %d, want %d (cumulative shift -1)", h2.NewStart, h2.OldStart-1)
+	}
+	a2, r2 := h2.Stats()
+	if a2 != 1 || r2 != 2 {
+		t.Errorf("Hunk2 stats = (+%d -%d), want (+1 -2)", a2, r2)
+	}
+
+	// 验证 hunk2 中上下文行的 NewNum 正确偏移
+	for _, l := range h2.Lines {
+		if l.Kind == DiffCtx {
+			expectedNew := l.OldNum - 1 // cumulative shift = -1
+			if l.NewNum != expectedNew {
+				t.Errorf("Hunk2 ctx line %q: NewNum = %d, want %d (OldNum=%d, shift=-1)",
+					l.Content, l.NewNum, expectedNew, l.OldNum)
+			}
+		}
+		if l.Kind == DiffAdd && l.Content == "XXX" {
+			// 新增行 NewNum 也应计入累积偏移
+			if l.NewNum == 0 {
+				t.Error("Hunk2 add line should have non-zero NewNum")
+			}
+		}
 	}
 
 	totalAdded, totalRemoved := diffStats(result.Meta.DiffHunks)
-	if totalAdded != 2 || totalRemoved != 2 {
-		t.Errorf("total diff stats = (+%d -%d), want (+2 -2)", totalAdded, totalRemoved)
+	if totalAdded != 2 || totalRemoved != 4 {
+		t.Errorf("total diff stats = (+%d -%d), want (+2 -4)", totalAdded, totalRemoved)
 	}
 }
 
