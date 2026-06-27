@@ -23,7 +23,17 @@ type EditFileParams struct {
 type EditFile struct{}
 
 func (t *EditFile) Name() string            { return "edit_file" }
-func (t *EditFile) Description() string     { return "基于字符串精确匹配的查找替换。old_string 必须唯一匹配。" }
+func (t *EditFile) Description() string {
+	return strings.Join([]string{
+		"基于字符串精确匹配的查找替换。old_string 必须唯一匹配。",
+		"",
+		"用于对现有文件做局部修改。优先于 write_file：",
+		"  - 小范围改动（≤50 行变更）→ 用 edit_file",
+		"  - 创建新文件或需要完全覆写 → 用 write_file",
+		"  - 修改前必须先用 read_file 确认 old_string 的精确内容（含缩进和空白符）",
+		"  - 若 old_string 不唯一匹配，需扩大上下文使其唯一",
+	}, " ")
+}
 func (t *EditFile) Schema() json.RawMessage { return editFileSchema }
 func (t *EditFile) ConcurrentSafe() bool    { return false }
 
@@ -167,6 +177,7 @@ func buildDiffHunks(original string, positions []int, oldStr, newStr string, con
 			OldCount: ctxEnd - ctxStart + 1,
 			NewStart: ctxStart,
 			NewCount: ctxEnd - ctxStart + 1 - oldLineCount + newLineCount,
+			Heading:  extractHeading(origLines, matchLine),
 		}
 
 		// 上下文前
@@ -302,4 +313,60 @@ func extractKeyword(line string) string {
 		longest = current
 	}
 	return longest
+}
+
+// extractHeading 从原文匹配行向前扫描，提取最接近的函数/方法/类型签名作为 hunk 头部上下文。
+// 返回匹配行的前一行中看起来像声明的文本（去除前导空白后截断至 60 字符）。
+func extractHeading(lines []string, matchLine int) string {
+	// 从 matchLine-1 向前搜索，最多搜索 10 行
+	start := matchLine - 1
+	if start < 0 {
+		return ""
+	}
+	end := start - 10
+	if end < 0 {
+		end = -1
+	}
+	for i := start; i > end; i-- {
+		trimmed := strings.TrimSpace(lines[i])
+		if trimmed == "" {
+			continue
+		}
+		// 匹配常见声明关键字：func / def / class / function / pub fn / fn / private fn / protected fn
+		if isDeclarationLine(trimmed) {
+			if len(trimmed) > 60 {
+				trimmed = trimmed[:60]
+			}
+			return trimmed
+		}
+	}
+	return ""
+}
+
+// declarationPatterns 定义常见语言的声明行匹配模式。
+var declarationPatterns = []string{
+	"func ",      // Go
+	"def ",       // Python / Ruby
+	"class ",     // Python / Ruby / Java / C++ 等
+	"function ",  // JavaScript / PHP
+	"pub fn ",    // Rust
+	"fn ",        // Rust
+	"interface ", // Go / Java / TypeScript
+	"type ",      // Go type 定义
+	"struct ",    // Go / Rust / C
+	"enum ",      // Rust / C++ / TypeScript
+	"trait ",     // Rust
+	"impl ",      // Rust
+	"@Override",  // Java
+	"@GetMapping", "@PostMapping", "@PutMapping", "@DeleteMapping", // Spring
+}
+
+// isDeclarationLine 判断一行是否为函数/类/类型声明。
+func isDeclarationLine(line string) bool {
+	for _, p := range declarationPatterns {
+		if strings.HasPrefix(line, p) {
+			return true
+		}
+	}
+	return false
 }

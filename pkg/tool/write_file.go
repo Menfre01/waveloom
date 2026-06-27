@@ -22,7 +22,9 @@ type WriteFileParams struct {
 type WriteFile struct{}
 
 func (t *WriteFile) Name() string            { return "write_file" }
-func (t *WriteFile) Description() string     { return "创建新文件或覆盖现有文件。自动创建父目录。" }
+func (t *WriteFile) Description() string {
+	return "创建新文件或覆盖现有文件。自动创建父目录。仅用于新建文件或需完全覆写现有文件的场景；对现有文件做局部修改请用 edit_file。"
+}
 func (t *WriteFile) Schema() json.RawMessage { return writeFileSchema }
 func (t *WriteFile) ConcurrentSafe() bool    { return false }
 
