@@ -53,11 +53,23 @@ type Config struct {
 	// Compactor 每轮 LLM 调用后执行上下文压缩。
 	// nil → 跳过（向后兼容，由 CompleteRun 兜底）。
 	Compactor compaction.Compactor
+
+	// ToolTimeout 单个工具执行的最大时长。
+	// 0 → 无超时限制（向后兼容）。
+	// 设为正值时，每个工具执行会在独立的超时 context 中运行，
+	// 防止工具因未正确处理 ctx 取消而永久阻塞 loop。
+	ToolTimeout time.Duration
 }
+
+// DefaultToolTimeout 是单个工具执行的推荐超时时间（10 分钟）。
+// 覆盖 shell（最长 600s）和 web_fetch 等所有工具类型。
+const DefaultToolTimeout = 10 * time.Minute
 
 // DefaultConfig 返回带推荐默认值的 Config。
 func DefaultConfig() Config {
-	return Config{}
+	return Config{
+		ToolTimeout: DefaultToolTimeout,
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -156,6 +168,26 @@ func (l *Loop) Run(ctx context.Context, messages []llm.Message) <-chan TurnEvent
 	go func() {
 		defer close(ch)
 
+		// panic 防御：捕获 loop 内任何未预期 panic，转为 LoopDone 事件后关闭 channel，
+		// 确保消费者（TUI/runner）不会因 channel 关闭而无 LoopDone 导致永久等待。
+		var state *LoopState
+		defer func() {
+			if r := recover(); r != nil {
+				msgs := messages
+				turn := 0
+				if state != nil {
+					msgs = state.Messages
+					turn = state.TurnCount
+				}
+				ch <- LoopDone{
+					Turn:     turn,
+					Reason:   ReasonToolFatal,
+					Err:      fmt.Errorf("panic: %v", r),
+					Messages: msgs,
+				}
+			}
+		}()
+
 		// 注入 SystemPrompt（如已配置且 messages 中尚无 system 消息）
 		if l.config.SystemPrompt != "" {
 			hasSystem := len(messages) > 0 && messages[0].Role == llm.RoleSystem
@@ -166,7 +198,7 @@ func (l *Loop) Run(ctx context.Context, messages []llm.Message) <-chan TurnEvent
 			}
 		}
 
-		state := &LoopState{
+		state = &LoopState{
 			Messages: messages,
 		}
 
@@ -262,10 +294,13 @@ func (l *Loop) Run(ctx context.Context, messages []llm.Message) <-chan TurnEvent
 				if ev.Delta != "" || ev.ReasoningDelta != "" {
 					contentBuf += ev.Delta
 					reasoningBuf += ev.ReasoningDelta
-					ch <- StreamDelta{
+					if !sendEvent(ctx, ch, StreamDelta{
 						Turn:           state.TurnCount + 1,
 						ContentDelta:   ev.Delta,
 						ReasoningDelta: ev.ReasoningDelta,
+					}) {
+						// ctx 已取消，跳出流消费循环，由下方的 ctx.Err() 检测统一终止
+						break
 					}
 				}
 
@@ -278,6 +313,17 @@ func (l *Loop) Run(ctx context.Context, messages []llm.Message) <-chan TurnEvent
 					}
 					break
 				}
+			}
+
+			// 流消费循环可能因 ctx 取消而中断，在此统一检测
+			if err := ctx.Err(); err != nil {
+				ch <- LoopDone{
+					Turn:     state.TurnCount,
+					Reason:   ReasonAborted,
+					Err:      err,
+					Messages: state.Messages,
+				}
+				return
 			}
 
 			// 3. 过滤无效 tool_calls（空 ID / 空 Name / 工具不存在），避免后续 API 400
@@ -596,8 +642,30 @@ func (l *Loop) executeToolCalls(ctx context.Context, calls []llm.ToolCall, state
 			wg.Add(1)
 			go func(tc llm.ToolCall) {
 				defer wg.Done()
+				defer func() {
+					if r := recover(); r != nil {
+						resultsCh <- execResult{
+							tc: tc,
+							result: &tool.ToolResult{
+								Error: &tool.ToolError{
+									Class:   tool.ErrorClassFatal,
+									Kind:    tool.ErrKindUnknownTool,
+									Message: fmt.Sprintf("panic: %v", r),
+								},
+							},
+							err:   fmt.Errorf("panic in tool %q: %v", tc.Name, r),
+							start: time.Now(),
+						}
+					}
+				}()
 				start := time.Now()
-				result, execErr := l.toolRegistry.Execute(ctx, tc.Name, json.RawMessage(tc.Arguments))
+				execCtx := ctx
+				if l.config.ToolTimeout > 0 {
+					var cancel context.CancelFunc
+					execCtx, cancel = context.WithTimeout(ctx, l.config.ToolTimeout)
+					defer cancel()
+				}
+				result, execErr := l.toolRegistry.Execute(execCtx, tc.Name, json.RawMessage(tc.Arguments))
 				resultsCh <- execResult{tc: tc, result: result, err: execErr, start: start}
 			}(tc)
 		}
@@ -698,7 +766,13 @@ func (l *Loop) executeToolCalls(ctx context.Context, calls []llm.ToolCall, state
 		}
 
 		start := time.Now()
-		result, execErr := l.toolRegistry.Execute(ctx, tc.Name, json.RawMessage(tc.Arguments))
+		execCtx := ctx
+		if l.config.ToolTimeout > 0 {
+			var cancel context.CancelFunc
+			execCtx, cancel = context.WithTimeout(ctx, l.config.ToolTimeout)
+			defer cancel()
+		}
+		result, execErr := l.toolRegistry.Execute(execCtx, tc.Name, json.RawMessage(tc.Arguments))
 		if execErr != nil {
 			return nil, ReasonToolFatal, fmt.Errorf("serial tool execution: %w", execErr)
 		}

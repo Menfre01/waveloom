@@ -6,6 +6,9 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
+
+	"waveloom/pkg/agentloop"
 )
 
 // CLIConfig 命令行配置。
@@ -25,6 +28,9 @@ type CLIConfig struct {
 	BypassPerm      bool
 	Verbose      bool   // 输出 LLM / 工具执行明细到 stderr
 	SettingsPath string // settings.json 路径
+	ToolTimeoutRaw string // 单个工具执行超时（Go Duration 格式，如 "10m" / "600s"），空 = 默认 10m
+	ToolTimeout    time.Duration // 解析后的值
+	ToolTimeoutSource string   // 超时配置来源（CLI / settings.json / 默认），供 TUI 通知使用
 }
 
 // parseCLI 解析命令行参数。
@@ -46,6 +52,7 @@ func parseCLI() CLIConfig {
 	flag.BoolVar(&cfg.ContinueSession, "continue", false, "恢复最近一个 session 的对话")
 	flag.BoolVar(&cfg.Verbose, "verbose", false, "输出 LLM 调用和工具执行的详细日志到 stderr")
 	flag.BoolVar(&cfg.BypassPerm, "bypass-permissions", false, "跳过权限检查（CI/测试）")
+	flag.StringVar(&cfg.ToolTimeoutRaw, "tool-timeout", "", "单个工具执行超时（Go Duration 格式，如 10m/600s/0s，0=禁用，默认 10m）")
 
 	setup := flag.Bool("setup", false, "首次设置向导")
 
@@ -65,6 +72,21 @@ func parseCLI() CLIConfig {
 	if parseErr != nil {
 		fmt.Fprintf(os.Stderr, "警告: 无法解析 --context-limit '%s' (%v)，回退为 1M\n", contextLimitRaw, parseErr)
 		cfg.ContextLimit = 1000000
+	}
+
+	// 解析工具超时
+	if cfg.ToolTimeoutRaw == "" {
+		cfg.ToolTimeout = 0 // 0 表示未设置，由 main.go 从 settings.json 回退
+	} else {
+		d, err := time.ParseDuration(cfg.ToolTimeoutRaw)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "警告: 无法解析 --tool-timeout '%s' (%v)，回退为 10m\n", cfg.ToolTimeoutRaw, err)
+			cfg.ToolTimeout = agentloop.DefaultToolTimeout
+			cfg.ToolTimeoutSource = "默认"
+		} else {
+			cfg.ToolTimeout = d
+			cfg.ToolTimeoutSource = "CLI"
+		}
 	}
 
 	// 单次模式：命令行剩余参数即 prompt
@@ -143,6 +165,7 @@ func printHelp() {
   --system-prompt TEXT    系统提示词
   --context-limit N       上下文窗口 token 上限，支持 1M / 200k / 1048576 等格式（默认: 1M）
   --bypass-permissions    跳过权限检查（CI/测试）
+  --tool-timeout D         单个工具执行超时（Go Duration 格式，如 10m / 600s / 0s，0 禁用，默认 10m）
   --resume ID             恢复指定 session ID 的对话
   --continue              恢复最近一个 session 的对话
 
