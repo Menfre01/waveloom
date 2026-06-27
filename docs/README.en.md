@@ -247,7 +247,7 @@ Adjust the four-tier watermark parameters via the `compaction` block (all have d
 |-----|-----|
 | Toggle theme | `Ctrl+G` cycles through dark / light / auto (auto follows terminal background) |
 | Select text | `Shift + mouse drag` to select any text in the terminal, even across TUI panels |
-| Quick file refs | Type `@` for a fuzzy file picker; `Tab` to enter subdirectories |
+| Quick file refs | Type `@path/to/file` to inline file contents, or `@` for a fuzzy file picker; `Tab` to enter subdirectories |
 | Resume sessions | `wvl --continue` resumes the last session, `wvl --resume <id>` resumes a specific one, `wvl ls` lists available IDs |
 | Inspect logs | Start with `wvl --verbose`; logs at `.waveloom/wvl.log`, run `tail -f` in another terminal |
 
