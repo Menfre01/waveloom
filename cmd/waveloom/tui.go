@@ -278,6 +278,7 @@ type model struct {
 	hudMessages   int
 	hudCacheHit   int
 	hudCacheMiss  int
+	hudLatMs      int64
 	turnStartTime time.Time // 本轮启动时间，用于计算延迟
 
 	// loop 级增量（透传给 CompleteRun → cm.stats，loop 结束归零）
@@ -1634,6 +1635,7 @@ func (m *model) handleLoopDone(ev agentloop.LoopDone, generation int) {
 		// 计算延迟（必须在 CompleteRun 之前，因为 CompleteRun 需要 durationMs）
 		if !m.turnStartTime.IsZero() {
 			elapsedMs = time.Since(m.turnStartTime).Milliseconds()
+			m.hudLatMs = elapsedMs
 		}
 
 		// 捕获 loop 级 token 增量（System 通知需要，归零前保存）
@@ -2588,13 +2590,14 @@ func (m *model) renderFooter() string {
 	line1Parts := []string{modelPart, ctxPart}
 	line1 := styleFooter.Width(contentWidth).Render(strings.Join(line1Parts, sep))
 
-	// Line 2: cache + turns + messages + balance
+	// Line 2: cache + turns + messages + balance + latency
 	compactingPart := m.renderCacheRate()
 	turnsPart := styleFooterLabel.Render("Loop") + " " + styleFooterValue.Render(fmt.Sprintf("%d", m.hudTurns))
 	messagesPart := styleFooterLabel.Render("M") + " " + styleFooterValue.Render(fmt.Sprintf("%d", m.hudMessages))
 	balancePart := m.renderBalance()
+	latencyPart := m.renderLatency()
 
-	line2Parts := []string{compactingPart, turnsPart, messagesPart, balancePart}
+	line2Parts := []string{compactingPart, turnsPart, messagesPart, balancePart, latencyPart}
 	line2Content := strings.Join(line2Parts, sep)
 	line2 := styleFooter.Width(contentWidth).Render(line2Content)
 
@@ -2674,6 +2677,26 @@ func (m *model) renderCacheRate() string {
 	}
 
 	return label + " " + valStyle.Render(fmt.Sprintf("%d%%", pct))
+}
+
+// renderLatency 渲染最近一次 loop 耗时。
+func (m *model) renderLatency() string {
+	label := styleFooterLabel.Render("elap")
+	if m.hudLatMs == 0 {
+		return label + " " + styleFooterValueMuted.Render("--")
+	}
+
+	var valStyle lipgloss.Style
+	switch {
+	case m.hudLatMs < 500:
+		valStyle = styleCacheGreen
+	case m.hudLatMs < 2000:
+		valStyle = styleCacheGold
+	default:
+		valStyle = styleFooterLatRed
+	}
+
+	return label + " " + valStyle.Render(formatDuration(m.hudLatMs))
 }
 
 
