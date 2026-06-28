@@ -14,19 +14,19 @@ var lspDefinitionSchema = json.RawMessage(`{
   "properties": {
     "file_path": {
       "type": "string",
-      "description": "文件绝对路径"
+      "description": "Absolute file path"
     },
     "line": {
       "type": "integer",
-      "description": "行号（0-based）"
+      "description": "Line number (0-based)"
     },
     "character": {
       "type": "integer",
-      "description": "列号（0-based）"
+      "description": "Column number (0-based)"
     },
     "working_dir": {
       "type": "string",
-      "description": "工作目录（可选）"
+      "description": "Working directory (optional)"
     }
   },
   "required": ["file_path", "line", "character"]
@@ -41,35 +41,43 @@ type LSPDefinitionParams struct {
 }
 
 // LSPDefinition 跳转到光标位置的符号定义。
-type LSPDefinition struct{}
+type LSPDefinition struct {
+	lspProvider *LSPProvider
+}
+
+// NewLSPDefinition 创建一个依赖注入的 LSPDefinition 工具。
+func NewLSPDefinition(provider *LSPProvider) *LSPDefinition {
+	return &LSPDefinition{lspProvider: provider}
+}
 
 func (t *LSPDefinition) Name() string           { return "lsp_definition" }
 func (t *LSPDefinition) Schema() json.RawMessage { return lspDefinitionSchema }
 func (t *LSPDefinition) ConcurrentSafe() bool    { return true }
 
 func (t *LSPDefinition) Description() string {
-	return "跳转到光标位置的符号定义。返回文件路径、行号、列号。用于理解第三方库、类型定义、函数签名。"
+	return "Jump to the symbol definition at the cursor position. Returns file path, line, and column. Use for understanding third-party libraries, type definitions, and function signatures."
 }
 
 func (t *LSPDefinition) Execute(ctx context.Context, p LSPDefinitionParams) (*ToolResult, error) {
-	if LSPManager == nil {
+	mgr := t.lspManager()
+	if mgr == nil {
 		return toolError(ErrorClassRecoverable, ErrKindCommandNotFound,
-			"LSP 未初始化", nil), nil
+			"LSP not initialized", nil), nil
 	}
 
-	inst, err := LSPManager.GetOrCreate(p.FilePath)
+	inst, err := mgr.GetOrCreate(p.FilePath)
 	if err != nil {
 		return toolError(ErrorClassRecoverable, ErrKindCommandNotFound,
-			fmt.Sprintf("无法启动 LSP Server: %s", err.Error()), err), nil
+			fmt.Sprintf("failed to start LSP server: %s", err.Error()), err), nil
 	}
 
-	if err := LSPManager.SyncFile(inst, p.FilePath); err != nil {
+	if err := mgr.SyncFile(inst, p.FilePath); err != nil {
 		return toolError(ErrorClassRecoverable, ErrKindCommandFailed,
-			fmt.Sprintf("LSP 文件同步失败: %s", err.Error()), err), nil
+			fmt.Sprintf("LSP file sync failed: %s", err.Error()), err), nil
 	}
 
 	var locations []lsp.Location
-	err = LSPManager.Call(ctx, inst, "textDocument/definition", lsp.DefinitionParams{
+	err = mgr.Call(ctx, inst, "textDocument/definition", lsp.DefinitionParams{
 		TextDocument: lsp.TextDocumentIdentifier{URI: lsp.PathToURI(p.FilePath)},
 		Position:     lsp.Position{Line: p.Line, Character: p.Character},
 	}, &locations)
@@ -79,7 +87,7 @@ func (t *LSPDefinition) Execute(ctx context.Context, p LSPDefinitionParams) (*To
 	}
 
 	if len(locations) == 0 {
-		return &ToolResult{Content: "未找到定义"}, nil
+		return &ToolResult{Content: "No definition found"}, nil
 	}
 
 	var b strings.Builder
@@ -92,4 +100,9 @@ func (t *LSPDefinition) Execute(ctx context.Context, p LSPDefinitionParams) (*To
 		)
 	}
 	return &ToolResult{Content: strings.TrimSpace(b.String())}, nil
+}
+
+// lspManager 返回注入的 LSP Manager。
+func (t *LSPDefinition) lspManager() *lsp.Manager {
+	return t.lspProvider.Manager
 }

@@ -703,3 +703,58 @@ func TestTrimParas_FocusBecomesNegative(t *testing.T) {
 		t.Errorf("expected focusIndex=-1 after trim eviction, got %d", m.focusIndex)
 	}
 }
+
+// ============================================================================
+// isTimeoutError
+// ============================================================================
+
+func TestIsTimeoutError_DeadlineExceeded(t *testing.T) {
+	if !isTimeoutError(context.DeadlineExceeded) {
+		t.Error("expected true for context.DeadlineExceeded")
+	}
+}
+
+func TestIsTimeoutError_WrappedDeadlineExceeded(t *testing.T) {
+	// Go 的 %w 包装后，errors.Is 应能穿透
+	err := context.DeadlineExceeded
+	wrapped := &testError{msg: "tool execution: " + err.Error(), wrapped: err}
+	if !isTimeoutError(wrapped) {
+		t.Error("expected true for wrapped context.DeadlineExceeded via errors.Is")
+	}
+}
+
+func TestIsTimeoutError_StringMatch(t *testing.T) {
+	// 某些错误可能不包装 deadline exceeded，但字符串包含
+	err := &testError{msg: "context deadline exceeded during tool execution"}
+	if !isTimeoutError(err) {
+		t.Error("expected true for string containing 'deadline exceeded'")
+	}
+}
+
+func TestIsTimeoutError_Canceled(t *testing.T) {
+	if isTimeoutError(context.Canceled) {
+		t.Error("expected false for context.Canceled (user interrupt)")
+	}
+}
+
+func TestIsTimeoutError_Nil(t *testing.T) {
+	if isTimeoutError(nil) {
+		t.Error("expected false for nil")
+	}
+}
+
+func TestIsTimeoutError_OtherError(t *testing.T) {
+	err := &testError{msg: "some random error"}
+	if isTimeoutError(err) {
+		t.Error("expected false for unrelated error")
+	}
+}
+
+// testError 实现 error 和 Unwrap 接口。
+type testError struct {
+	msg     string
+	wrapped error
+}
+
+func (e *testError) Error() string { return e.msg }
+func (e *testError) Unwrap() error { return e.wrapped }

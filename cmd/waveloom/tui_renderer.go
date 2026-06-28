@@ -457,27 +457,26 @@ func parseExitCode(output string) int {
 }
 
 // parseDiagnosticSummary 从 lsp_diagnostic 输出首行提取诊断计数。
-// 格式: "诊断结果：N 条 (E 错误, W 警告, I 信息, H 提示)"
-// 无诊断时为 "✓ 无诊断信息"，返回 -1。
+// 格式: "N diagnostics (E errors, W warnings, I info, H hints)"
+// 无诊断时为 "✓ No diagnostics"，返回 -1。
 func parseDiagnosticSummary(output string) (total, errors, warnings, infos, hints int) {
 	firstLine := strings.SplitN(output, "\n", 2)[0]
-	if strings.Contains(firstLine, "无诊断信息") {
+	if strings.Contains(firstLine, "No diagnostics") {
 		return -1, 0, 0, 0, 0
 	}
 	// 提取总数
 	total = -1
-	if idx := strings.Index(firstLine, "："); idx >= 0 {
-		after := firstLine[idx+len("："):]
-		totalStr := takeDigits(strings.TrimSpace(after))
+	if idx := strings.Index(firstLine, " diagnostics"); idx >= 0 {
+		totalStr := takeDigits(strings.TrimSpace(firstLine[:idx]))
 		if totalStr != "" {
 			total = atoi(totalStr)
 		}
 	}
 	// 提取分类计数
-	errors = extractParenInt(firstLine, "错误")
-	warnings = extractParenInt(firstLine, "警告")
-	infos = extractParenInt(firstLine, "信息")
-	hints = extractParenInt(firstLine, "提示")
+	errors = extractParenInt(firstLine, "errors")
+	warnings = extractParenInt(firstLine, "warnings")
+	infos = extractParenInt(firstLine, "info")
+	hints = extractParenInt(firstLine, "hints")
 	return
 }
 
@@ -1555,7 +1554,11 @@ func renderDiffPreview(sb *strings.Builder, hunks []tool.DiffHunk, textWidth int
 	}
 }
 
-// renderDiffView 渲染完整的统一 diff 视图（展开态），带行号列和背景着色。
+// renderDiffView 渲染完整的统一 diff 视图（展开态），遵循 POSIX unified diff 格式：
+//   - 前缀为单字符（+ / - / 空格）
+//   - hunk header 在 count=1 时省略 ",1"
+//   - 附加虚行号列（灰色），不影响 diff 语义
+//
 // 受 maxExpandedWrapped 约束，防止超长行导致海量输出。
 func renderDiffView(sb *strings.Builder, hunks []tool.DiffHunk, textWidth int, indent string) {
 	if len(hunks) == 0 {
@@ -1569,9 +1572,15 @@ func renderDiffView(sb *strings.Builder, hunks []tool.DiffHunk, textWidth int, i
 		if n := h.NewStart + h.NewCount; n > maxNum {
 			maxNum = n
 		}
-		if w := digits(maxNum); w > numWidth {
+		if w := digitCount(maxNum); w > numWidth {
 			numWidth = w
 		}
+	}
+
+	// 单字符前缀 + 行号列宽度 + 续行缩进（1 空格 = 前缀宽度）
+	codeWidth := textWidth - numWidth - 2 // numStr("  5 ") + prefix(1)
+	if codeWidth < 1 {
+		codeWidth = 1
 	}
 
 	wrapped := 0
@@ -1585,10 +1594,22 @@ func renderDiffView(sb *strings.Builder, hunks []tool.DiffHunk, textWidth int, i
 			sb.WriteString("\n")
 		}
 
-		// @@ header
-		header := fmt.Sprintf("@@ -%d,%d +%d,%d @@", h.OldStart, h.OldCount, h.NewStart, h.NewCount)
+		// @@ header（count=1 时省略 ",1"）；heading 过长时截断，防止终端换行造成视觉混乱
+		header := fmt.Sprintf("@@ -%s +%s @@", hunkRange(h.OldStart, h.OldCount), hunkRange(h.NewStart, h.NewCount))
 		if h.Heading != "" {
-			header += " " + h.Heading
+			full := header + " " + h.Heading
+			if len(full) > textWidth {
+				avail := textWidth - len(header) - 1 // -1 for space
+				if avail > 0 {
+					heading := h.Heading
+					if len(heading) > avail {
+						heading = heading[:avail]
+					}
+					header += " " + heading
+				}
+			} else {
+				header = full
+			}
 		}
 		sb.WriteString(indent)
 		sb.WriteString(styleDiffHeader.Render(header))
@@ -1596,10 +1617,18 @@ func renderDiffView(sb *strings.Builder, hunks []tool.DiffHunk, textWidth int, i
 
 		for _, l := range h.Lines {
 			prefix, styleContent := diffLinePrefixAndStyle(l.Kind)
-			codeWidth := textWidth - numWidth - 4 // 行号 + "  " + 前缀（2）
-			if codeWidth < 1 {
-				codeWidth = 1
+			// 行号：删除显示旧行号，新增显示新行号，上下文显示旧行号
+			var num int
+			switch l.Kind {
+			case tool.DiffDel:
+				num = l.OldNum
+			case tool.DiffAdd:
+				num = l.NewNum
+			default:
+				num = l.OldNum
 			}
+			numStr := fmt.Sprintf("%*d ", numWidth, num)
+
 			wlines := wrapLine(l.Content, codeWidth)
 			for wi, wl := range wlines {
 				if wrapped >= maxExpandedWrapped {
@@ -1609,24 +1638,12 @@ func renderDiffView(sb *strings.Builder, hunks []tool.DiffHunk, textWidth int, i
 				sb.WriteString(indent)
 				if wi == 0 {
 					// 首行：行号 + 前缀 + 内容
-					numStr := ""
-					switch l.Kind {
-					case tool.DiffDel:
-						numStr = fmt.Sprintf("%*d  ", numWidth, l.OldNum)
-					case tool.DiffAdd:
-						numStr = fmt.Sprintf("%*d  ", numWidth, l.NewNum)
-					case tool.DiffCtx:
-						numStr = fmt.Sprintf("%*d  ", numWidth, l.OldNum)
-					default:
-						numStr = fmt.Sprintf("%*s  ", numWidth, "")
-					}
 					sb.WriteString(styleLineNum.Render(numStr))
 					sb.WriteString(styleContent.Render(prefix + wl))
 				} else {
-					// 续行：空行号 + 对齐空格 + 内容
-					emptyNum := styleLineNum.Render(fmt.Sprintf("%*s  ", numWidth, ""))
-					sb.WriteString(emptyNum)
-					sb.WriteString(styleContent.Render("  " + wl))
+					// 续行：空行号 + 单空格缩进
+					sb.WriteString(styleLineNum.Render(fmt.Sprintf("%*s ", numWidth, "")))
+					sb.WriteString(styleContent.Render(" " + wl))
 				}
 				sb.WriteString("\n")
 				wrapped++
@@ -1635,6 +1652,7 @@ func renderDiffView(sb *strings.Builder, hunks []tool.DiffHunk, textWidth int, i
 				break
 			}
 		}
+
 		if truncated {
 			break
 		}
@@ -1645,7 +1663,28 @@ func renderDiffView(sb *strings.Builder, hunks []tool.DiffHunk, textWidth int, i
 		sb.WriteString(styleToolPreviewHint.Render(fmt.Sprintf("... (truncated to %d lines)", maxExpandedWrapped)))
 		sb.WriteString("\n")
 	}
+}
 
+// digitCount 返回 n 的十进制位数。
+func digitCount(n int) int {
+	if n <= 0 {
+		return 1
+	}
+	d := 0
+	for n > 0 {
+		n /= 10
+		d++
+	}
+	return d
+}
+
+// hunkRange 返回 unified diff hunk header 中的 range 字符串。
+// count=1 时省略 ",1"，与 git diff 行为一致。
+func hunkRange(start, count int) string {
+	if count == 1 {
+		return fmt.Sprintf("%d", start)
+	}
+	return fmt.Sprintf("%d,%d", start, count)
 }
 
 // lineStyle 根据 DiffLineKind 返回对应的前景色样式。
@@ -1663,45 +1702,36 @@ func lineStyle(kind tool.DiffLineKind) lipgloss.Style {
 }
 
 // linePrefix 根据 DiffLineKind 返回对应的前缀字符。
+// 严格遵循 unified diff 单字符前缀规范：+ 新增，- 删除，空格 上下文。
 func linePrefix(kind tool.DiffLineKind) string {
 	switch kind {
 	case tool.DiffAdd:
-		return "+ "
+		return "+"
 	case tool.DiffDel:
-		return "- "
+		return "-"
 	case tool.DiffHeader:
-		return "@@ "
+		return "@@"
 	default:
-		return "  "
+		return " "
 	}
 }
 
 // diffLinePrefixAndStyle 根据 DiffLineKind 返回首行前缀和续行样式。
+// 严格遵循 unified diff 单字符前缀规范。
 func diffLinePrefixAndStyle(kind tool.DiffLineKind) (prefix string, style lipgloss.Style) {
 	switch kind {
 	case tool.DiffAdd:
-		return "+ ", styleDiffAddBG
+		return "+", styleDiffAddBG
 	case tool.DiffDel:
-		return "- ", styleDiffDelBG
+		return "-", styleDiffDelBG
 	case tool.DiffCtx:
-		return "  ", styleDiffCtx
+		return " ", styleDiffCtx
 	default:
-		return "  ", styleToolExpanded
+		return " ", styleToolExpanded
 	}
 }
 
-// digits 返回 n 的十进制位数。
-func digits(n int) int {
-	if n <= 0 {
-		return 1
-	}
-	d := 0
-	for n > 0 {
-		n /= 10
-		d++
-	}
-	return d
-}
+
 
 // ---------------------------------------------------------------------------
 // 辅助：检测字符串内容类型

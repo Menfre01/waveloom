@@ -32,6 +32,7 @@
         "protection_zone_tokens": "8K",
         "context_limit_tokens": "1M"
     },
+    "tool_timeout": "10m",
     "environment": {
         "tools": {
             "go": "D:\\go\\go\\bin\\go",

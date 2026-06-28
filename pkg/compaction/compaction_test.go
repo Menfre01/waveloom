@@ -246,7 +246,7 @@ func TestFormatToolPlaceholder(t *testing.T) {
 	if !strings.Contains(result, "read_file") {
 		t.Fatalf("placeholder should mention tool name: %s", result)
 	}
-	if !strings.Contains(result, "已被压缩") {
+	if !strings.Contains(result, "compressed") {
 		t.Fatalf("placeholder should indicate compression: %s", result)
 	}
 }

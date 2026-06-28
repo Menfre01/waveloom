@@ -26,3 +26,6 @@ dist/
 
 # Claude Code
 .claude/
+
+# 视频脚本（不纳入发布版本）
+docs/video-script.md
