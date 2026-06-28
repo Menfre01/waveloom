@@ -14,24 +14,24 @@ var lspReferencesSchema = json.RawMessage(`{
   "properties": {
     "file_path": {
       "type": "string",
-      "description": "文件绝对路径"
+      "description": "Absolute file path"
     },
     "line": {
       "type": "integer",
-      "description": "行号（0-based）"
+      "description": "Line number (0-based)"
     },
     "character": {
       "type": "integer",
-      "description": "列号（0-based）"
+      "description": "Column number (0-based)"
     },
     "include_declaration": {
       "type": "boolean",
-      "description": "是否包含定义位置（默认 true）",
+      "description": "Include the definition location (default: true)",
       "default": true
     },
     "working_dir": {
       "type": "string",
-      "description": "工作目录（可选）"
+      "description": "Working directory (optional)"
     }
   },
   "required": ["file_path", "line", "character"]
@@ -47,14 +47,21 @@ type LSPReferencesParams struct {
 }
 
 // LSPReferences 查找符号的所有引用。
-type LSPReferences struct{}
+type LSPReferences struct {
+	lspProvider *LSPProvider
+}
+
+// NewLSPReferences 创建一个依赖注入的 LSPReferences 工具。
+func NewLSPReferences(provider *LSPProvider) *LSPReferences {
+	return &LSPReferences{lspProvider: provider}
+}
 
 func (t *LSPReferences) Name() string           { return "lsp_references" }
 func (t *LSPReferences) Schema() json.RawMessage { return lspReferencesSchema }
 func (t *LSPReferences) ConcurrentSafe() bool    { return true }
 
 func (t *LSPReferences) Description() string {
-	return "查找符号的所有引用位置（包括定义）。返回文件路径、行号、列号列表。用于追踪依赖、影响范围分析。"
+	return "Find all references to a symbol (including its definition). Returns a list of file paths, lines, and columns. Use for tracing dependencies and impact analysis."
 }
 
 func (t *LSPReferences) Execute(ctx context.Context, p LSPReferencesParams) (*ToolResult, error) {
@@ -62,24 +69,25 @@ func (t *LSPReferences) Execute(ctx context.Context, p LSPReferencesParams) (*To
 	if p.IncludeDeclaration != nil {
 		includeDecl = *p.IncludeDeclaration
 	}
-	if LSPManager == nil {
+	mgr := t.lspManager()
+	if mgr == nil {
 		return toolError(ErrorClassRecoverable, ErrKindCommandNotFound,
-			"LSP 未初始化", nil), nil
+			"LSP not initialized", nil), nil
 	}
 
-	inst, err := LSPManager.GetOrCreate(p.FilePath)
+	inst, err := mgr.GetOrCreate(p.FilePath)
 	if err != nil {
 		return toolError(ErrorClassRecoverable, ErrKindCommandNotFound,
-			fmt.Sprintf("无法启动 LSP Server: %s", err.Error()), err), nil
+			fmt.Sprintf("failed to start LSP server: %s", err.Error()), err), nil
 	}
 
-	if err := LSPManager.SyncFile(inst, p.FilePath); err != nil {
+	if err := mgr.SyncFile(inst, p.FilePath); err != nil {
 		return toolError(ErrorClassRecoverable, ErrKindCommandFailed,
-			fmt.Sprintf("LSP 文件同步失败: %s", err.Error()), err), nil
+			fmt.Sprintf("LSP file sync failed: %s", err.Error()), err), nil
 	}
 
 	var locations []lsp.Location
-	err = LSPManager.Call(ctx, inst, "textDocument/references", lsp.ReferencesParams{
+	err = mgr.Call(ctx, inst, "textDocument/references", lsp.ReferencesParams{
 		TextDocument: lsp.TextDocumentIdentifier{URI: lsp.PathToURI(p.FilePath)},
 		Position:     lsp.Position{Line: p.Line, Character: p.Character},
 		Context:      lsp.ReferencesContext{IncludeDeclaration: includeDecl},
@@ -90,7 +98,7 @@ func (t *LSPReferences) Execute(ctx context.Context, p LSPReferencesParams) (*To
 	}
 
 	if len(locations) == 0 {
-		return &ToolResult{Content: "未找到引用"}, nil
+		return &ToolResult{Content: "No references found"}, nil
 	}
 
 	// 限制输出最多 100 条
@@ -113,4 +121,9 @@ func (t *LSPReferences) Execute(ctx context.Context, p LSPReferencesParams) (*To
 		)
 	}
 	return &ToolResult{Content: strings.TrimSpace(b.String())}, nil
+}
+
+// lspManager 返回注入的 LSP Manager。
+func (t *LSPReferences) lspManager() *lsp.Manager {
+	return t.lspProvider.Manager
 }

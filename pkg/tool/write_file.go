@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"waveloom/pkg/pathutil"
 )
 
 // ---------------------------------------------------------------------------
@@ -23,14 +25,14 @@ type WriteFile struct{}
 
 func (t *WriteFile) Name() string            { return "write_file" }
 func (t *WriteFile) Description() string {
-	return "创建新文件或覆盖现有文件。自动创建父目录。仅用于新建文件或需完全覆写现有文件的场景；对现有文件做局部修改请用 edit_file。"
+	return "Create a new file or overwrite an existing file. Creates parent directories automatically. Use only for new files or complete overwrites; for partial edits use edit_file."
 }
 func (t *WriteFile) Schema() json.RawMessage { return writeFileSchema }
 func (t *WriteFile) ConcurrentSafe() bool    { return false }
 
 func (t *WriteFile) Execute(ctx context.Context, p WriteFileParams) (*ToolResult, error) {
 	// ── Step 1: 路径解析 ──
-	path, err := ResolvePathWithDir(p.FilePath, p.WorkingDir)
+	path, err := pathutil.ResolvePathWithDir(p.FilePath, p.WorkingDir)
 	if err != nil {
 		return toolError(ErrorClassRecoverable, ErrKindInvalidArgs,
 			fmt.Sprintf("invalid path: %v", err), err), nil

@@ -6,10 +6,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"os/exec"
-	"regexp"
 	"runtime"
 	"strings"
 	"time"
+
+	"waveloom/pkg/pathutil"
 )
 
 // ---------------------------------------------------------------------------
@@ -31,53 +32,26 @@ func (t *Shell) ConcurrentSafe() bool    { return false }
 // Description 引导 LLM 优先使用专用工具，仅在必要时使用 shell。
 func (t *Shell) Description() string {
 	return strings.Join([]string{
-		"在子进程中执行 Shell 命令。设置执行超时（默认 120s，最大 600s），捕获 stdout 和 stderr。",
+		"Execute a shell command in a subprocess. Configurable timeout (default 120s, max 600s), captures stdout and stderr.",
 		"",
-		"Unix/macOS 使用 sh -c 执行，Windows 使用 cmd /c 执行。",
-		"命令语法应兼容目标平台（Windows 不支持 ; 分隔多命令，请用 &&）。",
+		"Unix/macOS uses sh -c, Windows uses cmd /c.",
+		"Command syntax must target the correct platform (Windows does not support ; for multi-command, use &&).",
 		"",
-		"优先使用专用工具而非 shell:",
-		"  - 读文件: read_file（非 cat/head/tail）",
-		"  - 写文件: write_file（非 echo >/cat <<EOF）",
-		"  - 编辑文件: edit_file（非 sed/awk）",
-		"  - 搜索文件: search_file（非 find）",
-		"  - 内容搜索: grep（非 grep/rg）",
-		"  - 列出目录: ls（非 ls 命令）",
+		"Prefer dedicated tools over shell:",
+		"  - Read files: read_file (not cat/head/tail)",
+		"  - Write files: write_file (not echo >/cat <<EOF)",
+		"  - Edit files: edit_file (not sed/awk)",
+		"  - Find files: search_file (not find)",
+		"  - Search content: grep (not grep/rg)",
+		"  - List directories: ls (not ls command)",
 		"",
-		"多条独立命令可在一次响应中并行发起多个 shell 调用。",
-		"有依赖关系的命令用 && 串联，不要用换行符分隔。",
-		"避免不必要的 sleep；长任务用 run_in_background（后续支持）。",
+		"Launch multiple independent commands as parallel shell calls in a single response.",
+		"Chain dependent commands with &&, not newlines.",
+		"Avoid unnecessary sleep; use run_in_background for long tasks (future support).",
 		"",
-		"需要切换工作目录时，使用 working_dir 参数指定，不要在命令中使用 cd 前缀。",
-		"例: 要在 /tmp 下执行 ls，传 {\"command\":\"ls\", \"working_dir\":\"/tmp\"}，而非 {\"command\":\"cd /tmp && ls\"}。",
+		"To change working directory, use the working_dir parameter. Do NOT prefix commands with cd.",
+		"Example: for ls in /tmp, pass {\"command\":\"ls\", \"working_dir\":\"/tmp\"}, not {\"command\":\"cd /tmp && ls\"}.",
 	}, " ")
-}
-
-// ── cd 前缀归一化 ──
-
-// cdPattern 匹配 Shell 命令中的 "cd <path> &&" 或 "cd <path> ;" 前缀。
-// 支持单引号、双引号和无引号路径。
-//   例: cd /foo && bar       → dir=/foo, cmd=bar
-//        cd "/foo bar" && baz → dir=/foo bar, cmd=baz
-//        cd /foo; bar        → dir=/foo, cmd=bar
-var cdPattern = regexp.MustCompile(`^cd\s+(?:"([^"]*)"|'([^']*)'|([^\s;&]+))\s*(?:&&|;)\s*(.*)$`)
-
-// NormalizeShellCommand 剥离命令中的 cd 前缀，返回归一化后的命令和提取的工作目录。
-// 若命令不以 cd 开头，extractedDir 返回空字符串，原始命令原样返回。
-func NormalizeShellCommand(command string) (normalized string, extractedDir string) {
-	matches := cdPattern.FindStringSubmatch(command)
-	if matches == nil {
-		return command, ""
-	}
-	// matches[1]: 双引号路径, matches[2]: 单引号路径, matches[3]: 无引号路径, matches[4]: 剩余命令
-	dir := matches[1]
-	if dir == "" {
-		dir = matches[2]
-	}
-	if dir == "" {
-		dir = matches[3]
-	}
-	return matches[4], dir
 }
 
 // ── 超时常量 ──
@@ -122,7 +96,7 @@ func (t *Shell) Execute(ctx context.Context, p ShellParams) (*ToolResult, error)
 	defer cancel()
 
 	// ── Step 2: 归一化命令（剥离 cd 前缀，提取工作目录） ──
-	normalizedCmd, extractedDir := NormalizeShellCommand(p.Command)
+	normalizedCmd, extractedDir := pathutil.NormalizeShellCommand(p.Command)
 	if p.WorkingDir == "" && extractedDir != "" {
 		p.WorkingDir = extractedDir
 	}

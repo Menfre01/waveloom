@@ -203,12 +203,12 @@ func TestCompact_Tier2_Prune(t *testing.T) {
 	}
 
 	// 验证 tool 结果被替换为占位符
-	if !strings.Contains(messages[toolIdx].Content, "已被压缩") {
+	if !strings.Contains(messages[toolIdx].Content, "compressed") {
 		t.Fatalf("expected tool placeholder, got: %s", messages[toolIdx].Content)
 	}
 
 	// 验证 user code block 被压缩
-	if !strings.Contains(messages[userIdx].Content, ">50 行") {
+	if !strings.Contains(messages[userIdx].Content, ">50 lines") {
 		t.Fatalf("expected user code block placeholder, got: %s", messages[userIdx].Content)
 	}
 }
@@ -514,7 +514,7 @@ func TestCompressUserCodeBlocks_SmallFence(t *testing.T) {
 }
 
 func TestCompressUserCodeBlocks_LargeFence(t *testing.T) {
-	// >50 行的 fence 应被压缩
+	// >50 lines的 fence 应被压缩
 	lines := make([]string, 100)
 	for i := range lines {
 		lines[i] = "  some code"
@@ -524,7 +524,7 @@ func TestCompressUserCodeBlocks_LargeFence(t *testing.T) {
 	if !did {
 		t.Fatal("expected compression for fence with >50 lines")
 	}
-	if !strings.Contains(result, ">50 行") {
+	if !strings.Contains(result, ">50 lines") {
 		t.Fatalf("expected placeholder in compressed output, got: %s", result)
 	}
 	// 前 50 行保留
@@ -553,7 +553,7 @@ func TestCompressUserCodeBlocks_NestedBacktickInFence(t *testing.T) {
 }
 
 func TestCompressUserCodeBlocks_UnterminatedFence(t *testing.T) {
-	// 未闭合的 fence，内部 >50 行
+	// 未闭合的 fence，内部 >50 lines
 	lines := make([]string, 60)
 	for i := range lines {
 		lines[i] = "code"
@@ -563,7 +563,7 @@ func TestCompressUserCodeBlocks_UnterminatedFence(t *testing.T) {
 	if !did {
 		t.Fatal("expected compression for unterminated fence with >50 lines")
 	}
-	if !strings.Contains(result, ">50 行") {
+	if !strings.Contains(result, ">50 lines") {
 		t.Fatalf("expected placeholder, got: %s", result)
 	}
 	// 结尾不应有 trailing fence line
@@ -595,7 +595,7 @@ func TestCompressUserCodeBlocks_MultipleFences(t *testing.T) {
 	if !did {
 		t.Fatal("expected compression for multiple fences with one >50")
 	}
-	if !strings.Contains(result, ">50 行") {
+	if !strings.Contains(result, ">50 lines") {
 		t.Fatal("expected placeholder for large fence")
 	}
 	if !strings.Contains(result, "start") || !strings.Contains(result, "middle") || !strings.Contains(result, "end") {

@@ -29,6 +29,7 @@ func (m *mockClient) SendMessageStream(_ context.Context, _ []llm.Message, _ []l
 
 func (m *mockClient) GetBalance(_ context.Context) (*llm.BalanceInfo, error) { return nil, nil }
 func (m *mockClient) SupportsBalance() bool                                   { return false }
+func (m *mockClient) ListModels(_ context.Context) ([]llm.ModelInfo, error)   { return nil, nil }
 
 func TestCompactionSummarizer_Success(t *testing.T) {
 	summaryJSON := `{"progress":{"summary":"test","files":[]},"pending":[],"pitfalls":[],"constraints":""}`

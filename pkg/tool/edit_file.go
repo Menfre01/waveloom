@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"os"
 	"strings"
+
+	"waveloom/pkg/pathutil"
 )
 
 // ---------------------------------------------------------------------------
@@ -25,13 +27,13 @@ type EditFile struct{}
 func (t *EditFile) Name() string            { return "edit_file" }
 func (t *EditFile) Description() string {
 	return strings.Join([]string{
-		"基于字符串精确匹配的查找替换。old_string 必须唯一匹配。",
+		"Find-and-replace based on exact string match. old_string must be unique.",
 		"",
-		"用于对现有文件做局部修改。优先于 write_file：",
-		"  - 小范围改动（≤50 行变更）→ 用 edit_file",
-		"  - 创建新文件或需要完全覆写 → 用 write_file",
-		"  - 修改前必须先用 read_file 确认 old_string 的精确内容（含缩进和空白符）",
-		"  - 若 old_string 不唯一匹配，需扩大上下文使其唯一",
+		"For partial edits of existing files. Prefer over write_file:",
+		"  - Small changes (≤50 lines) → use edit_file",
+		"  - New files or full overwrites → use write_file",
+		"  - Always confirm old_string content with read_file before editing (including indentation and whitespace)",
+		"  - If old_string is not unique, expand the context to make it unique",
 	}, " ")
 }
 func (t *EditFile) Schema() json.RawMessage { return editFileSchema }
@@ -45,7 +47,7 @@ func (t *EditFile) Execute(ctx context.Context, p EditFileParams) (*ToolResult, 
 	}
 
 	// ── Step 2: 路径解析 ──
-	path, err := ResolvePathWithDir(p.FilePath, p.WorkingDir)
+	path, err := pathutil.ResolvePathWithDir(p.FilePath, p.WorkingDir)
 	if err != nil {
 		return toolError(ErrorClassRecoverable, ErrKindInvalidArgs,
 			fmt.Sprintf("invalid path: %v", err), err), nil
@@ -263,6 +265,14 @@ func buildDiffHunks(original string, positions []int, oldStr, newStr string, con
 		}
 
 		hunk.NewCount = hunk.OldCount - hunkDeleted + hunkAdded
+
+		// 检测 NoNewlineAtEOF：若 hunk 覆盖文件末尾且原文不以 \n 结尾，
+		// 或替换内容不以 \n 结尾，标记之（符合 POSIX unified diff）。
+		if (mw.ctxEnd >= totalLines && !strings.HasSuffix(original, "\n")) ||
+			!strings.HasSuffix(newStr, "\n") {
+			hunk.NoNewlineAtEOF = true
+		}
+
 		hunks = append(hunks, hunk)
 
 		// 累加此 hunk 产生的行号偏移（删除行数 − 新增行数）

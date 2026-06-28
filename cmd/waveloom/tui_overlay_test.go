@@ -413,6 +413,49 @@ func TestShouldActivatePicker_Empty(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// shouldActivateCommandPicker — / 触发检测
+// ---------------------------------------------------------------------------
+
+func TestShouldActivateCommandPicker_SlashOnly(t *testing.T) {
+	if !shouldActivateCommandPicker("/") {
+		t.Error("expected true for '/' only")
+	}
+}
+
+func TestShouldActivateCommandPicker_SlashWithChars(t *testing.T) {
+	if !shouldActivateCommandPicker("/hel") {
+		t.Error("expected true for '/hel'")
+	}
+}
+
+func TestShouldActivateCommandPicker_NoSlash(t *testing.T) {
+	if shouldActivateCommandPicker("hello world") {
+		t.Error("expected false for text without /")
+	}
+}
+
+func TestShouldActivateCommandPicker_SlashWithSpace(t *testing.T) {
+	if shouldActivateCommandPicker("/help ") {
+		t.Error("expected false when /-command has trailing space")
+	}
+	if shouldActivateCommandPicker("/model v4") {
+		t.Error("expected false when /-command has space and args")
+	}
+}
+
+func TestShouldActivateCommandPicker_SlashNotAtStart(t *testing.T) {
+	if shouldActivateCommandPicker("hello /world") {
+		t.Error("expected false for '/' not at start")
+	}
+}
+
+func TestShouldActivateCommandPicker_Empty(t *testing.T) {
+	if shouldActivateCommandPicker("") {
+		t.Error("expected false for empty string")
+	}
+}
+
+// ---------------------------------------------------------------------------
 // pathPrefixMatch — 路径分量最小前缀匹配
 // ---------------------------------------------------------------------------
 

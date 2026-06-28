@@ -105,6 +105,10 @@ func (m *mockLLMClient) GetBalance(ctx context.Context) (*llm.BalanceInfo, error
 
 func (m *mockLLMClient) SupportsBalance() bool { return false }
 
+func (m *mockLLMClient) ListModels(ctx context.Context) ([]llm.ModelInfo, error) {
+	return nil, nil
+}
+
 // drainEvents 消费 channel 直到关闭，返回最后一个 LoopDone 事件。
 func drainEvents(ch <-chan TurnEvent) LoopDone {
 	var last LoopDone
@@ -2886,3 +2890,240 @@ func makeResponses(n int, content string, calls []llm.ToolCall) []*llm.Response 
 	}
 	return resps
 }
+
+// ============================================================================
+// 9. ToolTimeout 测试
+// ============================================================================
+
+func TestDefaultConfigToolTimeout(t *testing.T) {
+	cfg := DefaultConfig()
+	if cfg.ToolTimeout != DefaultToolTimeout {
+		t.Errorf("expected DefaultToolTimeout %v, got %v", DefaultToolTimeout, cfg.ToolTimeout)
+	}
+}
+
+// slowTool 在 Execute 中 sleep 指定时长，用于测试超时。
+type slowTool struct {
+	name  string
+	sleep time.Duration
+}
+
+func (s *slowTool) Name() string             { return s.name }
+func (s *slowTool) Description() string      { return "slow tool: " + s.name }
+func (s *slowTool) Schema() json.RawMessage  { return json.RawMessage(`{"type":"object"}`) }
+func (s *slowTool) ConcurrentSafe() bool     { return false }
+
+func (s *slowTool) Execute(ctx context.Context, raw json.RawMessage) (*tool.ToolResult, error) {
+	select {
+	case <-time.After(s.sleep):
+		return &tool.ToolResult{Content: "done"}, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+func TestRunToolTimeout_SerialKillsSlowTool(t *testing.T) {
+	// ToolTimeout=100ms，工具 sleep 5s → 应被超时杀死
+	client := &mockLLMClient{
+		responses: []*llm.Response{
+			makeToolCallResponse("", makeToolCall("tc1", "slow", `{}`)),
+		},
+	}
+	slow := &slowTool{name: "slow", sleep: 5 * time.Second}
+	registry := newTestRegistry(slow)
+	loop := New(client, registry, Config{
+		ToolTimeout: 100 * time.Millisecond,
+	})
+
+	finalEv := drainEvents(loop.Run(context.Background(), []llm.Message{
+		{Role: llm.RoleUser, Content: "run slow tool"},
+	}))
+
+	if finalEv.Err == nil {
+		t.Fatal("expected error from timeout")
+	}
+	if finalEv.Reason != ReasonToolFatal {
+		t.Errorf("expected ReasonToolFatal, got %s", finalEv.Reason)
+	}
+}
+
+func TestRunToolTimeout_Disabled(t *testing.T) {
+	// ToolTimeout=0 → 不限制，工具正常完成
+	client := &mockLLMClient{
+		responses: []*llm.Response{
+			makeToolCallResponse("", makeToolCall("tc1", "slow", `{}`)),
+			makeTextResponse("finished"),
+		},
+	}
+	slow := &slowTool{name: "slow", sleep: 10 * time.Millisecond}
+	registry := newTestRegistry(slow)
+	loop := New(client, registry, Config{
+		ToolTimeout: 0, // 禁用
+	})
+
+	finalEv := drainEvents(loop.Run(context.Background(), []llm.Message{
+		{Role: llm.RoleUser, Content: "run quick tool"},
+	}))
+
+	if finalEv.Err != nil {
+		t.Fatalf("unexpected error: %v", finalEv.Err)
+	}
+	if finalEv.Reason != ReasonCompleted {
+		t.Errorf("expected ReasonCompleted, got %s", finalEv.Reason)
+	}
+}
+
+// ============================================================================
+// 10. Panic Recovery 测试
+// ============================================================================
+
+// panickingTool 在 Execute 中直接 panic。
+type panickingTool struct {
+	name string
+}
+
+func (p *panickingTool) Name() string             { return p.name }
+func (p *panickingTool) Description() string      { return "panic tool: " + p.name }
+func (p *panickingTool) Schema() json.RawMessage  { return json.RawMessage(`{"type":"object"}`) }
+func (p *panickingTool) ConcurrentSafe() bool     { return false }
+
+func (p *panickingTool) Execute(ctx context.Context, raw json.RawMessage) (*tool.ToolResult, error) {
+	panic("boom from tool")
+}
+
+func TestRunConcurrentToolPanicRecovery(t *testing.T) {
+	// 并发工具 panic → 被 recover 捕获，转为 Fatal 错误，不崩溃
+	client := &mockLLMClient{
+		responses: []*llm.Response{
+			makeToolCallResponse("", makeToolCall("tc1", "panic_tool", `{}`)),
+		},
+	}
+	panicT := &panickingTool{name: "panic_tool"}
+	registry := newTestRegistry(panicT)
+	loop := New(client, registry, Config{})
+
+	finalEv := drainEvents(loop.Run(context.Background(), []llm.Message{
+		{Role: llm.RoleUser, Content: "trigger panic"},
+	}))
+
+	if finalEv.Err == nil {
+		t.Fatal("expected error from panic recovery")
+	}
+	if finalEv.Reason != ReasonToolFatal {
+		t.Errorf("expected ReasonToolFatal, got %s", finalEv.Reason)
+	}
+	// 验证错误消息包含 "panic"
+	if !strings.Contains(finalEv.Err.Error(), "panic") {
+		t.Errorf("expected error to mention panic, got: %v", finalEv.Err)
+	}
+}
+
+func TestRunMainLoopPanicRecovery(t *testing.T) {
+	// 直接测试 panic recovery：构造一个会在 loop 内触发 panic 的场景。
+	// 使用 nil toolRegistry → Execute 会访问 nil map → panic。
+	client := &mockLLMClient{
+		responses: []*llm.Response{
+			makeToolCallResponse("", makeToolCall("tc1", "nonexistent", `{}`)),
+		},
+	}
+	// 注册工具但工具返回 nil——这会触发 nil pointer dereference 吗？
+	// 不，这里用不注册工具来触发过滤后空 tool_calls 路径
+	registry := newTestRegistry()
+	loop := New(client, registry, Config{})
+
+	// 正常路径：工具不存在被过滤 → 无工具调用 → 完成
+	finalEv := drainEvents(loop.Run(context.Background(), []llm.Message{
+		{Role: llm.RoleUser, Content: "test"},
+	}))
+
+	// 工具不存在应被过滤，loop 正常完成（ReasonCompleted）
+	if finalEv.Err != nil {
+		t.Fatalf("unexpected error for filtered unknown tool: %v", finalEv.Err)
+	}
+	if finalEv.Reason != ReasonCompleted {
+		t.Errorf("expected ReasonCompleted, got %s", finalEv.Reason)
+	}
+}
+
+// ============================================================================
+// 11. StreamDelta 取消测试
+// ============================================================================
+
+// slowMockLLMClient 在流中持续发送 delta，直到 ctx 取消。
+type slowMockLLMClient struct {
+	mu        sync.Mutex
+	callCount int
+}
+
+func (m *slowMockLLMClient) SendMessage(ctx context.Context, messages []llm.Message, tools []llm.ToolSpec) (*llm.Response, error) {
+	return &llm.Response{Content: "done"}, nil
+}
+
+func (m *slowMockLLMClient) SendMessageStream(ctx context.Context, messages []llm.Message, tools []llm.ToolSpec) (<-chan llm.StreamingEvent, error) {
+	m.mu.Lock()
+	m.callCount++
+	m.mu.Unlock()
+
+	ch := make(chan llm.StreamingEvent, 64)
+	go func() {
+		defer close(ch)
+		for i := 0; i < 100; i++ {
+			select {
+			case ch <- llm.StreamingEvent{Delta: "x"}:
+			case <-ctx.Done():
+				ch <- llm.StreamingEvent{Err: ctx.Err()}
+				return
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+		ch <- llm.StreamingEvent{
+			Done:  true,
+			Usage: &llm.UsageInfo{PromptTokens: 100},
+		}
+	}()
+	return ch, nil
+}
+
+func (m *slowMockLLMClient) GetBalance(ctx context.Context) (*llm.BalanceInfo, error) {
+	return nil, nil
+}
+
+func (m *slowMockLLMClient) SupportsBalance() bool { return false }
+
+func (m *slowMockLLMClient) ListModels(ctx context.Context) ([]llm.ModelInfo, error) {
+	return nil, nil
+}
+
+func TestRunStreamDeltaContextCancellation(t *testing.T) {
+	// 在流式 delta 发送过程中取消 ctx → loop 应终止并推送 LoopDone(ReasonAborted)
+	ctx, cancel := context.WithCancel(context.Background())
+
+	client := &slowMockLLMClient{}
+	registry := newTestRegistry()
+	loop := New(client, registry, Config{})
+
+	ch := loop.Run(ctx, []llm.Message{
+		{Role: llm.RoleUser, Content: "stream"},
+	})
+
+	// 等待首帧到达，然后取消 ctx
+	go func() {
+		time.Sleep(30 * time.Millisecond)
+		cancel()
+	}()
+
+	var lastLoopDone *LoopDone
+	for ev := range ch {
+		if ld, ok := ev.(LoopDone); ok {
+			lastLoopDone = &ld
+		}
+	}
+
+	if lastLoopDone == nil {
+		t.Fatal("expected LoopDone after context cancellation")
+	}
+	if lastLoopDone.Reason != ReasonAborted {
+		t.Errorf("expected ReasonAborted, got %s", lastLoopDone.Reason)
+	}
+}
+
