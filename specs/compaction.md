@@ -179,11 +179,15 @@ type Summarizer interface {
 | 工具 | 最大行数 | head | tail |
 |------|---------|------|------|
 | `read_file` | 200 | 150 | 10 |
+| `web_fetch` | 200 | 150 | 10 |
+| `ls` | 100 | 80 | 10 |
+| `search_file` | 80 | 60 | 10 |
+| `lsp_diagnostic` | 60 | 40 | 10 |
+| `lsp_references` | 60 | 40 | 10 |
 | `shell` | 60 | 20 | 30 |
 | `grep` | 60 | 50 | 0 |
-| `web_fetch` | 200 | 150 | 10 |
 
-`ls` / `search_file` / `edit_file` / `write_file` 不截断。未知工具不截断。
+`edit_file` / `write_file` 不截断。未知工具不截断。
 
 ### Tier 2: Prune（80-95%）
 
@@ -192,10 +196,10 @@ type Summarizer interface {
 | 角色 | 操作 |
 |------|------|
 | `assistant` | `reasoning_content` → 置空 |
-| `tool` (read_file/shell/grep/web_fetch) | `content` → 占位符 `[tool call 输出已被压缩]` |
+| `tool` (read_file/shell/grep/web_fetch/ls/search_file/lsp_diagnostic/lsp_references) | `content` → 占位符 `[tool call output compressed]` |
 | `user` | code fence 内 >50 行的块 → 占位符 `[粘贴的内容已被压缩（原始: >50 行）]` |
 
-`ls` / `search_file` / `edit_file` / `write_file` 不压缩。
+`edit_file` / `write_file` 不压缩。
 
 用户消息中 fence 外的自然语言指令原样保留。code fence 检测通过反引号计数匹配开关（3 个进入，≥3 个退出，关 ≥ 开）。
 

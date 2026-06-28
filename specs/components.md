@@ -283,7 +283,7 @@ func (l *Loop) Run(ctx context.Context, messages []Message) <-chan TurnEvent
 | 属性 | 值 |
 |------|-----|
 | **优先级** | P0——用户入口 |
-| **状态** | 🔶 进行中（one-shot CLI 已就绪，daemon + 协议设计中） |
+| **状态** | ⬜ 待实施 |
 | **职责** | 命令行入口 → 演进为 daemon server，通过 JSON-RPC over HTTP+SSE 对接 ink 及移动端客户端 |
 
 **当前状态：**
@@ -411,8 +411,10 @@ cmd/waveloom/config.go    — CLI 参数解析
 ✅ TUI                 — Bubble Tea v2 流式渲染、Markdown、@ 文件选择器
 ✅ Environment         — 工具链自动探测、settings.json 路径覆盖
 ✅ Reference           — @ 文件引用展开
+✅ Diff View           — edit_file 统一 diff 视图（行号、上下文、着色）
+✅ HUD                 — Footer HUD 与 ContextManager 解耦，CompleteResult 驱动
 ──────────────────────────────────────────────────  ← 🎯 最小可用 Agent 分界线
-🔶 Server / Protocol   — one-shot CLI 就绪，daemon + JSON-RPC over HTTP+SSE 设计中
+⬜ Server / Protocol   — daemon + JSON-RPC over HTTP+SSE 待建
 🔶 Event Stream        — 基础 TurnEvent channel 就绪，ObserverBus 待建
 ⬜ Task Planner
 ⬜ MCP Client

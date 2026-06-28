@@ -1,5 +1,7 @@
 # HUD 与 ContextManager 解耦 规格书
 
+> **状态：✅ 已实现** — `CompleteResult` 已返回，`EstimateCurrentTokens` / `CalibrateEstimatedTokens` / `MessageCount()` 已删除，TUI 通过 `lastTurnPrompt` + `lastTurnCompl` 自行计算。
+
 ## 定位
 
 TUI 底部 HUD（Footer）展示：模型名、上下文窗口使用量、缓存命中率、Loop 数、消息数、延迟、余额。
