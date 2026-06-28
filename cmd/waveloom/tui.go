@@ -2698,12 +2698,12 @@ func (m *model) renderCacheRate() string {
 
 	var valStyle lipgloss.Style
 	switch {
-	case pct > 50:
+	case pct >= 95:
 		valStyle = styleCacheGreen
-	case pct >= 25:
+	case pct >= 75:
 		valStyle = styleCacheGold
 	default:
-		valStyle = styleFooterValue
+		valStyle = styleFooterLatRed
 	}
 
 	return label + " " + valStyle.Render(fmt.Sprintf("%d%%", pct))
@@ -2727,9 +2727,9 @@ func (m *model) renderLatency() string {
 
 	var valStyle lipgloss.Style
 	switch {
-	case elapsed < 500:
-		valStyle = styleCacheGreen
-	case elapsed < 2000:
+	case elapsed < 120000:
+		valStyle = styleFooterValue
+	case elapsed < 600000:
 		valStyle = styleCacheGold
 	default:
 		valStyle = styleFooterLatRed
