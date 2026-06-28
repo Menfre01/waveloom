@@ -360,3 +360,39 @@ func (a *deepSeekAdapter) GetBalance(ctx context.Context, httpClient *http.Clien
 
 // SupportsBalance DeepSeek 支持余额查询。
 func (a *deepSeekAdapter) SupportsBalance() bool { return true }
+
+// ListModels 通过 DeepSeek API 获取可用模型列表。
+// 端点: GET /models
+func (a *deepSeekAdapter) ListModels(ctx context.Context, httpClient *http.Client) ([]ModelInfo, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, a.baseURL+"/models", nil)
+	if err != nil {
+		return nil, fmt.Errorf("creating list models request: %w", err)
+	}
+	key, value := a.AuthHeader()
+	req.Header.Set(key, value)
+
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("list models request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("reading list models response: %w", err)
+	}
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("list models HTTP %d: %s", resp.StatusCode, string(body))
+	}
+
+	var result struct {
+		Object string      `json:"object"`
+		Data   []ModelInfo `json:"data"`
+	}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, fmt.Errorf("parsing list models response: %w", err)
+	}
+
+	return result.Data, nil
+}

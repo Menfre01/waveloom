@@ -7,7 +7,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"waveloom/pkg/tool"
+	"waveloom/pkg/pathutil"
 )
 
 // ---------------------------------------------------------------------------
@@ -374,7 +374,7 @@ func ExtractPattern(toolName string, input json.RawMessage) string {
 			return ""
 		}
 		// 归一化：剥离 "cd <path> &&" 前缀，返回完整归一化命令
-		normalized, _ := tool.NormalizeShellCommand(params.Command)
+		normalized, _ := pathutil.NormalizeShellCommand(params.Command)
 		return normalized
 
 	case "web_fetch":
@@ -392,7 +392,7 @@ func ExtractPattern(toolName string, input json.RawMessage) string {
 			return ""
 		}
 		// 优先使用 working_dir 归一化为绝对路径（对齐工具实际执行时的解析逻辑）
-		resolved, err := tool.ResolvePathWithDir(path, workingDir)
+		resolved, err := pathutil.ResolvePathWithDir(path, workingDir)
 		if err == nil {
 			return resolved
 		}

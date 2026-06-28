@@ -4,11 +4,13 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"waveloom/pkg/pathutil"
 )
 
 func TestResolvePathSuccess(t *testing.T) {
 	dir := t.TempDir()
-	path, err := ResolvePath(dir)
+	path, err := pathutil.ResolvePath(dir)
 	if err != nil {
 		t.Fatalf("ResolvePath() error = %v", err)
 	}
@@ -19,7 +21,7 @@ func TestResolvePathSuccess(t *testing.T) {
 
 func TestResolvePathCleans(t *testing.T) {
 	dir := t.TempDir()
-	result, err := ResolvePath(filepath.Join(dir, "..", filepath.Base(dir), "sub"))
+	result, err := pathutil.ResolvePath(filepath.Join(dir, "..", filepath.Base(dir), "sub"))
 	if err != nil {
 		t.Fatalf("ResolvePath() error = %v", err)
 	}

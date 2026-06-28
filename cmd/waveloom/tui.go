@@ -24,6 +24,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"image/color"
 	"io"
@@ -48,8 +49,10 @@ import (
 	"waveloom/pkg/agentloop"
 	ctxpkg "waveloom/pkg/context"
 	"waveloom/pkg/llm"
+	"waveloom/pkg/pathutil"
 	"waveloom/pkg/permission"
 	"waveloom/pkg/reference"
+	"waveloom/pkg/slashcommand"
 	"waveloom/pkg/tool"
 )
 
@@ -239,14 +242,51 @@ func (i permItem) Title() string       { return i.title }
 func (i permItem) Description() string { return i.description }
 func (i permItem) FilterValue() string { return i.title }
 
+// themeItem 是主题选择器列表项。
+type themeItem struct {
+	label string
+	mode  string
+}
+
+func (i themeItem) Title() string       { return i.label }
+func (i themeItem) Description() string { return "" }
+func (i themeItem) FilterValue() string { return i.label }
+
+// modelPickerItem 是模型选择器列表项。
+type modelPickerItem struct {
+	modelID  string
+	ownedBy  string
+}
+
+func (i modelPickerItem) Title() string       { return i.modelID }
+func (i modelPickerItem) Description() string { return i.ownedBy }
+func (i modelPickerItem) FilterValue() string { return i.modelID }
+
+// commandPickerItem 是 slash 命令选择器列表项。
+type commandPickerItem struct {
+	name        string
+	description string
+	args        string // 参数占位符，如 "model"；无参数时为空
+}
+
+func (i commandPickerItem) Title() string {
+	if i.args != "" {
+		return "/" + i.name + " [" + i.args + "] " + i.description
+	}
+	return "/" + i.name + " " + i.description
+}
+func (i commandPickerItem) Description() string { return "" }
+func (i commandPickerItem) FilterValue() string { return i.name }
+
 type model struct {
 	// 外部依赖
-	cm         *ctxpkg.ContextManager
-	llmClient  llm.Client
-	registry   tool.Registry
-	guard      permission.Guard
-	expander   *reference.Expander
-	cwd        string
+	cm            *ctxpkg.ContextManager
+	llmClient     llm.Client
+	registry      tool.Registry
+	guard         permission.Guard
+	expander      *reference.Expander
+	slashRegistry *slashcommand.Registry
+	cwd           string
 	verboseLog io.Writer // --verbose 日志输出（nil = 不记录）
 	loop       *agentloop.Loop
 
@@ -262,6 +302,15 @@ type model struct {
 	permList     list.Model            // 权限选项列表（bubbles/list）
 	permDelegate *list.DefaultDelegate // 权限列表的 delegate 指针，主题切换时更新样式
 
+	// 主题选择器覆盖层
+	themeList     list.Model
+	themeDelegate *list.DefaultDelegate
+
+	// 模型选择器覆盖层
+	modelPickerList     list.Model
+	modelPickerDelegate *list.DefaultDelegate
+	modelPickerItems    []llm.ModelInfo // 模型列表数据，主题切换时更新样式
+
 	// 文件选择器
 	pickerVisible         bool
 	pickerFilter          string
@@ -273,6 +322,15 @@ type model struct {
 	pickerLastValue       string                // 上次刷新时的 input 值，避免 spinner tick 触发重复扫描
 	pickerList            list.Model            // 文件列表组件（bubbles/list）
 	pickerDelegate        *list.DefaultDelegate // 文件选择器 delegate 指针，主题切换时更新样式
+
+	// 命令选择器（/ 触发）
+	commandPickerVisible      bool
+	commandPickerList         list.Model
+	commandPickerDelegate     *list.DefaultDelegate
+	commandPickerItems        []slashcommand.CommandInfo
+	commandPickerFilter       string
+	commandPickerDismissValue string
+	commandPickerLastValue    string
 
 	// HUD 会话级累积（footer 显示用，跨 loop 不归零）
 	hudModel      string
@@ -297,8 +355,15 @@ type model struct {
 
 	contextLimit     int // 上下文窗口 token 上限
 	maxTurns         int // --max-turns（0 = 无限制）
+	toolTimeout      time.Duration // --tool-timeout（0 = 无限制）
+	toolTimeoutSource string      // 超时配置来源（CLI / settings.json / 默认）
 	bypassPerm       bool
 	lastPromptTokens int // ctx bar 实时值（TurnStats → API 真实值，Tier 3 完成 → 归零）
+
+	// Session 管理
+	agentsMdText  string // AGENTS.md 文本，/new 时重新注入
+	sessionDir    string // session 文件目录
+	settingsStore *tuiSettingsStore // /model settings 读写
 
 	// Transcript 持久化
 	transcriptPath    string // session_id.jsonl 文件路径
@@ -329,6 +394,7 @@ type model struct {
 	cancelRun     context.CancelFunc // 取消当前运行的 agent loop（nil 表示无运行中 loop）
 	runGeneration int                // 每次 doTurn 递增，闭包捕获后用于 LoopDone 去重
 	themeMode     string             // 当前主题模式: auto / dark / light
+	autoDark      bool               // 启动时 auto 检测结果：true = 深色背景，缓存避免运行时调用 HasDarkBackground
 	palette   palette            // 当前配色
 	width     int
 	height    int
@@ -410,7 +476,7 @@ func colorHex(c color.Color) string {
 // ---------------------------------------------------------------------------
 
 // newTUIModel 创建 TUI model，依赖由外部注入（LLM client / tool registry / guard / expander / verboseLog）。
-func newTUIModel(llmClient llm.Client, registry tool.Registry, guard permission.Guard, expander *reference.Expander, modelName string, theme string, verboseLog io.Writer, contextLimit int, maxTurns int) *model {
+func newTUIModel(llmClient llm.Client, registry tool.Registry, guard permission.Guard, expander *reference.Expander, modelName string, theme string, verboseLog io.Writer, contextLimit int, maxTurns int, toolTimeout time.Duration, toolTimeoutSource string) *model {
 	if modelName == "" {
 		modelName = "deepseek-v4"
 	}
@@ -420,7 +486,7 @@ func newTUIModel(llmClient llm.Client, registry tool.Registry, guard permission.
 
 	ti := textinput.New()
 	ti.Prompt = "› "
-	ti.Placeholder = "输入消息, Enter 发送 · @ 选择文件 · Esc 中断"
+	ti.Placeholder = "输入消息, Enter 发送 · / 命令 · @ 选择文件 · Esc 中断"
 	ti.CharLimit = 2048
 	ti.SetVirtualCursor(false) // real cursor 避免 virtual cursor 反色 ANSI 泄漏
 	styles := ti.Styles()
@@ -485,6 +551,8 @@ func newTUIModel(llmClient llm.Client, registry tool.Registry, guard permission.
 		hudModel:        normalizeWidth(modelName),
 		contextLimit:    contextLimit,
 		maxTurns:        maxTurns,
+		toolTimeout:     toolTimeout,
+		toolTimeoutSource: toolTimeoutSource,
 		glamourRenderer: glamourR,
 		keys:            defaultKeys,
 		help:            help.New(),
@@ -516,6 +584,7 @@ func (m *model) wireLoop() {
 		UserResponder: &tuiUserResponder{program: m.program, cwd: m.cwd},
 		VerboseWriter: m.verboseLog,
 		Compactor:     m.cm.Compactor(),
+		ToolTimeout:   m.toolTimeout,
 	})
 }
 
@@ -755,6 +824,14 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		var cmd tea.Cmd
 		m.permList, cmd = m.permList.Update(msg)
 		cmds = append(cmds, cmd)
+	case overlayThemePicker:
+		var cmd tea.Cmd
+		m.themeList, cmd = m.themeList.Update(msg)
+		cmds = append(cmds, cmd)
+	case overlayModelPicker:
+		var cmd tea.Cmd
+		m.modelPickerList, cmd = m.modelPickerList.Update(msg)
+		cmds = append(cmds, cmd)
 	}
 
 	// 文件选择器：过滤同步 + 激活/关闭检测
@@ -767,12 +844,29 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.updatePickerFilter()
 			m.pickerLastValue = m.input.Value()
 		}
-	} else if shouldActivatePicker(m.input.Value()) && !m.running && m.overlay == overlayNone {
+	} else if shouldActivatePicker(m.input.Value()) && !m.running && m.overlay == overlayNone && !m.commandPickerVisible {
 		// 选择器刚关闭且 input 值未变 → 阻止立即重新触发
 		if m.input.Value() != m.pickerDismissValue {
 			m.activatePicker()
 			cmds = append(cmds, m.startPickerScan())
 		}
+	}
+
+	// 命令选择器：过滤同步 + 激活/关闭检测
+	if m.commandPickerVisible {
+		if !shouldActivateCommandPicker(m.input.Value()) {
+			m.closeCommandPicker()
+		} else if m.input.Value() != m.commandPickerLastValue {
+			m.updateCommandPickerFilter()
+			m.commandPickerLastValue = m.input.Value()
+		}
+	} else if shouldActivateCommandPicker(m.input.Value()) && !m.running && m.overlay == overlayNone && !m.pickerVisible {
+		if m.input.Value() != m.commandPickerDismissValue {
+			m.activateCommandPicker()
+		}
+	} else {
+		// 输入不触发命令选择器时，清除 dismiss 记录，避免 Esc 后清空 / 再输入 / 无法激活
+		m.commandPickerDismissValue = ""
 	}
 
 	return m, tea.Batch(cmds...)
@@ -788,8 +882,9 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // 路由优先级：
 //  1. 全局快捷键（所有状态/覆盖层下生效）：Quit, ToggleTheme, JumpBottom, PageUp/Down
 //  2. 文件选择器活跃 → handlePickerKey
-//  3. 权限面板活跃 → permList 导航 + handlePermKey
-//  4. 正常模式快捷键
+//  3. 命令选择器活跃 → handleCommandPickerKey
+//  4. 权限面板活跃 → permList 导航 + handlePermKey / handleThemePickerKey / handleModelPickerKey
+//  5. 正常模式快捷键
 func (m *model) handleKeyPress(msg tea.KeyPressMsg) (bool, tea.Cmd) {
 	// =====================================================================
 	// 1. 全局快捷键（所有状态/覆盖层下生效，行为高度统一）
@@ -811,6 +906,13 @@ func (m *model) handleKeyPress(msg tea.KeyPressMsg) (bool, tea.Cmd) {
 	}
 
 	// =====================================================================
+	// 2b. 命令选择器活跃时路由
+	// =====================================================================
+	if m.commandPickerVisible {
+		return m.handleCommandPickerKey(msg)
+	}
+
+	// =====================================================================
 	// 3. 权限面板活跃时路由
 	// =====================================================================
 	if m.overlay == overlayPermission {
@@ -822,6 +924,20 @@ func (m *model) handleKeyPress(msg tea.KeyPressMsg) (bool, tea.Cmd) {
 			return true, cmd
 		}
 		return m.handlePermKey(keyStr)
+	}
+
+	// =====================================================================
+	// 3b. 主题选择器活跃时路由
+	// =====================================================================
+	if m.overlay == overlayThemePicker {
+		return m.handleThemePickerKey(msg)
+	}
+
+	// =====================================================================
+	// 3c. 模型选择器活跃时路由
+	// =====================================================================
+	if m.overlay == overlayModelPicker {
+		return m.handleModelPickerKey(msg)
 	}
 
 	// =====================================================================
@@ -854,6 +970,11 @@ func (m *model) handleKeyPress(msg tea.KeyPressMsg) (bool, tea.Cmd) {
 			}
 			if strings.EqualFold(userInput, "exit") {
 				return true, tea.Quit
+			}
+
+			// Slash 命令拦截：以 / 开头的输入在到达 Agent Loop 之前执行
+			if strings.HasPrefix(userInput, "/") {
+				return true, m.handleSlashCommand(userInput)
 			}
 
 			// 硬临界值阻断：上下文已达上限时直接拒绝新 prompt
@@ -1138,8 +1259,8 @@ func (m *model) commitPickerSelection(idx int) {
 	if atIdx < 0 {
 		return
 	}
-	// 替换 @ 及其后的内容为 @{selectedPath}
-	newValue := value[:atIdx] + "@" + selected
+	// 替换 @ 及其后的内容为 @{selectedPath} （追加空格，与 / 命令选择器行为一致）
+	newValue := value[:atIdx] + "@" + selected + " "
 	m.input.SetValue(newValue)
 	// 光标移到末尾
 	m.input.CursorEnd()
@@ -1164,6 +1285,192 @@ func (m *model) renderPickerDropdown(contentWidth int) string {
 	return boxStyle.Render(m.pickerList.View())
 }
 
+// ---------------------------------------------------------------------------
+// 命令选择器（/ 触发）
+// ---------------------------------------------------------------------------
+
+// activateCommandPicker 首次激活命令选择器。
+func (m *model) activateCommandPicker() {
+	m.commandPickerVisible = true
+	m.commandPickerFilter = extractFilterAfterSlash(m.input.Value())
+	m.commandPickerLastValue = m.input.Value()
+
+	// 从 registry 获取命令列表
+	m.commandPickerItems = m.slashRegistry.List()
+
+	// 立即过滤
+	m.updateCommandPickerFilter()
+}
+
+// closeCommandPicker 关闭命令选择器。
+func (m *model) closeCommandPicker() {
+	m.commandPickerVisible = false
+	m.commandPickerDismissValue = m.input.Value()
+	m.commandPickerLastValue = ""
+	m.commandPickerItems = nil
+}
+
+// extractFilterAfterSlash 提取 / 之后的文本作为命令过滤条件。
+func extractFilterAfterSlash(value string) string {
+	if !strings.HasPrefix(value, "/") {
+		return ""
+	}
+	return value[1:]
+}
+
+// updateCommandPickerFilter 根据当前输入过滤命令列表。
+func (m *model) updateCommandPickerFilter() {
+	m.commandPickerFilter = extractFilterAfterSlash(m.input.Value())
+
+	filter := strings.ToLower(m.commandPickerFilter)
+	var filtered []slashcommand.CommandInfo
+	for _, cmd := range m.commandPickerItems {
+		if filter == "" || strings.Contains(strings.ToLower(cmd.Name), filter) {
+			filtered = append(filtered, cmd)
+		}
+	}
+
+	m.buildCommandPickerList(filtered)
+}
+
+// buildCommandPickerList 从 CommandInfo 列表构建 bubbles/list 组件。
+func (m *model) buildCommandPickerList(items []slashcommand.CommandInfo) {
+	listItems := make([]list.Item, len(items))
+	for i, cmd := range items {
+		listItems[i] = commandPickerItem{name: cmd.Name, description: cmd.Description, args: cmd.Args}
+	}
+
+	height := len(listItems)
+	if height > 5 {
+		height = 5
+	}
+	if height < 1 {
+		height = 1
+	}
+
+	// 复用已有 list，仅更新 items + height
+	if m.commandPickerList.Items() != nil {
+		m.commandPickerList.SetItems(listItems)
+		m.commandPickerList.SetSize(0, height)
+		return
+	}
+
+	// 首次创建
+	delegate := list.NewDefaultDelegate()
+	delegate.ShowDescription = false
+	delegate.SetSpacing(0)
+	delegate.Styles = listItemStyles()
+
+	l := list.New(listItems, delegate, 0, height)
+	l.SetShowTitle(false)
+	l.SetShowPagination(false)
+	l.SetShowStatusBar(false)
+	l.SetShowFilter(false)
+	l.SetShowHelp(false)
+	l.KeyMap.Quit = key.NewBinding()
+	l.KeyMap.ForceQuit = key.NewBinding()
+
+	m.commandPickerList = l
+	m.commandPickerDelegate = &delegate
+}
+
+// handleCommandPickerKey 处理命令选择器中的按键。
+func (m *model) handleCommandPickerKey(msg tea.KeyPressMsg) (bool, tea.Cmd) {
+	keyStr := msg.String()
+
+	switch keyStr {
+	case "up", "down":
+		var cmd tea.Cmd
+		m.commandPickerList, cmd = m.commandPickerList.Update(msg)
+		return true, cmd
+
+	case "esc":
+		m.closeCommandPicker()
+		return true, nil
+
+	case "enter":
+		idx := m.commandPickerList.Index()
+		if idx >= 0 && idx < len(m.commandPickerList.Items()) {
+			item, ok := m.commandPickerList.Items()[idx].(commandPickerItem)
+			if ok && item.args == "" {
+				// 无参数命令：直接执行
+				m.closeCommandPicker()
+				return true, m.handleSlashCommand("/" + item.name)
+			}
+			m.commitCommandPickerSelection(idx)
+			m.closeCommandPicker()
+			return true, nil
+		}
+		// 无匹配项（如别名 /clear）：将当前输入作为 slash 命令执行
+		m.closeCommandPicker()
+		return true, m.handleSlashCommand(m.input.Value())
+
+	case "tab":
+		idx := m.commandPickerList.Index()
+		if idx >= 0 && idx < len(m.commandPickerList.Items()) {
+			m.completeCommandPickerFilter(idx)
+		}
+		return true, nil
+
+	default:
+		// 可打印字符 → 传给 input，Update() 中会触发 re-filter
+		return false, nil
+	}
+}
+
+// commitCommandPickerSelection 将选中命令回填到 textinput，关闭选择器。
+func (m *model) commitCommandPickerSelection(idx int) {
+	items := m.commandPickerList.Items()
+	if idx < 0 || idx >= len(items) {
+		return
+	}
+	item, ok := items[idx].(commandPickerItem)
+	if !ok {
+		return
+	}
+	// 替换 / 及其后的内容为 /{commandName} （保留空格以便用户输入参数）
+	newValue := "/" + item.name + " "
+	m.input.SetValue(newValue)
+	m.input.CursorEnd()
+}
+
+// completeCommandPickerFilter 将选中命令名补全到 / 过滤器，保持选择器打开。
+func (m *model) completeCommandPickerFilter(idx int) {
+	items := m.commandPickerList.Items()
+	if idx < 0 || idx >= len(items) {
+		return
+	}
+	item, ok := items[idx].(commandPickerItem)
+	if !ok {
+		return
+	}
+	newValue := "/" + item.name
+	m.input.SetValue(newValue)
+	m.input.CursorEnd()
+	// 更新过滤，保持选择器打开但只显示匹配项
+	m.commandPickerFilter = item.name
+	m.updateCommandPickerFilter()
+	m.commandPickerLastValue = m.input.Value()
+}
+
+// renderCommandPickerDropdown 渲染命令选择器下拉列表。
+func (m *model) renderCommandPickerDropdown(contentWidth int) string {
+	if m.commandPickerList.Items() == nil || len(m.commandPickerList.Items()) == 0 {
+		return ""
+	}
+
+	// 同步 list 宽度
+	m.commandPickerList.SetSize(contentWidth-4, m.commandPickerList.Height())
+
+	boxStyle := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(colorHeaderAccent).
+		Padding(1, 1).
+		Width(contentWidth)
+
+	return boxStyle.Render(m.commandPickerList.View())
+}
+
 // shouldActivatePicker 检测输入框当前内容是否触发文件选择器。
 // 条件: 最后一个 @ 在行首或空格之后，且 @ 之后无空格。
 func shouldActivatePicker(value string) bool {
@@ -1178,6 +1485,20 @@ func shouldActivatePicker(value string) bool {
 	// @ 之后不能已经包含空格（路径已完成，避免重新触发）
 	afterAt := value[idx+1:]
 	if strings.Contains(afterAt, " ") {
+		return false
+	}
+	return true
+}
+
+// shouldActivateCommandPicker 检测输入框当前内容是否触发命令选择器。
+// 条件: / 在行首，且 / 之后无空格（命令未完成）。
+func shouldActivateCommandPicker(value string) bool {
+	if !strings.HasPrefix(value, "/") {
+		return false
+	}
+	afterSlash := value[1:]
+	// / 之后不能已经包含空格（命令已完成，如 "/help" 整体提交或 "/model v4"）
+	if strings.Contains(afterSlash, " ") {
 		return false
 	}
 	return true
@@ -1268,8 +1589,8 @@ func (m *model) buildPickerList() {
 	}
 
 	maxHeight := len(items)
-	if maxHeight > 12 {
-		maxHeight = 12
+	if maxHeight > 5 {
+		maxHeight = 5
 	}
 	if maxHeight < 1 {
 		maxHeight = 1
@@ -1631,7 +1952,7 @@ func (m *model) handleLoopDone(ev agentloop.LoopDone, generation int) {
 	if !isStale {
 		m.running = false
 		m.focusIndex = -1
-		m.input.Placeholder = "输入消息, Enter 发送 · @ 选择文件 · Esc 中断"
+		m.input.Placeholder = "输入消息, Enter 发送 · / 命令 · @ 选择文件 · Esc 中断"
 		m.cancelRun = nil
 
 		// 计算延迟（必须在 CompleteRun 之前，因为 CompleteRun 需要 durationMs）
@@ -1708,11 +2029,17 @@ func (m *model) handleLoopDone(ev agentloop.LoopDone, generation int) {
 				NotifKind: notifInfo,
 			})
 		case agentloop.ReasonAborted:
+			abortText := fmt.Sprintf("已中断（%s）", elapsedStr)
+			abortKind := notifInfo
+			if m.toolTimeout > 0 && isTimeoutError(ev.Err) {
+				abortText = fmt.Sprintf("工具执行超时（%s %s）%s", m.toolTimeoutSource, formatDuration(m.toolTimeout.Milliseconds()), elapsedStr)
+				abortKind = notifError
+			}
 			m.paras = append(m.paras, Paragraph{
 				Type:      paraSystem,
 				State:     stateDone,
-				Text:      fmt.Sprintf("已中断（%s）", elapsedStr),
-				NotifKind: notifInfo,
+				Text:      abortText,
+				NotifKind: abortKind,
 			})
 		case agentloop.ReasonModelError:
 			m.paras = append(m.paras, Paragraph{
@@ -1722,10 +2049,14 @@ func (m *model) handleLoopDone(ev agentloop.LoopDone, generation int) {
 				NotifKind: notifError,
 			})
 		case agentloop.ReasonToolFatal:
+			text := fmt.Sprintf("工具错误（%s, %v）", elapsedStr, ev.Err)
+			if m.toolTimeout > 0 && isTimeoutError(ev.Err) {
+				text = fmt.Sprintf("工具执行超时（%s %s）%s", m.toolTimeoutSource, formatDuration(m.toolTimeout.Milliseconds()), elapsedStr)
+			}
 			m.paras = append(m.paras, Paragraph{
 				Type:      paraSystem,
 				State:     stateDone,
-				Text:      fmt.Sprintf("工具错误（%s, %v）", elapsedStr, ev.Err),
+				Text:      text,
 				NotifKind: notifError,
 			})
 		}
@@ -1746,6 +2077,17 @@ func (m *model) handleLoopDone(ev agentloop.LoopDone, generation int) {
 			}
 		}()
 	}
+}
+
+// isTimeoutError 判断错误是否为超时引起（context deadline exceeded 或包含 deadline exceeded 字样）。
+func isTimeoutError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	return strings.Contains(err.Error(), "deadline exceeded")
 }
 
 // ---------------------------------------------------------------------------
@@ -2003,10 +2345,10 @@ func (m *model) exitFocusMode() tea.Cmd {
 	// 借此区分测试中未初始化的 input，避免 virtualCursor.Blink 空指针。
 	if m.input.Prompt != "" {
 		cmd := m.input.Focus()
-		m.input.Placeholder = "输入消息, Enter 发送 · @ 选择文件 · Esc 中断"
+		m.input.Placeholder = "输入消息, Enter 发送 · / 命令 · @ 选择文件 · Esc 中断"
 		return cmd
 	}
-	m.input.Placeholder = "输入消息, Enter 发送 · @ 选择文件 · Esc 中断"
+	m.input.Placeholder = "输入消息, Enter 发送 · / 命令 · @ 选择文件 · Esc 中断"
 	return nil
 }
 
@@ -2327,16 +2669,35 @@ func (m *model) View() tea.View {
 
 	// 2. 渲染覆盖层
 	var overlayContent string
-	if m.overlay == overlayPermission && m.permReq != nil {
-		boxWidth := contentWidth
-		if boxWidth > 70 {
-			boxWidth = 70
+	switch m.overlay {
+	case overlayPermission:
+		if m.permReq != nil {
+			boxWidth := contentWidth
+			if boxWidth > 70 {
+				boxWidth = 70
+			}
+			overlayContent = m.renderPermOverlay(boxWidth)
 		}
-		overlayContent = m.renderPermOverlay(boxWidth)
+	case overlayThemePicker:
+		boxWidth := contentWidth
+		if boxWidth > 50 {
+			boxWidth = 50
+		}
+		overlayContent = m.renderThemePickerOverlay(boxWidth)
+	case overlayModelPicker:
+		boxWidth := contentWidth
+		if boxWidth > 60 {
+			boxWidth = 60
+		}
+		overlayContent = m.renderModelPickerOverlay(boxWidth)
 	}
 	var pickerContent string
 	if m.pickerVisible {
 		pickerContent = m.renderPickerDropdown(contentWidth)
+	}
+	var commandPickerContent string
+	if m.commandPickerVisible {
+		commandPickerContent = m.renderCommandPickerDropdown(contentWidth)
 	}
 
 	overlayLines := 0
@@ -2346,6 +2707,10 @@ func (m *model) View() tea.View {
 	pickerLines := 0
 	if pickerContent != "" {
 		pickerLines = strings.Count(pickerContent, "\n") + 1
+	}
+	commandPickerLines := 0
+	if commandPickerContent != "" {
+		commandPickerLines = strings.Count(commandPickerContent, "\n") + 1
 	}
 
 	// 3. 计算固定区域高度
@@ -2361,7 +2726,7 @@ func (m *model) View() tea.View {
 
 	// styleApp 顶部 padding 1 行，底部 0；内区可用高度 = m.height - 1
 	innerHeight := m.height - 1
-	bodyHeight := innerHeight - headerHeight - fixedBottomHeight - overlayLines - pickerLines
+	bodyHeight := innerHeight - headerHeight - fixedBottomHeight - overlayLines - pickerLines - commandPickerLines
 	if bodyHeight < 1 {
 		bodyHeight = 1
 	}
@@ -2416,6 +2781,9 @@ func (m *model) View() tea.View {
 	if pickerContent != "" {
 		parts = append(parts, pickerContent)
 	}
+	if commandPickerContent != "" {
+		parts = append(parts, commandPickerContent)
+	}
 	parts = append(parts, separator, inputView, "", footer)
 
 	mainBody := lipgloss.JoinVertical(lipgloss.Left, parts...)
@@ -2439,8 +2807,8 @@ func (m *model) View() tea.View {
 			}
 			// 在 alt screen 下，header + body + overlays + separator 之后是 input 行
 			// input 行在终端中的 Y 坐标（0-based）：
-			//   styleApp top(1) + headerHeight + bodyHeight + overlayLines + pickerLines + separator(1)
-			cur.Position.Y = 1 + headerHeight + bodyHeight + overlayLines + pickerLines + 1
+			//   styleApp top(1) + headerHeight + bodyHeight + overlayLines + pickerLines + commandPickerLines + separator(1)
+			cur.Position.Y = 1 + headerHeight + bodyHeight + overlayLines + pickerLines + commandPickerLines + 1
 			if cur.Position.Y >= m.height {
 				cur.Position.Y = m.height - 1
 			}
@@ -2670,35 +3038,44 @@ func (m *model) renderCacheRate() string {
 
 	var valStyle lipgloss.Style
 	switch {
-	case pct > 50:
+	case pct >= 95:
 		valStyle = styleCacheGreen
-	case pct >= 25:
-		valStyle = styleCacheGold
-	default:
-		valStyle = styleFooterValue
-	}
-
-	return label + " " + valStyle.Render(fmt.Sprintf("%d%%", pct))
-}
-
-// renderLatency 渲染最近一次 loop 耗时。
-func (m *model) renderLatency() string {
-	label := styleFooterLabel.Render("elap")
-	if m.hudLatMs == 0 {
-		return label + " " + styleFooterValueMuted.Render("--")
-	}
-
-	var valStyle lipgloss.Style
-	switch {
-	case m.hudLatMs < 500:
-		valStyle = styleCacheGreen
-	case m.hudLatMs < 2000:
+	case pct >= 75:
 		valStyle = styleCacheGold
 	default:
 		valStyle = styleFooterLatRed
 	}
 
-	return label + " " + valStyle.Render(formatDuration(m.hudLatMs))
+	return label + " " + valStyle.Render(fmt.Sprintf("%d%%", pct))
+}
+
+// renderLatency 渲染最近一次 loop 耗时（运行中实时计时，结束后显示最终值）。
+func (m *model) renderLatency() string {
+	label := styleFooterLabel.Render("elap")
+
+	// 运行中：实时计算 time.Since(turnStartTime)
+	var elapsed int64
+	if m.running && !m.turnStartTime.IsZero() {
+		elapsed = time.Since(m.turnStartTime).Milliseconds()
+	} else {
+		elapsed = m.hudLatMs
+	}
+
+	if elapsed == 0 {
+		return label + " " + styleFooterValueMuted.Render("--")
+	}
+
+	var valStyle lipgloss.Style
+	switch {
+	case elapsed < 120000:
+		valStyle = styleFooterValue
+	case elapsed < 600000:
+		valStyle = styleCacheGold
+	default:
+		valStyle = styleFooterLatRed
+	}
+
+	return label + " " + valStyle.Render(formatDuration(elapsed))
 }
 
 
@@ -2720,7 +3097,7 @@ func (r *tuiUserResponder) AskUser(ctx context.Context, toolName string, input j
 	// 格式化参数摘要；shell 命令做 cd 归一化后再展示，避免权限面板显示冗长的 cd 前缀
 	argsSummary := formatToolArgs(toolName, string(input), r.cwd)
 	if toolName == "shell" && argsSummary != "" {
-		if normalized, _ := tool.NormalizeShellCommand(argsSummary); normalized != "" {
+		if normalized, _ := pathutil.NormalizeShellCommand(argsSummary); normalized != "" {
 			argsSummary = normalized
 		}
 	}
@@ -2773,7 +3150,8 @@ func (m *model) initTheme() {
 	case "light":
 		p = lightPalette
 	case "auto":
-		if lipgloss.HasDarkBackground(os.Stdin, os.Stdout) {
+		m.autoDark = lipgloss.HasDarkBackground(os.Stdin, os.Stdout)
+		if m.autoDark {
 			p = darkPalette
 		} else {
 			p = lightPalette
@@ -2795,7 +3173,7 @@ func (m *model) toggleTheme() {
 		m.palette = lightPalette
 	case "light":
 		m.themeMode = "auto"
-		if lipgloss.HasDarkBackground(os.Stdin, os.Stdout) {
+		if m.autoDark {
 			applyTheme(darkPalette)
 			m.palette = darkPalette
 		} else {
@@ -2821,7 +3199,7 @@ func (m *model) syncThemeComponents() {
 	m.ctxProgress.EmptyColor = colorFooterFg
 
 	// 同步 help 组件主题
-	isDark := m.themeMode == "dark" || (m.themeMode == "auto" && lipgloss.HasDarkBackground(os.Stdin, os.Stdout))
+	isDark := m.themeMode == "dark" || (m.themeMode == "auto" && m.autoDark)
 	m.help.Styles = help.DefaultStyles(isDark)
 
 	// 同步 input 组件样式 —— 提示符与用户消息前缀联动，placeholder 使用 muted 色
@@ -2839,10 +3217,28 @@ func (m *model) syncThemeComponents() {
 		m.permList.SetDelegate(m.permDelegate)
 	}
 
+	// 同步 themeList delegate 样式
+	if m.themeDelegate != nil {
+		m.themeDelegate.Styles = listItemStyles()
+		m.themeList.SetDelegate(m.themeDelegate)
+	}
+
+	// 同步 modelPickerList delegate 样式
+	if m.modelPickerDelegate != nil {
+		m.modelPickerDelegate.Styles = listItemStyles()
+		m.modelPickerList.SetDelegate(m.modelPickerDelegate)
+	}
+
 	// 同步 pickerList delegate 样式（若已构建）
 	if m.pickerDelegate != nil {
 		m.pickerDelegate.Styles = listItemStyles()
 		m.pickerList.SetDelegate(m.pickerDelegate)
+	}
+
+	// 同步 commandPickerList delegate 样式（若已构建）
+	if m.commandPickerDelegate != nil {
+		m.commandPickerDelegate.Styles = listItemStyles()
+		m.commandPickerList.SetDelegate(m.commandPickerDelegate)
 	}
 
 	// 重建 glamour markdown 渲染器以匹配主题
@@ -2862,9 +3258,418 @@ func (m *model) syncThemeComponents() {
 	}
 }
 
+// ---------------------------------------------------------------------------
+// Slash Command 集成
+// ---------------------------------------------------------------------------
+
+// handleSlashCommand 处理以 / 开头的本地命令。
+// 命令名大小写不敏感，无匹配时显示帮助提示。
+func (m *model) handleSlashCommand(input string) tea.Cmd {
+	cmd, args := m.slashRegistry.Match(input)
+	if cmd == nil {
+		m.paras = append(m.paras, Paragraph{
+			Type:      paraSystem,
+			State:     stateDone,
+			Text:      fmt.Sprintf("未知命令: %s。输入 /help 查看可用命令。", input),
+			NotifKind: notifWarn,
+		})
+		m.trimParas()
+		m.flushTranscript()
+		m.input.Reset()
+		return nil
+	}
+
+	result, err := cmd.Execute(context.Background(), args)
+	if err != nil {
+		m.paras = append(m.paras, Paragraph{
+			Type:      paraSystem,
+			State:     stateDone,
+			Text:      fmt.Sprintf("命令执行失败: %v", err),
+			NotifKind: notifError,
+		})
+		m.trimParas()
+		m.flushTranscript()
+		m.input.Reset()
+		return nil
+	}
+
+	// 追加文本输出
+	if result.Text != "" {
+		notifKind := notifInfo
+		// 含错误关键词时用 warn 样式
+		if strings.Contains(result.Text, "失败") || strings.Contains(result.Text, "未知") ||
+			strings.Contains(result.Text, "无法") || strings.Contains(result.Text, "error") {
+			notifKind = notifWarn
+		}
+		m.paras = append(m.paras, Paragraph{
+			Type:      paraSystem,
+			State:     stateDone,
+			Text:      result.Text,
+			NotifKind: notifKind,
+		})
+		m.trimParas()
+	}
+
+	// 处理副作用
+	for _, se := range result.SideEffects {
+		switch se.Kind {
+		case slashcommand.SideEffectSessionReset:
+			m.paras = nil
+			m.transcriptWritten = 0
+			m.hudTurns = 0
+			m.hudMessages = 0
+			m.hudCacheHit = 0
+			m.hudCacheMiss = 0
+			m.focusIndex = -1
+			m.paras = append(m.paras, Paragraph{
+				Type:      paraSystem,
+				State:     stateDone,
+				Text:      "新 session 已创建。",
+				NotifKind: notifInfo,
+			})
+
+		case slashcommand.SideEffectOpenThemePicker:
+			m.buildThemeList()
+			m.overlay = overlayThemePicker
+			m.input.Blur()
+
+		case slashcommand.SideEffectOpenModelPicker:
+			var models []llm.ModelInfo
+			if err := json.Unmarshal([]byte(se.Detail), &models); err == nil {
+				m.modelPickerItems = models
+				m.buildModelPickerList()
+				m.overlay = overlayModelPicker
+				m.input.Blur()
+			}
+
+		case slashcommand.SideEffectModelSwitched:
+			m.hudModel = normalizeWidth(se.Detail)
+			m.reconfigureLLMClient(se.Detail)
+		}
+	}
+
+	m.flushTranscript()
+	m.input.Reset()
+	return nil
+}
+
+// handleModelSwap 处理模型切换滞后。
+// 命令层写入 settings 后通过 SideEffect 通知 TUI 更新 HUD + 重建 Client。
+func (m *model) reconfigureLLMClient(newModel string) {
+	settings, err := m.settingsStore.LoadLLM()
+	if err != nil {
+		return
+	}
+	settings.Model = newModel
+	client, _, err := llm.NewClientFromLLMSettings(settings)
+	if err != nil {
+		return
+	}
+	m.llmClient = client
+	if m.loop != nil {
+		m.wireLoop()
+	}
+}
+
+// ---------------------------------------------------------------------------
+// SettingsStore & ModelLister 实现（TUI 侧，供 slash command 注入）
+// ---------------------------------------------------------------------------
+
+// tuiSettingsStore 实现 slashcommand.SettingsStore。
+// SaveLLM 全量 read-modify-write，保留 settings.json 其他 section（lsp, compaction 等）。
+type tuiSettingsStore struct {
+	projectPath string
+	globalPath  string
+}
+
+func (s *tuiSettingsStore) LoadLLM() (*llm.LLMSettings, error) {
+	global, _ := llm.LoadSettingsIfExists(s.globalPath)
+	project, _ := llm.LoadSettingsIfExists(s.projectPath)
+	return llm.MergeLLMSettings(global, project), nil
+}
+
+func (s *tuiSettingsStore) SaveLLM(settings *llm.LLMSettings) error {
+	return writeFullSettings(s.projectPath, settings, "")
+}
+
+func (s *tuiSettingsStore) SaveTheme(mode string) error {
+	return writeFullSettings(s.projectPath, nil, mode)
+}
+
+// writeFullSettings 全量 read-modify-write settings.json，替换 llm section 和/或 theme。
+// llmSettings 为 nil 时保留已有的 llm section；theme 为空时保留已有的 theme。
+func writeFullSettings(path string, llmSettings *llm.LLMSettings, theme string) error {
+	// 读取现有完整文件
+	full := make(map[string]any)
+	if data, err := os.ReadFile(path); err == nil {
+		json.Unmarshal(data, &full)
+	}
+
+	if llmSettings != nil {
+		// 将 LLMSettings 转为 map
+		llmMap := make(map[string]any)
+		b, err := json.Marshal(llmSettings)
+		if err != nil {
+			return err
+		}
+		json.Unmarshal(b, &llmMap)
+		full["llm"] = llmMap
+	}
+
+	if theme != "" {
+		full["theme"] = theme
+	}
+
+	// 写回
+	out, err := json.MarshalIndent(full, "", "    ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, out, 0o644)
+}
+
+// tuiModelLister 实现 slashcommand.ModelLister，委托给 llm.Client。
+type tuiModelLister struct {
+	client llm.Client
+}
+
+func (l *tuiModelLister) ListModels(ctx context.Context) ([]llm.ModelInfo, error) {
+	return l.client.ListModels(ctx)
+}
+
+// tuiSessionCreator 实现 slashcommand.SessionCreator，委托给 TUI model。
+type tuiSessionCreator struct {
+	m *model
+}
+
+func (c *tuiSessionCreator) NewSession() error {
+	m := c.m
+	// 生成新 session ID + 路径
+	sid := ctxpkg.NewSessionID()
+	sessionPath := filepath.Join(m.sessionDir, sid+".json")
+	m.cm.SetSessionPath(sessionPath)
+
+	// 重置 ContextManager
+	m.cm.Reset()
+
+	// 重新注入 AGENTS.md
+	if m.agentsMdText != "" {
+		m.cm.InjectUserInstructions(m.agentsMdText)
+	}
+
+	// 更新 transcript 路径
+	m.transcriptPath = ctxpkg.TranscriptPath(m.sessionDir, sid)
+	m.transcriptWritten = 0
+
+	return nil
+}
+
+// newSlashRegistry 创建 slash command 注册表，注入 TUI 侧依赖实现。
+func newSlashRegistry(creator slashcommand.SessionCreator, store slashcommand.SettingsStore, lister slashcommand.ModelLister, currentModel string) *slashcommand.Registry {
+	r := slashcommand.NewRegistry()
+	r.Register(slashcommand.NewNewCommand(creator))
+	r.Register(slashcommand.NewModelCommand(store, lister, currentModel))
+	r.Register(slashcommand.NewThemeCommand())
+	r.Register(slashcommand.NewHelpCommand(r))
+	return r
+}
+
+// ---------------------------------------------------------------------------
+// 覆盖层 — 主题选择器
+// ---------------------------------------------------------------------------
+
+// themeItems 返回主题选择器的固定选项。
+var themeItems = []themeItem{
+	{label: "Auto（自动检测终端背景色）", mode: "auto"},
+	{label: "Dark", mode: "dark"},
+	{label: "Light", mode: "light"},
+}
+
+// buildThemeList 构建主题选择列表覆盖层。
+func (m *model) buildThemeList() {
+	items := make([]list.Item, len(themeItems))
+	selectedIdx := 0
+	for i, ti := range themeItems {
+		items[i] = ti
+		if ti.mode == m.themeMode {
+			selectedIdx = i
+		}
+	}
+
+	delegate := list.NewDefaultDelegate()
+	delegate.ShowDescription = false
+	delegate.SetSpacing(0)
+	delegate.Styles = listItemStyles()
+	m.themeDelegate = &delegate
+
+	l := list.New(items, delegate, 0, 3)
+	l.SetShowTitle(false)
+	l.SetShowPagination(false)
+	l.SetShowStatusBar(false)
+	l.SetShowFilter(false)
+	l.SetShowHelp(false)
+	l.KeyMap.Quit = key.NewBinding()
+	l.KeyMap.ForceQuit = key.NewBinding()
+	if selectedIdx < 3 {
+		l.Select(selectedIdx)
+	}
+	m.themeList = l
+}
+
+// handleThemePickerKey 处理主题选择器中的按键。
+func (m *model) handleThemePickerKey(msg tea.KeyPressMsg) (bool, tea.Cmd) {
+	keyStr := msg.String()
+	switch keyStr {
+	case "up", "down":
+		var cmd tea.Cmd
+		m.themeList, cmd = m.themeList.Update(msg)
+		return true, cmd
+	case "enter":
+		idx := m.themeList.Index()
+		if idx >= 0 && idx < len(themeItems) {
+			m.applyThemeMode(themeItems[idx].mode)
+		}
+		m.closeThemePicker()
+		return true, nil
+	case "esc":
+		m.closeThemePicker()
+		return true, nil
+	}
+	return false, nil
+}
+
+// applyThemeMode 应用指定主题模式并保存到 settings.json。
+func (m *model) applyThemeMode(mode string) {
+	m.themeMode = mode
+	var p palette
+	switch mode {
+	case "dark":
+		p = darkPalette
+	case "light":
+		p = lightPalette
+	case "auto":
+		if m.autoDark {
+			p = darkPalette
+		} else {
+			p = lightPalette
+		}
+	}
+	applyTheme(p)
+	m.palette = p
+	m.syncThemeComponents()
+	// 落盘到 project settings.json
+	if m.settingsStore != nil {
+		_ = m.settingsStore.SaveTheme(mode)
+	}
+}
+
+func (m *model) closeThemePicker() {
+	m.overlay = overlayNone
+	m.input.Focus()
+}
+
+// ---------------------------------------------------------------------------
+// 覆盖层 — 模型选择器
+// ---------------------------------------------------------------------------
+
+// buildModelPickerList 从 modelPickerItems 构建模型选择列表。
+// 当前使用的模型（m.hudModel）在列表中高亮。
+func (m *model) buildModelPickerList() {
+	items := make([]list.Item, len(m.modelPickerItems))
+	selectedIdx := 0
+	for i, mi := range m.modelPickerItems {
+		items[i] = modelPickerItem{modelID: mi.ID, ownedBy: mi.OwnedBy}
+		if mi.ID == m.hudModel {
+			selectedIdx = i
+		}
+	}
+
+	height := len(items)
+	if height > 5 {
+		height = 5
+	}
+	if height < 1 {
+		height = 1
+	}
+
+	delegate := list.NewDefaultDelegate()
+	delegate.ShowDescription = false
+	delegate.SetSpacing(0)
+	delegate.Styles = listItemStyles()
+	m.modelPickerDelegate = &delegate
+
+	l := list.New(items, delegate, 0, height)
+	l.SetShowTitle(false)
+	l.SetShowPagination(false)
+	l.SetShowStatusBar(false)
+	l.SetShowFilter(false)
+	l.SetShowHelp(false)
+	l.KeyMap.Quit = key.NewBinding()
+	l.KeyMap.ForceQuit = key.NewBinding()
+	if selectedIdx < height {
+		l.Select(selectedIdx)
+	}
+	m.modelPickerList = l
+}
+
+// handleModelPickerKey 处理模型选择器中的按键。
+func (m *model) handleModelPickerKey(msg tea.KeyPressMsg) (bool, tea.Cmd) {
+	keyStr := msg.String()
+	switch keyStr {
+	case "up", "down":
+		var cmd tea.Cmd
+		m.modelPickerList, cmd = m.modelPickerList.Update(msg)
+		return true, cmd
+	case "enter":
+		idx := m.modelPickerList.Index()
+		if idx >= 0 && idx < len(m.modelPickerItems) {
+			m.commitModelSwitch(m.modelPickerItems[idx].ID)
+		}
+		m.closeModelPicker()
+		return true, nil
+	case "esc":
+		m.closeModelPicker()
+		return true, nil
+	}
+	return false, nil
+}
+
+// commitModelSwitch 确认模型切换：写 settings + 热替换。
+func (m *model) commitModelSwitch(modelID string) {
+	settings, err := m.settingsStore.LoadLLM()
+	if err != nil {
+		settings = &llm.LLMSettings{}
+	}
+	settings.Model = modelID
+	if err := m.settingsStore.SaveLLM(settings); err != nil {
+		// 忽略写入错误，用户感知到 HUD 已更新
+	}
+	m.hudModel = normalizeWidth(modelID)
+	m.reconfigureLLMClient(modelID)
+}
+
+func (m *model) closeModelPicker() {
+	m.overlay = overlayNone
+	m.input.Focus()
+}
+
+// ---------------------------------------------------------------------------
+// runTUI
+// ---------------------------------------------------------------------------
+
 // runTUI 启动交互式 TUI 模式。依赖由 main() 统一初始化后传入，无需重复创建。
-func runTUI(llmClient llm.Client, registry tool.Registry, guard permission.Guard, expander *reference.Expander, modelName string, theme string, verboseLog io.Writer, contextLimit int, maxTurns int, bypassPerm bool, ctxMgr *ctxpkg.ContextManager, isResume bool, sessionDir string) {
-	m := newTUIModel(llmClient, registry, guard, expander, modelName, theme, verboseLog, contextLimit, maxTurns)
+func runTUI(llmClient llm.Client, registry tool.Registry, guard permission.Guard, expander *reference.Expander, modelName string, theme string, verboseLog io.Writer, contextLimit int, maxTurns int, toolTimeout time.Duration, toolTimeoutSource string, bypassPerm bool, ctxMgr *ctxpkg.ContextManager, isResume bool, sessionDir string, globalPath string, projectPath string, agentsMdText string) {
+	m := newTUIModel(llmClient, registry, guard, expander, modelName, theme, verboseLog, contextLimit, maxTurns, toolTimeout, toolTimeoutSource)
+	m.agentsMdText = agentsMdText
+	m.sessionDir = sessionDir
+
+	// 构造 slash command registry（TUI 侧依赖实现）
+	store := &tuiSettingsStore{projectPath: projectPath, globalPath: globalPath}
+	m.settingsStore = store
+	lister := &tuiModelLister{client: llmClient}
+	sessionCreator := &tuiSessionCreator{m: m}
+	m.slashRegistry = newSlashRegistry(sessionCreator, store, lister, modelName)
+
 	m.bypassPerm = bypassPerm
 	// 用外部创建的 ContextManager 替换 newTUIModel 内部创建的
 	m.cm = ctxMgr

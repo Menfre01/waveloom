@@ -3,6 +3,7 @@ package main
 import (
 	"strings"
 
+	"charm.land/bubbles/v2/key"
 	"charm.land/lipgloss/v2"
 )
 
@@ -14,8 +15,11 @@ import (
 type Overlay int
 
 const (
-	overlayNone       Overlay = iota // 无覆盖层
-	overlayPermission                // 权限确认框（阻断式）
+	overlayNone           Overlay = iota // 无覆盖层
+	overlayPermission                    // 权限确认框（阻断式）
+	overlayThemePicker                   // /theme 触发：主题选择列表
+	overlayModelPicker                   // /model 无参触发：模型选择列表
+	overlayCommandPicker                 // / 命令补全（预留）
 )
 
 // ---------------------------------------------------------------------------
@@ -98,6 +102,84 @@ func (m *model) renderPermOverlay(boxWidth int) string {
 	contentLines = append(contentLines, hint)
 
 	// 动态宽度：不超出可用空间
+	boxStyle := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(colorHeaderAccent).
+		Padding(1, 2).
+		Width(boxWidth)
+
+	return boxStyle.Render(strings.Join(contentLines, "\n"))
+}
+
+// ---------------------------------------------------------------------------
+// 主题选择器覆盖层渲染
+// ---------------------------------------------------------------------------
+
+var themePickerKeys = []key.Binding{
+	key.NewBinding(key.WithKeys("↑/↓"), key.WithHelp("↑/↓", "导航")),
+	key.NewBinding(key.WithKeys("enter"), key.WithHelp("Enter", "确认")),
+	key.NewBinding(key.WithKeys("esc"), key.WithHelp("Esc", "取消")),
+}
+
+func (m *model) renderThemePickerOverlay(boxWidth int) string {
+	innerWidth := boxWidth - 2 - 4
+	m.themeList.SetSize(innerWidth, 3)
+	overlayFgStyle := lipgloss.NewStyle().Foreground(colorFooterFg).Width(innerWidth)
+
+	title := styleOverlayTitle.Width(innerWidth).Render("▲ 选择主题")
+	contentLines := []string{title, ""}
+
+	// 高亮当前选择
+	contentLines = append(contentLines, overlayFgStyle.Render(m.themeList.View()))
+	contentLines = append(contentLines, "")
+
+	m.help.SetWidth(innerWidth)
+	hintWrapper := lipgloss.NewStyle().Foreground(colorMuted).Width(innerWidth)
+	hint := hintWrapper.Render(m.help.ShortHelpView(themePickerKeys))
+	contentLines = append(contentLines, hint)
+
+	boxStyle := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(colorHeaderAccent).
+		Padding(1, 2).
+		Width(boxWidth)
+
+	return boxStyle.Render(strings.Join(contentLines, "\n"))
+}
+
+// ---------------------------------------------------------------------------
+// 模型选择器覆盖层渲染
+// ---------------------------------------------------------------------------
+
+var modelPickerKeys = []key.Binding{
+	key.NewBinding(key.WithKeys("↑/↓"), key.WithHelp("↑/↓", "导航")),
+	key.NewBinding(key.WithKeys("enter"), key.WithHelp("Enter", "确认")),
+	key.NewBinding(key.WithKeys("esc"), key.WithHelp("Esc", "取消")),
+}
+
+func (m *model) renderModelPickerOverlay(boxWidth int) string {
+	innerWidth := boxWidth - 2 - 4
+	height := len(m.modelPickerItems)
+	if height > 5 {
+		height = 5
+	}
+	if height < 1 {
+		height = 1
+	}
+	m.modelPickerList.SetSize(innerWidth, height)
+	overlayFgStyle := lipgloss.NewStyle().Foreground(colorFooterFg).Width(innerWidth)
+
+	title := styleOverlayTitle.Width(innerWidth).Render("▲ 选择模型")
+	contentLines := []string{title, ""}
+
+	contentLines = append(contentLines, overlayFgStyle.Render(m.modelPickerList.View()))
+	contentLines = append(contentLines, "")
+
+	m.help.SetWidth(innerWidth)
+	hintWrapper := lipgloss.NewStyle().Foreground(colorMuted).Width(innerWidth)
+	hint := hintWrapper.Render(m.help.ShortHelpView(modelPickerKeys))
+	contentLines = append(contentLines, hint)
+
 	boxStyle := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(colorHeaderAccent).

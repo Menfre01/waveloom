@@ -283,7 +283,7 @@ func (l *Loop) Run(ctx context.Context, messages []Message) <-chan TurnEvent
 | 属性 | 值 |
 |------|-----|
 | **优先级** | P0——用户入口 |
-| **状态** | 🔶 进行中（one-shot CLI 已就绪，daemon + 协议设计中） |
+| **状态** | ⬜ 待实施 |
 | **职责** | 命令行入口 → 演进为 daemon server，通过 JSON-RPC over HTTP+SSE 对接 ink 及移动端客户端 |
 
 **当前状态：**
@@ -397,6 +397,41 @@ cmd/waveloom/config.go    — CLI 参数解析
 
 ---
 
+### 17. SlashCommand（Slash 命令系统）
+
+| 属性 | 值 |
+|------|-----|
+| **优先级** | P0——用户本地交互命令 |
+| **状态** | ⬜ 待实施 |
+| **职责** | 拦截 `/` 前缀输入，执行本地命令：session 重置、模型/Provider 热切换、settings 编辑覆盖层、主题切换、状态查询 |
+
+**参考：**
+- Claude Code: `/clear`, `/compact`, `/config`, `/status`, `/cost`, `/init`, `/doctor`
+- Codex CLI: `core/src/commands/`
+
+**首版命令（4 个）：**
+| 命令 | 说明 |
+|------|------|
+| `/new` (`/clear`) | 创建全新 session（新 session ID，全新上下文） |
+| `/model [name]` | 显示/热切换模型（不重启 Loop），同步更新 HUD |
+| `/theme` | 调起主题选择列表覆盖层（Auto / Dark / Light） |
+| `/help` | 列出所有可用命令 |
+
+> `/status` 不需要 — Footer HUD 已实时显示 session 状态。
+> `/provider` / `/config` 不需要 — 用户直接编辑 settings.json 即可。
+> `/skill` 纳入独立 spec 规划。
+
+**关键设计决策：**
+- 与 Tool System 解耦：slash 命令不发送给 LLM，不经过 Agent Loop
+- `/config` 调起 Bubble Tea 覆盖层提供 UI 编辑 settings
+- `/model` / `/provider` 热替换 llmClient 参数，不重启 session
+- 命令自动补全复用 @picker 的 list.Model + fuzzyFilter 基础设施
+- Registry 模式对齐 Tool System，构造期注册
+
+详见 `specs/slash-command.md`。
+
+---
+
 ## 实现状态总表
 
 ```
@@ -411,12 +446,15 @@ cmd/waveloom/config.go    — CLI 参数解析
 ✅ TUI                 — Bubble Tea v2 流式渲染、Markdown、@ 文件选择器
 ✅ Environment         — 工具链自动探测、settings.json 路径覆盖
 ✅ Reference           — @ 文件引用展开
+✅ Diff View           — edit_file 统一 diff 视图（行号、上下文、着色）
+✅ HUD                 — Footer HUD 与 ContextManager 解耦，CompleteResult 驱动
 ──────────────────────────────────────────────────  ← 🎯 最小可用 Agent 分界线
-🔶 Server / Protocol   — one-shot CLI 就绪，daemon + JSON-RPC over HTTP+SSE 设计中
+⬜ Server / Protocol   — daemon + JSON-RPC over HTTP+SSE 待建
 🔶 Event Stream        — 基础 TurnEvent channel 就绪，ObserverBus 待建
 ⬜ Task Planner
 ⬜ MCP Client
 ⬜ Sub-Agent Orchestrator
+⬜ SlashCommand         — /new /model /theme /help
 ```
 
 ---
@@ -457,7 +495,13 @@ cmd/waveloom/config.go    — CLI 参数解析
                       ▼              ▼
               ┌────────────┐ ┌──────────────┐
               │  ink (TUI) │ │  mobile app  │
-              └────────────┘ └──────────────┘
+              └─────┬──────┘ └──────────────┘
+                    │
+                    ▼
+              ┌──────────────┐
+              │  SlashCommand │  ← /new /model /theme /help
+              │  (本地命令层)  │
+              └──────────────┘
 ```
 
 ### 依赖层次
@@ -469,7 +513,7 @@ Layer 2 — 能力+安全+状态  │  Tool System  │  Permission  │  Contex
                          │  LSP Client   │  Compaction  │  Environment
                          │                              ← 🎯 最小可用 Agent
 Layer 3 — 接入层          │  Server + Protocol (JSON-RPC over HTTP+SSE)
-                         │  TUI (Bubble Tea v2)  │  Reference
+                         │  TUI (Bubble Tea v2)  │  Reference  │  SlashCommand
 Layer 4 — 体验增强       │  Memory & Persistence
 Layer 5 — 生态扩展       │  Task Planner  │  MCP Client
 Layer 6 — 协作规模       │  Sub-Agent Orchestrator

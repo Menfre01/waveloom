@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"waveloom/pkg/tool"
+	"waveloom/pkg/pathutil"
 )
 
 // ---------------------------------------------------------------------------
@@ -67,8 +67,8 @@ type PathCheckResult struct {
 // PathSafetyCheck 检查路径安全性。
 // workingDirs 是允许的工作目录列表（通常为项目根目录）。
 func PathSafetyCheck(path string, workingDirs []string) PathCheckResult {
-	// 1. 路径标准化（复用 tool.ResolvePath）
-	resolved, err := tool.ResolvePath(path)
+	// 1. 路径标准化（复用 pathutil.ResolvePath）
+	resolved, err := pathutil.ResolvePath(path)
 	if err != nil {
 		return PathCheckResult{
 			Level:          PathDangerous,
@@ -112,7 +112,7 @@ func PathSafetyCheck(path string, workingDirs []string) PathCheckResult {
 	// 4. 工作目录检查
 	withinWorkDir := false
 	for _, dir := range workingDirs {
-		resolvedDir, err := tool.ResolvePath(dir)
+		resolvedDir, err := pathutil.ResolvePath(dir)
 		if err != nil {
 			continue
 		}

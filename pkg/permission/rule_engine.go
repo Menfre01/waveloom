@@ -7,7 +7,7 @@ import (
 	"strings"
 	"sync"
 
-	"waveloom/pkg/tool"
+	"waveloom/pkg/pathutil"
 )
 
 // ---------------------------------------------------------------------------
@@ -149,7 +149,7 @@ func matchContent(toolName, pattern string, input json.RawMessage) bool {
 			return false
 		}
 		// 归一化：剥离 "cd <path> &&" 前缀，使 pattern 匹配更稳定
-		target, _ = tool.NormalizeShellCommand(params.Command)
+		target, _ = pathutil.NormalizeShellCommand(params.Command)
 
 	case "web_fetch":
 		var params struct {
@@ -204,7 +204,7 @@ func matchContent(toolName, pattern string, input json.RawMessage) bool {
 	originalTarget := target
 
 	// 优先使用 working_dir 将 target 解析为绝对路径（对齐工具实际执行时的解析逻辑）
-	resolved, err := tool.ResolvePathWithDir(target, workingDir)
+	resolved, err := pathutil.ResolvePathWithDir(target, workingDir)
 	if err == nil {
 		target = resolved
 	} else {

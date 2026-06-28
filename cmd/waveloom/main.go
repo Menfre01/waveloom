@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"runtime"
 
+	"waveloom/pkg/agentloop"
 	"waveloom/pkg/compaction"
 	ctxpkg "waveloom/pkg/context"
 	"waveloom/pkg/environment"
@@ -78,11 +79,11 @@ func main() {
 	}
 
 	// 5. 初始化 LSP Manager（全局，供 LSP 工具使用）
-	initLSPManager(globalPath, projectPath, verboseLog)
+	lspProvider := initLSPManager(globalPath, projectPath, verboseLog)
 
 	// 6. 初始化 Tool Registry
 	registry := tool.NewRegistry()
-	registerBuiltinTools(registry)
+	registerBuiltinTools(registry, lspProvider)
 
 	// 7. 加载 Guard（权限系统，合并全局和项目权限规则）
 	guard := createGuard(globalPath, projectPath)
@@ -91,7 +92,7 @@ func main() {
 	cwd, _ := os.Getwd()
 
 	// 9. 创建 @ 引用展开器（用于 AGENTS.md 和用户输入中的 @ 引用展开）
-	expander := reference.New(registry, guard)
+	expander := reference.New(guard)
 
 	// 10. 加载 AGENTS.md 持久记忆（对标 Codex agents_md.rs）
 	var agentsMdText string
@@ -135,6 +136,24 @@ func main() {
 	if cs := compaction.LoadCompactionSettings(projectPath); cs != nil {
 		cs.ApplyToConfig(&compactionConfig)
 	}
+
+	// 合并工具超时：优先级 CLI > project settings.json > global settings.json > 默认 10m
+	if cfg.ToolTimeout == 0 {
+		if d, ok, _ := agentloop.LoadToolTimeout(projectPath); ok {
+			cfg.ToolTimeout = d
+			cfg.ToolTimeoutSource = "settings.json"
+		}
+	}
+	if cfg.ToolTimeout == 0 {
+		if d, ok, _ := agentloop.LoadToolTimeout(globalPath); ok {
+			cfg.ToolTimeout = d
+			cfg.ToolTimeoutSource = "~/.waveloom/settings.json"
+		}
+	}
+	if cfg.ToolTimeout == 0 {
+		cfg.ToolTimeout = agentloop.DefaultToolTimeout
+		cfg.ToolTimeoutSource = "默认"
+	}
 	ctxMgr := ctxpkg.NewWithCompaction(systemPrompt, compactionConfig, compaction.NewCompactionSummarizer(summarizerClient, 0))
 
 	// 13. 将 AGENTS.md 作为 user 消息注入（对标 Codex UserInstructions fragment）
@@ -174,7 +193,7 @@ func main() {
 
 	// 15. 分支：无 prompt → 交互式 TUI，有 prompt → 单次执行
 	if cfg.OneShot == "" {
-		runTUI(llmClient, registry, guard, expander, cfg.Model, cfg.Theme, verboseLog, cfg.ContextLimit, cfg.MaxTurns, cfg.BypassPerm, ctxMgr, isResume, sessionDir)
+		runTUI(llmClient, registry, guard, expander, cfg.Model, cfg.Theme, verboseLog, cfg.ContextLimit, cfg.MaxTurns, cfg.ToolTimeout, cfg.ToolTimeoutSource, cfg.BypassPerm, ctxMgr, isResume, sessionDir, globalPath, projectPath, agentsMdText)
 		return
 	}
 
@@ -182,7 +201,7 @@ func main() {
 }
 
 // registerBuiltinTools 注册内置工具。
-func registerBuiltinTools(r tool.Registry) {
+func registerBuiltinTools(r tool.Registry, lspProvider *tool.LSPProvider) {
 	r.Register(tool.Wrap(&tool.ReadFile{}))
 	r.Register(tool.Wrap(&tool.WriteFile{}))
 	r.Register(tool.Wrap(&tool.EditFile{}))
@@ -192,18 +211,18 @@ func registerBuiltinTools(r tool.Registry) {
 	r.Register(tool.Wrap(&tool.Ls{}))
 	r.Register(tool.Wrap(&tool.WebFetch{}))
 
-	// LSP 工具：仅在 LSPManager 已初始化时注册
-	if tool.LSPManager != nil {
-		r.Register(tool.Wrap(&tool.LSDiagnostic{}))
-		r.Register(tool.Wrap(&tool.LSPDefinition{}))
-		r.Register(tool.Wrap(&tool.LSPReferences{}))
-		r.Register(tool.Wrap(&tool.LSPHover{}))
+	// LSP 工具：通过依赖注入初始化
+	if lspProvider != nil && lspProvider.Manager != nil {
+		r.Register(tool.Wrap(tool.NewLSDiagnostic(lspProvider)))
+		r.Register(tool.Wrap(tool.NewLSPDefinition(lspProvider)))
+		r.Register(tool.Wrap(tool.NewLSPReferences(lspProvider)))
+		r.Register(tool.Wrap(tool.NewLSPHover(lspProvider)))
 	}
 }
 
 // initLSPManager 初始化 LSP Server 管理器。
 // 合并全局和项目 settings.json 中的 lsp 配置。
-func initLSPManager(globalPath, projectPath string, verboseLog io.Writer) {
+func initLSPManager(globalPath, projectPath string, verboseLog io.Writer) *tool.LSPProvider {
 	// 加载用户覆盖配置
 	userServers := lsp.LoadUserServers(projectPath)
 	if globalOverrides := lsp.LoadUserServers(globalPath); len(globalOverrides) > 0 {
@@ -218,7 +237,9 @@ func initLSPManager(globalPath, projectPath string, verboseLog io.Writer) {
 	if verboseLog != nil {
 		opts = append(opts, lsp.WithLogger(log.New(verboseLog, "[lsp] ", log.LstdFlags)))
 	}
-	tool.LSPManager = lsp.NewManager(opts...)
+	mgr := lsp.NewManager(opts...)
+
+	return tool.NewLSPProvider(mgr)
 }
 
 // resolveSettingsPaths 返回全局和项目配置文件路径。

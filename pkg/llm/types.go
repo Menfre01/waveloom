@@ -261,3 +261,10 @@ func FilterValidToolCalls(calls []ToolCall, registry map[string]bool) []ToolCall
 	return valid
 }
 
+// ModelInfo 表示从 Provider 的 GET /models 接口获取的模型基本信息。
+type ModelInfo struct {
+	ID      string `json:"id"`       // 模型标识符，如 "deepseek-v4-pro"
+	Object  string `json:"object"`   // 对象类型，其值为 "model"
+	OwnedBy string `json:"owned_by"` // 拥有该模型的组织
+}
+

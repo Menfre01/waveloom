@@ -4,9 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
 
 	"waveloom/pkg/permission"
-	"waveloom/pkg/tool"
 )
 
 // ---------------------------------------------------------------------------
@@ -24,15 +27,13 @@ const (
 
 // Expander 负责解析和展开 @ 引用。
 type Expander struct {
-	registry tool.Registry
-	guard    permission.Guard
+	guard permission.Guard
 }
 
 // New 创建一个新的 Expander。
-func New(registry tool.Registry, guard permission.Guard) *Expander {
+func New(guard permission.Guard) *Expander {
 	return &Expander{
-		registry: registry,
-		guard:    guard,
+		guard: guard,
 	}
 }
 
@@ -41,8 +42,8 @@ func New(registry tool.Registry, guard permission.Guard) *Expander {
 // 展开逻辑:
 //  1. 扫描 userInput，提取所有 @ref
 //  2. 对每个 ref，通过 os.Stat 判定是文件还是目录
-//  3. 文件 → 调用 read_file 获取内容
-//     目录 → 调用 ls 获取树形列表
+//  3. 文件 → 直接读取内容
+//     目录 → 列出目录结构
 //  4. 将 @ref 替换为 @@ 围栏块包裹的实际内容
 //  5. 展开失败时保留 @ref 原文 + 追加错误标记
 func (e *Expander) Expand(ctx context.Context, userInput string, cwd string) (expanded string, refs []ResolvedRef, err error) {
@@ -72,14 +73,12 @@ func (e *Expander) expandRefs(ctx context.Context, refs []Ref, cwd string) ([]Re
 	for _, ref := range refs {
 		// Check total bytes limit
 		if totalBytes >= maxTotalBytes {
-			// Skip remaining refs; caller can detect truncation via len(resolved) < len(refs)
 			break
 		}
 
-		// Determine tool name and params
+		// Permission check — 使用对应的工具名以匹配权限规则
 		var toolName string
 		var params json.RawMessage
-
 		switch ref.Kind {
 		case KindFile:
 			toolName = "read_file"
@@ -91,10 +90,8 @@ func (e *Expander) expandRefs(ctx context.Context, refs []Ref, cwd string) ([]Re
 			continue
 		}
 
-		// Permission check
 		decision := e.guard.Check(ctx, toolName, params)
 		if decision.Decision == permission.DecisionDeny || decision.Decision == permission.DecisionAsk {
-			// For ask in expander (non-interactive), treat as deny
 			resolved = append(resolved, ResolvedRef{
 				Ref:   ref,
 				Error: fmt.Sprintf("permission denied: %s", decision.Message),
@@ -102,26 +99,26 @@ func (e *Expander) expandRefs(ctx context.Context, refs []Ref, cwd string) ([]Re
 			continue
 		}
 
-		// Execute tool
-		result, execErr := e.registry.Execute(ctx, toolName, params)
-		if execErr != nil {
-			resolved = append(resolved, ResolvedRef{
-				Ref:   ref,
-				Error: fmt.Sprintf("tool execution failed: %v", execErr),
-			})
-			continue
+		// Direct file I/O
+		var content string
+		var readErr error
+
+		switch ref.Kind {
+		case KindFile:
+			content, readErr = readFileContent(ref.Path)
+		case KindFolder:
+			content, readErr = listDirContent(ref.Path, 2)
 		}
 
-		if result.IsError() {
+		if readErr != nil {
 			resolved = append(resolved, ResolvedRef{
 				Ref:   ref,
-				Error: result.Error.Message,
+				Error: readErr.Error(),
 			})
 			continue
 		}
 
 		// Apply single-file size limit
-		content := result.Content
 		byteCount := len(content)
 		if byteCount > maxFileBytes {
 			content = content[:maxFileBytes]
@@ -131,14 +128,12 @@ func (e *Expander) expandRefs(ctx context.Context, refs []Ref, cwd string) ([]Re
 
 		// Check total bytes
 		if totalBytes+byteCount > maxTotalBytes {
-			// Truncate this file's content to fit
 			available := maxTotalBytes - totalBytes
 			if available > 0 {
 				content = content[:available]
 				content += "\n[truncated: total context exceeds 128KB limit]"
 				byteCount = len(content)
 			} else {
-				// Should not reach here due to totalBytes check at top, but be safe
 				break
 			}
 		}
@@ -150,8 +145,71 @@ func (e *Expander) expandRefs(ctx context.Context, refs []Ref, cwd string) ([]Re
 			Content: content,
 			Bytes:   byteCount,
 		})
-
 	}
 
 	return resolved, nil
+}
+
+// readFileContent 读取文件内容。文件不存在时返回错误。
+func readFileContent(path string) (string, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", fmt.Errorf("file not found: %s", path)
+	}
+	return string(data), nil
+}
+
+// listDirContent 列出目录内容（带深度限制）。
+func listDirContent(root string, maxDepth int) (string, error) {
+	info, err := os.Stat(root)
+	if err != nil {
+		return "", fmt.Errorf("directory not found: %s", root)
+	}
+	if !info.IsDir() {
+		return "", fmt.Errorf("not a directory: %s", root)
+	}
+
+	var b strings.Builder
+	printDir(&b, root, "", 0, maxDepth)
+	return strings.TrimSpace(b.String()), nil
+}
+
+// printDir 递归打印目录树。
+func printDir(b *strings.Builder, dir string, prefix string, depth int, maxDepth int) {
+	if depth > maxDepth {
+		return
+	}
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+
+	// Sort: directories first, then files, alphabetically within each group
+	sort.Slice(entries, func(i, j int) bool {
+		if entries[i].IsDir() != entries[j].IsDir() {
+			return entries[i].IsDir()
+		}
+		return entries[i].Name() < entries[j].Name()
+	})
+
+	for i, entry := range entries {
+		isLast := i == len(entries)-1
+		connector := "├── "
+		childPrefix := prefix + "│   "
+		if isLast {
+			connector = "└── "
+			childPrefix = prefix + "    "
+		}
+
+		name := entry.Name()
+		if entry.IsDir() {
+			name += "/"
+		}
+		fmt.Fprintf(b, "%s%s%s\n", prefix, connector, name)
+
+		if entry.IsDir() && depth < maxDepth {
+			printDir(b, filepath.Join(dir, entry.Name()), childPrefix, depth+1, maxDepth)
+		}
+	}
 }

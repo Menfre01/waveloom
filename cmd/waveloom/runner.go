@@ -22,6 +22,7 @@ func runOneShot(cfg CLIConfig, llmClient llm.Client, registry tool.Registry, gua
 		SystemPrompt:  "",
 		Guard:         guard,
 		VerboseWriter: verboseLog,
+		ToolTimeout:   cfg.ToolTimeout,
 	}
 	// 单次模式无 UserResponder，ask 降级为 deny
 	loop := agentloop.New(llmClient, registry, loopCfg)

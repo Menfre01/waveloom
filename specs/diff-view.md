@@ -1,5 +1,7 @@
 # diff-view: edit_file 统一 Diff 显示组件
 
+> **状态：✅ 已实现** — 全链路已贯通（`buildDiffHunks` → `ToolMeta.DiffHunks` → `ToolCallResult.DiffHunks` → `Paragraph.DiffHunks` → `renderDiffView` / `renderDiffPreview`）。
+
 ## 一、问题分析
 
 **现状**：`edit_file` 工具的 `renderReplacement()` 仅对比 `old_string` 和 `new_string` 本身，无上下文。TUI 展开后用户只能看到孤立的 `-/+` 行，无法判断改动在文件中的位置。

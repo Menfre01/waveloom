@@ -2,5 +2,15 @@ package tool
 
 import "waveloom/pkg/lsp"
 
-// LSPManager 是全局 LSP Server 管理器，由 main 初始化后设置。
-var LSPManager *lsp.Manager
+// LSPProvider 是 LSP 工具的依赖接口，用于替代原先的全局变量。
+// 所有 LSP 工具通过此接口获取 Manager 实例，支持依赖注入。
+type LSPProvider struct {
+	Manager *lsp.Manager
+}
+
+// NewLSPProvider 创建一个新的 LSPProvider。
+func NewLSPProvider(m *lsp.Manager) *LSPProvider {
+	return &LSPProvider{Manager: m}
+}
+
+
