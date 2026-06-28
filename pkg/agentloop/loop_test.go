@@ -105,6 +105,10 @@ func (m *mockLLMClient) GetBalance(ctx context.Context) (*llm.BalanceInfo, error
 
 func (m *mockLLMClient) SupportsBalance() bool { return false }
 
+func (m *mockLLMClient) ListModels(ctx context.Context) ([]llm.ModelInfo, error) {
+	return nil, nil
+}
+
 // drainEvents 消费 channel 直到关闭，返回最后一个 LoopDone 事件。
 func drainEvents(ch <-chan TurnEvent) LoopDone {
 	var last LoopDone
@@ -3085,6 +3089,10 @@ func (m *slowMockLLMClient) GetBalance(ctx context.Context) (*llm.BalanceInfo, e
 }
 
 func (m *slowMockLLMClient) SupportsBalance() bool { return false }
+
+func (m *slowMockLLMClient) ListModels(ctx context.Context) ([]llm.ModelInfo, error) {
+	return nil, nil
+}
 
 func TestRunStreamDeltaContextCancellation(t *testing.T) {
 	// 在流式 delta 发送过程中取消 ctx → loop 应终止并推送 LoopDone(ReasonAborted)

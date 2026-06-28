@@ -38,4 +38,8 @@ type providerAdapter interface {
 
 	// SupportsBalance 返回 Provider 是否支持余额查询。
 	SupportsBalance() bool
+
+	// ListModels 获取 Provider 支持的模型列表。
+	// 对应 GET /models（DeepSeek）或 GET /models（OpenAI）。
+	ListModels(ctx context.Context, httpClient *http.Client) ([]ModelInfo, error)
 }

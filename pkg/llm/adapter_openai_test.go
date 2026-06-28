@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"strings"
 	"testing"
@@ -669,6 +670,82 @@ func TestOpenAISupportsBalance(t *testing.T) {
 	adapter := newOpenAIAdapter(ClientConfig{})
 	if adapter.SupportsBalance() {
 		t.Error("OpenAI adapter should NOT support balance")
+	}
+}
+
+// --- OpenAI ListModels Tests ---
+
+func TestOpenAIListModelsSuccess(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/models" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"object":"list","data":[
+			{"id":"gpt-4o","object":"model","owned_by":"openai"},
+			{"id":"gpt-4o-mini","object":"model","owned_by":"openai"}
+		]}`))
+	}))
+	defer server.Close()
+
+	adapter := newOpenAIAdapter(ClientConfig{
+		APIKey:  "sk-test",
+		BaseURL: server.URL,
+	})
+
+	models, err := adapter.ListModels(context.Background(), server.Client())
+	if err != nil {
+		t.Fatalf("ListModels: %v", err)
+	}
+	if len(models) != 2 {
+		t.Fatalf("len(models) = %d, want 2", len(models))
+	}
+	if models[0].ID != "gpt-4o" {
+		t.Errorf("models[0].ID = %q, want gpt-4o", models[0].ID)
+	}
+	if models[1].ID != "gpt-4o-mini" {
+		t.Errorf("models[1].ID = %q, want gpt-4o-mini", models[1].ID)
+	}
+}
+
+func TestOpenAIListModelsHTTPError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer server.Close()
+
+	adapter := newOpenAIAdapter(ClientConfig{
+		APIKey:  "sk-test",
+		BaseURL: server.URL,
+	})
+
+	_, err := adapter.ListModels(context.Background(), server.Client())
+	if err == nil {
+		t.Fatal("expected error for 401 on list models endpoint")
+	}
+}
+
+func TestOpenAIListModelsParseError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`not json`))
+	}))
+	defer server.Close()
+
+	adapter := newOpenAIAdapter(ClientConfig{
+		APIKey:  "sk-test",
+		BaseURL: server.URL,
+	})
+
+	_, err := adapter.ListModels(context.Background(), server.Client())
+	if err == nil {
+		t.Fatal("expected error for malformed JSON list models response")
+	}
+	if !strings.Contains(err.Error(), "parsing list models response") {
+		t.Errorf("unexpected error: %v", err)
 	}
 }
 

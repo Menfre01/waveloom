@@ -33,6 +33,10 @@ type Client interface {
 
 	// SupportsBalance 返回当前 Provider 是否支持余额查询。
 	SupportsBalance() bool
+
+	// ListModels 获取 Provider 支持的模型列表。
+	// 对应 GET /models（DeepSeek）或 GET /models（OpenAI）。
+	ListModels(ctx context.Context) ([]ModelInfo, error)
 }
 
 // client 是 Client 接口的内部实现。
@@ -158,6 +162,14 @@ func (c *client) GetBalance(ctx context.Context) (*BalanceInfo, error) {
 // SupportsBalance 委托给 adapter 判断。
 func (c *client) SupportsBalance() bool {
 	return c.adapter.SupportsBalance()
+}
+
+// ListModels 委托给 adapter 获取模型列表。
+func (c *client) ListModels(ctx context.Context) ([]ModelInfo, error) {
+	if ctx == nil {
+		return nil, &NonRetryableError{Message: "context must not be nil"}
+	}
+	return c.adapter.ListModels(ctx, c.httpClient)
 }
 
 // readStream 在后台 goroutine 中读取 SSE 流，解析增量事件并发送到 channel。
