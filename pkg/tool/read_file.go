@@ -9,6 +9,8 @@ import (
 	"io"
 	"os"
 	"strings"
+
+	"waveloom/pkg/pathutil"
 )
 
 // ---------------------------------------------------------------------------
@@ -31,7 +33,7 @@ func (t *ReadFile) ConcurrentSafe() bool { return true }
 
 func (t *ReadFile) Execute(ctx context.Context, p ReadFileParams) (*ToolResult, error) {
 	// ── Step 1: 路径解析 ──
-	path, err := ResolvePathWithDir(p.FilePath, p.WorkingDir)
+	path, err := pathutil.ResolvePathWithDir(p.FilePath, p.WorkingDir)
 	if err != nil {
 		return toolError(ErrorClassRecoverable, ErrKindInvalidArgs,
 			fmt.Sprintf("invalid path: %v", err), err), nil

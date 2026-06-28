@@ -31,9 +31,8 @@ func main() {
 
 	mgr := lsp.NewManager(lsp.WithIdleTimeout(10 * time.Second))
 	defer mgr.Close()
-	setManager(mgr)
 
-	tool := &LSDiagnostic{}
+	tool := NewLSDiagnostic(NewLSPProvider(mgr))
 	// 第一次：didOpen 触发诊断推送
 	_, _ = tool.Execute(t.Context(), LSDiagnosticParams{FilePath: path})
 
@@ -70,9 +69,8 @@ func main() {
 
 	mgr := lsp.NewManager(lsp.WithIdleTimeout(10 * time.Second))
 	defer mgr.Close()
-	setManager(mgr)
 
-	tool := &LSDiagnostic{}
+	tool := NewLSDiagnostic(NewLSPProvider(mgr))
 	_, _ = tool.Execute(t.Context(), LSDiagnosticParams{FilePath: path})
 
 	waitForDiagnostics(t, mgr, lsp.PathToURI(path), 100*time.Millisecond, 5*time.Second)
@@ -112,7 +110,6 @@ func main() {
 
 	mgr := lsp.NewManager(lsp.WithIdleTimeout(10 * time.Second))
 	defer mgr.Close()
-	setManager(mgr)
 
 	// 先打开文件让 gopls 加载包
 	inst, err := mgr.GetOrCreate(path)
@@ -123,7 +120,7 @@ func main() {
 	// 等待 gopls 完成包加载
 	waitForReady(t, mgr, inst, path, 2*time.Second)
 
-	tool := &LSPDefinition{}
+	tool := NewLSPDefinition(NewLSPProvider(mgr))
 	result, err := tool.Execute(t.Context(), LSPDefinitionParams{
 		FilePath:  path,
 		Line:      5,
@@ -163,7 +160,6 @@ func main() {
 
 	mgr := lsp.NewManager(lsp.WithIdleTimeout(10 * time.Second))
 	defer mgr.Close()
-	setManager(mgr)
 
 	inst, err := mgr.GetOrCreate(path)
 	if err != nil {
@@ -172,7 +168,7 @@ func main() {
 	_ = mgr.SyncFile(inst, path)
 	waitForReady(t, mgr, inst, path, 2*time.Second)
 
-	tool := &LSPHover{}
+	tool := NewLSPHover(NewLSPProvider(mgr))
 	result, err := tool.Execute(t.Context(), LSPHoverParams{
 		FilePath:  path,
 		Line:      5,
@@ -212,7 +208,6 @@ func main() {
 
 	mgr := lsp.NewManager(lsp.WithIdleTimeout(10 * time.Second))
 	defer mgr.Close()
-	setManager(mgr)
 
 	inst, err := mgr.GetOrCreate(path)
 	if err != nil {
@@ -221,7 +216,7 @@ func main() {
 	_ = mgr.SyncFile(inst, path)
 	waitForReady(t, mgr, inst, path, 2*time.Second)
 
-	tool := &LSPReferences{}
+	tool := NewLSPReferences(NewLSPProvider(mgr))
 	result, err := tool.Execute(t.Context(), LSPReferencesParams{
 		FilePath:  path,
 		Line:      2,
@@ -249,10 +244,6 @@ func writeFile(t *testing.T, path, content string) string {
 		t.Fatal(err)
 	}
 	return path
-}
-
-func setManager(mgr *lsp.Manager) {
-	LSPManager = mgr
 }
 
 // waitForDiagnostics 轮询等待诊断到达缓存。

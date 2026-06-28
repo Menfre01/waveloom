@@ -6,10 +6,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"os/exec"
-	"regexp"
 	"runtime"
 	"strings"
 	"time"
+
+	"waveloom/pkg/pathutil"
 )
 
 // ---------------------------------------------------------------------------
@@ -51,33 +52,6 @@ func (t *Shell) Description() string {
 		"To change working directory, use the working_dir parameter. Do NOT prefix commands with cd.",
 		"Example: for ls in /tmp, pass {\"command\":\"ls\", \"working_dir\":\"/tmp\"}, not {\"command\":\"cd /tmp && ls\"}.",
 	}, " ")
-}
-
-// ── cd 前缀归一化 ──
-
-// cdPattern 匹配 Shell 命令中的 "cd <path> &&" 或 "cd <path> ;" 前缀。
-// 支持单引号、双引号和无引号路径。
-//   例: cd /foo && bar       → dir=/foo, cmd=bar
-//        cd "/foo bar" && baz → dir=/foo bar, cmd=baz
-//        cd /foo; bar        → dir=/foo, cmd=bar
-var cdPattern = regexp.MustCompile(`^cd\s+(?:"([^"]*)"|'([^']*)'|([^\s;&]+))\s*(?:&&|;)\s*(.*)$`)
-
-// NormalizeShellCommand 剥离命令中的 cd 前缀，返回归一化后的命令和提取的工作目录。
-// 若命令不以 cd 开头，extractedDir 返回空字符串，原始命令原样返回。
-func NormalizeShellCommand(command string) (normalized string, extractedDir string) {
-	matches := cdPattern.FindStringSubmatch(command)
-	if matches == nil {
-		return command, ""
-	}
-	// matches[1]: 双引号路径, matches[2]: 单引号路径, matches[3]: 无引号路径, matches[4]: 剩余命令
-	dir := matches[1]
-	if dir == "" {
-		dir = matches[2]
-	}
-	if dir == "" {
-		dir = matches[3]
-	}
-	return matches[4], dir
 }
 
 // ── 超时常量 ──
@@ -122,7 +96,7 @@ func (t *Shell) Execute(ctx context.Context, p ShellParams) (*ToolResult, error)
 	defer cancel()
 
 	// ── Step 2: 归一化命令（剥离 cd 前缀，提取工作目录） ──
-	normalizedCmd, extractedDir := NormalizeShellCommand(p.Command)
+	normalizedCmd, extractedDir := pathutil.NormalizeShellCommand(p.Command)
 	if p.WorkingDir == "" && extractedDir != "" {
 		p.WorkingDir = extractedDir
 	}

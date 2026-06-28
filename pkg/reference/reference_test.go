@@ -9,54 +9,11 @@ import (
 	"testing"
 
 	"waveloom/pkg/permission"
-	"waveloom/pkg/tool"
 )
 
 // ---------------------------------------------------------------------------
 // Mock types
 // ---------------------------------------------------------------------------
-
-// mockRegistry 可编程控制 Execute 返回值。
-type mockRegistry struct {
-	results map[string]mockCall
-}
-
-type mockCall struct {
-	result *tool.ToolResult
-	err    error
-}
-
-func (m *mockRegistry) Register(tool.Tool)              {}
-func (m *mockRegistry) List() []tool.ToolSpec            { return nil }
-func (m *mockRegistry) Get(name string) (tool.Tool, bool) { return nil, false }
-
-func (m *mockRegistry) Execute(_ context.Context, name string, input json.RawMessage) (*tool.ToolResult, error) {
-	// Build key: toolName + file_path or path from input
-	var params struct {
-		FilePath   string `json:"file_path"`
-		Path       string `json:"path"`
-		WorkingDir string `json:"working_dir"`
-	}
-	json.Unmarshal(input, &params)
-	key := name + "|" + params.FilePath + "|" + params.Path
-	if c, ok := m.results[key]; ok {
-		return c.result, c.err
-	}
-	// Fallback: try toolName alone
-	if c, ok := m.results[name]; ok {
-		return c.result, c.err
-	}
-	return &tool.ToolResult{}, nil
-}
-
-func newMockRegistry() *mockRegistry {
-	return &mockRegistry{results: make(map[string]mockCall)}
-}
-
-func (m *mockRegistry) setExecute(name, filePath, dirPath string, result *tool.ToolResult, err error) {
-	key := name + "|" + filePath + "|" + dirPath
-	m.results[key] = mockCall{result: result, err: err}
-}
 
 // mockGuard 可编程控制 Check 返回值。
 type mockGuard struct {
@@ -550,15 +507,10 @@ func TestExpandFileSuccess(t *testing.T) {
 	dir := t.TempDir()
 	f := makeFile(t, dir, "auth/login.go", "package auth\n\nfunc Login() {}")
 
-	reg := newMockRegistry()
-	reg.setExecute("read_file", f, "", &tool.ToolResult{
-		Content: "     1  package auth\n     2\n     3  func Login() {}",
-		Meta:    tool.ToolMeta{ByteCount: 38},
-	}, nil)
 
 	guard := newMockGuard()
 
-	expander := New(reg, guard)
+	expander := New(guard)
 	refs := []Ref{{Raw: "@auth/login.go", Path: f, Kind: KindFile}}
 
 	resolved, err := expander.expandRefs(context.Background(), refs, dir)
@@ -580,15 +532,10 @@ func TestExpandFolderSuccess(t *testing.T) {
 	dir := t.TempDir()
 	d := makeDir(t, dir, "pkg/auth")
 
-	reg := newMockRegistry()
-	reg.setExecute("ls", "", d, &tool.ToolResult{
-		Content: "Listed pkg/auth (3 entries, 1ms):\nlogin.go\nlogout.go\nmiddleware/\n  rate_limiter.go",
-		Meta:    tool.ToolMeta{ByteCount: 72},
-	}, nil)
 
 	guard := newMockGuard()
 
-	expander := New(reg, guard)
+	expander := New(guard)
 	refs := []Ref{{Raw: "@pkg/auth", Path: d, Kind: KindFolder}}
 
 	resolved, err := expander.expandRefs(context.Background(), refs, dir)
@@ -607,18 +554,10 @@ func TestExpandFileNotFound(t *testing.T) {
 	dir := t.TempDir()
 	missing := filepath.Join(dir, "nonexistent.go")
 
-	reg := newMockRegistry()
-	reg.setExecute("read_file", missing, "", &tool.ToolResult{
-		Error: &tool.ToolError{
-			Class:   tool.ErrorClassRecoverable,
-			Kind:    tool.ErrKindFileNotFound,
-			Message: "file not found",
-		},
-	}, nil)
 
 	guard := newMockGuard()
 
-	expander := New(reg, guard)
+	expander := New(guard)
 	refs := []Ref{{Raw: "@nonexistent.go", Path: missing, Kind: KindFile}}
 
 	resolved, err := expander.expandRefs(context.Background(), refs, dir)
@@ -637,15 +576,11 @@ func TestExpandPermissionDenied(t *testing.T) {
 	dir := t.TempDir()
 	f := makeFile(t, dir, "secret.go", "package secret")
 
-	reg := newMockRegistry()
-	reg.setExecute("read_file", f, "", &tool.ToolResult{
-		Content: "secret content",
-	}, nil)
 
 	guard := newMockGuard()
 	guard.setDecision("read_file", permission.DecisionDeny)
 
-	expander := New(reg, guard)
+	expander := New(guard)
 	refs := []Ref{{Raw: "@secret.go", Path: f, Kind: KindFile}}
 
 	resolved, err := expander.expandRefs(context.Background(), refs, dir)
@@ -665,19 +600,10 @@ func TestExpandMultipleRefs(t *testing.T) {
 	f1 := makeFile(t, dir, "auth/login.go", "package auth")
 	f2 := makeFile(t, dir, "context/context.go", "package context")
 
-	reg := newMockRegistry()
-	reg.setExecute("read_file", f1, "", &tool.ToolResult{
-		Content: "[1] package auth",
-		Meta:    tool.ToolMeta{ByteCount: 13},
-	}, nil)
-	reg.setExecute("read_file", f2, "", &tool.ToolResult{
-		Content: "[1] package context",
-		Meta:    tool.ToolMeta{ByteCount: 16},
-	}, nil)
 
 	guard := newMockGuard()
 
-	expander := New(reg, guard)
+	expander := New(guard)
 	refs := []Ref{
 		{Raw: "@auth/login.go", Path: f1, Kind: KindFile},
 		{Raw: "@context/context.go", Path: f2, Kind: KindFile},
@@ -702,19 +628,10 @@ func TestExpandMaxTotalBytes(t *testing.T) {
 	f1 := makeFile(t, dir, "a.go", strings.Repeat("x", 100*1024)) // 100KB
 	f2 := makeFile(t, dir, "b.go", "package b")
 
-	reg := newMockRegistry()
-	reg.setExecute("read_file", f1, "", &tool.ToolResult{
-		Content: "     1  " + strings.Repeat("x", 100*1024),
-		Meta:    tool.ToolMeta{ByteCount: 100 * 1024},
-	}, nil)
-	reg.setExecute("read_file", f2, "", &tool.ToolResult{
-		Content: "[1] package b",
-		Meta:    tool.ToolMeta{ByteCount: 13},
-	}, nil)
 
 	guard := newMockGuard()
 
-	expander := New(reg, guard)
+	expander := New(guard)
 	refs := []Ref{
 		{Raw: "@a.go", Path: f1, Kind: KindFile},
 		{Raw: "@b.go", Path: f2, Kind: KindFile},
@@ -735,15 +652,10 @@ func TestExpandMaxFileBytes(t *testing.T) {
 	dir := t.TempDir()
 	f := makeFile(t, dir, "big.go", strings.Repeat("x", 40*1024)) // 40KB
 
-	reg := newMockRegistry()
-	reg.setExecute("read_file", f, "", &tool.ToolResult{
-		Content: "     1  " + strings.Repeat("x", 40*1024),
-		Meta:    tool.ToolMeta{ByteCount: 40 * 1024},
-	}, nil)
 
 	guard := newMockGuard()
 
-	expander := New(reg, guard)
+	expander := New(guard)
 	refs := []Ref{{Raw: "@big.go", Path: f, Kind: KindFile}}
 
 	resolved, _ := expander.expandRefs(context.Background(), refs, dir)
@@ -919,16 +831,11 @@ func TestReplaceUnknownLanguage(t *testing.T) {
 
 func TestExpandFullSingleFile(t *testing.T) {
 	dir := t.TempDir()
-	f := makeFile(t, dir, "auth/login.go", "package auth\n\nfunc Login() {}")
+	_ = makeFile(t, dir, "auth/login.go", "package auth\n\nfunc Login() {}")
 
-	reg := newMockRegistry()
-	reg.setExecute("read_file", f, "", &tool.ToolResult{
-		Content: "     1  package auth\n     2\n     3  func Login() {}",
-		Meta:    tool.ToolMeta{ByteCount: 38},
-	}, nil)
 
 	guard := newMockGuard()
-	expander := New(reg, guard)
+	expander := New(guard)
 
 	expanded, refs, err := expander.Expand(context.Background(), "look at @auth/login.go", dir)
 	if err != nil {
@@ -946,9 +853,8 @@ func TestExpandFullSingleFile(t *testing.T) {
 }
 
 func TestExpandFullNoRefPassthrough(t *testing.T) {
-	reg := newMockRegistry()
 	guard := newMockGuard()
-	expander := New(reg, guard)
+	expander := New(guard)
 
 	expanded, refs, err := expander.Expand(context.Background(), "hello world", "/tmp")
 	if err != nil {
@@ -964,21 +870,12 @@ func TestExpandFullNoRefPassthrough(t *testing.T) {
 
 func TestExpandFullWithFolders(t *testing.T) {
 	dir := t.TempDir()
-	f := makeFile(t, dir, "auth/login.go", "package auth")
-	d := makeDir(t, dir, "pkg/llm")
+	_ = makeFile(t, dir, "auth/login.go", "package auth")
+	_ = makeDir(t, dir, "pkg/llm")
 
-	reg := newMockRegistry()
-	reg.setExecute("read_file", f, "", &tool.ToolResult{
-		Content: "     1  package auth",
-		Meta:    tool.ToolMeta{ByteCount: 16},
-	}, nil)
-	reg.setExecute("ls", "", d, &tool.ToolResult{
-		Content: "client.go\ntypes.go",
-		Meta:    tool.ToolMeta{ByteCount: 18},
-	}, nil)
 
 	guard := newMockGuard()
-	expander := New(reg, guard)
+	expander := New(guard)
 
 	expanded, refs, err := expander.Expand(context.Background(), "check @auth/login.go and @pkg/llm", dir)
 	if err != nil {
@@ -1001,21 +898,12 @@ func TestExpandFullWithFolders(t *testing.T) {
 
 func TestE2EExpandAndReplace(t *testing.T) {
 	dir := t.TempDir()
-	f1 := makeFile(t, dir, "auth/login.go", "package auth\n\nfunc Login() {}")
-	d2 := makeDir(t, dir, "pkg/context")
+	_ = makeFile(t, dir, "auth/login.go", "package auth\n\nfunc Login() {}")
+	_ = makeDir(t, dir, "pkg/context")
 
-	reg := newMockRegistry()
-	reg.setExecute("read_file", f1, "", &tool.ToolResult{
-		Content: "     1  package auth\n     2\n     3  func Login() {}",
-		Meta:    tool.ToolMeta{ByteCount: 38},
-	}, nil)
-	reg.setExecute("ls", "", d2, &tool.ToolResult{
-		Content: "context.go\ncontext_test.go",
-		Meta:    tool.ToolMeta{ByteCount: 28},
-	}, nil)
 
 	guard := newMockGuard()
-	expander := New(reg, guard)
+	expander := New(guard)
 
 	userInput := "看一下 @auth/login.go 这个文件和 @pkg/context 目录"
 	expanded, refs, err := expander.Expand(context.Background(), userInput, dir)
@@ -1054,16 +942,11 @@ func TestE2EExpandAndReplace(t *testing.T) {
 // TestAgentsMdExpand_SingleFile 模拟 AGENTS.md 中引用单个文件。
 func TestAgentsMdExpand_SingleFile(t *testing.T) {
 	dir := t.TempDir()
-	f := makeFile(t, dir, "docs/coding-style.md", "# 编码规范\n\n- 遵循 Go 惯例\n- 错误统一处理")
+	_ = makeFile(t, dir, "docs/coding-style.md", "# 编码规范\n\n- 遵循 Go 惯例\n- 错误统一处理")
 
-	reg := newMockRegistry()
-	reg.setExecute("read_file", f, "", &tool.ToolResult{
-		Content: "# 编码规范\n\n- 遵循 Go 惯例\n- 错误统一处理",
-		Meta:    tool.ToolMeta{ByteCount: 52},
-	}, nil)
 
 	guard := newMockGuard()
-	expander := New(reg, guard)
+	expander := New(guard)
 
 	agentsMdText := "# AGENTS.md instructions for /project\n\n<INSTRUCTIONS>\n\n## /project/AGENTS.md\n基础规范 @docs/coding-style.md\n\n</INSTRUCTIONS>"
 	expanded, refs, err := expander.Expand(context.Background(), agentsMdText, dir)
@@ -1087,9 +970,8 @@ func TestAgentsMdExpand_SingleFile(t *testing.T) {
 // TestAgentsMdExpand_NoRefPassthrough AGENTS.md 中没有 @ 引用时直接透传。
 func TestAgentsMdExpand_NoRefPassthrough(t *testing.T) {
 	dir := t.TempDir()
-	reg := newMockRegistry()
 	guard := newMockGuard()
-	expander := New(reg, guard)
+	expander := New(guard)
 
 	agentsMdText := "# AGENTS.md instructions for /project\n\n<INSTRUCTIONS>\n\n## /project/AGENTS.md\n纯文本规范，没有任何引用。\n\n</INSTRUCTIONS>"
 	expanded, refs, err := expander.Expand(context.Background(), agentsMdText, dir)
@@ -1107,19 +989,11 @@ func TestAgentsMdExpand_NoRefPassthrough(t *testing.T) {
 // TestAgentsMdExpand_FileNotFound AGENTS.md 中 @ 引用的文件不存在时，ref 携带错误信息且输出包含 [not found] 标记。
 func TestAgentsMdExpand_FileNotFound(t *testing.T) {
 	dir := t.TempDir()
-	missing := filepath.Join(dir, "nonexistent.md")
+	_ = filepath.Join(dir, "nonexistent.md")
 
-	reg := newMockRegistry()
-	reg.setExecute("read_file", missing, "", &tool.ToolResult{
-		Error: &tool.ToolError{
-			Class:   tool.ErrorClassRecoverable,
-			Kind:    tool.ErrKindFileNotFound,
-			Message: "file not found",
-		},
-	}, nil)
 
 	guard := newMockGuard()
-	expander := New(reg, guard)
+	expander := New(guard)
 
 	agentsMdText := "# AGENTS.md instructions\n\n<INSTRUCTIONS>\n\n@nonexistent.md\n\n</INSTRUCTIONS>"
 	expanded, refs, err := expander.Expand(context.Background(), agentsMdText, dir)
@@ -1145,16 +1019,11 @@ func TestAgentsMdExpand_FileNotFound(t *testing.T) {
 // TestAgentsMdExpand_RelativePath AGENTS.md 中的相对路径 @ 引用基于 cwd 解析。
 func TestAgentsMdExpand_RelativePath(t *testing.T) {
 	dir := t.TempDir()
-	f := makeFile(t, dir, "sub/dir/rules.md", "# 子目录规范")
+	_ = makeFile(t, dir, "sub/dir/rules.md", "# 子目录规范")
 
-	reg := newMockRegistry()
-	reg.setExecute("read_file", f, "", &tool.ToolResult{
-		Content: "# 子目录规范",
-		Meta:    tool.ToolMeta{ByteCount: 18},
-	}, nil)
 
 	guard := newMockGuard()
-	expander := New(reg, guard)
+	expander := New(guard)
 
 	agentsMdText := "# AGENTS.md\n\n<INSTRUCTIONS>\n\n引用 @sub/dir/rules.md\n\n</INSTRUCTIONS>"
 	expanded, refs, err := expander.Expand(context.Background(), agentsMdText, dir)
@@ -1174,14 +1043,9 @@ func TestAgentsMdExpand_AbsolutePath(t *testing.T) {
 	dir := t.TempDir()
 	f := makeFile(t, dir, "global-rules.md", "# 全局规范")
 
-	reg := newMockRegistry()
-	reg.setExecute("read_file", f, "", &tool.ToolResult{
-		Content: "# 全局规范",
-		Meta:    tool.ToolMeta{ByteCount: 15},
-	}, nil)
 
 	guard := newMockGuard()
-	expander := New(reg, guard)
+	expander := New(guard)
 
 	agentsMdText := "# AGENTS.md\n\n<INSTRUCTIONS>\n\n引用 @" + f + "\n\n</INSTRUCTIONS>"
 	expanded, refs, err := expander.Expand(context.Background(), agentsMdText, dir)
@@ -1202,16 +1066,11 @@ func TestAgentsMdExpand_AbsolutePath(t *testing.T) {
 // TestAgentsMdExpand_MarkdownFile AGENTS.md 中引用 .md 文件应获得 ```markdown 语言标签。
 func TestAgentsMdExpand_MarkdownFile(t *testing.T) {
 	dir := t.TempDir()
-	f := makeFile(t, dir, "docs/project-overview.md", "# 项目概览\n\nWaveloom 是一个终端编码代理。")
+	_ = makeFile(t, dir, "docs/project-overview.md", "# 项目概览\n\nWaveloom 是一个终端编码代理。")
 
-	reg := newMockRegistry()
-	reg.setExecute("read_file", f, "", &tool.ToolResult{
-		Content: "# 项目概览\n\nWaveloom 是一个终端编码代理。",
-		Meta:    tool.ToolMeta{ByteCount: 40},
-	}, nil)
 
 	guard := newMockGuard()
-	expander := New(reg, guard)
+	expander := New(guard)
 
 	agentsMdText := "# AGENTS.md\n\n<INSTRUCTIONS>\n\n@docs/project-overview.md\n\n</INSTRUCTIONS>"
 	expanded, refs, err := expander.Expand(context.Background(), agentsMdText, dir)
@@ -1229,21 +1088,12 @@ func TestAgentsMdExpand_MarkdownFile(t *testing.T) {
 // TestAgentsMdExpand_MultipleMixedRefs AGENTS.md 中同时引用文件和目录。
 func TestAgentsMdExpand_MultipleMixedRefs(t *testing.T) {
 	dir := t.TempDir()
-	f := makeFile(t, dir, "specs/agent-loop.md", "# Agent Loop 规格")
-	d := makeDir(t, dir, "pkg/agentloop")
+	_ = makeFile(t, dir, "specs/agent-loop.md", "# Agent Loop 规格")
+	_ = makeDir(t, dir, "pkg/agentloop")
 
-	reg := newMockRegistry()
-	reg.setExecute("read_file", f, "", &tool.ToolResult{
-		Content: "# Agent Loop 规格",
-		Meta:    tool.ToolMeta{ByteCount: 20},
-	}, nil)
-	reg.setExecute("ls", "", d, &tool.ToolResult{
-		Content: "loop.go\ntypes.go",
-		Meta:    tool.ToolMeta{ByteCount: 18},
-	}, nil)
 
 	guard := newMockGuard()
-	expander := New(reg, guard)
+	expander := New(guard)
 
 	agentsMdText := "# AGENTS.md\n\n<INSTRUCTIONS>\n\n规格见 @specs/agent-loop.md\n代码见 @pkg/agentloop\n\n</INSTRUCTIONS>"
 	expanded, refs, err := expander.Expand(context.Background(), agentsMdText, dir)
@@ -1265,18 +1115,13 @@ func TestAgentsMdExpand_MultipleMixedRefs(t *testing.T) {
 // refs 列表中包含 "permission denied" 错误详情，输出中显示 [not found] 标记。
 func TestAgentsMdExpand_PermissionDenied(t *testing.T) {
 	dir := t.TempDir()
-	f := makeFile(t, dir, "secret.md", "# 机密文档")
+	_ = makeFile(t, dir, "secret.md", "# 机密文档")
 
-	reg := newMockRegistry()
-	reg.setExecute("read_file", f, "", &tool.ToolResult{
-		Content: "# 机密文档",
-		Meta:    tool.ToolMeta{ByteCount: 15},
-	}, nil)
 
 	guard := newMockGuard()
 	guard.setDecision("read_file", permission.DecisionDeny)
 
-	expander := New(reg, guard)
+	expander := New(guard)
 
 	agentsMdText := "# AGENTS.md\n\n<INSTRUCTIONS>\n\n@secret.md\n\n</INSTRUCTIONS>"
 	expanded, refs, err := expander.Expand(context.Background(), agentsMdText, dir)
@@ -1297,24 +1142,12 @@ func TestAgentsMdExpand_PermissionDenied(t *testing.T) {
 // TestAgentsMdExpand_PartialFailure 一个 @ 引用成功、另一个失败时，成功的内容仍保留，失败的显示错误。
 func TestAgentsMdExpand_PartialFailure(t *testing.T) {
 	dir := t.TempDir()
-	f := makeFile(t, dir, "docs/readme.md", "# 说明")
-	missing := filepath.Join(dir, "docs", "changelog.md")
+	_ = makeFile(t, dir, "docs/readme.md", "# 说明")
+	_ = filepath.Join(dir, "docs", "changelog.md")
 
-	reg := newMockRegistry()
-	reg.setExecute("read_file", f, "", &tool.ToolResult{
-		Content: "# 说明",
-		Meta:    tool.ToolMeta{ByteCount: 10},
-	}, nil)
-	reg.setExecute("read_file", missing, "", &tool.ToolResult{
-		Error: &tool.ToolError{
-			Class:   tool.ErrorClassRecoverable,
-			Kind:    tool.ErrKindFileNotFound,
-			Message: "file not found",
-		},
-	}, nil)
 
 	guard := newMockGuard()
-	expander := New(reg, guard)
+	expander := New(guard)
 
 	agentsMdText := "# AGENTS.md\n\n<INSTRUCTIONS>\n\n@docs/readme.md\n@docs/changelog.md\n\n</INSTRUCTIONS>"
 	expanded, refs, err := expander.Expand(context.Background(), agentsMdText, dir)
@@ -1335,16 +1168,11 @@ func TestAgentsMdExpand_PartialFailure(t *testing.T) {
 // TestAgentsMdExpand_FuzzyMatch AGENTS.md 中的 @ 引用支持模糊前缀匹配。
 func TestAgentsMdExpand_FuzzyMatch(t *testing.T) {
 	dir := t.TempDir()
-	f := makeFile(t, dir, "specs/reference-context.md", "# 引用上下文")
+	_ = makeFile(t, dir, "specs/reference-context.md", "# 引用上下文")
 
-	reg := newMockRegistry()
-	reg.setExecute("read_file", f, "", &tool.ToolResult{
-		Content: "# 引用上下文",
-		Meta:    tool.ToolMeta{ByteCount: 18},
-	}, nil)
 
 	guard := newMockGuard()
-	expander := New(reg, guard)
+	expander := New(guard)
 
 	agentsMdText := "# AGENTS.md\n\n<INSTRUCTIONS>\n\n@specs/reference-c\n\n</INSTRUCTIONS>"
 	expanded, _, err := expander.Expand(context.Background(), agentsMdText, dir)
@@ -1359,16 +1187,11 @@ func TestAgentsMdExpand_FuzzyMatch(t *testing.T) {
 // TestAgentsMdExpand_ContentAboveRefs AGENTS.md 中的 @ 引用展开后，非引用文本应保留在下方。
 func TestAgentsMdExpand_ContentAboveRefs(t *testing.T) {
 	dir := t.TempDir()
-	f := makeFile(t, dir, "specs/agent-loop.md", "# Agent Loop")
+	_ = makeFile(t, dir, "specs/agent-loop.md", "# Agent Loop")
 
-	reg := newMockRegistry()
-	reg.setExecute("read_file", f, "", &tool.ToolResult{
-		Content: "# Agent Loop",
-		Meta:    tool.ToolMeta{ByteCount: 12},
-	}, nil)
 
 	guard := newMockGuard()
-	expander := New(reg, guard)
+	expander := New(guard)
 
 	agentsMdText := "# AGENTS.md instructions for /project\n\n<INSTRUCTIONS>\n\n## /project/AGENTS.md\n\n项目基础规范，详见 @specs/agent-loop.md\n\n更多细节请参考团队 Wiki。\n\n</INSTRUCTIONS>"
 	expanded, _, err := expander.Expand(context.Background(), agentsMdText, dir)
@@ -1396,9 +1219,8 @@ func TestAgentsMdExpand_ContentAboveRefs(t *testing.T) {
 // TestAgentsMdExpand_Empty 空 AGENTS.md 内容无引用，不报错。
 func TestAgentsMdExpand_Empty(t *testing.T) {
 	dir := t.TempDir()
-	reg := newMockRegistry()
 	guard := newMockGuard()
-	expander := New(reg, guard)
+	expander := New(guard)
 
 	expanded, refs, err := expander.Expand(context.Background(), "", dir)
 	if err != nil {
@@ -1415,16 +1237,11 @@ func TestAgentsMdExpand_Empty(t *testing.T) {
 // TestAgentsMdExpand_TotalByteLimit AGENTS.md 展开后总大小超过 128KB 时应截断。
 func TestAgentsMdExpand_TotalByteLimit(t *testing.T) {
 	dir := t.TempDir()
-	f1 := makeFile(t, dir, "big.md", strings.Repeat("# 大文件\n", 20000)) // ~140KB
+	_ = makeFile(t, dir, "big.md", strings.Repeat("# 大文件\n", 20000)) // ~140KB
 
-	reg := newMockRegistry()
-	reg.setExecute("read_file", f1, "", &tool.ToolResult{
-		Content: strings.Repeat("# 大文件\n", 20000),
-		Meta:    tool.ToolMeta{ByteCount: 140 * 1024},
-	}, nil)
 
 	guard := newMockGuard()
-	expander := New(reg, guard)
+	expander := New(guard)
 
 	agentsMdText := "# AGENTS.md\n\n<INSTRUCTIONS>\n\n@big.md\n\n</INSTRUCTIONS>"
 	expanded, refs, err := expander.Expand(context.Background(), agentsMdText, dir)
@@ -1442,16 +1259,14 @@ func TestAgentsMdExpand_TotalByteLimit(t *testing.T) {
 // TestAgentsMdExpand_DirectoryRef AGENTS.md 中 @ 引用目录时展开为文件列表。
 func TestAgentsMdExpand_DirectoryRef(t *testing.T) {
 	dir := t.TempDir()
-	d := makeDir(t, dir, "docs/specs")
+	_ = makeDir(t, dir, "docs/specs")
+	_ = makeFile(t, dir, "docs/specs/agent-loop.md", "# agent-loop")
+	_ = makeFile(t, dir, "docs/specs/reference.md", "# reference")
+	_ = makeFile(t, dir, "docs/specs/compaction.md", "# compaction")
 
-	reg := newMockRegistry()
-	reg.setExecute("ls", "", d, &tool.ToolResult{
-		Content: "agent-loop.md\nreference.md\ncompaction.md",
-		Meta:    tool.ToolMeta{ByteCount: 38},
-	}, nil)
 
 	guard := newMockGuard()
-	expander := New(reg, guard)
+	expander := New(guard)
 
 	agentsMdText := "# AGENTS.md\n\n<INSTRUCTIONS>\n\n@docs/specs\n\n</INSTRUCTIONS>"
 	expanded, refs, err := expander.Expand(context.Background(), agentsMdText, dir)

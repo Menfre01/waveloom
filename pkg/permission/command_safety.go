@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"waveloom/pkg/tool"
+	"waveloom/pkg/pathutil"
 )
 
 // ---------------------------------------------------------------------------
@@ -159,7 +159,7 @@ func CommandSafetyCheck(command string) CommandCheckResult {
 	}
 
 	// 0. 归一化：剥离 "cd <path> &&" 前缀，使 first token 反映实际命令
-	normalized, _ := tool.NormalizeShellCommand(command)
+	normalized, _ := pathutil.NormalizeShellCommand(command)
 	if normalized != "" {
 		command = normalized
 	}

@@ -8,6 +8,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"waveloom/pkg/pathutil"
 )
 
 // ---------------------------------------------------------------------------
@@ -45,7 +47,7 @@ func (t *Ls) Execute(ctx context.Context, p LsParams) (*ToolResult, error) {
 			path, _ = os.Getwd()
 		}
 	}
-	path, err := ResolvePathWithDir(path, workingDir)
+	path, err := pathutil.ResolvePathWithDir(path, workingDir)
 	if err != nil {
 		return toolError(ErrorClassRecoverable, ErrKindInvalidArgs,
 			fmt.Sprintf("invalid path: %v", err), err), nil

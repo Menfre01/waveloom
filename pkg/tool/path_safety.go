@@ -125,39 +125,6 @@ func HasBinaryExtension(path string) bool {
 }
 
 // ---------------------------------------------------------------------------
-// ResolvePath — 路径标准化
-// ---------------------------------------------------------------------------
-
-func ResolvePath(path string) (string, error) {
-	abs, err := filepath.Abs(path)
-	if err != nil {
-		return "", fmt.Errorf("failed to resolve path: %w", err)
-	}
-	return filepath.Clean(abs), nil
-}
-
-// ResolvePathWithDir 将路径基于指定工作目录解析为绝对路径。
-// workingDir 为空时回退到 ResolvePath（基于进程 CWD）。
-func ResolvePathWithDir(path, workingDir string) (string, error) {
-	if workingDir == "" {
-		return ResolvePath(path)
-	}
-	absDir, err := filepath.Abs(workingDir)
-	if err != nil {
-		return "", fmt.Errorf("failed to resolve working_dir: %w", err)
-	}
-	absDir = filepath.Clean(absDir)
-
-	var absPath string
-	if filepath.IsAbs(path) {
-		absPath = path
-	} else {
-		absPath = filepath.Join(absDir, path)
-	}
-	return filepath.Clean(absPath), nil
-}
-
-// ---------------------------------------------------------------------------
 // IsWithinDir — 项目边界检查
 // ---------------------------------------------------------------------------
 

@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"waveloom/pkg/pathutil"
 )
 
 func TestShellInterpreter(t *testing.T) {
@@ -531,7 +533,7 @@ func TestNormalizeShellCommand(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			gotCmd, gotDir := NormalizeShellCommand(tt.command)
+			gotCmd, gotDir := pathutil.NormalizeShellCommand(tt.command)
 			if gotCmd != tt.wantCmd {
 				t.Errorf("command = %q, want %q", gotCmd, tt.wantCmd)
 			}

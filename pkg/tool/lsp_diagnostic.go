@@ -31,7 +31,14 @@ type LSDiagnosticParams struct {
 }
 
 // LSDiagnostic 获取指定文件的 LSP 诊断信息。
-type LSDiagnostic struct{}
+type LSDiagnostic struct {
+	lspProvider *LSPProvider
+}
+
+// NewLSDiagnostic 创建一个依赖注入的 LSDiagnostic 工具。
+func NewLSDiagnostic(provider *LSPProvider) *LSDiagnostic {
+	return &LSDiagnostic{lspProvider: provider}
+}
 
 func (t *LSDiagnostic) Name() string           { return "lsp_diagnostic" }
 func (t *LSDiagnostic) Schema() json.RawMessage { return lspDiagnosticSchema }
@@ -42,24 +49,25 @@ func (t *LSDiagnostic) Description() string {
 }
 
 func (t *LSDiagnostic) Execute(ctx context.Context, p LSDiagnosticParams) (*ToolResult, error) {
-	if LSPManager == nil {
+	mgr := t.lspManager()
+	if mgr == nil {
 		return toolError(ErrorClassRecoverable, ErrKindCommandNotFound,
 			"LSP not initialized", nil), nil
 	}
 
-	inst, err := LSPManager.GetOrCreate(p.FilePath)
+	inst, err := mgr.GetOrCreate(p.FilePath)
 	if err != nil {
 		return toolError(ErrorClassRecoverable, ErrKindCommandNotFound,
 			fmt.Sprintf("failed to start LSP server: %s", err.Error()), err), nil
 	}
 
-	if err := LSPManager.SyncFile(inst, p.FilePath); err != nil {
+	if err := mgr.SyncFile(inst, p.FilePath); err != nil {
 		return toolError(ErrorClassRecoverable, ErrKindCommandFailed,
 			fmt.Sprintf("LSP file sync failed: %s", err.Error()), err), nil
 	}
 
 	uri := lsp.PathToURI(p.FilePath)
-	diags := LSPManager.Diagnostics(uri)
+	diags := mgr.Diagnostics(uri)
 
 	return &ToolResult{Content: formatDiagnostics(diags)}, nil
 }
@@ -116,4 +124,9 @@ func severityPrefix(s lsp.DiagnosticSeverity) string {
 	default:
 		return "unknown"
 	}
+}
+
+// lspManager 返回注入的 LSP Manager。
+func (t *LSDiagnostic) lspManager() *lsp.Manager {
+	return t.lspProvider.Manager
 }
