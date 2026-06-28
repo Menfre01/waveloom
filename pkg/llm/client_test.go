@@ -2406,6 +2406,90 @@ func TestSupportsBalanceOpenAI(t *testing.T) {
 	}
 }
 
+// --- ListModels Tests ---
+
+func TestListModelsDeepSeek(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/models" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"object":"list","data":[
+			{"id":"deepseek-v4-pro","object":"model","owned_by":"deepseek"}
+		]}`))
+	}))
+	defer server.Close()
+
+	cfg := ClientConfig{
+		APIKey:  "sk-test",
+		Model:   "deepseek-v4-flash",
+		BaseURL: server.URL,
+	}
+	adapter := newDeepSeekAdapter(cfg)
+	c := newClientWithAdapter(cfg, adapter)
+
+	models, err := c.ListModels(context.Background())
+	if err != nil {
+		t.Fatalf("ListModels: %v", err)
+	}
+	if len(models) != 1 {
+		t.Fatalf("len(models) = %d, want 1", len(models))
+	}
+	if models[0].ID != "deepseek-v4-pro" {
+		t.Errorf("ID = %q, want deepseek-v4-pro", models[0].ID)
+	}
+}
+
+func TestListModelsOpenAI(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/models" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"object":"list","data":[
+			{"id":"gpt-4o","object":"model","owned_by":"openai"}
+		]}`))
+	}))
+	defer server.Close()
+
+	cfg := ClientConfig{
+		APIKey:  "sk-test",
+		Model:   "gpt-4o",
+		BaseURL: server.URL,
+	}
+	adapter := newOpenAIAdapter(cfg)
+	c := newClientWithAdapter(cfg, adapter)
+
+	models, err := c.ListModels(context.Background())
+	if err != nil {
+		t.Fatalf("ListModels: %v", err)
+	}
+	if len(models) != 1 {
+		t.Fatalf("len(models) = %d, want 1", len(models))
+	}
+	if models[0].ID != "gpt-4o" {
+		t.Errorf("ID = %q, want gpt-4o", models[0].ID)
+	}
+}
+
+func TestListModelsNilContext(t *testing.T) {
+	cfg := ClientConfig{APIKey: "sk-test", Model: "gpt-4o"}
+	c := newClientWithAdapter(cfg, newOpenAIAdapter(cfg))
+
+	_, err := c.ListModels(nil)
+	if err == nil {
+		t.Fatal("expected error for nil context")
+	}
+	var nre *NonRetryableError
+	if !errors.As(err, &nre) {
+		t.Errorf("expected *NonRetryableError, got %T", err)
+	}
+}
+
 // --- SendMessageStream BuildRequest error path ---
 
 type errorBuildStreamAdapter struct {

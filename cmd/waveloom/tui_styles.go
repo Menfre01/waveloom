@@ -170,7 +170,6 @@ var (
 	styleDiffCtx           lipgloss.Style // diff 上下文行
 	styleDiffHeader        lipgloss.Style // hunk 头 @@ ... @@
 	styleLineNum           lipgloss.Style // 行号列
-	styleNoNewline         lipgloss.Style // "\ No newline at end of file" 标记
 	styleToolPreview       lipgloss.Style
 	styleToolPreviewHint   lipgloss.Style
 	styleToolExpanded      lipgloss.Style
@@ -255,7 +254,6 @@ func applyTheme(p palette) {
 	styleDiffCtx = lipgloss.NewStyle().Foreground(colorMuted)
 	styleDiffHeader = lipgloss.NewStyle().Foreground(colorHeaderAccent)
 	styleLineNum = lipgloss.NewStyle().Foreground(colorGray)
-	styleNoNewline = lipgloss.NewStyle().Foreground(colorGray)
 
 	// 工具输出预览样式
 	styleToolPreview = lipgloss.NewStyle().Foreground(colorMuted)

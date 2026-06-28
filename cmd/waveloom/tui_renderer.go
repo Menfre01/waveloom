@@ -1554,11 +1554,10 @@ func renderDiffPreview(sb *strings.Builder, hunks []tool.DiffHunk, textWidth int
 	}
 }
 
-// renderDiffView 渲染完整的统一 diff 视图（展开态），严格遵循 POSIX unified diff 格式：
+// renderDiffView 渲染完整的统一 diff 视图（展开态），遵循 POSIX unified diff 格式：
 //   - 前缀为单字符（+ / - / 空格）
 //   - hunk header 在 count=1 时省略 ",1"
-//   - 无逐行行号（位置由 hunk header 提供）
-//   - 末尾输出 "\ No newline at end of file"（如适用）
+//   - 附加虚行号列（灰色），不影响 diff 语义
 //
 // 受 maxExpandedWrapped 约束，防止超长行导致海量输出。
 func renderDiffView(sb *strings.Builder, hunks []tool.DiffHunk, textWidth int, indent string) {
@@ -1566,7 +1565,20 @@ func renderDiffView(sb *strings.Builder, hunks []tool.DiffHunk, textWidth int, i
 		return
 	}
 
-	codeWidth := textWidth - 1 // 单字符前缀
+	// 计算行号列宽度（最多 4 位）
+	numWidth := 4
+	for _, h := range hunks {
+		maxNum := h.OldStart + h.OldCount
+		if n := h.NewStart + h.NewCount; n > maxNum {
+			maxNum = n
+		}
+		if w := digitCount(maxNum); w > numWidth {
+			numWidth = w
+		}
+	}
+
+	// 单字符前缀 + 行号列宽度 + 续行缩进（1 空格 = 前缀宽度）
+	codeWidth := textWidth - numWidth - 2 // numStr("  5 ") + prefix(1)
 	if codeWidth < 1 {
 		codeWidth = 1
 	}
@@ -1582,10 +1594,22 @@ func renderDiffView(sb *strings.Builder, hunks []tool.DiffHunk, textWidth int, i
 			sb.WriteString("\n")
 		}
 
-		// @@ header（count=1 时省略 ",1"）
+		// @@ header（count=1 时省略 ",1"）；heading 过长时截断，防止终端换行造成视觉混乱
 		header := fmt.Sprintf("@@ -%s +%s @@", hunkRange(h.OldStart, h.OldCount), hunkRange(h.NewStart, h.NewCount))
 		if h.Heading != "" {
-			header += " " + h.Heading
+			full := header + " " + h.Heading
+			if len(full) > textWidth {
+				avail := textWidth - len(header) - 1 // -1 for space
+				if avail > 0 {
+					heading := h.Heading
+					if len(heading) > avail {
+						heading = heading[:avail]
+					}
+					header += " " + heading
+				}
+			} else {
+				header = full
+			}
 		}
 		sb.WriteString(indent)
 		sb.WriteString(styleDiffHeader.Render(header))
@@ -1593,6 +1617,18 @@ func renderDiffView(sb *strings.Builder, hunks []tool.DiffHunk, textWidth int, i
 
 		for _, l := range h.Lines {
 			prefix, styleContent := diffLinePrefixAndStyle(l.Kind)
+			// 行号：删除显示旧行号，新增显示新行号，上下文显示旧行号
+			var num int
+			switch l.Kind {
+			case tool.DiffDel:
+				num = l.OldNum
+			case tool.DiffAdd:
+				num = l.NewNum
+			default:
+				num = l.OldNum
+			}
+			numStr := fmt.Sprintf("%*d ", numWidth, num)
+
 			wlines := wrapLine(l.Content, codeWidth)
 			for wi, wl := range wlines {
 				if wrapped >= maxExpandedWrapped {
@@ -1601,10 +1637,12 @@ func renderDiffView(sb *strings.Builder, hunks []tool.DiffHunk, textWidth int, i
 				}
 				sb.WriteString(indent)
 				if wi == 0 {
-					// 首行：前缀 + 内容
+					// 首行：行号 + 前缀 + 内容
+					sb.WriteString(styleLineNum.Render(numStr))
 					sb.WriteString(styleContent.Render(prefix + wl))
 				} else {
-					// 续行：单空格对齐（前缀宽度 = 1）
+					// 续行：空行号 + 单空格缩进
+					sb.WriteString(styleLineNum.Render(fmt.Sprintf("%*s ", numWidth, "")))
 					sb.WriteString(styleContent.Render(" " + wl))
 				}
 				sb.WriteString("\n")
@@ -1613,18 +1651,6 @@ func renderDiffView(sb *strings.Builder, hunks []tool.DiffHunk, textWidth int, i
 			if truncated {
 				break
 			}
-		}
-
-		// "\ No newline at end of file" 标记
-		if h.NoNewlineAtEOF && !truncated {
-			if wrapped >= maxExpandedWrapped {
-				truncated = true
-				break
-			}
-			sb.WriteString(indent)
-			sb.WriteString(styleNoNewline.Render(`\ No newline at end of file`))
-			sb.WriteString("\n")
-			wrapped++
 		}
 
 		if truncated {
@@ -1637,6 +1663,19 @@ func renderDiffView(sb *strings.Builder, hunks []tool.DiffHunk, textWidth int, i
 		sb.WriteString(styleToolPreviewHint.Render(fmt.Sprintf("... (truncated to %d lines)", maxExpandedWrapped)))
 		sb.WriteString("\n")
 	}
+}
+
+// digitCount 返回 n 的十进制位数。
+func digitCount(n int) int {
+	if n <= 0 {
+		return 1
+	}
+	d := 0
+	for n > 0 {
+		n /= 10
+		d++
+	}
+	return d
 }
 
 // hunkRange 返回 unified diff hunk header 中的 range 字符串。
