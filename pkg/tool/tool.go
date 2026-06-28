@@ -133,6 +133,10 @@ type DiffHunk struct {
 	NewCount int        // 新文件覆盖行数
 	Heading  string     // hunk 头部函数上下文（如 "func main() {"）
 	Lines    []DiffLine
+
+	// NoNewlineAtEOF 表示 hunk 末尾的旧文件或新文件不以换行结尾。
+	// 渲染时输出 "\ No newline at end of file" 标记（符合 POSIX unified diff 规范）。
+	NoNewlineAtEOF bool
 }
 
 // Stats 返回该 hunk 的增删统计。

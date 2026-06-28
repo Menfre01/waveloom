@@ -265,6 +265,14 @@ func buildDiffHunks(original string, positions []int, oldStr, newStr string, con
 		}
 
 		hunk.NewCount = hunk.OldCount - hunkDeleted + hunkAdded
+
+		// 检测 NoNewlineAtEOF：若 hunk 覆盖文件末尾且原文不以 \n 结尾，
+		// 或替换内容不以 \n 结尾，标记之（符合 POSIX unified diff）。
+		if (mw.ctxEnd >= totalLines && !strings.HasSuffix(original, "\n")) ||
+			!strings.HasSuffix(newStr, "\n") {
+			hunk.NoNewlineAtEOF = true
+		}
+
 		hunks = append(hunks, hunk)
 
 		// 累加此 hunk 产生的行号偏移（删除行数 − 新增行数）

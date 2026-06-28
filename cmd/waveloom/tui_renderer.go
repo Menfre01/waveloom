@@ -1554,23 +1554,21 @@ func renderDiffPreview(sb *strings.Builder, hunks []tool.DiffHunk, textWidth int
 	}
 }
 
-// renderDiffView 渲染完整的统一 diff 视图（展开态），带行号列和背景着色。
+// renderDiffView 渲染完整的统一 diff 视图（展开态），严格遵循 POSIX unified diff 格式：
+//   - 前缀为单字符（+ / - / 空格）
+//   - hunk header 在 count=1 时省略 ",1"
+//   - 无逐行行号（位置由 hunk header 提供）
+//   - 末尾输出 "\ No newline at end of file"（如适用）
+//
 // 受 maxExpandedWrapped 约束，防止超长行导致海量输出。
 func renderDiffView(sb *strings.Builder, hunks []tool.DiffHunk, textWidth int, indent string) {
 	if len(hunks) == 0 {
 		return
 	}
 
-	// 计算行号列宽度（最多 4 位）
-	numWidth := 4
-	for _, h := range hunks {
-		maxNum := h.OldStart + h.OldCount
-		if n := h.NewStart + h.NewCount; n > maxNum {
-			maxNum = n
-		}
-		if w := digits(maxNum); w > numWidth {
-			numWidth = w
-		}
+	codeWidth := textWidth - 1 // 单字符前缀
+	if codeWidth < 1 {
+		codeWidth = 1
 	}
 
 	wrapped := 0
@@ -1584,8 +1582,8 @@ func renderDiffView(sb *strings.Builder, hunks []tool.DiffHunk, textWidth int, i
 			sb.WriteString("\n")
 		}
 
-		// @@ header
-		header := fmt.Sprintf("@@ -%d,%d +%d,%d @@", h.OldStart, h.OldCount, h.NewStart, h.NewCount)
+		// @@ header（count=1 时省略 ",1"）
+		header := fmt.Sprintf("@@ -%s +%s @@", hunkRange(h.OldStart, h.OldCount), hunkRange(h.NewStart, h.NewCount))
 		if h.Heading != "" {
 			header += " " + h.Heading
 		}
@@ -1595,10 +1593,6 @@ func renderDiffView(sb *strings.Builder, hunks []tool.DiffHunk, textWidth int, i
 
 		for _, l := range h.Lines {
 			prefix, styleContent := diffLinePrefixAndStyle(l.Kind)
-			codeWidth := textWidth - numWidth - 4 // 行号 + "  " + 前缀（2）
-			if codeWidth < 1 {
-				codeWidth = 1
-			}
 			wlines := wrapLine(l.Content, codeWidth)
 			for wi, wl := range wlines {
 				if wrapped >= maxExpandedWrapped {
@@ -1607,25 +1601,11 @@ func renderDiffView(sb *strings.Builder, hunks []tool.DiffHunk, textWidth int, i
 				}
 				sb.WriteString(indent)
 				if wi == 0 {
-					// 首行：行号 + 前缀 + 内容
-					numStr := ""
-					switch l.Kind {
-					case tool.DiffDel:
-						numStr = fmt.Sprintf("%*d  ", numWidth, l.OldNum)
-					case tool.DiffAdd:
-						numStr = fmt.Sprintf("%*d  ", numWidth, l.NewNum)
-					case tool.DiffCtx:
-						numStr = fmt.Sprintf("%*d  ", numWidth, l.OldNum)
-					default:
-						numStr = fmt.Sprintf("%*s  ", numWidth, "")
-					}
-					sb.WriteString(styleLineNum.Render(numStr))
+					// 首行：前缀 + 内容
 					sb.WriteString(styleContent.Render(prefix + wl))
 				} else {
-					// 续行：空行号 + 对齐空格 + 内容
-					emptyNum := styleLineNum.Render(fmt.Sprintf("%*s  ", numWidth, ""))
-					sb.WriteString(emptyNum)
-					sb.WriteString(styleContent.Render("  " + wl))
+					// 续行：单空格对齐（前缀宽度 = 1）
+					sb.WriteString(styleContent.Render(" " + wl))
 				}
 				sb.WriteString("\n")
 				wrapped++
@@ -1634,6 +1614,19 @@ func renderDiffView(sb *strings.Builder, hunks []tool.DiffHunk, textWidth int, i
 				break
 			}
 		}
+
+		// "\ No newline at end of file" 标记
+		if h.NoNewlineAtEOF && !truncated {
+			if wrapped >= maxExpandedWrapped {
+				truncated = true
+				break
+			}
+			sb.WriteString(indent)
+			sb.WriteString(styleNoNewline.Render(`\ No newline at end of file`))
+			sb.WriteString("\n")
+			wrapped++
+		}
+
 		if truncated {
 			break
 		}
@@ -1644,7 +1637,15 @@ func renderDiffView(sb *strings.Builder, hunks []tool.DiffHunk, textWidth int, i
 		sb.WriteString(styleToolPreviewHint.Render(fmt.Sprintf("... (truncated to %d lines)", maxExpandedWrapped)))
 		sb.WriteString("\n")
 	}
+}
 
+// hunkRange 返回 unified diff hunk header 中的 range 字符串。
+// count=1 时省略 ",1"，与 git diff 行为一致。
+func hunkRange(start, count int) string {
+	if count == 1 {
+		return fmt.Sprintf("%d", start)
+	}
+	return fmt.Sprintf("%d,%d", start, count)
 }
 
 // lineStyle 根据 DiffLineKind 返回对应的前景色样式。
@@ -1662,45 +1663,36 @@ func lineStyle(kind tool.DiffLineKind) lipgloss.Style {
 }
 
 // linePrefix 根据 DiffLineKind 返回对应的前缀字符。
+// 严格遵循 unified diff 单字符前缀规范：+ 新增，- 删除，空格 上下文。
 func linePrefix(kind tool.DiffLineKind) string {
 	switch kind {
 	case tool.DiffAdd:
-		return "+ "
+		return "+"
 	case tool.DiffDel:
-		return "- "
+		return "-"
 	case tool.DiffHeader:
-		return "@@ "
+		return "@@"
 	default:
-		return "  "
+		return " "
 	}
 }
 
 // diffLinePrefixAndStyle 根据 DiffLineKind 返回首行前缀和续行样式。
+// 严格遵循 unified diff 单字符前缀规范。
 func diffLinePrefixAndStyle(kind tool.DiffLineKind) (prefix string, style lipgloss.Style) {
 	switch kind {
 	case tool.DiffAdd:
-		return "+ ", styleDiffAddBG
+		return "+", styleDiffAddBG
 	case tool.DiffDel:
-		return "- ", styleDiffDelBG
+		return "-", styleDiffDelBG
 	case tool.DiffCtx:
-		return "  ", styleDiffCtx
+		return " ", styleDiffCtx
 	default:
-		return "  ", styleToolExpanded
+		return " ", styleToolExpanded
 	}
 }
 
-// digits 返回 n 的十进制位数。
-func digits(n int) int {
-	if n <= 0 {
-		return 1
-	}
-	d := 0
-	for n > 0 {
-		n /= 10
-		d++
-	}
-	return d
-}
+
 
 // ---------------------------------------------------------------------------
 // 辅助：检测字符串内容类型
