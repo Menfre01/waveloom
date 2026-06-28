@@ -49,6 +49,7 @@ import (
 	"waveloom/pkg/agentloop"
 	ctxpkg "waveloom/pkg/context"
 	"waveloom/pkg/llm"
+	"waveloom/pkg/pathutil"
 	"waveloom/pkg/permission"
 	"waveloom/pkg/reference"
 	"waveloom/pkg/tool"
@@ -2708,24 +2709,33 @@ func (m *model) renderCacheRate() string {
 	return label + " " + valStyle.Render(fmt.Sprintf("%d%%", pct))
 }
 
-// renderLatency 渲染最近一次 loop 耗时。
+// renderLatency 渲染最近一次 loop 耗时（运行中实时计时，结束后显示最终值）。
 func (m *model) renderLatency() string {
 	label := styleFooterLabel.Render("elap")
-	if m.hudLatMs == 0 {
+
+	// 运行中：实时计算 time.Since(turnStartTime)
+	var elapsed int64
+	if m.running && !m.turnStartTime.IsZero() {
+		elapsed = time.Since(m.turnStartTime).Milliseconds()
+	} else {
+		elapsed = m.hudLatMs
+	}
+
+	if elapsed == 0 {
 		return label + " " + styleFooterValueMuted.Render("--")
 	}
 
 	var valStyle lipgloss.Style
 	switch {
-	case m.hudLatMs < 500:
+	case elapsed < 500:
 		valStyle = styleCacheGreen
-	case m.hudLatMs < 2000:
+	case elapsed < 2000:
 		valStyle = styleCacheGold
 	default:
 		valStyle = styleFooterLatRed
 	}
 
-	return label + " " + valStyle.Render(formatDuration(m.hudLatMs))
+	return label + " " + valStyle.Render(formatDuration(elapsed))
 }
 
 
@@ -2747,7 +2757,7 @@ func (r *tuiUserResponder) AskUser(ctx context.Context, toolName string, input j
 	// 格式化参数摘要；shell 命令做 cd 归一化后再展示，避免权限面板显示冗长的 cd 前缀
 	argsSummary := formatToolArgs(toolName, string(input), r.cwd)
 	if toolName == "shell" && argsSummary != "" {
-		if normalized, _ := tool.NormalizeShellCommand(argsSummary); normalized != "" {
+		if normalized, _ := pathutil.NormalizeShellCommand(argsSummary); normalized != "" {
 			argsSummary = normalized
 		}
 	}

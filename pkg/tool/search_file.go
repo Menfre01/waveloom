@@ -9,6 +9,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"waveloom/pkg/pathutil"
 )
 
 // ---------------------------------------------------------------------------
@@ -40,7 +42,7 @@ func (t *SearchFile) Execute(ctx context.Context, p SearchFileParams) (*ToolResu
 	if dir == "" {
 		dir, _ = os.Getwd()
 	}
-	dir, err := ResolvePath(dir)
+	dir, err := pathutil.ResolvePath(dir)
 	if err != nil {
 		return toolError(ErrorClassRecoverable, ErrKindInvalidArgs,
 			fmt.Sprintf("invalid working_dir: %v", err), err), nil
