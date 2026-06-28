@@ -846,6 +846,85 @@ func TestDeepSeekGetBalanceParseError(t *testing.T) {
 	}
 }
 
+// --- DeepSeek ListModels Tests ---
+
+func TestDeepSeekListModelsSuccess(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/models" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"object":"list","data":[
+			{"id":"deepseek-v4-pro","object":"model","owned_by":"deepseek"},
+			{"id":"deepseek-v4-flash","object":"model","owned_by":"deepseek"}
+		]}`))
+	}))
+	defer server.Close()
+
+	adapter := newDeepSeekAdapter(ClientConfig{
+		APIKey:  "sk-test",
+		BaseURL: server.URL,
+	})
+
+	models, err := adapter.ListModels(context.Background(), server.Client())
+	if err != nil {
+		t.Fatalf("ListModels: %v", err)
+	}
+	if len(models) != 2 {
+		t.Fatalf("len(models) = %d, want 2", len(models))
+	}
+	if models[0].ID != "deepseek-v4-pro" {
+		t.Errorf("models[0].ID = %q, want deepseek-v4-pro", models[0].ID)
+	}
+	if models[1].ID != "deepseek-v4-flash" {
+		t.Errorf("models[1].ID = %q, want deepseek-v4-flash", models[1].ID)
+	}
+	if models[0].OwnedBy != "deepseek" {
+		t.Errorf("models[0].OwnedBy = %q, want deepseek", models[0].OwnedBy)
+	}
+}
+
+func TestDeepSeekListModelsHTTPError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer server.Close()
+
+	adapter := newDeepSeekAdapter(ClientConfig{
+		APIKey:  "sk-test",
+		BaseURL: server.URL,
+	})
+
+	_, err := adapter.ListModels(context.Background(), server.Client())
+	if err == nil {
+		t.Fatal("expected error for 401 on list models endpoint")
+	}
+}
+
+func TestDeepSeekListModelsParseError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`not json`))
+	}))
+	defer server.Close()
+
+	adapter := newDeepSeekAdapter(ClientConfig{
+		APIKey:  "sk-test",
+		BaseURL: server.URL,
+	})
+
+	_, err := adapter.ListModels(context.Background(), server.Client())
+	if err == nil {
+		t.Fatal("expected error for malformed JSON list models response")
+	}
+	if !strings.Contains(err.Error(), "parsing list models response") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
 // isError 辅助函数，检查 err 是否匹配 target 类型。
 func isError(err error, target interface{}) bool {
 	return errors.As(err, target)
