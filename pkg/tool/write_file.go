@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"waveloom/pkg/pathutil"
 )
 
 // ---------------------------------------------------------------------------
@@ -30,7 +32,7 @@ func (t *WriteFile) ConcurrentSafe() bool    { return false }
 
 func (t *WriteFile) Execute(ctx context.Context, p WriteFileParams) (*ToolResult, error) {
 	// ── Step 1: 路径解析 ──
-	path, err := ResolvePathWithDir(p.FilePath, p.WorkingDir)
+	path, err := pathutil.ResolvePathWithDir(p.FilePath, p.WorkingDir)
 	if err != nil {
 		return toolError(ErrorClassRecoverable, ErrKindInvalidArgs,
 			fmt.Sprintf("invalid path: %v", err), err), nil

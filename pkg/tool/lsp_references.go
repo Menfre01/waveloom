@@ -47,7 +47,14 @@ type LSPReferencesParams struct {
 }
 
 // LSPReferences 查找符号的所有引用。
-type LSPReferences struct{}
+type LSPReferences struct {
+	lspProvider *LSPProvider
+}
+
+// NewLSPReferences 创建一个依赖注入的 LSPReferences 工具。
+func NewLSPReferences(provider *LSPProvider) *LSPReferences {
+	return &LSPReferences{lspProvider: provider}
+}
 
 func (t *LSPReferences) Name() string           { return "lsp_references" }
 func (t *LSPReferences) Schema() json.RawMessage { return lspReferencesSchema }
@@ -62,24 +69,25 @@ func (t *LSPReferences) Execute(ctx context.Context, p LSPReferencesParams) (*To
 	if p.IncludeDeclaration != nil {
 		includeDecl = *p.IncludeDeclaration
 	}
-	if LSPManager == nil {
+	mgr := t.lspManager()
+	if mgr == nil {
 		return toolError(ErrorClassRecoverable, ErrKindCommandNotFound,
 			"LSP not initialized", nil), nil
 	}
 
-	inst, err := LSPManager.GetOrCreate(p.FilePath)
+	inst, err := mgr.GetOrCreate(p.FilePath)
 	if err != nil {
 		return toolError(ErrorClassRecoverable, ErrKindCommandNotFound,
 			fmt.Sprintf("failed to start LSP server: %s", err.Error()), err), nil
 	}
 
-	if err := LSPManager.SyncFile(inst, p.FilePath); err != nil {
+	if err := mgr.SyncFile(inst, p.FilePath); err != nil {
 		return toolError(ErrorClassRecoverable, ErrKindCommandFailed,
 			fmt.Sprintf("LSP file sync failed: %s", err.Error()), err), nil
 	}
 
 	var locations []lsp.Location
-	err = LSPManager.Call(ctx, inst, "textDocument/references", lsp.ReferencesParams{
+	err = mgr.Call(ctx, inst, "textDocument/references", lsp.ReferencesParams{
 		TextDocument: lsp.TextDocumentIdentifier{URI: lsp.PathToURI(p.FilePath)},
 		Position:     lsp.Position{Line: p.Line, Character: p.Character},
 		Context:      lsp.ReferencesContext{IncludeDeclaration: includeDecl},
@@ -113,4 +121,9 @@ func (t *LSPReferences) Execute(ctx context.Context, p LSPReferencesParams) (*To
 		)
 	}
 	return &ToolResult{Content: strings.TrimSpace(b.String())}, nil
+}
+
+// lspManager 返回注入的 LSP Manager。
+func (t *LSPReferences) lspManager() *lsp.Manager {
+	return t.lspProvider.Manager
 }

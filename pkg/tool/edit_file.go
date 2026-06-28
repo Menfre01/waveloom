@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"os"
 	"strings"
+
+	"waveloom/pkg/pathutil"
 )
 
 // ---------------------------------------------------------------------------
@@ -45,7 +47,7 @@ func (t *EditFile) Execute(ctx context.Context, p EditFileParams) (*ToolResult, 
 	}
 
 	// ── Step 2: 路径解析 ──
-	path, err := ResolvePathWithDir(p.FilePath, p.WorkingDir)
+	path, err := pathutil.ResolvePathWithDir(p.FilePath, p.WorkingDir)
 	if err != nil {
 		return toolError(ErrorClassRecoverable, ErrKindInvalidArgs,
 			fmt.Sprintf("invalid path: %v", err), err), nil
