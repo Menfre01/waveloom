@@ -14,7 +14,7 @@
 
 1. 在 [Issues](https://github.com/Menfre01/waveloom/issues) 中搜索，确认未被报告过
 2. 使用 **Bug Report** 模板提交
-3. 提供复现步骤、期望行为、实际行为、环境信息（OS、终端、wvl 版本）
+3. 提供复现步骤、期望行为、实际行为、环境信息（OS、终端、waveloom 版本）
 
 ### 请求新功能
 

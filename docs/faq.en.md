@@ -8,21 +8,21 @@
 
 # Troubleshooting
 
-**Q: "command not found" when running `wvl`?**
+**Q: "command not found" when running `waveloom`?**
 
 The install path is not in PATH. Pre-built binaries install to `~/.local/bin` — ensure it's in PATH: `export PATH="$HOME/.local/bin:$PATH"` and add to `~/.bashrc` or `~/.zshrc`.
 
 **Q: "api_key is required" error?**
 
-No API Key detected. Run `wvl setup` to complete first-time configuration, or set the `LLM_API_KEY` environment variable. Config is written to `~/.waveloom/settings.json`.
+No API Key detected. Run `waveloom setup` to complete first-time configuration, or set the `LLM_API_KEY` environment variable. Config is written to `~/.waveloom/settings.json`.
 
 **Q: macOS "cannot verify developer"?**
 
-Run `xattr -d com.apple.quarantine ~/.local/bin/wvl` to remove the quarantine attribute.
+Run `xattr -d com.apple.quarantine ~/.local/bin/waveloom` to remove the quarantine attribute.
 
 **Q: How can I verify prefix caching is working?**
 
-The TUI footer status bar shows the cache hit rate. You can also check `.waveloom/wvl.log` (requires `--verbose`) for `cache_hit_tokens` info.
+The TUI footer status bar shows the cache hit rate. You can also check `.waveloom/waveloom.log` (requires `--verbose`) for `cache_hit_tokens` info.
 
 **Q: LSP tools not working?**
 

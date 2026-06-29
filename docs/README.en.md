@@ -24,7 +24,7 @@
 You describe what you want in natural language. The agent reads code, analyzes logic, edits files, and executes commands — right in your terminal. Every write and command execution requires your consent first. Primary recommended model: `deepseek-v4-pro`. Also compatible with `deepseek-v4-flash` and OpenAI-compatible endpoints.
 
 > [!IMPORTANT]
-> **Safe & Transparent**: The agent always asks for confirmation before writing files or executing commands — nothing happens silently. **API Key Required**: Get one from [DeepSeek](https://platform.deepseek.com/api_keys), then run `wvl setup`.
+> **Safe & Transparent**: The agent always asks for confirmation before writing files or executing commands — nothing happens silently. **API Key Required**: Get one from [DeepSeek](https://platform.deepseek.com/api_keys), then run `waveloom setup`.
 
 ---
 
@@ -54,13 +54,13 @@ Requires: [DeepSeek API Key](https://platform.deepseek.com/api_keys).
 Apple Silicon (M1/M2/M3):
 
 ```sh
-mkdir -p ~/.local/bin && curl -fsSL https://github.com/Menfre01/waveloom/releases/latest/download/wvl_darwin_arm64.tar.gz | tar -xz -C ~/.local/bin wvl
+mkdir -p ~/.local/bin && curl -fsSL https://github.com/Menfre01/waveloom/releases/latest/download/waveloom_darwin_arm64.tar.gz | tar -xz -C ~/.local/bin waveloom
 ```
 
 Intel Mac:
 
 ```sh
-mkdir -p ~/.local/bin && curl -fsSL https://github.com/Menfre01/waveloom/releases/latest/download/wvl_darwin_amd64.tar.gz | tar -xz -C ~/.local/bin wvl
+mkdir -p ~/.local/bin && curl -fsSL https://github.com/Menfre01/waveloom/releases/latest/download/waveloom_darwin_amd64.tar.gz | tar -xz -C ~/.local/bin waveloom
 ```
 
 **Linux**
@@ -68,21 +68,21 @@ mkdir -p ~/.local/bin && curl -fsSL https://github.com/Menfre01/waveloom/release
 x86_64:
 
 ```sh
-mkdir -p ~/.local/bin && curl -fsSL https://github.com/Menfre01/waveloom/releases/latest/download/wvl_linux_amd64.tar.gz | tar -xz -C ~/.local/bin wvl
+mkdir -p ~/.local/bin && curl -fsSL https://github.com/Menfre01/waveloom/releases/latest/download/waveloom_linux_amd64.tar.gz | tar -xz -C ~/.local/bin waveloom
 ```
 
 ARM64:
 
 ```sh
-mkdir -p ~/.local/bin && curl -fsSL https://github.com/Menfre01/waveloom/releases/latest/download/wvl_linux_arm64.tar.gz | tar -xz -C ~/.local/bin wvl
+mkdir -p ~/.local/bin && curl -fsSL https://github.com/Menfre01/waveloom/releases/latest/download/waveloom_linux_arm64.tar.gz | tar -xz -C ~/.local/bin waveloom
 ```
 
 **After install**
 
 ```sh
-wvl setup                # Configure API key (once only)
-wvl                      # Launch interactive TUI
-wvl "explain this code"  # Or run a one-shot query
+waveloom setup                # Configure API key (once only)
+waveloom                      # Launch interactive TUI
+waveloom "explain this code"  # Or run a one-shot query
 ```
 
 > Supports macOS / Linux AMD64 & ARM64. Installs to `~/.local/bin` — no sudo needed. If that directory isn't in PATH, run `export PATH="$HOME/.local/bin:$PATH"` and add to `~/.bashrc` or `~/.zshrc`. To upgrade, re-run the install command. From source: `git pull && make install`. Details in [`install.md`](./install.en.md).
@@ -96,14 +96,14 @@ Install waveloom on this machine:
 
 1. Detect OS and architecture (`uname -sm`).
 2. Download the latest binary from https://github.com/Menfre01/waveloom/releases/latest based on architecture:
-   - macOS arm64: `wvl_darwin_arm64.tar.gz`
-   - macOS amd64: `wvl_darwin_amd64.tar.gz`
-   - Linux amd64: `wvl_linux_amd64.tar.gz`
-   - Linux arm64: `wvl_linux_arm64.tar.gz`
+   - macOS arm64: `waveloom_darwin_arm64.tar.gz`
+   - macOS amd64: `waveloom_darwin_amd64.tar.gz`
+   - Linux amd64: `waveloom_linux_amd64.tar.gz`
+   - Linux arm64: `waveloom_linux_arm64.tar.gz`
 3. Extract and install to ~/.local/bin:
-   `mkdir -p ~/.local/bin && curl -fsSL <URL> | tar -xz -C ~/.local/bin wvl`
-4. Verify: `wvl --version`
-5. Remind the user to run `wvl setup` to configure their DeepSeek API Key.
+   `mkdir -p ~/.local/bin && curl -fsSL <URL> | tar -xz -C ~/.local/bin waveloom`
+4. Verify: `waveloom --version`
+5. Remind the user to run `waveloom setup` to configure their DeepSeek API Key.
 ````
 
 ---
@@ -136,12 +136,12 @@ Typical use cases: writing unit tests, refactoring a module, debugging an issue,
 ## Usage
 
 ```sh
-wvl                      # Interactive TUI mode
-wvl setup                # First-time setup wizard
-wvl "explain the design of pkg/llm/client.go"  # One-shot
-wvl ls                   # List recent sessions
-wvl --continue           # Resume the most recent session
-wvl --resume <id>        # Resume a specific session
+waveloom                      # Interactive TUI mode
+waveloom setup                # First-time setup wizard
+waveloom "explain the design of pkg/llm/client.go"  # One-shot
+waveloom ls                   # List recent sessions
+waveloom --continue           # Resume the most recent session
+waveloom --resume <id>        # Resume a specific session
 ```
 
 In interactive mode: Enter to send, Esc to interrupt, `Tab` / `Shift+Tab` to focus interactive paragraphs, Enter to expand/collapse, `Ctrl+G` to toggle theme. Type `@` for a fuzzy file picker. See [`usage.md`](./usage.en.md) for details.
@@ -240,7 +240,7 @@ Use the `tool_timeout` field to cap the maximum execution time for a single tool
 | `--max-turns N` | Maximum turns, 0 = unlimited | `0` (unlimited) |
 | `--context-limit 1M` | Context window size, supports `1M` / `200k` / raw number | `1M` |
 | `--theme auto/dark/light` | Theme, auto detects terminal background | `auto` |
-| `--verbose` | Log detailed output to `.waveloom/wvl.log` | Off |
+| `--verbose` | Log detailed output to `.waveloom/waveloom.log` | Off |
 | `--bypass-permissions` | Skip all permission checks | Off |
 | `--tool-timeout D` | Single tool execution timeout (Go Duration format, e.g. `10m` / `600s` / `0s`, 0 to disable) | `10m` |
 | `--resume ID` | Resume a specific session | — |
@@ -259,8 +259,8 @@ Use the `tool_timeout` field to cap the maximum execution time for a single tool
 | Quick file refs | Type `@path/to/file` to inline file contents, or `@` for a fuzzy file picker; `Tab` to enter subdirectories |
 | Project conventions | `AGENTS.md` is auto-loaded at startup (global → project root → CWD, layered) and injected as the first user message |
 | AGENTS.md sub-files | Use `@path/to/file` inside `AGENTS.md` to pull in other files; content is expanded and merged (multiple refs, auto dedup) |
-| Resume sessions | `wvl --continue` resumes the last session, `wvl --resume <id>` resumes a specific one, `wvl ls` lists available IDs |
-| Inspect logs | Start with `wvl --verbose`; logs at `.waveloom/wvl.log`, run `tail -f` in another terminal |
+| Resume sessions | `waveloom --continue` resumes the last session, `waveloom --resume <id>` resumes a specific one, `waveloom ls` lists available IDs |
+| Inspect logs | Start with `waveloom --verbose`; logs at `.waveloom/waveloom.log`, run `tail -f` in another terminal |
 
 ---
 
@@ -300,8 +300,8 @@ Common install, config, and usage issues — see [`faq.en.md`](./faq.en.md).
 Requires Go 1.25+.
 
 ```sh
-make build       # Build → bin/wvl
-make install     # Install → $HOME/go/bin/wvl
+make build       # Build → bin/waveloom
+make install     # Install → $HOME/go/bin/waveloom
 make test        # Test
 ```
 

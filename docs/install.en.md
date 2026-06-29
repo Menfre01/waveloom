@@ -19,30 +19,30 @@ No Go required. Grab the right binary from [Releases](https://github.com/Menfre0
 **macOS (ARM64 — Apple Silicon)**
 
 ```sh
-mkdir -p ~/.local/bin && curl -fsSL https://github.com/Menfre01/waveloom/releases/latest/download/wvl_darwin_arm64.tar.gz | tar -xz -C ~/.local/bin wvl
+mkdir -p ~/.local/bin && curl -fsSL https://github.com/Menfre01/waveloom/releases/latest/download/waveloom_darwin_arm64.tar.gz | tar -xz -C ~/.local/bin waveloom
 ```
 
 **macOS (AMD64 — Intel)**
 
 ```sh
-mkdir -p ~/.local/bin && curl -fsSL https://github.com/Menfre01/waveloom/releases/latest/download/wvl_darwin_amd64.tar.gz | tar -xz -C ~/.local/bin wvl
+mkdir -p ~/.local/bin && curl -fsSL https://github.com/Menfre01/waveloom/releases/latest/download/waveloom_darwin_amd64.tar.gz | tar -xz -C ~/.local/bin waveloom
 ```
 
 **Linux (AMD64)**
 
 ```sh
-mkdir -p ~/.local/bin && curl -fsSL https://github.com/Menfre01/waveloom/releases/latest/download/wvl_linux_amd64.tar.gz | tar -xz -C ~/.local/bin wvl
+mkdir -p ~/.local/bin && curl -fsSL https://github.com/Menfre01/waveloom/releases/latest/download/waveloom_linux_amd64.tar.gz | tar -xz -C ~/.local/bin waveloom
 ```
 
 **Linux (ARM64)**
 
 ```sh
-mkdir -p ~/.local/bin && curl -fsSL https://github.com/Menfre01/waveloom/releases/latest/download/wvl_linux_arm64.tar.gz | tar -xz -C ~/.local/bin wvl
+mkdir -p ~/.local/bin && curl -fsSL https://github.com/Menfre01/waveloom/releases/latest/download/waveloom_linux_arm64.tar.gz | tar -xz -C ~/.local/bin waveloom
 ```
 
 > macOS Gatekeeper? Allow it with:
 > ```sh
-> xattr -d com.apple.quarantine ~/.local/bin/wvl
+> xattr -d com.apple.quarantine ~/.local/bin/waveloom
 > ```
 
 ## Build from Source
@@ -52,7 +52,7 @@ Prerequisites: **Go 1.25+**.
 ```sh
 git clone https://github.com/Menfre01/waveloom.git
 cd waveloom && make install
-# wvl is installed to $HOME/go/bin — make sure it's on PATH:
+# waveloom is installed to $HOME/go/bin — make sure it's on PATH:
 export PATH=$HOME/go/bin:$PATH
 ```
 
@@ -70,24 +70,24 @@ cd waveloom && git pull && make install
 
 ```sh
 # Interactive guide (once only)
-wvl setup
+waveloom setup
 # → Choose Provider → Enter API Key → Choose Model → Done
 
 # Or skip config entirely with an env var:
-LLM_API_KEY=sk-... wvl
+LLM_API_KEY=sk-... waveloom
 ```
 
 ## Quick Start
 
 ```sh
 # 1. Install (macOS ARM64 example)
-mkdir -p ~/.local/bin && curl -fsSL https://github.com/Menfre01/waveloom/releases/latest/download/wvl_darwin_arm64.tar.gz | tar -xz -C ~/.local/bin wvl
+mkdir -p ~/.local/bin && curl -fsSL https://github.com/Menfre01/waveloom/releases/latest/download/waveloom_darwin_arm64.tar.gz | tar -xz -C ~/.local/bin waveloom
 
 # 2. First-time setup (once only)
-wvl setup
+waveloom setup
 
 # 3. Start using
-wvl "Hello, tell me about yourself"
+waveloom "Hello, tell me about yourself"
 ```
 
 > Config is saved to `~/.waveloom/settings.json`. Project-level config can be placed at `.waveloom/settings.json`, with the same fields and higher priority than the global config.
