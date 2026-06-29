@@ -235,7 +235,7 @@ func TestShellDangerousCommandDetected(t *testing.T) {
 func TestSearchFileNotDirectory(t *testing.T) {
 	dir := t.TempDir()
 	filePath := filepath.Join(dir, "file.txt")
-	os.WriteFile(filePath, []byte("content"), 0o644)
+	_ = os.WriteFile(filePath, []byte("content"), 0o644)
 
 	tool := &SearchFile{}
 	result, err := tool.Execute(context.Background(), SearchFileParams{
