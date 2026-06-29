@@ -47,8 +47,8 @@ func (c *HelpCommand) Execute(ctx context.Context, args string) (*Result, error)
 	b.WriteString("  PgUp / PgDn     上下翻页\n")
 	b.WriteString("  Esc（运行中）     中断当前 Agent 执行\n")
 	b.WriteString("\n")
-	b.WriteString("  会话结束时 session 自动保存，使用 wvl --continue 恢复最近会话。\n")
-	b.WriteString("  单次执行：wvl \"解释这段代码\"\n")
+	b.WriteString("  会话结束时 session 自动保存，使用 waveloom --continue 恢复最近会话。\n")
+	b.WriteString("  单次执行：waveloom \"解释这段代码\"\n")
 
 	return &Result{Text: strings.TrimSpace(b.String())}, nil
 }

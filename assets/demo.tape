@@ -13,7 +13,7 @@ Set Framerate 12
 Set PlaybackSpeed 1
 
 # 启动交互模式
-Type "wvl"
+Type "waveloom"
 Enter
 
 # 等待 TUI 启动

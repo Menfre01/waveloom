@@ -7,9 +7,9 @@ import (
 	"sync"
 	"time"
 
-	"waveloom/pkg/llm"
-	"waveloom/pkg/permission"
-	"waveloom/pkg/tool"
+	"github.com/Menfre01/waveloom/pkg/llm"
+	"github.com/Menfre01/waveloom/pkg/permission"
+	"github.com/Menfre01/waveloom/pkg/tool"
 )
 
 // executeToolCalls 按并发安全性分区执行工具调用。

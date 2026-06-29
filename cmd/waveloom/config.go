@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"waveloom/pkg/agentloop"
+	"github.com/Menfre01/waveloom/pkg/agentloop"
 )
 
 // CLIConfig 命令行配置。
@@ -25,6 +25,7 @@ type CLIConfig struct {
 	ResumeSessionID string // 恢复指定 session ID（空 = 新建 session）
 	ContinueSession bool   // 恢复最近一个 session
 	ListSessions    bool   // 列出最近 sessions
+	CompletionShell string // shell 补全脚本名称（bash/zsh/fish），空 = 不输出
 	BypassPerm      bool
 	Verbose      bool   // 输出 LLM / 工具执行明细到 stderr
 	SettingsPath string // settings.json 路径
@@ -92,11 +93,18 @@ func parseCLI() CLIConfig {
 	// 单次模式：命令行剩余参数即 prompt
 	args := flag.Args()
 	if len(args) > 0 {
-		// "setup" 和 "ls" 作为子命令处理，不走 oneshot
+		// "setup"、"ls"、"completion" 作为子命令处理，不走 oneshot
 		if args[0] == "setup" {
 			cfg.Setup = true
 		} else if args[0] == "ls" {
 			cfg.ListSessions = true
+		} else if args[0] == "completion" {
+			if len(args) >= 2 {
+				cfg.CompletionShell = args[1]
+			} else {
+				fmt.Fprintf(os.Stderr, "用法: waveloom completion <bash|zsh|fish>\n")
+				os.Exit(1)
+			}
 		} else {
 			cfg.OneShot = args[0]
 		}
@@ -147,12 +155,13 @@ func printHelp() {
 	fmt.Fprintf(os.Stderr, `Waveloom — Code Agent CLI
 
 用法:
-  wvl                     交互式 TUI 模式
-  wvl ls                  列出最近 sessions
-  wvl setup               首次设置向导
-  wvl "prompt"            单次执行模式
-  wvl --help              显示帮助
-  wvl --version           显示版本号
+  waveloom                     交互式 TUI 模式
+  waveloom ls                  列出最近 sessions
+  waveloom setup               首次设置向导
+  waveloom completion <shell>  输出 shell 补全脚本 (bash/zsh/fish)
+  waveloom "prompt"            单次执行模式
+  waveloom --help              显示帮助
+  waveloom --version           显示版本号
 
 选项:
   --settings PATH         配置文件路径（项目级；全局 ~/.waveloom/settings.json 自动合并）
@@ -160,7 +169,7 @@ func printHelp() {
   --model NAME            LLM 模型名称
   --theme MODE            主题模式: auto（默认）/ dark / light
                           auto 自动检测终端背景色
-  --verbose               记录 LLM 调用和工具执行日志到 .waveloom/wvl.log
+  --verbose               记录 LLM 调用和工具执行日志到 .waveloom/waveloom.log
   --max-turns N           最大 turn 数（0=无限制）
   --system-prompt TEXT    系统提示词
   --context-limit N       上下文窗口 token 上限，支持 1M / 200k / 1048576 等格式（默认: 1M）

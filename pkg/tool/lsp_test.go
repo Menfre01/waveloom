@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"waveloom/pkg/lsp"
+	"github.com/Menfre01/waveloom/pkg/lsp"
 )
 
 // ---------------------------------------------------------------------------

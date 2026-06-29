@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"waveloom/pkg/llm"
+	"github.com/Menfre01/waveloom/pkg/llm"
 )
 
 // ModelCommand 实现 /model 命令。

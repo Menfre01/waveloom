@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"waveloom/pkg/pathutil"
+	"github.com/Menfre01/waveloom/pkg/pathutil"
 )
 
 func TestResolvePathSuccess(t *testing.T) {

@@ -6,12 +6,12 @@ import (
 	"io"
 	"os"
 
-	"waveloom/pkg/agentloop"
-	ctxpkg "waveloom/pkg/context"
-	"waveloom/pkg/llm"
-	"waveloom/pkg/permission"
-	"waveloom/pkg/reference"
-	"waveloom/pkg/tool"
+	"github.com/Menfre01/waveloom/pkg/agentloop"
+	ctxpkg "github.com/Menfre01/waveloom/pkg/context"
+	"github.com/Menfre01/waveloom/pkg/llm"
+	"github.com/Menfre01/waveloom/pkg/permission"
+	"github.com/Menfre01/waveloom/pkg/reference"
+	"github.com/Menfre01/waveloom/pkg/tool"
 )
 
 // runOneShot 执行单次/管道模式（无 TUI，纯文本输出）。

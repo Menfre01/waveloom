@@ -1,8 +1,8 @@
-BINARY = wvl
+BINARY = waveloom
 MODULE = ./cmd/waveloom
 LOCALBIN ?= $(HOME)/go/bin
 VERSION ?= $(shell git describe --tags --dirty --always 2>/dev/null || echo dev)
-LDFLAGS = -s -w -X main.Version=$(VERSION) -X waveloom/pkg/context.BuildVersion=$(VERSION)
+LDFLAGS = -s -w -X main.Version=$(VERSION) -X github.com/Menfre01/waveloom/pkg/context.BuildVersion=$(VERSION)
 
 # Release matrix
 GOOSES = linux darwin
@@ -45,6 +45,12 @@ release:
 	done
 	@cd $(DIST_DIR) && shasum -a 256 *.tar.gz > checksums.txt
 	@echo "Done → $(DIST_DIR)/"
+
+.PHONY: homebrew-formula
+homebrew-formula:
+	@chmod +x .github/scripts/generate-formula.sh
+	.github/scripts/generate-formula.sh > $(DIST_DIR)/waveloom.rb
+	@echo "Formula generated → $(DIST_DIR)/waveloom.rb"
 
 .PHONY: clean
 clean:
