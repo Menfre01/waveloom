@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"waveloom/pkg/llm"
+	"github.com/Menfre01/waveloom/pkg/llm"
 )
 
 // runSetup 首次设置向导。引导用户完成必要配置，写入 ~/.waveloom/settings.json。
@@ -74,7 +74,7 @@ func runSetup() {
 
 	if apiKey == "" {
 		fmt.Println()
-		fmt.Println("  ⚠️  API Key 不能为空。你可以之后设置 LLM_API_KEY 环境变量再运行 wvl setup。")
+		fmt.Println("  ⚠️  API Key 不能为空。你可以之后设置 LLM_API_KEY 环境变量再运行 waveloom setup。")
 		os.Exit(1)
 	}
 
@@ -129,7 +129,7 @@ func runSetup() {
 	fmt.Printf("  │  Model:     %-32s │\n", model)
 	fmt.Println("  ╰─────────────────────────────────────────────╯")
 	fmt.Println()
-	fmt.Println("  现在可以运行 wvl 进入交互模式了。")
+	fmt.Println("  现在可以运行 waveloom 进入交互模式了。")
 }
 
 // needsSetup 检查是否缺少 API Key 配置。

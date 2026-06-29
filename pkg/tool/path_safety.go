@@ -129,14 +129,21 @@ func HasBinaryExtension(path string) bool {
 // ---------------------------------------------------------------------------
 
 func IsWithinDir(path, dir string) bool {
-	evalPath, err := filepath.EvalSymlinks(path)
-	if err != nil {
-		evalPath = path
+	evalPath, errPath := filepath.EvalSymlinks(path)
+	evalDir, errDir := filepath.EvalSymlinks(dir)
+
+	// If path resolution fails, also skip dir resolution to keep both
+	// in the same namespace.  This avoids false negatives when path
+	// does not exist yet but dir is rooted under a symlink (e.g. /tmp
+	// → /private/tmp on macOS), which would cause filepath.Rel to
+	// fail on the mismatched prefixes.
+	if errPath != nil {
+		evalPath = filepath.Clean(path)
+		evalDir = filepath.Clean(dir)
+	} else if errDir != nil {
+		evalDir = filepath.Clean(dir)
 	}
-	evalDir, err := filepath.EvalSymlinks(dir)
-	if err != nil {
-		evalDir = dir
-	}
+
 	rel, err := filepath.Rel(evalDir, evalPath)
 	if err != nil {
 		return false

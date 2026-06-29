@@ -6,7 +6,7 @@ package compaction
 import (
 	"context"
 
-	"waveloom/pkg/llm"
+	"github.com/Menfre01/waveloom/pkg/llm"
 )
 
 // Compactor 执行上下文压缩。Loop 在每轮 LLM 调用 + tool 执行完毕后调用。

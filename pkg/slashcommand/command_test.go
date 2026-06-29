@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"waveloom/pkg/llm"
+	"github.com/Menfre01/waveloom/pkg/llm"
 )
 
 // --- Mocks ---
@@ -279,7 +279,7 @@ func TestHelpCommandWithCommands(t *testing.T) {
 	if !strings.Contains(result.Text, "使用技巧") {
 		t.Error("help should contain usage tips")
 	}
-	if !strings.Contains(result.Text, "wvl --continue") {
+	if !strings.Contains(result.Text, "waveloom --continue") {
 		t.Error("help should mention session resume")
 	}
 }

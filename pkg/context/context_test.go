@@ -5,8 +5,8 @@ import (
 	"sync"
 	"testing"
 
-	"waveloom/pkg/compaction"
-	"waveloom/pkg/llm"
+	"github.com/Menfre01/waveloom/pkg/compaction"
+	"github.com/Menfre01/waveloom/pkg/llm"
 )
 
 func TestNew_WithSystemPrompt(t *testing.T) {

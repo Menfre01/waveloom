@@ -7,8 +7,8 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	ctxpkg "waveloom/pkg/context"
-	"waveloom/pkg/llm"
+	ctxpkg "github.com/Menfre01/waveloom/pkg/context"
+	"github.com/Menfre01/waveloom/pkg/llm"
 )
 
 // newTestCM 创建一个用于测试的 ContextManager（无 hard limit）。
