@@ -361,6 +361,8 @@ type model struct {
 	spTool         spinner.Model  // tool 执行中前缀动画
 	ctxProgress    progress.Model // ctx 窗口进度条（bubbles progress 组件）
 	input          textinput.Model
+	inputVisStart  int    // 输入框水平滚动起始偏移，镜像 textinput 内部 offset，仅当光标移出可视区时更新
+	inputLastValue string // 上一次同步时的输入值，变更时强制重置 inputVisStart
 
 	// 输入历史
 	inputHistory []string // 已提交的输入，最新在前
@@ -790,6 +792,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			newValue := current[:pos] + insert + current[pos:]
 			m.input.SetValue(newValue)
 			m.input.SetCursor(pos + len(insert))
+			m.syncInputVisibleStart()
 		}
 		return m, nil
 	}
@@ -800,6 +803,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		var cmd tea.Cmd
 		m.input, cmd = m.input.Update(msg)
 		cmds = append(cmds, cmd)
+		m.syncInputVisibleStart()
 	case overlayPermission:
 		// 权限面板活跃时，将按键传给 list 组件（↑↓ 导航）
 		var cmd tea.Cmd
@@ -2615,29 +2619,61 @@ func (m *model) scrollToBottom() {
 // 视图
 // ---------------------------------------------------------------------------
 
-// visibleOffset 计算 textinput 水平滚动后在可视范围内光标的起始偏移量。
-// textinput 内容超出可视宽度时内部维护 offset（未公开），通过从光标位置
-// 反向扫描累积显示宽度到等于输入框宽度来确定可视起点。
-func visibleOffset(value string, pos int, maxWidth int) int {
-	runes := []rune(value)
-	if pos > len(runes) {
-		pos = len(runes)
-	}
-	if maxWidth <= 0 {
-		return 0
+// syncInputVisibleStart 镜像 textinput 内部 handleOverflow 的 sticky offset 逻辑：
+// 仅当光标移出当前可视窗口时才调整 inputVisStart，否则保持不变。
+// 这确保光标在溢出文本中自由左右移动，而不是被粘滞在右边界。
+func (m *model) syncInputVisibleStart() {
+	value := m.input.Value()
+
+	// 值被外部修改（Reset / SetValue / 粘贴等）→ 重置偏移，下一次光标移动会自然调整
+	if value != m.inputLastValue {
+		m.inputVisStart = 0
+		m.inputLastValue = value
 	}
 
-	width := 0
-	offset := pos
-	for offset > 0 {
-		w := lipgloss.Width(string(runes[offset-1]))
-		if width+w > maxWidth {
+	pos := m.input.Position()
+	w := m.input.Width()
+	runes := []rune(value)
+
+	// 内容未溢出 → 起点始终为 0
+	totalWidth := 0
+	for _, r := range runes {
+		totalWidth += lipgloss.Width(string(r))
+	}
+	if w <= 0 || totalWidth <= w {
+		m.inputVisStart = 0
+		return
+	}
+
+	// 计算当前 inputVisStart 对应的可视终点（不含该位置字符）
+	visEnd := m.inputVisStart
+	visWidth := 0
+	for visEnd < len(runes) {
+		cw := lipgloss.Width(string(runes[visEnd]))
+		if visWidth+cw > w {
 			break
 		}
-		width += w
-		offset--
+		visWidth += cw
+		visEnd++
 	}
-	return offset
+
+	if pos < m.inputVisStart {
+		// 光标移到可视区左侧 → 起点跟进
+		m.inputVisStart = pos
+	} else if pos >= visEnd {
+		// 光标移到可视区右侧或超出 → 反向扫描确定新起点
+		m.inputVisStart = pos
+		visWidth = 0
+		for m.inputVisStart > 0 {
+			cw := lipgloss.Width(string(runes[m.inputVisStart-1]))
+			if visWidth+cw > w {
+				break
+			}
+			visWidth += cw
+			m.inputVisStart--
+		}
+	}
+	// 光标在可视区内 → inputVisStart 保持不变
 }
 
 func (m *model) View() tea.View {
@@ -2786,8 +2822,16 @@ func (m *model) View() tea.View {
 		if cur := m.input.Cursor(); cur != nil {
 			value := m.input.Value()
 			pos := m.input.Position()
-			offset := visibleOffset(value, pos, m.input.Width())
-			visibleBeforeCursor := string([]rune(value)[offset:pos])
+			runes := []rune(value)
+
+			// 防御：syncInputVisibleStart 在 handleKeyPress 提前 return 的路径
+			//（Enter 提交、选择器确认、历史导航等）中不会被调到，inputVisStart 可能
+			// 因之前的 Reset/SetValue 变为越界值，slice 前 clamp 到 [0, pos]。
+			if m.inputVisStart < 0 || m.inputVisStart > len(runes) || m.inputVisStart > pos {
+				m.inputVisStart = 0
+			}
+
+			visibleBeforeCursor := string(runes[m.inputVisStart:pos])
 			cursorX := lipgloss.Width(m.input.Prompt) + lipgloss.Width(visibleBeforeCursor)
 			cur.X = cursorX + 2 // styleApp 左 padding
 			if cur.X > m.width-2 {
