@@ -8,17 +8,13 @@ on:
 
 jobs:
   test:
-    name: Test (Go ${{ matrix.go-version }})
+    name: Test
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        go-version: ["1.25", "1.24"]
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v6
         with:
-          go-version: ${{ matrix.go-version }}
+          go-version: "1.25"
       - name: Build
         run: make build
       - name: Test
