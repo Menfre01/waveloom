@@ -1,0 +1,19 @@
+version: "2"
+
+linters:
+  default: none
+  enable:
+    - errcheck
+    - ineffassign
+    - staticcheck
+    - unused
+
+issues:
+  exclude:
+    - 'Error return value of `.*\.Close` is not checked'
+    - 'Error return value of `resp\.Body\.Close` is not checked'
+    - 'Error return value of `os\.(Setenv|Unsetenv)` is not checked'
+    - 'Error return value of `defer`'
+  exclude-dirs:
+    - dist
+    - bin
