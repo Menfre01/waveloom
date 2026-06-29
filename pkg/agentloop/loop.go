@@ -9,7 +9,6 @@ package agentloop
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -579,45 +578,6 @@ func truncateText(s string, maxLen int) string {
 		return s
 	}
 	return string(runes[:maxLen]) + "…"
-}
-
-// truncateArgs 截断工具调用参数字符串（JSON），保持紧凑。
-func truncateArgs(args string, maxLen int) string {
-	if args == "" || args == "{}" {
-		return ""
-	}
-	// 尝试压缩 JSON 为 key=value 摘要
-	var raw map[string]any
-	if err := json.Unmarshal([]byte(args), &raw); err == nil {
-		parts := make([]string, 0, len(raw))
-		for k, v := range raw {
-			parts = append(parts, fmt.Sprintf("%s=%v", k, v))
-		}
-		short := joinStrings(parts, ", ")
-		if len([]rune(short)) <= maxLen {
-			return short
-		}
-	}
-	return truncateText(args, maxLen)
-}
-
-// joinStrings 用 sep 连接字符串切片。
-func joinStrings(elems []string, sep string) string {
-	if len(elems) == 0 {
-		return ""
-	}
-	n := len(sep) * (len(elems) - 1)
-	for _, e := range elems {
-		n += len(e)
-	}
-	b := make([]byte, 0, n)
-	for i, e := range elems {
-		if i > 0 {
-			b = append(b, sep...)
-		}
-		b = append(b, e...)
-	}
-	return string(b)
 }
 
 // sendEvent 发送事件到 channel，若 ctx 已取消则跳过发送并返回 false。

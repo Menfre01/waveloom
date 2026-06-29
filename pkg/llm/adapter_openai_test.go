@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"strings"
 	"testing"
 )
@@ -374,11 +373,6 @@ func TestOpenAIBuildRequestToolResultMessage(t *testing.T) {
 	if toolMsg["tool_call_id"] != "call_1" {
 		t.Errorf("tool_call_id = %v, want call_1", toolMsg["tool_call_id"])
 	}
-}
-
-// parseRequestURL 解析请求的 URL 用于验证。
-func parseRequestURL(req *http.Request) *url.URL {
-	return req.URL
 }
 
 // --- ClassifyError Edge Cases ---

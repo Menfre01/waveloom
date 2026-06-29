@@ -207,7 +207,7 @@ func TestNewClientFromLLMSettings(t *testing.T) {
 }
 
 func TestNewClientFromLLMSettingsMissingAPIKey(t *testing.T) {
-	os.Unsetenv("LLM_API_KEY")
+	_ = os.Unsetenv("LLM_API_KEY")
 
 	settings := &LLMSettings{
 		Provider: "openai",
@@ -224,7 +224,7 @@ func TestNewClientFromLLMSettingsMissingAPIKey(t *testing.T) {
 }
 
 func TestNewClientFromLLMSettingsAPIKeyFallbackToEnv(t *testing.T) {
-	os.Setenv("LLM_API_KEY", "sk-from-env")
+	_ = os.Setenv("LLM_API_KEY", "sk-from-env")
 	defer os.Unsetenv("LLM_API_KEY")
 
 	// api_key 字段为空 → 回退到环境变量
@@ -245,7 +245,7 @@ func TestNewClientFromLLMSettingsAPIKeyFallbackToEnv(t *testing.T) {
 }
 
 func TestNewClientFromLLMSettingsAPIKeyFromSettingsPriority(t *testing.T) {
-	os.Setenv("LLM_API_KEY", "sk-from-env")
+	_ = os.Setenv("LLM_API_KEY", "sk-from-env")
 	defer os.Unsetenv("LLM_API_KEY")
 
 	// settings.api_key 优先于环境变量

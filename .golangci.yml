@@ -1,0 +1,28 @@
+linters:
+  enable:
+    - errcheck
+    - ineffassign
+    - staticcheck
+    - unused
+
+linters-settings:
+  errcheck:
+    check-type-assertions: false
+    check-blank: false
+    exclude-functions:
+      # Standard Close patterns — errors from Close are rarely actionable
+      - (*os.File).Close
+      - (*net/http.ResponseBody).Close
+      - io.Closer.Close
+      - (io.ReadCloser).Close
+      - (io.WriteCloser).Close
+
+issues:
+  exclude-rules:
+    # defer Close is idiomatic Go — the error cannot be handled
+    - linters: [errcheck]
+      text: "Error return value of `.*\\.Close` is not checked"
+    - linters: [errcheck]
+      text: "Error return value of `os\\.(Setenv|Unsetenv)` is not checked"
+    - linters: [errcheck]
+      text: "Error return value of `defer"

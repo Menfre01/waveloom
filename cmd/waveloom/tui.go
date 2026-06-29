@@ -619,7 +619,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		// 重建 Glamour renderer 以适配新宽度
 		if m.glamourRenderer != nil {
-			m.glamourRenderer.Close()
+			_ = m.glamourRenderer.Close()
 		}
 		glamourR, err := glamour.NewTermRenderer(
 			glamour.WithWordWrap(max(m.width-6, 20)),
@@ -3402,7 +3402,7 @@ func writeFullSettings(path string, llmSettings *llm.LLMSettings, theme string) 
 	// 读取现有完整文件
 	full := make(map[string]any)
 	if data, err := os.ReadFile(path); err == nil {
-		json.Unmarshal(data, &full)
+		_ = json.Unmarshal(data, &full)
 	}
 
 	if llmSettings != nil {
@@ -3412,7 +3412,7 @@ func writeFullSettings(path string, llmSettings *llm.LLMSettings, theme string) 
 		if err != nil {
 			return err
 		}
-		json.Unmarshal(b, &llmMap)
+		_ = json.Unmarshal(b, &llmMap)
 		full["llm"] = llmMap
 	}
 
@@ -3713,7 +3713,7 @@ func runTUI(llmClient llm.Client, registry tool.Registry, guard permission.Guard
 	if sid := m.cm.SessionID(); sid != "" {
 		// 退出时用最终统计更新 recent.json（覆盖启动时写入的初始值）
 		stats := m.cm.Stats()
-		ctxpkg.UpdateRecentSessions(sessionDir, sid, stats.MessageCount)
+		_ = ctxpkg.UpdateRecentSessions(sessionDir, sid, stats.MessageCount)
 		fmt.Fprintf(os.Stderr, "已保存 session: %s\n", sid)
 		fmt.Fprintf(os.Stderr, "  恢复对话: waveloom --resume %s\n", sid)
 	}

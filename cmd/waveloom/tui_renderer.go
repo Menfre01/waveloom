@@ -670,25 +670,6 @@ type ViewportCtx struct {
 	Focused  bool                  // 当前段落是否处于焦点态
 }
 
-// renderSingleParagraph 渲染单个段落到行数组，用于 spliceLastParagraph 增量更新。
-// 不写入段落级缓存（流式段落缓存无意义），调用方负责将结果拼接到 viewport 缓存。
-func renderSingleParagraph(p *Paragraph, ctx ViewportCtx) []string {
-	var sb strings.Builder
-	switch p.Type {
-	case paraUser:
-		renderUserPara(&sb, p, ctx)
-	case paraAssistant:
-		renderAssistantPara(&sb, p, ctx)
-	case paraThought:
-		renderThoughtPara(&sb, p, ctx)
-	case paraTool:
-		renderToolPara(&sb, p, ctx)
-	case paraSystem:
-		renderSystemPara(&sb, p, ctx)
-	}
-	return strings.Split(sb.String(), "\n")
-}
-
 // buildViewportContent 从段落列表重建 viewport 的全部文本行，同时返回每段的起始行号。
 // 对未变更（!renderDirty）且宽度匹配的段落复用缓存渲染，大幅降低流式刷新开销。
 // 返回 []string 而非单一字符串，调用方应使用 SetContentLines 避免不必要的 Split。
@@ -1736,21 +1717,6 @@ func diffLinePrefixAndStyle(kind tool.DiffLineKind) (prefix string, style lipglo
 // ---------------------------------------------------------------------------
 // 辅助：检测字符串内容类型
 // ---------------------------------------------------------------------------
-
-// isDiffContent 判断工具输出是否看起来像 unified diff。
-func isDiffContent(s string) bool {
-	return strings.Contains(s, "\n--- ") || strings.Contains(s, "\n+++ ") ||
-		strings.Contains(s, "\n@@ ") || strings.Contains(s, "\ndiff --git ")
-}
-
-// indentStr 给多行文本的每一行加上缩进前缀。
-func indentStr(s, indent string) string {
-	lines := strings.Split(s, "\n")
-	for i, line := range lines {
-		lines[i] = indent + line
-	}
-	return strings.Join(lines, "\n")
-}
 
 // collapseBlankLines 将 2 个以上连续换行压缩为最多 1 个空行（即 \n\n\n+ → \n\n）。
 // 用于归一化 Glamour 在不同 block 元素间输出的不等量空行。

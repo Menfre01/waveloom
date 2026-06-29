@@ -12,7 +12,7 @@ func TestLsSuccess(t *testing.T) {
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "file1.txt"), []byte("a"), 0o644)
 	os.WriteFile(filepath.Join(dir, "file2.go"), []byte("b"), 0o644)
-	os.Mkdir(filepath.Join(dir, "subdir"), 0o755)
+	_ = os.Mkdir(filepath.Join(dir, "subdir"), 0o755)
 
 	tool := &Ls{}
 	result, err := tool.Execute(context.Background(), LsParams{
@@ -73,7 +73,7 @@ func TestLsNotDir(t *testing.T) {
 
 func TestLsRecursiveDepth(t *testing.T) {
 	dir := t.TempDir()
-	os.MkdirAll(filepath.Join(dir, "a", "b", "c"), 0o755)
+	_ = os.MkdirAll(filepath.Join(dir, "a", "b", "c"), 0o755)
 	os.WriteFile(filepath.Join(dir, "a", "a.go"), []byte("1"), 0o644)
 	os.WriteFile(filepath.Join(dir, "a", "b", "b.go"), []byte("2"), 0o644)
 	os.WriteFile(filepath.Join(dir, "a", "b", "c", "c.go"), []byte("3"), 0o644)
@@ -160,7 +160,7 @@ func TestLsEmptyDirectory(t *testing.T) {
 
 func TestLsSkipsHiddenDirs(t *testing.T) {
 	dir := t.TempDir()
-	os.Mkdir(filepath.Join(dir, ".git"), 0o755)
+	_ = os.Mkdir(filepath.Join(dir, ".git"), 0o755)
 	os.WriteFile(filepath.Join(dir, ".git", "config"), []byte("git config"), 0o644)
 	os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main"), 0o644)
 

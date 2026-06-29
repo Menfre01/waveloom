@@ -83,11 +83,11 @@ func NewClient(command string, args []string, rootURI string) (*Client, error) {
 	// 后台读取 stdout
 	go c.readLoop()
 	// 后台消费 stderr（丢弃，避免管道阻塞）
-	go func() { io.Copy(io.Discard, stderrPipe) }()
+	go func() { _, _ = io.Copy(io.Discard, stderrPipe) }()
 
 	// initialize 握手
 	if err := c.initialize(rootURI); err != nil {
-		c.Close()
+		_ = c.Close()
 		return nil, fmt.Errorf("lsp: initialize: %w", err)
 	}
 
@@ -206,11 +206,11 @@ func (c *Client) Close() error {
 	select {
 	case <-done:
 	case <-time.After(5 * time.Second):
-		c.cmd.Process.Kill()
+		_ = c.cmd.Process.Kill()
 	}
 
-	c.stdin.Close()
-	c.stdout.Close()
+	_ = c.stdin.Close()
+	_ = c.stdout.Close()
 	return nil
 }
 
