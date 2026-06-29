@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"strings"
 
-	"waveloom/pkg/llm"
-	"waveloom/pkg/tool"
+	"github.com/Menfre01/waveloom/pkg/llm"
+	"github.com/Menfre01/waveloom/pkg/tool"
 
 	"charm.land/bubbles/v2/spinner"
 	"charm.land/glamour/v2"

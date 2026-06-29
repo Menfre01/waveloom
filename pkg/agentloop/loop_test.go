@@ -10,10 +10,10 @@ import (
 	"testing"
 	"time"
 
-	"waveloom/pkg/compaction"
-	"waveloom/pkg/llm"
-	"waveloom/pkg/permission"
-	"waveloom/pkg/tool"
+	"github.com/Menfre01/waveloom/pkg/compaction"
+	"github.com/Menfre01/waveloom/pkg/llm"
+	"github.com/Menfre01/waveloom/pkg/permission"
+	"github.com/Menfre01/waveloom/pkg/tool"
 )
 
 // ============================================================================

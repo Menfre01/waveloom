@@ -9,7 +9,7 @@ import (
 	"sort"
 	"strings"
 
-	"waveloom/pkg/permission"
+	"github.com/Menfre01/waveloom/pkg/permission"
 )
 
 // ---------------------------------------------------------------------------

@@ -272,7 +272,7 @@ func (l *Loop) Run(ctx context.Context, messages []Message) <-chan TurnEvent
 - 暗色/亮色/自动主题切换（`Ctrl+G`）
 - IME 输入支持（CJK 等宽渲染）
 - `--continue` / `--resume` session 恢复
-- `wvl ls` 列出最近 sessions
+- `waveloom ls` 列出最近 sessions
 
 详见 `specs/tui.md`。
 
@@ -289,7 +289,7 @@ func (l *Loop) Run(ctx context.Context, messages []Message) <-chan TurnEvent
 **当前状态：**
 
 ```
-cmd/waveloom/main.go      — 单次 CLI 入口 "wvl 'prompt'"
+cmd/waveloom/main.go      — 单次 CLI 入口 "waveloom 'prompt'"
 cmd/waveloom/runner.go    — one-shot 执行，消费 TurnEvent channel
 cmd/waveloom/config.go    — CLI 参数解析
 ```
@@ -356,7 +356,7 @@ cmd/waveloom/config.go    — CLI 参数解析
 - AGENTS.md 层级发现与加载（home → CWD → 项目根，根→叶序拼接）
 - Session 持久化（JSON 落盘到 `~/.waveloom/<project>/sessions/`）
 - `--resume <id>` 恢复指定 session，`--continue` 恢复最近 session
-- `wvl ls` 列出最近 sessions
+- `waveloom ls` 列出最近 sessions
 - Transcript 回放（以文本格式记录对话，含行级时间戳）
 
 **参考：**

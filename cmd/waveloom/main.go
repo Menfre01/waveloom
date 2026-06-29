@@ -9,16 +9,16 @@ import (
 	"path/filepath"
 	"runtime"
 
-	"waveloom/pkg/agentloop"
-	"waveloom/pkg/compaction"
-	ctxpkg "waveloom/pkg/context"
-	"waveloom/pkg/environment"
-	"waveloom/pkg/llm"
-	"waveloom/pkg/lsp"
-	"waveloom/pkg/memory"
-	"waveloom/pkg/permission"
-	"waveloom/pkg/reference"
-	"waveloom/pkg/tool"
+	"github.com/Menfre01/waveloom/pkg/agentloop"
+	"github.com/Menfre01/waveloom/pkg/compaction"
+	ctxpkg "github.com/Menfre01/waveloom/pkg/context"
+	"github.com/Menfre01/waveloom/pkg/environment"
+	"github.com/Menfre01/waveloom/pkg/llm"
+	"github.com/Menfre01/waveloom/pkg/lsp"
+	"github.com/Menfre01/waveloom/pkg/memory"
+	"github.com/Menfre01/waveloom/pkg/permission"
+	"github.com/Menfre01/waveloom/pkg/reference"
+	"github.com/Menfre01/waveloom/pkg/tool"
 )
 
 func main() {
@@ -39,6 +39,12 @@ func main() {
 	// 1.5 设置模式 — 首次配置向导
 	if cfg.Setup {
 		runSetup()
+		return
+	}
+
+	// 1.6 shell 补全 — 无需任何初始化
+	if cfg.CompletionShell != "" {
+		runCompletion(cfg.CompletionShell)
 		return
 	}
 
@@ -65,7 +71,7 @@ func main() {
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		if needsSetup() {
-			fmt.Fprintf(os.Stderr, "\n  请运行 wvl setup 完成首次配置，或设置 LLM_API_KEY 环境变量。\n")
+			fmt.Fprintf(os.Stderr, "\n  请运行 waveloom setup 完成首次配置，或设置 LLM_API_KEY 环境变量。\n")
 		}
 		os.Exit(1)
 	}
@@ -280,7 +286,7 @@ func createLLMClient(globalPath, projectPath, cliModel string) (llm.Client, llm.
 			return nil, llm.ClientConfig{}, fmt.Errorf("failed to create default settings: %w", err)
 		}
 		fmt.Fprintf(os.Stderr, "📝 已生成默认配置文件: %s\n", projectPath)
-		fmt.Fprintf(os.Stderr, "   💡 运行 wvl setup 完成首次配置，或设置 LLM_API_KEY 环境变量\n")
+		fmt.Fprintf(os.Stderr, "   💡 运行 waveloom setup 完成首次配置，或设置 LLM_API_KEY 环境变量\n")
 		var loadErr error
 		projectSettings, loadErr = llm.LoadSettingsIfExists(projectPath)
 		if loadErr != nil {
@@ -300,7 +306,7 @@ func createLLMClient(globalPath, projectPath, cliModel string) (llm.Client, llm.
 }
 
 // setupVerboseLog 在 .waveloom/ 下创建滚动日志。
-// --verbose 时：wvl.log → wvl.log.1（丢弃更旧的），创建新 wvl.log。
+// --verbose 时：waveloom.log → waveloom.log.1（丢弃更旧的），创建新 waveloom.log。
 // 非 verbose 时返回 nil, nil。
 func setupVerboseLog(verbose bool) (io.WriteCloser, error) {
 	if !verbose {
@@ -312,10 +318,10 @@ func setupVerboseLog(verbose bool) (io.WriteCloser, error) {
 		return nil, fmt.Errorf("create log dir: %w", err)
 	}
 
-	logPath := filepath.Join(logDir, "wvl.log")
+	logPath := filepath.Join(logDir, "waveloom.log")
 	oldPath := logPath + ".1"
 
-	// 轮换: wvl.log → wvl.log.1
+	// 轮换: waveloom.log → waveloom.log.1
 	if _, err := os.Stat(logPath); err == nil {
 		os.Remove(oldPath)                     // 丢弃更旧
 		os.Rename(logPath, oldPath)           // 当前 → .1
@@ -380,7 +386,7 @@ func probeEnvironment(cwd, globalPath, projectPath string) string {
 	return environment.FormatEnvironmentSection(results, osName, shellInfo, overrides)
 }
 
-// listSessions 列出最近的 sessions（wvl ls）。
+// listSessions 列出最近的 sessions（waveloom ls）。
 func listSessions(projectPath, globalPath string) {
 	sessionOverride := ctxpkg.LoadSessionDir(projectPath)
 	if sessionOverride == "" {
@@ -412,6 +418,6 @@ func listSessions(projectPath, globalPath string) {
 		fmt.Printf("  %s  (%d messages, %s)\n", e.ID, e.MessageCount, e.UpdatedAt)
 	}
 	fmt.Println()
-	fmt.Println("恢复: wvl --resume <id>  或  wvl --continue")
+	fmt.Println("恢复: waveloom --resume <id>  或  waveloom --continue")
 }
 
