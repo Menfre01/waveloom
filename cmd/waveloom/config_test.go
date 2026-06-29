@@ -174,10 +174,10 @@ func TestSetupVerboseLog_Enabled(t *testing.T) {
 		t.Error("waveloom.log not created")
 	}
 
-	_ = os.Remove(logPath)
-	os.Remove(logPath + ".1")
+	_ = _ = os.Remove(logPath)
+	_ = os.Remove(logPath + ".1")
 	if !origExists {
-		os.Remove(dir)
+		_ = os.Remove(dir)
 	}
 }
 

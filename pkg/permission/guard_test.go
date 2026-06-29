@@ -724,7 +724,7 @@ func TestPersistRuleToConfig_Duplicate(t *testing.T) {
 	path := filepath.Join(dir, "settings.json")
 
 	// 写入相同规则两次
-	PersistRuleToConfig(path, Rule{Behavior: RuleAllow, ToolName: "read_file"})
+	_ = PersistRuleToConfig(path, Rule{Behavior: RuleAllow, ToolName: "read_file"})
 	err := PersistRuleToConfig(path, Rule{Behavior: RuleAllow, ToolName: "read_file"})
 	if err != nil {
 		t.Fatalf("duplicate PersistRuleToConfig should be silent no-op: %v", err)
