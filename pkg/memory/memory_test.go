@@ -302,7 +302,7 @@ func TestLoad_ReadError(t *testing.T) {
 	if err := os.Chmod(f, 0o000); err != nil {
 		t.Fatal(err)
 	}
-	defer os.Chmod(f, 0o644)
+	defer func() { _ = os.Chmod(f, 0o644) }()
 
 	loader := NewLoader(dir, "")
 	text, warnings, err := loader.Load()

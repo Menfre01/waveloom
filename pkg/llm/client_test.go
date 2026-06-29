@@ -236,7 +236,7 @@ func TestSendMessageNilContext(t *testing.T) {
 	// Go 不允许传递 nil context 给 WithContext，但 SendMessage 内部检查
 	// 实际上 Go 的 context 不能为 nil 传给 req.WithContext
 	// 我们通过传入 nil context 来测试
-	resp, err := c.SendMessage(nil, []Message{{Role: RoleUser, Content: "test"}}, nil)
+	resp, err := c.SendMessage(context.TODO(), []Message{{Role: RoleUser, Content: "test"}}, nil)
 	if err == nil {
 		t.Error("expected error for nil context")
 		_ = resp
@@ -2201,7 +2201,7 @@ func TestSendMessageStreamPreFlightNilContext(t *testing.T) {
 	c := newClientWithAdapter(ClientConfig{APIKey: "sk-test"}, adapter).(*client)
 
 	// 传入 nil context
-	_, err := c.SendMessageStream(nil, []Message{
+	_, err := c.SendMessageStream(context.TODO(), []Message{
 		{Role: RoleUser, Content: "Hi"},
 	}, nil)
 	if err == nil {
@@ -2376,7 +2376,7 @@ func TestGetBalanceNilContext(t *testing.T) {
 	cfg := ClientConfig{APIKey: "sk-test", Model: "gpt-4o"}
 	c := newClientWithAdapter(cfg, newOpenAIAdapter(cfg))
 
-	_, err := c.GetBalance(nil)
+	_, err := c.GetBalance(context.TODO())
 	if err == nil {
 		t.Fatal("expected error for nil context")
 	}

@@ -436,13 +436,13 @@ func (l *Loop) checkPermission(ctx context.Context, tc llm.ToolCall, results map
 			switch choice.RememberScope {
 			case permission.ScopeConfig:
 				// 三写：RuleEngine（当前 session）+ SessionMemory（当前 session）+ 落盘 settings.json（跨 session）
-				l.config.Guard.AddRule(rule, permission.ScopeConfig)
+				_ = l.config.Guard.AddRule(rule, permission.ScopeConfig)
 				if choice.Decision == permission.DecisionAllow {
 					l.config.Guard.SessionAllow(tc.Name, rawArgs)
 				} else {
 					l.config.Guard.SessionDeny(tc.Name, rawArgs)
 				}
-				l.config.Guard.PersistRule(rule)
+				_ = l.config.Guard.PersistRule(rule)
 			case permission.ScopeSession:
 				// 仅 SessionMemory（当前 session），不落盘
 				if choice.Decision == permission.DecisionAllow {

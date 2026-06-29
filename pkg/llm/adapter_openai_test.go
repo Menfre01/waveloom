@@ -746,4 +746,4 @@ func TestOpenAIListModelsParseError(t *testing.T) {
 // httpStatusError 用于测试 ClassifyError，在 client.go 中定义。
 // 这里仅验证接口，具体实现在 client.go 中。
 // 如果 httpStatusError 还未定义，先跳过需要它的测试。
-var _ = errors.New("placeholder")
+var errPlaceholder = errors.New("placeholder")
