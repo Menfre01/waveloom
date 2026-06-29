@@ -2257,16 +2257,22 @@ func isExpandable(p *Paragraph, contentWidth int) bool {
 		// 或为结构化摘要（grep/ls/search_file/lsp_*）或通过预览行已传达完整信息。
 		switch p.ToolName {
 		case "shell", "web_fetch":
-			if p.State != stateDone && p.State != stateCollapsed && p.State != stateExpanded {
+			if p.State != stateDone && p.State != stateCollapsed && p.State != stateExpanded && p.State != stateError {
 				return false
 			}
 			// 折叠预览至多展示 maxPreviewWrapped 行，若全部输出未溢出则无需展开。
 			// 阈值与 renderToolPreview 中 writeWrappedPreview 的截断条件保持一致。
-			if p.State == stateDone || p.State == stateCollapsed {
+			if p.State == stateDone || p.State == stateCollapsed || p.State == stateError {
 				body := stripToolStatusHeader(p.ToolResult)
+				if body == "" && p.ToolError != "" {
+					body = p.ToolError
+				}
 				if p.ToolName == "web_fetch" {
 					// web_fetch 预览跳过空行，计数时也跳过
 					body = parseWebFetchBody(p.ToolResult)
+					if body == "" && p.ToolError != "" {
+						body = p.ToolError
+					}
 					return countWrappedLinesNonEmpty(body, contentWidth-2) >= maxPreviewWrapped
 				}
 				return countWrappedLines(body, contentWidth-2) >= maxPreviewWrapped
@@ -2402,8 +2408,14 @@ func (m *model) toggleParagraphFocus() {
 		switch p.State {
 		case stateDone, stateCollapsed:
 			p.State = stateExpanded
+		case stateError:
+			p.State = stateExpanded
 		case stateExpanded:
-			p.State = stateDone
+			if p.ToolError != "" || p.ToolDenied {
+				p.State = stateError
+			} else {
+				p.State = stateDone
+			}
 		}
 	}
 	p.renderDirty = true

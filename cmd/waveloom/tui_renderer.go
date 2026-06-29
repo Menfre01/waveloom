@@ -212,7 +212,13 @@ func toolSuffix(p *Paragraph) string {
 	}
 
 	if p.ToolError != "" {
-		return fmt.Sprintf("(%s)", p.ToolError)
+		// 仅取错误首行作为摘要后缀，避免多行错误（如 not_dir 的目录列表）
+		// 撑破单行摘要布局。完整错误在预览区展示。
+		firstLine := p.ToolError
+		if idx := strings.IndexByte(firstLine, '\n'); idx >= 0 {
+			firstLine = firstLine[:idx]
+		}
+		return fmt.Sprintf("(%s)", firstLine)
 	}
 	if p.ToolDenied {
 		return "(permission denied)"
@@ -1219,7 +1225,7 @@ func renderToolPara(sb *strings.Builder, p *Paragraph, ctx ViewportCtx) {
 
 	// 完成/错误态的折叠预览
 	if p.State == stateDone || p.State == stateError {
-		if p.State == stateCollapsed || p.State == stateDone {
+		if p.State == stateCollapsed || p.State == stateDone || p.State == stateError {
 			if p.DiffHunks != nil {
 				renderDiffPreview(sb, p.DiffHunks, textWidth, indentStr)
 			} else {
@@ -1243,8 +1249,16 @@ func renderToolPara(sb *strings.Builder, p *Paragraph, ctx ViewportCtx) {
 const maxPreviewWrapped = 5
 
 // renderToolPreview 渲染工具输出的默认预览行（折叠态）。indent 由上层传入以对齐摘要行前缀。
+//
+// 错误态（ToolResult 为空但 ToolError 非空）：统一以红色 "│ " 前缀渲染错误信息，
+// 与 shell 错误输出布局对齐，保证所有工具的失败信息在 TUI 中一致可见。
 func renderToolPreview(sb *strings.Builder, p *Paragraph, textWidth int, indent string) {
 	result := stripToolStatusHeader(p.ToolResult)
+	isErrorOnly := false
+	if result == "" && p.ToolError != "" {
+		result = p.ToolError
+		isErrorOnly = true
+	}
 	if result == "" {
 		return
 	}
@@ -1273,6 +1287,24 @@ func renderToolPreview(sb *strings.Builder, p *Paragraph, textWidth int, indent 
 	wrapped := 0
 	truncated := false
 
+	// ── 错误统一预览：所有工具的错误信息（ToolResult 为空、ToolError 非空）
+	//    均以红色样式渲染，与 shell stderr 输出对齐。
+	if isErrorOnly {
+		lines := strings.Split(result, "\n")
+		for _, line := range lines {
+			if writeWrappedPreview(line, styleToolPrefixErr, &wrapped) {
+				truncated = true
+				break
+			}
+		}
+		if truncated {
+			sb.WriteString(indent)
+			sb.WriteString(styleToolPreviewHint.Render("··· (truncated)"))
+			sb.WriteString("\n")
+		}
+		return
+	}
+
 	switch p.ToolName {
 	case "write_file", "edit_file":
 		lines := strings.Split(result, "\n")
@@ -1290,16 +1322,19 @@ func renderToolPreview(sb *strings.Builder, p *Paragraph, textWidth int, indent 
 		}
 
 	case "shell":
+		lineStyle := styleToolPreview
+		if p.ToolError != "" {
+			lineStyle = styleToolPrefixErr
+		}
 		lines := strings.Split(result, "\n")
 		for _, line := range lines {
 			line = strings.TrimLeft(line, " ")
-			if writeWrappedPreview(line, styleToolPreview, &wrapped) {
+			if writeWrappedPreview(line, lineStyle, &wrapped) {
 				truncated = true
 				break
 			}
 		}
 
-	// 仅 read_file, grep, search_file, ls — 不显示预览
 	case "lsp_diagnostic":
 		lines := strings.Split(result, "\n")
 		start := 1
@@ -1354,7 +1389,7 @@ func renderToolPreview(sb *strings.Builder, p *Paragraph, textWidth int, indent 
 			}
 		}
 	default:
-		// 无预览
+		// 无预览（read_file, grep, search_file, ls 等成功态不展示预览）
 	}
 
 	if truncated {
@@ -1376,12 +1411,17 @@ func renderToolPreview(sb *strings.Builder, p *Paragraph, textWidth int, indent 
 const maxExpandedWrapped = 2000
 
 // renderToolFullOutput 渲染工具的完整输出（展开态）。indent 由上层传入以对齐摘要行前缀。
+// 当 ToolResult 为空但 ToolError 非空时（如 stateError → stateExpanded 展开），
+// 回退到渲染错误信息。
 func renderToolFullOutput(sb *strings.Builder, p *Paragraph, textWidth int, indent string) {
 	if textWidth < 1 {
 		textWidth = 1
 	}
 
 	result := stripToolStatusHeader(p.ToolResult)
+	if result == "" && p.ToolError != "" {
+		result = p.ToolError
+	}
 	if result == "" {
 		return
 	}
