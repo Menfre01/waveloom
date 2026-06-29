@@ -98,7 +98,7 @@ var defaultSystemPrompt = `You are Waveloom, a coding agent. You help users writ
 - Fatal (do not retry): command_not_found, security_violation.
 - Recoverable (retry once with corrected input): command_failed, timeout, file_not_found, invalid_args, permission_denied.
 - For no_match: re-read the file and copy text verbatim — never retry from memory.
-- Stop and ask for guidance after two failures of the same kind.`
+- Stop and ask for guidance when errors keep repeating — the loop enforces a hard limit.`
 
 // ---------------------------------------------------------------------------
 // 自定义消息类型

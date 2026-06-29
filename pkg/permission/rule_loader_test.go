@@ -91,7 +91,7 @@ func TestLoadRulesFromConfigFile(t *testing.T) {
 		},
 	}
 	data, _ := json.Marshal(config)
-	os.WriteFile(configPath, data, 0o644)
+	_ = os.WriteFile(configPath, data, 0o644)
 
 	entries, err := LoadRulesFromConfigFile(configPath)
 	if err != nil {
@@ -127,7 +127,7 @@ func TestLoadRulesFromConfigFile_NotExist(t *testing.T) {
 func TestLoadRulesFromConfigFile_InvalidJSON(t *testing.T) {
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "settings.json")
-	os.WriteFile(configPath, []byte("invalid json"), 0o644)
+	_ = os.WriteFile(configPath, []byte("invalid json"), 0o644)
 
 	_, err := LoadRulesFromConfigFile(configPath)
 	if err == nil {
@@ -145,7 +145,7 @@ func TestLoadRulesFromConfigFile_NoPermissionsBlock(t *testing.T) {
 		},
 	}
 	data, _ := json.Marshal(config)
-	os.WriteFile(configPath, data, 0o644)
+	_ = os.WriteFile(configPath, data, 0o644)
 
 	entries, err := LoadRulesFromConfigFile(configPath)
 	if err != nil {
