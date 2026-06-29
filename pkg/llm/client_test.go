@@ -236,7 +236,7 @@ func TestSendMessageNilContext(t *testing.T) {
 	// Go 不允许传递 nil context 给 WithContext，但 SendMessage 内部检查
 	// 实际上 Go 的 context 不能为 nil 传给 req.WithContext
 	// 我们通过传入 nil context 来测试
-	resp, err := c.SendMessage(nil, []Message{{Role: RoleUser, Content: "test"}}, nil)
+	resp, err := c.SendMessage(nil, []Message{{Role: RoleUser, Content: "test"}}, nil) //nolint:staticcheck
 	if err == nil {
 		t.Error("expected error for nil context")
 		_ = resp
@@ -2201,7 +2201,7 @@ func TestSendMessageStreamPreFlightNilContext(t *testing.T) {
 	c := newClientWithAdapter(ClientConfig{APIKey: "sk-test"}, adapter).(*client)
 
 	// 传入 nil context
-	_, err := c.SendMessageStream(nil, []Message{
+	_, err := c.SendMessageStream(nil, []Message{ //nolint:staticcheck
 		{Role: RoleUser, Content: "Hi"},
 	}, nil)
 	if err == nil {
@@ -2325,7 +2325,7 @@ func TestGetBalanceDeepSeekHTTP(t *testing.T) {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{"is_available":true,"balance_infos":[{"currency":"CNY","total_balance":"100.00","granted_balance":"50.00","topped_up_balance":"50.00"}]}`))
+		_, _ = w.Write([]byte(`{"is_available":true,"balance_infos":[{"currency":"CNY","total_balance":"100.00","granted_balance":"50.00","topped_up_balance":"50.00"}]}`))
 	}))
 	defer server.Close()
 
@@ -2376,7 +2376,7 @@ func TestGetBalanceNilContext(t *testing.T) {
 	cfg := ClientConfig{APIKey: "sk-test", Model: "gpt-4o"}
 	c := newClientWithAdapter(cfg, newOpenAIAdapter(cfg))
 
-	_, err := c.GetBalance(nil)
+	_, err := c.GetBalance(nil) //nolint:staticcheck
 	if err == nil {
 		t.Fatal("expected error for nil context")
 	}
@@ -2416,7 +2416,7 @@ func TestListModelsDeepSeek(t *testing.T) {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{"object":"list","data":[
+		_, _ = w.Write([]byte(`{"object":"list","data":[
 			{"id":"deepseek-v4-pro","object":"model","owned_by":"deepseek"}
 		]}`))
 	}))
@@ -2450,7 +2450,7 @@ func TestListModelsOpenAI(t *testing.T) {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{"object":"list","data":[
+		_, _ = w.Write([]byte(`{"object":"list","data":[
 			{"id":"gpt-4o","object":"model","owned_by":"openai"}
 		]}`))
 	}))
@@ -2480,7 +2480,7 @@ func TestListModelsNilContext(t *testing.T) {
 	cfg := ClientConfig{APIKey: "sk-test", Model: "gpt-4o"}
 	c := newClientWithAdapter(cfg, newOpenAIAdapter(cfg))
 
-	_, err := c.ListModels(nil)
+	_, err := c.ListModels(nil) //nolint:staticcheck
 	if err == nil {
 		t.Fatal("expected error for nil context")
 	}

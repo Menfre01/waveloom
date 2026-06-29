@@ -57,7 +57,7 @@ func TestTranscriptMaxLines(t *testing.T) {
 
 	// Write more than maxTranscriptLines
 	for i := 0; i < maxTranscriptLines+100; i++ {
-		AppendTranscriptLine(path, TranscriptLine{Type: "system", State: "done", Text: "msg"})
+		_ = AppendTranscriptLine(path, TranscriptLine{Type: "system", State: "done", Text: "msg"})
 	}
 
 	loaded, err := LoadTranscriptLines(path)
@@ -110,8 +110,8 @@ func TestRecentUpdateAndLoad(t *testing.T) {
 func TestRecentDeduplication(t *testing.T) {
 	dir := t.TempDir()
 
-	UpdateRecentSessions(dir, "session-1", 5)
-	UpdateRecentSessions(dir, "session-1", 8) // 更新同一个
+	_ = UpdateRecentSessions(dir, "session-1", 5)
+	_ = UpdateRecentSessions(dir, "session-1", 8) // 更新同一个
 
 	entries, _ := LoadRecentSessions(dir)
 	if len(entries) != 1 {
@@ -127,7 +127,7 @@ func TestRecentMaxEntries(t *testing.T) {
 
 	for i := 0; i < maxRecentSessions+5; i++ {
 		id := "session-" + string(rune('a'+i%26))
-		UpdateRecentSessions(dir, id, 0)
+		_ = UpdateRecentSessions(dir, id, 0)
 	}
 
 	entries, _ := LoadRecentSessions(dir)
@@ -155,7 +155,7 @@ func TestContinueSessionID(t *testing.T) {
 		t.Fatalf("expected empty, got %q (err=%v)", id, err)
 	}
 
-	UpdateRecentSessions(dir, "last-session", 3)
+	_ = UpdateRecentSessions(dir, "last-session", 3)
 	id, err = ContinueSessionID(dir)
 	if err != nil || id != "last-session" {
 		t.Fatalf("expected 'last-session', got %q (err=%v)", id, err)

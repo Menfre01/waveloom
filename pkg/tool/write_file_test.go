@@ -168,7 +168,7 @@ func TestWriteFileCreateShowsCreated(t *testing.T) {
 func TestWriteFileUpdateShowsUpdated(t *testing.T) {
 	dir := t.TempDir()
 	filePath := filepath.Join(dir, "update.txt")
-	os.WriteFile(filePath, []byte("old line1\nold line2\n"), 0o644)
+	_ = os.WriteFile(filePath, []byte("old line1\nold line2\n"), 0o644)
 
 	tool := &WriteFile{}
 	result, err := tool.Execute(context.Background(), WriteFileParams{
@@ -196,7 +196,7 @@ func TestWriteFileUpdateShowsUpdated(t *testing.T) {
 func TestWriteFileNoChangeWarning(t *testing.T) {
 	dir := t.TempDir()
 	filePath := filepath.Join(dir, "same.txt")
-	os.WriteFile(filePath, []byte("same content\n"), 0o644)
+	_ = os.WriteFile(filePath, []byte("same content\n"), 0o644)
 
 	tool := &WriteFile{}
 	result, err := tool.Execute(context.Background(), WriteFileParams{

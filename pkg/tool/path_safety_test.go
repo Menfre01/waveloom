@@ -34,7 +34,7 @@ func TestResolvePathCleans(t *testing.T) {
 func TestIsWithinDirInside(t *testing.T) {
 	dir := t.TempDir()
 	subDir := filepath.Join(dir, "sub")
-	os.Mkdir(subDir, 0o755)
+	_ = os.Mkdir(subDir, 0o755)
 
 	if !IsWithinDir(subDir, dir) {
 		t.Errorf("IsWithinDir(%q, %q) = false, want true", subDir, dir)
@@ -52,8 +52,8 @@ func TestIsWithinDirOutside(t *testing.T) {
 
 func TestIsWithinDirDifferentBranch(t *testing.T) {
 	dir := t.TempDir()
-	os.Mkdir(filepath.Join(dir, "a"), 0o755)
-	os.Mkdir(filepath.Join(dir, "b"), 0o755)
+	_ = os.Mkdir(filepath.Join(dir, "a"), 0o755)
+	_ = os.Mkdir(filepath.Join(dir, "b"), 0o755)
 
 	if IsWithinDir(filepath.Join(dir, "a"), filepath.Join(dir, "b")) {
 		t.Errorf("IsWithinDir(sibling) = true, want false")
@@ -82,7 +82,7 @@ func TestIsWithinDirSymlinkFallback(t *testing.T) {
 func TestIsBinaryFileText(t *testing.T) {
 	dir := t.TempDir()
 	f := filepath.Join(dir, "text.txt")
-	os.WriteFile(f, []byte("hello world\n"), 0o644)
+	_ = os.WriteFile(f, []byte("hello world\n"), 0o644)
 
 	isBin, err := IsBinaryFile(f)
 	if err != nil {
@@ -104,7 +104,7 @@ func TestIsBinaryFileBinary(t *testing.T) {
 			data[i] = 'A'
 		}
 	}
-	os.WriteFile(f, data, 0o644)
+	_ = os.WriteFile(f, data, 0o644)
 
 	isBin, err := IsBinaryFile(f)
 	if err != nil {
@@ -118,7 +118,7 @@ func TestIsBinaryFileBinary(t *testing.T) {
 func TestIsBinaryFileEmpty(t *testing.T) {
 	dir := t.TempDir()
 	f := filepath.Join(dir, "empty.txt") // 用 .txt 绕过扩展名检查，走内容检测
-	os.WriteFile(f, []byte{}, 0o644)
+	_ = os.WriteFile(f, []byte{}, 0o644)
 
 	isBin, err := IsBinaryFile(f)
 	if err != nil {

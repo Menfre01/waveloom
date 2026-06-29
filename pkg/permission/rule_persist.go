@@ -76,7 +76,7 @@ func PersistRuleToConfig(configPath string, rule Rule) error {
 		return fmt.Errorf("write config tmp: %w", err)
 	}
 	if err := os.Rename(tmpPath, configPath); err != nil {
-		os.Remove(tmpPath)
+		_ = os.Remove(tmpPath)
 		return fmt.Errorf("rename config file: %w", err)
 	}
 	return nil

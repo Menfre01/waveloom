@@ -9,8 +9,8 @@ import (
 
 func TestGrepSuccess(t *testing.T) {
 	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "a.go"), []byte("package main\n\nfunc hello() {}\n"), 0o644)
-	os.WriteFile(filepath.Join(dir, "b.go"), []byte("package main\n\nfunc world() {}\n"), 0o644)
+	_ = os.WriteFile(filepath.Join(dir, "a.go"), []byte("package main\n\nfunc hello() {}\n"), 0o644)
+	_ = os.WriteFile(filepath.Join(dir, "b.go"), []byte("package main\n\nfunc world() {}\n"), 0o644)
 
 	tool := &Grep{}
 	result, err := tool.Execute(context.Background(), GrepParams{
@@ -33,7 +33,7 @@ func TestGrepSuccess(t *testing.T) {
 
 func TestGrepNoResults(t *testing.T) {
 	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "a.go"), []byte("package main\n"), 0o644)
+	_ = os.WriteFile(filepath.Join(dir, "a.go"), []byte("package main\n"), 0o644)
 
 	tool := &Grep{}
 	result, err := tool.Execute(context.Background(), GrepParams{
@@ -70,8 +70,8 @@ func TestGrepInvalidRegex(t *testing.T) {
 
 func TestGrepWithInclude(t *testing.T) {
 	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "a.go"), []byte("package main\nconst x = 1\n"), 0o644)
-	os.WriteFile(filepath.Join(dir, "b.txt"), []byte("const y = 2\n"), 0o644)
+	_ = os.WriteFile(filepath.Join(dir, "a.go"), []byte("package main\nconst x = 1\n"), 0o644)
+	_ = os.WriteFile(filepath.Join(dir, "b.txt"), []byte("const y = 2\n"), 0o644)
 
 	tool := &Grep{}
 	result, err := tool.Execute(context.Background(), GrepParams{
@@ -95,7 +95,7 @@ func TestGrepWithInclude(t *testing.T) {
 
 func TestGrepCaseInsensitive(t *testing.T) {
 	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "a.go"), []byte("package main\nFUNC Hello() {}\n"), 0o644)
+	_ = os.WriteFile(filepath.Join(dir, "a.go"), []byte("package main\nFUNC Hello() {}\n"), 0o644)
 
 	tool := &Grep{}
 	result, err := tool.Execute(context.Background(), GrepParams{
@@ -117,7 +117,7 @@ func TestGrepCaseInsensitive(t *testing.T) {
 func TestGrepWithContextLines(t *testing.T) {
 	dir := t.TempDir()
 	content := "line1\nline2\nMATCH line3\nline4\nline5\n"
-	os.WriteFile(filepath.Join(dir, "a.go"), []byte(content), 0o644)
+	_ = os.WriteFile(filepath.Join(dir, "a.go"), []byte(content), 0o644)
 
 	tool := &Grep{}
 	result, err := tool.Execute(context.Background(), GrepParams{
@@ -151,8 +151,8 @@ func TestGrepSkipsBinary(t *testing.T) {
 			binaryContent[i] = 'A'
 		}
 	}
-	os.WriteFile(filepath.Join(dir, "binary.bin"), binaryContent, 0o644)
-	os.WriteFile(filepath.Join(dir, "text.go"), []byte("package main\nconst found = true\n"), 0o644)
+	_ = os.WriteFile(filepath.Join(dir, "binary.bin"), binaryContent, 0o644)
+	_ = os.WriteFile(filepath.Join(dir, "text.go"), []byte("package main\nconst found = true\n"), 0o644)
 
 	tool := &Grep{}
 	result, err := tool.Execute(context.Background(), GrepParams{

@@ -10,10 +10,10 @@ import (
 func TestSearchFileSuccess(t *testing.T) {
 	dir := t.TempDir()
 	// 创建测试文件结构
-	os.MkdirAll(filepath.Join(dir, "pkg"), 0o755)
-	os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main"), 0o644)
-	os.WriteFile(filepath.Join(dir, "pkg", "util.go"), []byte("package pkg"), 0o644)
-	os.WriteFile(filepath.Join(dir, "readme.md"), []byte("# readme"), 0o644)
+	_ = os.MkdirAll(filepath.Join(dir, "pkg"), 0o755)
+	_ = os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main"), 0o644)
+	_ = os.WriteFile(filepath.Join(dir, "pkg", "util.go"), []byte("package pkg"), 0o644)
+	_ = os.WriteFile(filepath.Join(dir, "readme.md"), []byte("# readme"), 0o644)
 
 	tool := &SearchFile{}
 	result, err := tool.Execute(context.Background(), SearchFileParams{
@@ -39,7 +39,7 @@ func TestSearchFileSuccess(t *testing.T) {
 
 func TestSearchFileNoResults(t *testing.T) {
 	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "readme.md"), []byte("# readme"), 0o644)
+	_ = os.WriteFile(filepath.Join(dir, "readme.md"), []byte("# readme"), 0o644)
 
 	tool := &SearchFile{}
 	result, err := tool.Execute(context.Background(), SearchFileParams{
@@ -63,10 +63,10 @@ func TestSearchFileNoResults(t *testing.T) {
 
 func TestSearchFileRecursive(t *testing.T) {
 	dir := t.TempDir()
-	os.MkdirAll(filepath.Join(dir, "sub", "deep"), 0o755)
-	os.WriteFile(filepath.Join(dir, "test.go"), []byte("package main"), 0o644)
-	os.WriteFile(filepath.Join(dir, "sub", "sub.go"), []byte("package sub"), 0o644)
-	os.WriteFile(filepath.Join(dir, "sub", "deep", "deep.go"), []byte("package deep"), 0o644)
+	_ = os.MkdirAll(filepath.Join(dir, "sub", "deep"), 0o755)
+	_ = os.WriteFile(filepath.Join(dir, "test.go"), []byte("package main"), 0o644)
+	_ = os.WriteFile(filepath.Join(dir, "sub", "sub.go"), []byte("package sub"), 0o644)
+	_ = os.WriteFile(filepath.Join(dir, "sub", "deep", "deep.go"), []byte("package deep"), 0o644)
 
 	tool := &SearchFile{}
 	result, err := tool.Execute(context.Background(), SearchFileParams{
@@ -86,11 +86,11 @@ func TestSearchFileRecursive(t *testing.T) {
 
 func TestSearchFileSkipsHiddenDirs(t *testing.T) {
 	dir := t.TempDir()
-	os.MkdirAll(filepath.Join(dir, ".git", "objects"), 0o755)
-	os.MkdirAll(filepath.Join(dir, "node_modules", "pkg"), 0o755)
-	os.WriteFile(filepath.Join(dir, ".git", "objects", "file.go"), []byte("package git"), 0o644)
-	os.WriteFile(filepath.Join(dir, "node_modules", "pkg", "mod.go"), []byte("package mod"), 0o644)
-	os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main"), 0o644)
+	_ = os.MkdirAll(filepath.Join(dir, ".git", "objects"), 0o755)
+	_ = os.MkdirAll(filepath.Join(dir, "node_modules", "pkg"), 0o755)
+	_ = os.WriteFile(filepath.Join(dir, ".git", "objects", "file.go"), []byte("package git"), 0o644)
+	_ = os.WriteFile(filepath.Join(dir, "node_modules", "pkg", "mod.go"), []byte("package mod"), 0o644)
+	_ = os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main"), 0o644)
 
 	tool := &SearchFile{}
 	result, err := tool.Execute(context.Background(), SearchFileParams{

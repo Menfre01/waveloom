@@ -11,10 +11,10 @@ func testWorkingDir(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
 	// 创建一些测试文件/目录
-	os.MkdirAll(filepath.Join(dir, ".git", "refs"), 0o755)
-	os.MkdirAll(filepath.Join(dir, "src", "pkg"), 0o755)
-	os.WriteFile(filepath.Join(dir, "src", "main.go"), []byte("package main"), 0o644)
-	os.WriteFile(filepath.Join(dir, ".gitconfig"), []byte("[user]"), 0o644)
+	_ = os.MkdirAll(filepath.Join(dir, ".git", "refs"), 0o755)
+	_ = os.MkdirAll(filepath.Join(dir, "src", "pkg"), 0o755)
+	_ = os.WriteFile(filepath.Join(dir, "src", "main.go"), []byte("package main"), 0o644)
+	_ = os.WriteFile(filepath.Join(dir, ".gitconfig"), []byte("[user]"), 0o644)
 	return dir
 }
 
@@ -80,7 +80,7 @@ func TestPathSafetyCheck_DangerousPath(t *testing.T) {
 func TestPathSafetyCheck_MultipleWorkingDirs(t *testing.T) {
 	dir1 := t.TempDir()
 	dir2 := t.TempDir()
-	os.WriteFile(filepath.Join(dir2, "test.txt"), []byte("hello"), 0o644)
+	_ = os.WriteFile(filepath.Join(dir2, "test.txt"), []byte("hello"), 0o644)
 
 	// 文件在 dir2 内，workingDirs 包含 dir1 和 dir2
 	got := PathSafetyCheck(filepath.Join(dir2, "test.txt"), []string{dir1, dir2})
@@ -243,7 +243,7 @@ func TestEvalExistingPrefix_PartialExists(t *testing.T) {
 
 func TestEvalExistingPrefix_AllExists(t *testing.T) {
 	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "real.txt"), []byte("hello"), 0o644)
+	_ = os.WriteFile(filepath.Join(dir, "real.txt"), []byte("hello"), 0o644)
 	expected := filepath.Join(dir, "real.txt")
 
 	result := evalExistingPrefix(expected)

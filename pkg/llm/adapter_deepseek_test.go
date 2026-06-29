@@ -828,7 +828,7 @@ func TestDeepSeekGetBalanceParseError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`not json`))
+		_, _ = w.Write([]byte(`not json`))
 	}))
 	defer server.Close()
 
@@ -856,7 +856,7 @@ func TestDeepSeekListModelsSuccess(t *testing.T) {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{"object":"list","data":[
+		_, _ = w.Write([]byte(`{"object":"list","data":[
 			{"id":"deepseek-v4-pro","object":"model","owned_by":"deepseek"},
 			{"id":"deepseek-v4-flash","object":"model","owned_by":"deepseek"}
 		]}`))
@@ -907,7 +907,7 @@ func TestDeepSeekListModelsParseError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`not json`))
+		_, _ = w.Write([]byte(`not json`))
 	}))
 	defer server.Close()
 

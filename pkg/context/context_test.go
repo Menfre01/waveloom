@@ -46,7 +46,7 @@ func TestPrepareRun_ReturnsCopy(t *testing.T) {
 
 	// 修改返回值不应影响 ContextManager 内部状态
 	msgs1[0].Content = "modified"
-	msgs1 = append(msgs1, llm.Message{Role: llm.RoleAssistant, Content: "fake"})
+	_ = append(msgs1, llm.Message{Role: llm.RoleAssistant, Content: "fake"})
 
 	// 第二次 PrepareRun 应基于原始内部状态
 	msgs2 := cm.PrepareRun("turn 2")

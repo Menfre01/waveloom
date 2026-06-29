@@ -101,7 +101,7 @@ func SaveSessionToFile(path string, messages []llm.Message, stats Stats, compDat
 		return fmt.Errorf("write session tmp: %w", err)
 	}
 	if err := os.Rename(tmpPath, path); err != nil {
-		os.Remove(tmpPath)
+		_ = os.Remove(tmpPath)
 		return fmt.Errorf("rename session file: %w", err)
 	}
 	return nil
@@ -161,7 +161,8 @@ func loadSessionFile(path string) (*sessionFile, error) {
 
 // RemoveSessionFile 删除 session 文件。
 func RemoveSessionFile(path string) error {
-	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+	err := os.Remove(path)
+	if err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("remove session file: %w", err)
 	}
 	return nil

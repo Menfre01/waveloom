@@ -84,12 +84,12 @@ func TestRegistryMatchNoMatch(t *testing.T) {
 		t.Errorf("Match(/unknown) = (%q, %q), want nil", cmd.Name(), args)
 	}
 
-	cmd, args = r.Match("/")
+	cmd, _ = r.Match("/")
 	if cmd != nil {
 		t.Errorf("Match(/) = %v, want nil", cmd)
 	}
 
-	cmd, args = r.Match("not a slash")
+	cmd, _ = r.Match("not a slash")
 	if cmd != nil {
 		t.Errorf("Match(not a slash) = %v, want nil", cmd)
 	}

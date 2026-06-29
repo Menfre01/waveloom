@@ -168,7 +168,7 @@ func TestResolvePathCleans(t *testing.T) {
 
 func TestResolvePathWithDir(t *testing.T) {
 	tmp := t.TempDir()
-	os.MkdirAll(filepath.Join(tmp, "src"), 0o755)
+	_ = os.MkdirAll(filepath.Join(tmp, "src"), 0o755)
 
 	t.Run("relative path", func(t *testing.T) {
 		got, err := ResolvePathWithDir("src", tmp)

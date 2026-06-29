@@ -235,7 +235,7 @@ func TestShellDangerousCommandDetected(t *testing.T) {
 func TestSearchFileNotDirectory(t *testing.T) {
 	dir := t.TempDir()
 	filePath := filepath.Join(dir, "file.txt")
-	os.WriteFile(filePath, []byte("content"), 0o644)
+	_ = os.WriteFile(filePath, []byte("content"), 0o644)
 
 	tool := &SearchFile{}
 	result, err := tool.Execute(context.Background(), SearchFileParams{
@@ -257,8 +257,8 @@ func TestSearchFileNotDirectory(t *testing.T) {
 func TestWriteFileReadOnlyDir(t *testing.T) {
 	dir := t.TempDir()
 	roDir := filepath.Join(dir, "readonly")
-	os.Mkdir(roDir, 0o444) // 只读目录
-	defer os.Chmod(roDir, 0o755)
+	_ = os.Mkdir(roDir, 0o444) // 只读目录
+	defer func() { _ = os.Chmod(roDir, 0o755) }()
 
 	tool := &WriteFile{}
 	result, err := tool.Execute(context.Background(), WriteFileParams{
