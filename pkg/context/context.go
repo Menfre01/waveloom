@@ -118,9 +118,7 @@ func (cm *ContextManager) CompleteRun(messages []llm.Message, promptTokens, cont
 	cm.mu.Lock()
 
 	// 验证和存储消息（压缩已在 Loop 内完成）
-	validated, ok := llm.ValidateMessages(messages)
-	if !ok {
-	}
+	validated, _ := llm.ValidateMessages(messages)
 	cm.messages = validated
 
 	cm.stats.TotalTurns++
@@ -193,7 +191,7 @@ func (cm *ContextManager) Save() {
 	cm.mu.RUnlock()
 
 	if path != "" {
-		SaveSessionToFile(path, messages, stats, &compaction)
+		_ = SaveSessionToFile(path, messages, stats, &compaction)
 	}
 }
 
@@ -206,7 +204,7 @@ func (cm *ContextManager) saveToPath(path string) {
 	compaction := cm.compactionData()
 	cm.mu.RUnlock()
 
-	SaveSessionToFile(path, messages, stats, &compaction)
+	_ = SaveSessionToFile(path, messages, stats, &compaction)
 }
 
 // compactionData 返回压缩系统的完整状态快照（调用方需持有锁）。
@@ -251,7 +249,7 @@ func (cm *ContextManager) RemoveSession() {
 	cm.mu.Unlock()
 
 	if path != "" {
-		RemoveSessionFile(path)
+		_ = RemoveSessionFile(path)
 	}
 }
 

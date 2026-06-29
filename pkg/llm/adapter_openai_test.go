@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"strings"
 	"testing"
 )
@@ -376,11 +375,6 @@ func TestOpenAIBuildRequestToolResultMessage(t *testing.T) {
 	}
 }
 
-// parseRequestURL 解析请求的 URL 用于验证。
-func parseRequestURL(req *http.Request) *url.URL {
-	return req.URL
-}
-
 // --- ClassifyError Edge Cases ---
 
 func TestOpenAIClassifyErrorDefaultNon5xx(t *testing.T) {
@@ -683,7 +677,7 @@ func TestOpenAIListModelsSuccess(t *testing.T) {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{"object":"list","data":[
+		_, _ = w.Write([]byte(`{"object":"list","data":[
 			{"id":"gpt-4o","object":"model","owned_by":"openai"},
 			{"id":"gpt-4o-mini","object":"model","owned_by":"openai"}
 		]}`))
@@ -731,7 +725,7 @@ func TestOpenAIListModelsParseError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`not json`))
+		_, _ = w.Write([]byte(`not json`))
 	}))
 	defer server.Close()
 
