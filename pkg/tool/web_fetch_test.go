@@ -153,7 +153,7 @@ func TestWebFetchTimeout(t *testing.T) {
 func TestWebFetchBinaryContentType(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "image/png")
-		w.Write([]byte{0x89, 0x50, 0x4E, 0x47})
+		_, _ = w.Write([]byte{0x89, 0x50, 0x4E, 0x47})
 	}))
 	defer server.Close()
 

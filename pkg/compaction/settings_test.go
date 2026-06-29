@@ -174,7 +174,7 @@ func TestLoadCompactionSettings_FileNotFound(t *testing.T) {
 func TestLoadCompactionSettings_NoCompactionSection(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "settings.json")
-	os.WriteFile(path, []byte(`{"llm": {"api_key": "sk-test"}}`), 0o644)
+	_ = os.WriteFile(path, []byte(`{"llm": {"api_key": "sk-test"}}`), 0o644)
 
 	if cs := LoadCompactionSettings(path); cs != nil {
 		t.Fatal("expected nil when compaction section is missing")
@@ -191,7 +191,7 @@ func TestLoadCompactionSettings_Valid(t *testing.T) {
 			"context_limit_tokens": 500000
 		}
 	}`
-	os.WriteFile(path, []byte(content), 0o644)
+	_ = os.WriteFile(path, []byte(content), 0o644)
 
 	cs := LoadCompactionSettings(path)
 	if cs == nil {
@@ -214,7 +214,7 @@ func TestLoadCompactionSettings_Valid(t *testing.T) {
 func TestLoadCompactionSettings_InvalidJSON(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "settings.json")
-	os.WriteFile(path, []byte(`not json`), 0o644)
+	_ = os.WriteFile(path, []byte(`not json`), 0o644)
 
 	if cs := LoadCompactionSettings(path); cs != nil {
 		t.Fatal("expected nil for invalid JSON")
