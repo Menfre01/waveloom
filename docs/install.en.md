@@ -14,6 +14,16 @@ Requires: [DeepSeek API Key](https://platform.deepseek.com/api_keys).
 
 No Go required. Grab the right binary from [Releases](https://github.com/Menfre01/waveloom/releases/latest).
 
+### Homebrew
+
+```sh
+brew install Menfre01/tap/waveloom
+```
+
+> If prompted "untrusted tap", run `brew trust menfre01/tap` and retry.
+
+### Manual Download
+
 > Installs to `~/.local/bin` — no sudo needed. If the directory isn't in PATH, run `export PATH="$HOME/.local/bin:$PATH"` and add to `~/.bashrc` or `~/.zshrc`.
 
 **macOS (ARM64 — Apple Silicon)**

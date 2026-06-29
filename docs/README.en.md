@@ -77,12 +77,31 @@ ARM64:
 mkdir -p ~/.local/bin && curl -fsSL https://github.com/Menfre01/waveloom/releases/latest/download/waveloom_linux_arm64.tar.gz | tar -xz -C ~/.local/bin waveloom
 ```
 
+**Homebrew (macOS / Linux)**
+
+```sh
+brew install Menfre01/tap/waveloom
+```
+
+> If prompted "untrusted tap", run `brew trust menfre01/tap` and retry.
+
 **After install**
 
 ```sh
 waveloom setup                # Configure API key (once only)
 waveloom                      # Launch interactive TUI
 waveloom "explain this code"  # Or run a one-shot query
+```
+
+**Shell completions**
+
+```sh
+# bash
+source <(waveloom completion bash)
+# zsh
+source <(waveloom completion zsh)
+# fish
+waveloom completion fish > ~/.config/fish/completions/waveloom.fish
 ```
 
 > Supports macOS / Linux AMD64 & ARM64. Installs to `~/.local/bin` — no sudo needed. If that directory isn't in PATH, run `export PATH="$HOME/.local/bin:$PATH"` and add to `~/.bashrc` or `~/.zshrc`. To upgrade, re-run the install command. From source: `git pull && make install`. Details in [`install.md`](./install.en.md).

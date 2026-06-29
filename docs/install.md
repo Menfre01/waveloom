@@ -14,6 +14,16 @@
 
 无需 Go 环境，下载即用。前往 [Releases](https://github.com/Menfre01/waveloom/releases/latest) 下载对应平台的 `waveloom`。
 
+### Homebrew
+
+```sh
+brew install Menfre01/tap/waveloom
+```
+
+> 若提示 "untrusted tap"，执行 `brew trust menfre01/tap` 后重试。
+
+### 手动下载
+
 > 安装到 `~/.local/bin`，无需 sudo。若该路径不在 PATH 中，执行 `export PATH="$HOME/.local/bin:$PATH"` 并写入 `~/.bashrc` 或 `~/.zshrc`。
 
 **macOS (ARM64 — Apple Silicon)**
