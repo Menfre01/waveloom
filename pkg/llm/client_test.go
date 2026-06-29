@@ -2325,7 +2325,7 @@ func TestGetBalanceDeepSeekHTTP(t *testing.T) {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{"is_available":true,"balance_infos":[{"currency":"CNY","total_balance":"100.00","granted_balance":"50.00","topped_up_balance":"50.00"}]}`))
+		_, _ = w.Write([]byte(`{"is_available":true,"balance_infos":[{"currency":"CNY","total_balance":"100.00","granted_balance":"50.00","topped_up_balance":"50.00"}]}`))
 	}))
 	defer server.Close()
 
