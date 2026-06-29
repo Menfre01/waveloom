@@ -8,7 +8,7 @@ package slashcommand
 import (
 	"context"
 
-	"waveloom/pkg/llm"
+	"github.com/Menfre01/waveloom/pkg/llm"
 )
 
 // ── Command 接口 ──

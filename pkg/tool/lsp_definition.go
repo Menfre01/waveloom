@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"strings"
 
-	"waveloom/pkg/lsp"
+	"github.com/Menfre01/waveloom/pkg/lsp"
 )
 
 var lspDefinitionSchema = json.RawMessage(`{

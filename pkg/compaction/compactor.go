@@ -4,7 +4,7 @@ import (
 	"context"
 	"sync"
 
-	"waveloom/pkg/llm"
+	"github.com/Menfre01/waveloom/pkg/llm"
 )
 
 // TieredCompactor 执行四级水位线上下文压缩，实现 Compactor 接口。

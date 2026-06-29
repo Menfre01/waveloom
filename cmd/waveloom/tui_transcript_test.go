@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	ctxpkg "waveloom/pkg/context"
+	ctxpkg "github.com/Menfre01/waveloom/pkg/context"
 )
 
 func TestParagraphToTranscriptLineRoundTrip(t *testing.T) {

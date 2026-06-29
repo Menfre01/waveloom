@@ -46,14 +46,14 @@ import (
 	glamourstyles "charm.land/glamour/v2/styles"
 	"charm.land/lipgloss/v2"
 
-	"waveloom/pkg/agentloop"
-	ctxpkg "waveloom/pkg/context"
-	"waveloom/pkg/llm"
-	"waveloom/pkg/pathutil"
-	"waveloom/pkg/permission"
-	"waveloom/pkg/reference"
-	"waveloom/pkg/slashcommand"
-	"waveloom/pkg/tool"
+	"github.com/Menfre01/waveloom/pkg/agentloop"
+	ctxpkg "github.com/Menfre01/waveloom/pkg/context"
+	"github.com/Menfre01/waveloom/pkg/llm"
+	"github.com/Menfre01/waveloom/pkg/pathutil"
+	"github.com/Menfre01/waveloom/pkg/permission"
+	"github.com/Menfre01/waveloom/pkg/reference"
+	"github.com/Menfre01/waveloom/pkg/slashcommand"
+	"github.com/Menfre01/waveloom/pkg/tool"
 )
 
 // ---------------------------------------------------------------------------
@@ -3715,6 +3715,6 @@ func runTUI(llmClient llm.Client, registry tool.Registry, guard permission.Guard
 		stats := m.cm.Stats()
 		ctxpkg.UpdateRecentSessions(sessionDir, sid, stats.MessageCount)
 		fmt.Fprintf(os.Stderr, "已保存 session: %s\n", sid)
-		fmt.Fprintf(os.Stderr, "  恢复对话: wvl --resume %s\n", sid)
+		fmt.Fprintf(os.Stderr, "  恢复对话: waveloom --resume %s\n", sid)
 	}
 }

@@ -11,7 +11,7 @@
 ## Interactive Mode
 
 ```sh
-wvl
+waveloom
 ```
 
 Once in the TUI, type like a chat and press Enter to send. The agent autonomously invokes tools to read files, search code, edit, and run tests.
@@ -50,17 +50,17 @@ The **footer status bar** shows: current model, context usage (progress bar), ca
 ## One-shot
 
 ```sh
-wvl "explain the design of pkg/llm/client.go"
-wvl --model deepseek-v4-pro "write unit tests for UserService"
-echo "review the code under pkg/llm/" | wvl
+waveloom "explain the design of pkg/llm/client.go"
+waveloom --model deepseek-v4-pro "write unit tests for UserService"
+echo "review the code under pkg/llm/" | waveloom
 ```
 
 ## Session Management
 
 ```sh
-wvl ls                     # List recent sessions
-wvl --continue             # Resume the most recent session
-wvl --resume <session-id>  # Resume a specific session
+waveloom ls                     # List recent sessions
+waveloom --continue             # Resume the most recent session
+waveloom --resume <session-id>  # Resume a specific session
 ```
 
 ## @ File References

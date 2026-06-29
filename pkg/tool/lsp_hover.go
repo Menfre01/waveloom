@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"waveloom/pkg/lsp"
+	"github.com/Menfre01/waveloom/pkg/lsp"
 )
 
 var lspHoverSchema = json.RawMessage(`{

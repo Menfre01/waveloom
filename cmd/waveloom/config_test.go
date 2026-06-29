@@ -16,7 +16,7 @@ func resetCommandLine() {
 // parseCLIForTest 在每次调用前重置 flag.CommandLine 并设置 os.Args。
 func parseCLIForTest(args []string) CLIConfig {
 	resetCommandLine()
-	os.Args = append([]string{"wvl"}, args...)
+	os.Args = append([]string{"waveloom"}, args...)
 	return parseCLI()
 }
 
@@ -169,9 +169,9 @@ func TestSetupVerboseLog_Enabled(t *testing.T) {
 	}
 	wc.Close()
 
-	logPath := filepath.Join(".waveloom", "wvl.log")
+	logPath := filepath.Join(".waveloom", "waveloom.log")
 	if _, err := os.Stat(logPath); os.IsNotExist(err) {
-		t.Error("wvl.log not created")
+		t.Error("waveloom.log not created")
 	}
 
 	os.Remove(logPath)
@@ -257,6 +257,27 @@ func TestParseCLI_ListSessionsSubcommand(t *testing.T) {
 	cfg := parseCLIForTest([]string{"ls"})
 	if !cfg.ListSessions {
 		t.Error("expected ListSessions=true for 'ls' subcommand")
+	}
+}
+
+func TestParseCLI_CompletionBash(t *testing.T) {
+	cfg := parseCLIForTest([]string{"completion", "bash"})
+	if cfg.CompletionShell != "bash" {
+		t.Errorf("expected CompletionShell='bash', got %q", cfg.CompletionShell)
+	}
+}
+
+func TestParseCLI_CompletionZsh(t *testing.T) {
+	cfg := parseCLIForTest([]string{"completion", "zsh"})
+	if cfg.CompletionShell != "zsh" {
+		t.Errorf("expected CompletionShell='zsh', got %q", cfg.CompletionShell)
+	}
+}
+
+func TestParseCLI_CompletionFish(t *testing.T) {
+	cfg := parseCLIForTest([]string{"completion", "fish"})
+	if cfg.CompletionShell != "fish" {
+		t.Errorf("expected CompletionShell='fish', got %q", cfg.CompletionShell)
 	}
 }
 

@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"waveloom/pkg/llm"
+	"github.com/Menfre01/waveloom/pkg/llm"
 )
 
 // ---------------------------------------------------------------------------

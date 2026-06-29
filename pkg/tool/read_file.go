@@ -10,7 +10,7 @@ import (
 	"os"
 	"strings"
 
-	"waveloom/pkg/pathutil"
+	"github.com/Menfre01/waveloom/pkg/pathutil"
 )
 
 // ---------------------------------------------------------------------------

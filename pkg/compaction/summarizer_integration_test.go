@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"waveloom/pkg/llm"
+	"github.com/Menfre01/waveloom/pkg/llm"
 )
 
 // loadSummaryClient 从项目级 settings.json 创建 JSON 模式的摘要 Client。

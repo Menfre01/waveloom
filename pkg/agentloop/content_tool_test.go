@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"waveloom/pkg/llm"
+	"github.com/Menfre01/waveloom/pkg/llm"
 )
 
 func TestRunContentAndToolCallsTogether(t *testing.T) {

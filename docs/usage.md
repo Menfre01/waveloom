@@ -11,7 +11,7 @@
 ## 交互模式
 
 ```sh
-wvl
+waveloom
 ```
 
 进入 TUI 后，像聊天一样打字，Enter 发送。Agent 会自主调用工具来读文件、搜代码、编辑、跑测试。
@@ -50,17 +50,17 @@ wvl
 ## 单次执行
 
 ```sh
-wvl "解释 pkg/llm/client.go 的设计"
-wvl --model deepseek-v4-pro "给 UserService 写单元测试"
-echo "review pkg/llm/ 下的代码" | wvl
+waveloom "解释 pkg/llm/client.go 的设计"
+waveloom --model deepseek-v4-pro "给 UserService 写单元测试"
+echo "review pkg/llm/ 下的代码" | waveloom
 ```
 
 ## 会话管理
 
 ```sh
-wvl ls                     # 列出最近会话
-wvl --continue             # 恢复最近一次会话
-wvl --resume <session-id>  # 恢复指定会话
+waveloom ls                     # 列出最近会话
+waveloom --continue             # 恢复最近一次会话
+waveloom --resume <session-id>  # 恢复指定会话
 ```
 
 ## @ 文件引用
