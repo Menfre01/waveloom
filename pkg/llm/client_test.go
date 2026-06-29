@@ -2480,7 +2480,7 @@ func TestListModelsNilContext(t *testing.T) {
 	cfg := ClientConfig{APIKey: "sk-test", Model: "gpt-4o"}
 	c := newClientWithAdapter(cfg, newOpenAIAdapter(cfg))
 
-	_, err := c.ListModels(nil)
+	_, err := c.ListModels(context.TODO())
 	if err == nil {
 		t.Fatal("expected error for nil context")
 	}

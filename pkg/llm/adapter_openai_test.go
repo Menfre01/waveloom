@@ -725,7 +725,7 @@ func TestOpenAIListModelsParseError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`not json`))
+		_, _ = w.Write([]byte(`not json`))
 	}))
 	defer server.Close()
 
@@ -746,4 +746,4 @@ func TestOpenAIListModelsParseError(t *testing.T) {
 // httpStatusError 用于测试 ClassifyError，在 client.go 中定义。
 // 这里仅验证接口，具体实现在 client.go 中。
 // 如果 httpStatusError 还未定义，先跳过需要它的测试。
-var errPlaceholder = errors.New("placeholder")
+var _ = errors.New("placeholder")

@@ -57,7 +57,7 @@ func TestTranscriptMaxLines(t *testing.T) {
 
 	// Write more than maxTranscriptLines
 	for i := 0; i < maxTranscriptLines+100; i++ {
-		AppendTranscriptLine(path, TranscriptLine{Type: "system", State: "done", Text: "msg"})
+		_ = AppendTranscriptLine(path, TranscriptLine{Type: "system", State: "done", Text: "msg"})
 	}
 
 	loaded, err := LoadTranscriptLines(path)
@@ -110,8 +110,8 @@ func TestRecentUpdateAndLoad(t *testing.T) {
 func TestRecentDeduplication(t *testing.T) {
 	dir := t.TempDir()
 
-	UpdateRecentSessions(dir, "session-1", 5)
-	UpdateRecentSessions(dir, "session-1", 8) // 更新同一个
+	_ = UpdateRecentSessions(dir, "session-1", 5)
+	_ = UpdateRecentSessions(dir, "session-1", 8) // 更新同一个
 
 	entries, _ := LoadRecentSessions(dir)
 	if len(entries) != 1 {
