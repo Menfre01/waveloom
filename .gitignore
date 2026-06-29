@@ -17,8 +17,8 @@ dist/
 /waveloom
 
 # Waveloom verbose 日志
-.waveloom/wvl.log
-.waveloom/wvl.log.*
+.waveloom/waveloom.log
+.waveloom/waveloom.log.*
 .waveloom/
 
 # IDE

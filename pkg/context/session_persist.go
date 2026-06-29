@@ -9,8 +9,8 @@ import (
 	"path/filepath"
 	"time"
 
-	"waveloom/pkg/compaction"
-	"waveloom/pkg/llm"
+	"github.com/Menfre01/waveloom/pkg/compaction"
+	"github.com/Menfre01/waveloom/pkg/llm"
 )
 
 // BuildVersion 由 main() 在启动时注入（来自 ldflags 或 fallback）。

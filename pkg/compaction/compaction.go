@@ -22,7 +22,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"waveloom/pkg/llm"
+	"github.com/Menfre01/waveloom/pkg/llm"
 )
 
 // ---------------------------------------------------------------------------

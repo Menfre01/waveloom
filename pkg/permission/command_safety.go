@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"waveloom/pkg/pathutil"
+	"github.com/Menfre01/waveloom/pkg/pathutil"
 )
 
 // ---------------------------------------------------------------------------
