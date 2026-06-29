@@ -99,9 +99,9 @@ func TestEditFileSearchHint(t *testing.T) {
 	if result.Error.Kind != ErrKindNoMatch {
 		t.Errorf("Error.Kind = %q, want %q", result.Error.Kind, ErrKindNoMatch)
 	}
-	// 应包含搜索线索 — "fmt.Println" 是共同关键字
-	if !contains(result.Error.Message, "Similar line") {
-		t.Errorf("Error should include similar line hint: %s", result.Error.Message)
+	// 应包含搜索线索 — 输出编辑距离最接近的行
+	if !contains(result.Error.Message, "closest matches") {
+		t.Errorf("Error should include closest matches hint: %s", result.Error.Message)
 	}
 }
 
