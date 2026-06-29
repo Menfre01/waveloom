@@ -83,6 +83,8 @@ mkdir -p ~/.local/bin && curl -fsSL https://github.com/Menfre01/waveloom/release
 brew install Menfre01/tap/waveloom
 ```
 
+> 若提示 "untrusted tap"，执行 `brew trust menfre01/tap` 后重试。
+
 **安装后**
 
 ```sh
