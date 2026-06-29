@@ -677,7 +677,7 @@ func TestOpenAIListModelsSuccess(t *testing.T) {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{"object":"list","data":[
+		_, _ = w.Write([]byte(`{"object":"list","data":[
 			{"id":"gpt-4o","object":"model","owned_by":"openai"},
 			{"id":"gpt-4o-mini","object":"model","owned_by":"openai"}
 		]}`))

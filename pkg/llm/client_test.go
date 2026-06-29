@@ -2416,7 +2416,7 @@ func TestListModelsDeepSeek(t *testing.T) {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{"object":"list","data":[
+		_, _ = w.Write([]byte(`{"object":"list","data":[
 			{"id":"deepseek-v4-pro","object":"model","owned_by":"deepseek"}
 		]}`))
 	}))
@@ -2450,7 +2450,7 @@ func TestListModelsOpenAI(t *testing.T) {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{"object":"list","data":[
+		_, _ = w.Write([]byte(`{"object":"list","data":[
 			{"id":"gpt-4o","object":"model","owned_by":"openai"}
 		]}`))
 	}))

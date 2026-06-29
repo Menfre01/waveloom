@@ -82,7 +82,7 @@ func TestIsWithinDirSymlinkFallback(t *testing.T) {
 func TestIsBinaryFileText(t *testing.T) {
 	dir := t.TempDir()
 	f := filepath.Join(dir, "text.txt")
-	os.WriteFile(f, []byte("hello world\n"), 0o644)
+	_ = os.WriteFile(f, []byte("hello world\n"), 0o644)
 
 	isBin, err := IsBinaryFile(f)
 	if err != nil {
@@ -104,7 +104,7 @@ func TestIsBinaryFileBinary(t *testing.T) {
 			data[i] = 'A'
 		}
 	}
-	os.WriteFile(f, data, 0o644)
+	_ = os.WriteFile(f, data, 0o644)
 
 	isBin, err := IsBinaryFile(f)
 	if err != nil {
@@ -118,7 +118,7 @@ func TestIsBinaryFileBinary(t *testing.T) {
 func TestIsBinaryFileEmpty(t *testing.T) {
 	dir := t.TempDir()
 	f := filepath.Join(dir, "empty.txt") // 用 .txt 绕过扩展名检查，走内容检测
-	os.WriteFile(f, []byte{}, 0o644)
+	_ = os.WriteFile(f, []byte{}, 0o644)
 
 	isBin, err := IsBinaryFile(f)
 	if err != nil {
