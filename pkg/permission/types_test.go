@@ -200,9 +200,7 @@ func (m *mockGuard) SessionMemoryLen() int                       { return 0 }
 
 func TestGuardInterfaceTypeAssertion(t *testing.T) {
 	var g Guard = &mockGuard{}
-	if g == nil {
-		t.Error("mockGuard is nil")
-	}
+	_ = g // 编译期验证 mockGuard 实现 Guard 接口
 }
 
 // mockUserResponder 用于验证 UserResponder 接口类型断言。
@@ -219,7 +217,5 @@ func (m *mockUserResponder) AskUser(ctx context.Context, toolName string, input 
 
 func TestUserResponderInterfaceTypeAssertion(t *testing.T) {
 	var u UserResponder = &mockUserResponder{}
-	if u == nil {
-		t.Error("mockUserResponder is nil")
-	}
+	_ = u // 编译期验证 mockUserResponder 实现 UserResponder 接口
 }

@@ -73,6 +73,12 @@ func (t *EditFile) Execute(ctx context.Context, p EditFileParams) (*ToolResult, 
 	count := strings.Count(original, p.OldString)
 
 	if count == 0 {
+		// 降级1：空白符归一化匹配（压缩连续空白为单空格后比较）
+		if hint := tryNormalizedMatch(original, p.OldString); hint != "" {
+			return toolError(ErrorClassRecoverable, ErrKindNoMatch,
+				fmt.Sprintf("no exact match for old_string in %s\n\n%s\n\n%s",
+					path, hint, renderSearchHint(p.OldString, original)), nil), nil
+		}
 		return toolError(ErrorClassRecoverable, ErrKindNoMatch,
 			fmt.Sprintf("no match found for old_string in %s\n%s",
 				path, renderSearchHint(p.OldString, original)), nil), nil
@@ -111,13 +117,13 @@ func (t *EditFile) Execute(ctx context.Context, p EditFileParams) (*ToolResult, 
 	// ── Step 8: 构造精简 Content（给 LLM）+ 结构化 Meta（给 TUI）──
 	added, removed := diffStats(hunks)
 	var summary strings.Builder
-	summary.WriteString(fmt.Sprintf("Edited file: %s\n", path))
+	fmt.Fprintf(&summary, "Edited file: %s\n", path)
 	if p.ReplaceAll {
-		summary.WriteString(fmt.Sprintf("   Replaced %d occurrence(s)\n", count))
+		fmt.Fprintf(&summary, "   Replaced %d occurrence(s)\n", count)
 	} else {
 		summary.WriteString("   Replaced 1 occurrence\n")
 	}
-	summary.WriteString(fmt.Sprintf("   +%d -%d lines", added, removed))
+	fmt.Fprintf(&summary, "   +%d -%d lines", added, removed)
 
 	return &ToolResult{
 		Content: summary.String(),
@@ -313,17 +319,142 @@ func diffStats(hunks []DiffHunk) (added, removed int) {
 	return
 }
 
-// renderSearchHint 当 old_string 未匹配时，在原文中寻找与 target 首行编辑距离最小的若干行，
+// tryNormalizedMatch 在精确匹配失败后，尝试空白符归一化匹配。
+// 将原文每行和 old_string 每行的连续空白压缩为单空格，然后进行逐行匹配。
+// 若找到唯一匹配，返回实际匹配文本的提示（含行号和内容）。
+// 若找不到匹配或多匹配，返回空字符串（继续走 renderSearchHint）。
+func tryNormalizedMatch(original, oldStr string) string {
+	origLines := strings.Split(original, "\n")
+	oldLines := strings.Split(oldStr, "\n")
+
+	if len(oldLines) == 0 {
+		return ""
+	}
+
+	// 归一化每行
+	origNormalized := make([]string, len(origLines))
+	for i, line := range origLines {
+		origNormalized[i] = normalizeLine(line)
+	}
+	oldNormalized := make([]string, len(oldLines))
+	for i, line := range oldLines {
+		oldNormalized[i] = normalizeLine(line)
+	}
+
+	// 在归一化原文中查找归一化 old_string 序列
+	matchStart := findLineSequence(origNormalized, oldNormalized)
+	if matchStart < 0 {
+		return ""
+	}
+
+	// 确认唯一性
+	if findLineSequence(origNormalized[matchStart+1:], oldNormalized) >= 0 {
+		return "" // 多处匹配，无法确定
+	}
+
+	// 构造提示
+	ctxStart := matchStart - 2
+	if ctxStart < 0 {
+		ctxStart = 0
+	}
+	ctxEnd := matchStart + len(oldLines) + 2
+	if ctxEnd > len(origLines) {
+		ctxEnd = len(origLines)
+	}
+
+	var buf strings.Builder
+	buf.WriteString("⚠️  Whitespace mismatch detected. The content exists but with different whitespace:\n")
+	buf.WriteString("\n  Did you mean this?\n")
+	for i := ctxStart; i < ctxEnd; i++ {
+		marker := "  "
+		if i >= matchStart && i < matchStart+len(oldLines) {
+			marker = "→ "
+		}
+		fmt.Fprintf(&buf, "%sLine %d: %s\n", marker, i+1, origLines[i])
+	}
+	buf.WriteString("\n  Copy the exact text (including indentation) from the lines marked → above.")
+
+	return buf.String()
+}
+
+// findLineSequence 在 haystack 中查找 needle 序列，返回起始索引。
+// 未找到返回 -1。
+func findLineSequence(haystack, needle []string) int {
+	if len(needle) == 0 || len(haystack) < len(needle) {
+		return -1
+	}
+	for i := 0; i <= len(haystack)-len(needle); i++ {
+		match := true
+		for j, n := range needle {
+			if haystack[i+j] != n {
+				match = false
+				break
+			}
+		}
+		if match {
+			return i
+		}
+	}
+	return -1
+}
+
+// normalizeLine 将一行内的连续空白符（空格、制表符）压缩为单空格，
+// 并去除首尾空白。用于逐行容错匹配。
+func normalizeLine(s string) string {
+	var buf strings.Builder
+	inSpace := false
+	for _, r := range s {
+		if r == ' ' || r == '\t' {
+			if !inSpace {
+				buf.WriteByte(' ')
+				inSpace = true
+			}
+		} else {
+			buf.WriteRune(r)
+			inSpace = false
+		}
+	}
+	return strings.TrimSpace(buf.String())
+}
+
+// normalizeWhitespace 将连续空白符（空格、制表符、换行符）压缩为单空格，
+// 并去除首尾空白。用于容错匹配。
+func normalizeWhitespace(s string) string {
+	var buf strings.Builder
+	inSpace := false
+	for _, r := range s {
+		if r == ' ' || r == '\t' || r == '\n' || r == '\r' {
+			if !inSpace {
+				buf.WriteByte(' ')
+				inSpace = true
+			}
+		} else {
+			buf.WriteRune(r)
+			inSpace = false
+		}
+	}
+	return strings.TrimSpace(buf.String())
+}
+
+// renderSearchHint 当 old_string 未匹配时，在原文中寻找与 target 特征行编辑距离最小的若干行，
 // 连同其上下各 1 行上下文一起返回，帮助 LLM 一眼看出 old_string 与原文的精确差异。
 func renderSearchHint(target, content string) string {
 	if target == "" || content == "" {
 		return ""
 	}
 
-	query := strings.SplitN(target, "\n", 2)[0]
+	// 选择最特征行：多行 old_string 时用最长非空行而非首行，提高匹配精度
+	query := pickBestQueryLine(target)
 	queryRunes := []rune(query)
 	if len(queryRunes) < 4 {
 		return ""
+	}
+
+	// 检测是否误复制了 read_file 的行号前缀 [N] ...
+	if looksLikeLineNumberPrefix(target) {
+		hint := "   Hint: old_string appears to include line number prefixes like [N] from read_file output.\n"
+		hint += "   The actual file does NOT contain these prefixes. Re-read the file and copy the raw content."
+		return hint
 	}
 
 	fileLines := strings.Split(content, "\n")
@@ -378,14 +509,14 @@ func renderSearchHint(target, content string) string {
 		}
 		// 前一行上下文
 		if c.index > 0 && !seen[c.index-1] {
-			buf.WriteString(fmt.Sprintf("   Line %d: %s\n", c.index, fileLines[c.index-1]))
+			fmt.Fprintf(&buf, "   Line %d: %s\n", c.index, fileLines[c.index-1])
 			seen[c.index-1] = true
 		}
 		// 相似行（高亮差异）
-		buf.WriteString(fmt.Sprintf("→  Line %d: %s  (distance=%d)\n", c.index+1, fileLines[c.index], c.distance))
+		fmt.Fprintf(&buf, "→  Line %d: %s  (distance=%d)\n", c.index+1, fileLines[c.index], c.distance)
 		// 后一行上下文
 		if c.index+1 < len(fileLines) && !seen[c.index+1] {
-			buf.WriteString(fmt.Sprintf("   Line %d: %s\n", c.index+2, fileLines[c.index+1]))
+			fmt.Fprintf(&buf, "   Line %d: %s\n", c.index+2, fileLines[c.index+1])
 			seen[c.index+1] = true
 		}
 		printed++
@@ -394,7 +525,58 @@ func renderSearchHint(target, content string) string {
 	if printed == 0 {
 		return ""
 	}
-	return fmt.Sprintf("   Hint: closest matches to first line of old_string:\n%s", buf.String())
+	return fmt.Sprintf("   Hint: closest matches to old_string:\n%s", buf.String())
+}
+
+// pickBestQueryLine 从多行 old_string 中选择最佳查询行。
+// 优先选择最长的非空行（最具区分度），避免用 `}` 或空行等通用模式做模糊匹配。
+func pickBestQueryLine(target string) string {
+	lines := strings.Split(target, "\n")
+	if len(lines) <= 1 {
+		return target
+	}
+	best := ""
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if len(trimmed) > len(best) {
+			best = trimmed
+		}
+	}
+	if best == "" {
+		// 所有行都是空白 → 用第一行
+		return strings.SplitN(target, "\n", 2)[0]
+	}
+	return best
+}
+
+// looksLikeLineNumberPrefix 检测 old_string 是否疑似包含 read_file 输出的行号前缀。
+// read_file 输出格式为 "[N] content"，如果 old_string 中包含此模式则返回 true。
+func looksLikeLineNumberPrefix(s string) bool {
+	// 检测是否以 [数字] 开头，且后面跟空格
+	lines := strings.Split(s, "\n")
+	matchCount := 0
+	for _, line := range lines {
+		trimmed := strings.TrimLeft(line, " \t")
+		if len(trimmed) >= 4 && trimmed[0] == '[' {
+			end := strings.IndexByte(trimmed, ']')
+			if end > 1 && end < 8 {
+				// 检查括号内是否为数字
+				numPart := trimmed[1:end]
+				isNum := true
+				for _, c := range numPart {
+					if c < '0' || c > '9' {
+						isNum = false
+						break
+					}
+				}
+				if isNum && end+1 < len(trimmed) && trimmed[end+1] == ' ' {
+					matchCount++
+				}
+			}
+		}
+	}
+	// 如果超过一半的行匹配行号前缀模式，判定为误复制
+	return matchCount > 0 && matchCount*2 >= len(lines)
 }
 
 // levenshteinDistance 计算两个 rune 序列的编辑距离。

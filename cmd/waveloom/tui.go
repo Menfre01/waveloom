@@ -80,6 +80,7 @@ var defaultSystemPrompt = `You are Waveloom, a coding agent. You help users writ
 - Check before you guess — confirm tool availability in ## Environment before calling any binary.
 - Edit surgically — prefer edit_file over write_file, never touch unrelated code.
 - Invoke parallel-safe tools (read_file, search_file, grep, ls, web_fetch, lsp_*) in the same response when independent — the system serializes write_file, edit_file, and shell automatically.
+- Use ls to explore directories before reading files — never pass a directory path to read_file.
 
 ## Coding standards
 
@@ -98,7 +99,8 @@ var defaultSystemPrompt = `You are Waveloom, a coding agent. You help users writ
 - On error, identify the kind, then decide: retry once or stop.
 - Fatal (do not retry): permission_denied, security_violation, disk_full.
 - Recoverable (retry once with corrected input): command_failed, command_not_found, command_permission_denied, timeout, file_not_found, invalid_args, no_match, no_results, not_dir, binary_file, multiple_matches.
-- For no_match: re-read the file and copy text verbatim — never retry from memory.
+- For not_dir: the error message includes a directory listing — pick a file from it and retry immediately.
+- For no_match: the error includes a hint with the closest matching lines and line numbers — use read_file to verify the exact content at those lines, then copy text verbatim (including indentation).
 - Stop and ask for guidance when errors keep repeating — the loop enforces a hard limit.`
 
 // ---------------------------------------------------------------------------
@@ -419,7 +421,7 @@ func waveloomGlamourStyle(p palette) ansi.StyleConfig {
 	base.Code.BackgroundColor = &toolCodeBg
 
 	// 代码块文本 → ToolCode
-	base.CodeBlock.StylePrimitive.Color = &toolCode
+	base.CodeBlock.Color = &toolCode
 
 	// 代码块 Chroma 背景 → ToolCodeBg，文本 → ToolCode
 	if base.CodeBlock.Chroma != nil {
@@ -982,11 +984,7 @@ func (m *model) handleKeyPress(msg tea.KeyPressMsg) (bool, tea.Cmd) {
 		// 立即中断当前 loop，将输入内容作为新任务启动。
 		userInput := strings.TrimSpace(m.input.Value())
 		if userInput == "" {
-			// 空输入 → 仅中断，不发新任务
-			if m.cancelRun != nil {
-				m.cancelRun()
-				m.cancelRun = nil
-			}
+			// 空输入 → 不做任何响应，不中断运行中的 session
 			return true, nil
 		}
 		m.input.Reset()
@@ -2779,16 +2777,16 @@ func (m *model) View() tea.View {
 			offset := visibleOffset(value, pos, m.input.Width())
 			visibleBeforeCursor := string([]rune(value)[offset:pos])
 			cursorX := lipgloss.Width(m.input.Prompt) + lipgloss.Width(visibleBeforeCursor)
-			cur.Position.X = cursorX + 2 // styleApp 左 padding
-			if cur.Position.X > m.width-2 {
-				cur.Position.X = m.width - 2
+			cur.X = cursorX + 2 // styleApp 左 padding
+			if cur.X > m.width-2 {
+				cur.X = m.width - 2
 			}
 			// 在 alt screen 下，header + body + overlays + separator 之后是 input 行
 			// input 行在终端中的 Y 坐标（0-based）：
 			//   styleApp top(1) + headerHeight + bodyHeight + overlayLines + pickerLines + commandPickerLines + separator(1)
-			cur.Position.Y = 1 + headerHeight + bodyHeight + overlayLines + pickerLines + commandPickerLines + 1
-			if cur.Position.Y >= m.height {
-				cur.Position.Y = m.height - 1
+			cur.Y = 1 + headerHeight + bodyHeight + overlayLines + pickerLines + commandPickerLines + 1
+			if cur.Y >= m.height {
+				cur.Y = m.height - 1
 			}
 			v.Cursor = cur
 		}
@@ -3619,9 +3617,7 @@ func (m *model) commitModelSwitch(modelID string) {
 		settings = &llm.LLMSettings{}
 	}
 	settings.Model = modelID
-	if err := m.settingsStore.SaveLLM(settings); err != nil {
-		// 忽略写入错误，用户感知到 HUD 已更新
-	}
+	_ = m.settingsStore.SaveLLM(settings) // 忽略写入错误，用户感知到 HUD 已更新
 	m.hudModel = normalizeWidth(modelID)
 	m.reconfigureLLMClient(modelID)
 }
@@ -3671,9 +3667,7 @@ func runTUI(llmClient llm.Client, registry tool.Registry, guard permission.Guard
 	// 写入 recent.json（TUI 启动时唯一写入点）
 	if sid := ctxMgr.SessionID(); sid != "" {
 		stats := ctxMgr.Stats()
-		if err := ctxpkg.UpdateRecentSessions(sessionDir, sid, stats.MessageCount); err != nil {
-			// 静默失败
-		}
+		_ = ctxpkg.UpdateRecentSessions(sessionDir, sid, stats.MessageCount) // 静默失败
 	}
 
 	p := tea.NewProgram(m)

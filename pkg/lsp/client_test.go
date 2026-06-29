@@ -168,7 +168,7 @@ func TestClientInitialize(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 
 	if !client.CommandRunning() {
 		t.Error("command should be running after init")
@@ -201,7 +201,7 @@ func main() {
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 
 	// 注册诊断通知处理器
 	diagCh := make(chan PublishDiagnosticsParams, 1)
@@ -265,7 +265,7 @@ func main() {
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 
 	fileURI := "file://" + dir + "/main.go"
 	content, _ := os.ReadFile(dir + "/main.go")
@@ -320,7 +320,7 @@ func main() {
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 
 	fileURI := "file://" + dir + "/main.go"
 	content, _ := os.ReadFile(dir + "/main.go")
@@ -377,7 +377,7 @@ func main() {
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 
 	diagCh := make(chan PublishDiagnosticsParams, 1)
 	client.OnNotification("textDocument/publishDiagnostics", func(raw json.RawMessage) {
@@ -454,7 +454,7 @@ func TestCallContextAlreadyCancelled(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 
 	// 已取消的 context → 应立即返回 context.Canceled
 	ctx, cancel := context.WithCancel(context.Background())
@@ -508,7 +508,7 @@ func main() {
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 
 	fileURI := "file://" + dir + "/main.go"
 	content, _ := os.ReadFile(dir + "/main.go")
@@ -570,7 +570,7 @@ func main() {
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 
 	fileURI := DocumentURI("file://" + dir + "/main.go")
 	content, _ := os.ReadFile(dir + "/main.go")

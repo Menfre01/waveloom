@@ -143,7 +143,7 @@ func (t *WebFetch) Execute(ctx context.Context, p WebFetchParams) (*ToolResult, 
 		return toolError(ErrorClassRecoverable, ErrKindCommandFailed,
 			fmt.Sprintf("request failed: %v", err), err), nil
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	// ── Step 6: 检查 Content-Type ──
 	contentType := resp.Header.Get("Content-Type")
@@ -197,12 +197,12 @@ func (t *WebFetch) Execute(ctx context.Context, p WebFetchParams) (*ToolResult, 
 
 	// ── Step 10: 格式化输出 ──
 	var buf bytes.Buffer
-	buf.WriteString(fmt.Sprintf("Fetched %s  HTTP %d", p.URL, resp.StatusCode))
-	buf.WriteString(fmt.Sprintf("  %s", duration.Round(time.Millisecond)))
-	buf.WriteString(fmt.Sprintf("\nContent-Type: %s", contentType))
-	buf.WriteString(fmt.Sprintf("\nSize: %s", formatSize(int64(len(bodyBytes)))))
+	fmt.Fprintf(&buf, "Fetched %s  HTTP %d", p.URL, resp.StatusCode)
+	fmt.Fprintf(&buf, "  %s", duration.Round(time.Millisecond))
+	fmt.Fprintf(&buf, "\nContent-Type: %s", contentType)
+	fmt.Fprintf(&buf, "\nSize: %s", formatSize(int64(len(bodyBytes))))
 	if truncated {
-		buf.WriteString(fmt.Sprintf(" [truncated from > %s]", formatSize(int64(maxSize))))
+		fmt.Fprintf(&buf, " [truncated from > %s]", formatSize(int64(maxSize)))
 	}
 	buf.WriteString("\n\n")
 	buf.WriteString(bodyText)

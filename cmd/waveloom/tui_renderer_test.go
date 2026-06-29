@@ -448,3 +448,60 @@ func TestSkipAnsiSequence_PlainText(t *testing.T) {
 		t.Fatalf("expected 0 for plain text, got %d", n)
 	}
 }
+
+// ── stripToolStatusHeader ──
+
+func TestStripToolStatusHeader_ShellFailed(t *testing.T) {
+	input := "Command failed (exit=1)  120ms\n   stderr/stdout:\n     error: something broke\n"
+	got := stripToolStatusHeader(input)
+	if strings.Contains(got, "Command failed") {
+		t.Errorf("should strip shell status header, got: %q", got)
+	}
+	if !strings.Contains(got, "error: something broke") {
+		t.Errorf("should keep error output, got: %q", got)
+	}
+}
+
+func TestStripToolStatusHeader_ShellSucceeded(t *testing.T) {
+	input := "Command succeeded (exit=0)  50ms\n   stdout:\n     build ok\n"
+	got := stripToolStatusHeader(input)
+	if strings.Contains(got, "Command succeeded") {
+		t.Errorf("should strip shell status header, got: %q", got)
+	}
+	if !strings.Contains(got, "build ok") {
+		t.Errorf("should keep stdout output, got: %q", got)
+	}
+}
+
+func TestStripToolStatusHeader_ShellTimedOut(t *testing.T) {
+	input := "Command timed out  120s\n   Timeout: 120s\n   stderr/stdout:\n     partial output\n"
+	got := stripToolStatusHeader(input)
+	if strings.Contains(got, "Command timed out") {
+		t.Errorf("should strip timeout header, got: %q", got)
+	}
+	if strings.Contains(got, "Timeout:") {
+		t.Errorf("should strip timeout label, got: %q", got)
+	}
+	if !strings.Contains(got, "partial output") {
+		t.Errorf("should keep partial output, got: %q", got)
+	}
+}
+
+func TestStripToolStatusHeader_Emoji(t *testing.T) {
+	input := "✅ Tool executed\nsome content"
+	got := stripToolStatusHeader(input)
+	if strings.Contains(got, "\u2705") {
+		t.Errorf("should strip emoji header, got: %q", got)
+	}
+	if !strings.Contains(got, "some content") {
+		t.Errorf("should keep content, got: %q", got)
+	}
+}
+
+func TestStripToolStatusHeader_NoHeader(t *testing.T) {
+	input := "just some output\nwith multiple lines"
+	got := stripToolStatusHeader(input)
+	if got != "just some output\nwith multiple lines" {
+		t.Errorf("should return unchanged, got: %q", got)
+	}
+}

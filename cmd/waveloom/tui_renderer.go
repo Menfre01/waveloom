@@ -1127,16 +1127,40 @@ func displayWidth(s string) int {
 
 // stripToolStatusHeader 去除 tool 结果首行的状态标题（如 "✅ Command succeeded (exit=0) 123ms"），
 // 并清理尾部空行。摘要行已有 toolName + toolSuffix，颜色已传达成功/失败，无需重复。
+// 同时剥离 shell 的 "Command succeeded/failed/timed out" 头部和 "stdout:" / "stderr/stdout:" 标签行，
+// 让预览直接展示实际输出内容。
 func stripToolStatusHeader(result string) string {
 	lines := strings.Split(result, "\n")
 	start := 0
-	// 跳过首行中 "✅" 或 "❌" 开头的状态标题
+
+	// 通用：跳过 emoji 状态标题（✅ / ❌ 开头）
 	if len(lines) > 0 {
 		first := strings.TrimSpace(lines[0])
 		if strings.HasPrefix(first, "\u2705") || strings.HasPrefix(first, "\u274c") {
 			start = 1
 		}
 	}
+
+	// Shell：跳过 "Command succeeded / failed / timed out" 状态头
+	if start == 0 && len(lines) > 0 {
+		first := strings.TrimSpace(lines[0])
+		if strings.HasPrefix(first, "Command succeeded") ||
+			strings.HasPrefix(first, "Command failed") ||
+			strings.HasPrefix(first, "Command timed out") {
+			start = 1
+
+			// 跳过 stdout/stderr 标签行和 timeout 提示行
+			if len(lines) > 1 {
+				second := strings.TrimSpace(lines[1])
+				if strings.HasPrefix(second, "stdout:") ||
+					strings.HasPrefix(second, "stderr/stdout:") ||
+					strings.HasPrefix(second, "Timeout:") {
+					start = 2
+				}
+			}
+		}
+	}
+
 	// 去除尾部空行
 	end := len(lines)
 	for end > start && strings.TrimSpace(lines[end-1]) == "" {

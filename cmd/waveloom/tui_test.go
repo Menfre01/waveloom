@@ -370,6 +370,34 @@ func TestHardLimitGuard_AllowsEnterWhenNotReached(t *testing.T) {
 	}
 }
 
+func TestEnter_EmptyInputWhenRunning_NoInterrupt(t *testing.T) {
+	m := &model{
+		cm:      newTestCM(),
+		keys:    defaultKeys,
+		paras:   []Paragraph{},
+		running: true,
+		width:   120,
+		height:  40,
+	}
+	// 设置 cancelRun 可以取消
+	cancelCalled := false
+	m.cancelRun = func() { cancelCalled = true }
+	// 输入框为空
+	m.input.SetValue("")
+
+	handled, cmd := m.handleKeyPress(tea.KeyPressMsg(tea.Key{Code: tea.KeyEnter}))
+
+	if !handled {
+		t.Error("expected handled=true for Enter with empty input when running")
+	}
+	if cmd != nil {
+		t.Error("expected nil cmd (no doTurn) for empty input when running")
+	}
+	if cancelCalled {
+		t.Error("cancelRun should NOT be called for empty input when running")
+	}
+}
+
 // ── 段落焦点导航测试 ──
 
 func TestIsExpandable(t *testing.T) {
