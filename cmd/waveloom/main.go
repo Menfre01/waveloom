@@ -18,6 +18,7 @@ import (
 	"github.com/Menfre01/waveloom/pkg/memory"
 	"github.com/Menfre01/waveloom/pkg/permission"
 	"github.com/Menfre01/waveloom/pkg/reference"
+	"github.com/Menfre01/waveloom/pkg/skill"
 	"github.com/Menfre01/waveloom/pkg/tool"
 )
 
@@ -87,22 +88,24 @@ func main() {
 	// 5. 初始化 LSP Manager（全局，供 LSP 工具使用）
 	lspProvider := initLSPManager(globalPath, projectPath, verboseLog)
 
+	// 5.5 获取 CWD、homeDir、构造 skill loader
+	cwd, _ := os.Getwd()
+	homeDir, _ := os.UserHomeDir()
+	skillLoader := skill.NewLoader(cwd, homeDir, "", "medium")
+
 	// 6. 初始化 Tool Registry
 	registry := tool.NewRegistry()
-	registerBuiltinTools(registry, lspProvider)
+	registerBuiltinTools(registry, lspProvider, skillLoader)
 
 	// 7. 加载 Guard（权限系统，合并全局和项目权限规则）
 	guard := createGuard(globalPath, projectPath)
-
-	// 8. 获取 CWD
-	cwd, _ := os.Getwd()
 
 	// 9. 创建 @ 引用展开器（用于 AGENTS.md 和用户输入中的 @ 引用展开）
 	expander := reference.New(guard)
 
 	// 10. 加载 AGENTS.md 持久记忆
 	var agentsMdText string
-	if homeDir, err := os.UserHomeDir(); err == nil {
+	if homeDir != "" {
 		loader := memory.NewLoader(cwd, homeDir)
 		text, warnings, loadErr := loader.Load()
 		if loadErr != nil {
@@ -134,6 +137,12 @@ func main() {
 	// 避免因命令缺失陷入探测死循环。
 	// globalPath 和 projectPath 用于加载用户配置的工具路径覆盖。
 	systemPrompt += probeEnvironment(cwd, globalPath, projectPath)
+
+	// 注入 skill 列表到 system prompt
+	if skillListing := skillLoader.FormatSkillListing(); skillListing != "" {
+		systemPrompt += skillListing
+	}
+
 	// 合并 compaction 配置：默认值 + settings.json 覆盖
 	compactionConfig := compaction.DefaultCompactionConfig()
 	if cs := compaction.LoadCompactionSettings(globalPath); cs != nil {
@@ -207,7 +216,7 @@ func main() {
 }
 
 // registerBuiltinTools 注册内置工具。
-func registerBuiltinTools(r tool.Registry, lspProvider *tool.LSPProvider) {
+func registerBuiltinTools(r tool.Registry, lspProvider *tool.LSPProvider, skillLoader *skill.Loader) {
 	r.Register(tool.Wrap(&tool.ReadFile{}))
 	r.Register(tool.Wrap(&tool.WriteFile{}))
 	r.Register(tool.Wrap(&tool.EditFile{}))
@@ -223,6 +232,11 @@ func registerBuiltinTools(r tool.Registry, lspProvider *tool.LSPProvider) {
 		r.Register(tool.Wrap(tool.NewLSPDefinition(lspProvider)))
 		r.Register(tool.Wrap(tool.NewLSPReferences(lspProvider)))
 		r.Register(tool.Wrap(tool.NewLSPHover(lspProvider)))
+	}
+
+	// Skill 工具
+	if skillLoader != nil {
+		r.Register(tool.Wrap(tool.NewSkillTool(skillLoader)))
 	}
 }
 

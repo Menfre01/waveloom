@@ -48,6 +48,14 @@ type ModelLister interface {
 	ListModels(ctx context.Context) ([]llm.ModelInfo, error)
 }
 
+// ── /skill-name 所需 ──
+
+// SkillExecutor 由 TUI 实现，通过 skill 工具加载并渲染 SKILL.md。
+// 返回渲染后的 body（变量已替换、!`cmd` 已执行、附属文件清单已追加）。
+type SkillExecutor interface {
+	ExecuteSkill(ctx context.Context, name, args string) (body string, err error)
+}
+
 // ── Result ──
 
 // SideEffectKind 标识命令触发的副作用类型。
@@ -59,12 +67,15 @@ const (
 	SideEffectModelSwitched   SideEffectKind = "model_switched"
 	SideEffectOpenThemePicker SideEffectKind = "open_theme_picker"
 	SideEffectOpenModelPicker SideEffectKind = "open_model_picker"
+	SideEffectInvokeSkill     SideEffectKind = "invoke_skill" // TUI: 注入 skill body → doTurn
 )
 
 // SideEffect 描述命令执行后需要 TUI 执行的副作用。
 type SideEffect struct {
-	Kind   SideEffectKind
-	Detail string // model_switched → 新模型名；open_model_picker → 模型列表 JSON
+	Kind    SideEffectKind
+	Detail  string // model_switched → 新模型名；open_model_picker → 模型列表 JSON；invoke_skill → skill body
+	Detail2 string // invoke_skill → skill name
+	Detail3 string // invoke_skill → skill args
 }
 
 // Result 是命令执行的结果。
