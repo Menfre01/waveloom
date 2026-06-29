@@ -87,6 +87,7 @@ var defaultSystemPrompt = fmt.Sprintf(`You are Waveloom %s, a terminal-based cod
 - Use web_fetch to consult online docs, API references, and package registry information.
 - Make surgical, minimal edits. Do not refactor unrelated code or add unnecessary comments.
 - Prefer edit_file (with unified diff patches) over write_file for small changes.
+- When using edit_file, copy old_string verbatim from read_file output — same indentation, same whitespace, same line breaks. Never reconstruct from memory.
 - When using shell, prefer checking exit codes over parsing output.
 - If rg (ripgrep) is listed in Available tools under ## Environment, prefer it over grep for faster searches; otherwise use grep.
 - When using shell, use the working_dir parameter to set the working directory. Do NOT prepend "cd <path> &&" to the command — this breaks permission pattern matching.
@@ -115,6 +116,9 @@ var defaultSystemPrompt = fmt.Sprintf(`You are Waveloom %s, a terminal-based cod
   command_failed — The command ran but exited non-zero. Check stderr, fix args, retry once.
   timeout — Command exceeded time limit. Increase timeout_ms or simplify the command.
   file_not_found — Check the path with search_file or ls; retry with corrected path.
+  no_match — The old_string was not found in the file. Re-read the file with read_file,
+         then copy the exact text verbatim (including indentation and whitespace)
+         for old_string. Never retry from memory.
   invalid_args — Fix the parameter syntax and retry.
   permission_denied — Cannot access. Use an alternative path or ask user.
   security_violation — Fatal. The operation is blocked by policy. Do not retry.
@@ -1484,10 +1488,7 @@ func shouldActivatePicker(value string) bool {
 	}
 	// @ 之后不能已经包含空格（路径已完成，避免重新触发）
 	afterAt := value[idx+1:]
-	if strings.Contains(afterAt, " ") {
-		return false
-	}
-	return true
+	return !strings.Contains(afterAt, " ")
 }
 
 // shouldActivateCommandPicker 检测输入框当前内容是否触发命令选择器。
@@ -2418,15 +2419,17 @@ func (m *model) toggleParagraphFocus() {
 	p := &m.paras[m.focusIndex]
 	switch p.Type {
 	case paraThought:
-		if p.State == stateCollapsed {
+		switch p.State {
+		case stateCollapsed:
 			p.State = stateExpanded
-		} else if p.State == stateExpanded {
+		case stateExpanded:
 			p.State = stateCollapsed
 		}
 	case paraTool:
-		if p.State == stateDone || p.State == stateCollapsed {
+		switch p.State {
+		case stateDone, stateCollapsed:
 			p.State = stateExpanded
-		} else if p.State == stateExpanded {
+		case stateExpanded:
 			p.State = stateDone
 		}
 	}
