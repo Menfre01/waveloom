@@ -94,18 +94,19 @@ func parseCLI() CLIConfig {
 	args := flag.Args()
 	if len(args) > 0 {
 		// "setup"、"ls"、"completion" 作为子命令处理，不走 oneshot
-		if args[0] == "setup" {
+		switch args[0] {
+		case "setup":
 			cfg.Setup = true
-		} else if args[0] == "ls" {
+		case "ls":
 			cfg.ListSessions = true
-		} else if args[0] == "completion" {
+		case "completion":
 			if len(args) >= 2 {
 				cfg.CompletionShell = args[1]
 			} else {
 				fmt.Fprintf(os.Stderr, "用法: waveloom completion <bash|zsh|fish>\n")
 				os.Exit(1)
 			}
-		} else {
+		default:
 			cfg.OneShot = args[0]
 		}
 	}
@@ -131,11 +132,11 @@ func parseTokenLimit(s string) (int, error) {
 	// 后缀单位
 	multiplier := 1
 	last := s[len(s)-1]
-	switch {
-	case last == 'M' || last == 'm':
+	switch last {
+	case 'M', 'm':
 		multiplier = 1000 * 1000
 		s = s[:len(s)-1]
-	case last == 'K' || last == 'k':
+	case 'K', 'k':
 		multiplier = 1000
 		s = s[:len(s)-1]
 	}
