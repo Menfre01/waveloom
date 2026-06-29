@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"waveloom/pkg/pathutil"
+	"github.com/Menfre01/waveloom/pkg/pathutil"
 )
 
 func TestShellInterpreter(t *testing.T) {

@@ -162,10 +162,18 @@ chore: 新增 Makefile
 
 ### 发布流程
 
-1. **扫描 commit** — 从上次 tag 到 HEAD，按上述分类汇总 changelog
-2. **审查 README** — 检查中英双语 README 是否需要同步新功能、新命令、新 flag
-3. **文档提交** — 如有 README 修改，先 commit
-4. **打 tag** — `git tag vX.Y.Z`
-5. **交叉编译** — `make release`
-6. **推送** — `git push origin dev && git push origin vX.Y.Z`
-7. **创建 Release** — `gh release create vX.Y.Z dist/* --title "vX.Y.Z" --notes "changelog"`
+发布由 GitHub Actions 自动完成（`.github/workflows/release.yml`），触发条件为 tag push `v*`。
+
+手动步骤（release workflow 之前完成，按顺序）：
+
+1. **汇总 changelog** — 从上次 tag 到 HEAD 扫描 commit，按上述分类（新增功能/修复/重构/性能优化）汇总，更新 `CHANGELOG.md` 和 `CHANGELOG.en.md`
+2. **审查 README** — 检查 `README.md` 和 `docs/README.en.md` 是否需要同步新功能、新命令、新 flag
+3. **审查双语文档** — 检查 `CONTRIBUTING` / `SECURITY` / `docs/` 下中英双语是否同步
+4. **文档提交** — 如有文档修改，先 commit（类型 `docs`）
+5. **打 tag 并推送** — `git tag vX.Y.Z && git push origin dev && git push origin vX.Y.Z`
+
+自动化步骤（release workflow 接管）：
+
+5. **交叉编译** — `make release`（darwin/linux × amd64/arm64）
+6. **创建 GitHub Release** — `gh release create` 上传 tarball 和 checksums
+7. **同步 Homebrew 公式** — 从 checksums.txt 生成公式并推送到 `Menfre01/homebrew-tap`

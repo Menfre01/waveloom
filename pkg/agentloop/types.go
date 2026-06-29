@@ -1,8 +1,8 @@
 package agentloop
 
 import (
-	"waveloom/pkg/llm"
-	"waveloom/pkg/tool"
+	"github.com/Menfre01/waveloom/pkg/llm"
+	"github.com/Menfre01/waveloom/pkg/tool"
 )
 
 // ---------------------------------------------------------------------------

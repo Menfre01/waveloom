@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"waveloom/pkg/permission"
+	"github.com/Menfre01/waveloom/pkg/permission"
 )
 
 // ---------------------------------------------------------------------------

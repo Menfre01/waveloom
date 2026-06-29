@@ -1,4 +1,4 @@
-module waveloom
+module github.com/Menfre01/waveloom
 
 go 1.25.8
 

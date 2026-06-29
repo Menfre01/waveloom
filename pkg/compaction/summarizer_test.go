@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"waveloom/pkg/llm"
+	"github.com/Menfre01/waveloom/pkg/llm"
 )
 
 // mockClient 实现 llm.Client 用于测试 CompactionSummarizer。

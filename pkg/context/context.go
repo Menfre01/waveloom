@@ -12,8 +12,8 @@ import (
 	"strings"
 	"sync"
 
-	"waveloom/pkg/compaction"
-	"waveloom/pkg/llm"
+	"github.com/Menfre01/waveloom/pkg/compaction"
+	"github.com/Menfre01/waveloom/pkg/llm"
 )
 
 // Stats 记录跨轮次的累计统计。

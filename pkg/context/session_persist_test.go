@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"waveloom/pkg/compaction"
-	"waveloom/pkg/llm"
+	"github.com/Menfre01/waveloom/pkg/compaction"
+	"github.com/Menfre01/waveloom/pkg/llm"
 )
 
 // ---------------------------------------------------------------------------

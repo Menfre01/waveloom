@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"strings"
 
-	"waveloom/pkg/llm"
+	"github.com/Menfre01/waveloom/pkg/llm"
 )
 
 // CompactionSummarizer 使用 LLM Client 执行 Tier 3 增量摘要。
