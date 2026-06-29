@@ -66,7 +66,8 @@ type GuardImpl struct {
 	workingDirs       []string
 	bypassMode        bool
 	toolRiskClass     map[string]ToolRiskClass
-	projectConfigPath string // settings.json 路径（落盘用）
+	builtinAllow      map[string]bool   // 内置白名单工具，Check() 第 0 步直接放行
+	projectConfigPath string            // settings.json 路径（落盘用）
 }
 
 // NewGuard 创建一个新的 GuardImpl。
@@ -91,6 +92,11 @@ func NewGuard(opts ...GuardOption) *GuardImpl {
 	g.toolRiskClass["write_file"] = RiskClassWrite
 	g.toolRiskClass["edit_file"] = RiskClassWrite
 	g.toolRiskClass["shell"] = RiskClassExecute
+
+	// 内置白名单：无需权限检查，直接放行
+	g.builtinAllow = map[string]bool{
+		"ask_user_question": true,
+	}
 
 	// 默认工作目录：项目根目录 + /tmp + 系统临时目录
 	g.workingDirs = make([]string, 0, 3)
@@ -122,6 +128,16 @@ func NewGuard(opts ...GuardOption) *GuardImpl {
 //  6. Bypass 模式 → ALLOW
 //  7. 默认策略（read→ALLOW, write/execute→ASK）
 func (g *GuardImpl) Check(ctx context.Context, toolName string, input json.RawMessage) DecisionResult {
+	// Step 0: 内置白名单 — 直接放行，不经过规则/安全检查/默认策略
+	if g.builtinAllow[toolName] {
+		g.denialTracker.RecordAllow()
+		return DecisionResult{
+			Decision: DecisionAllow,
+			Reason:   ReasonBuiltinAllow,
+			Message:  "built-in always-allow tool",
+		}
+	}
+
 	// Step 1: deny 规则检查（最高优先级）
 	if result, found := g.ruleEngine.CheckDeny(toolName, input); found {
 		g.denialTracker.RecordDenial()
@@ -387,6 +403,12 @@ func ExtractPattern(toolName string, input json.RawMessage) string {
 			return ""
 		}
 		return params.URL
+
+	case "ask_user_question":
+		// ask_user_question 不需要内容级 pattern —— 它不操作文件/命令，
+		// 且权限检查恒为 ask（requiresUserInteraction=true），
+		// 没有 allow/deny/session 记忆的概念。
+		return ""
 
 	default:
 		path, workingDir := extractFilePath(input)
