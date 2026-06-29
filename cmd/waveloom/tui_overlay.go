@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"strings"
 
 	"charm.land/bubbles/v2/key"
@@ -17,6 +18,7 @@ type Overlay int
 const (
 	overlayNone           Overlay = iota // 无覆盖层
 	overlayPermission                    // 权限确认框（阻断式）
+	overlayQuestion                      // AskUserQuestion 选择题（阻断式）
 	overlayThemePicker                   // /theme 触发：主题选择列表
 	overlayModelPicker                   // /model 无参触发：模型选择列表
 	overlayCommandPicker                 // / 命令补全（预留）
@@ -109,6 +111,59 @@ func (m *model) renderPermOverlay(boxWidth int) string {
 		Width(boxWidth)
 
 	return boxStyle.Render(strings.Join(contentLines, "\n"))
+}
+
+// ---------------------------------------------------------------------------
+// AskUserQuestion 选择题覆盖层渲染（huh 表单）
+// ---------------------------------------------------------------------------
+
+// renderQuestionOverlay 渲染选择题覆盖层（huh 表单或 Other 文本输入）。
+func (m *model) renderQuestionOverlay(boxWidth int) string {
+	if m.questionReq == nil || m.questionIdx >= len(m.questionReq.questions) {
+		return ""
+	}
+
+	q := m.questionReq.questions[m.questionIdx]
+	totalQuestions := len(m.questionReq.questions)
+	innerWidth := boxWidth - 2 - 4
+
+	// 标题行：header chip + 问题编号
+	titleText := fmt.Sprintf("▲ %s", q.Header)
+	if totalQuestions > 1 {
+		titleText += fmt.Sprintf(" (%d/%d)", m.questionIdx+1, totalQuestions)
+	}
+	title := styleOverlayTitle.Width(innerWidth).Render(titleText)
+
+	var body string
+	var hintKeys []key.Binding
+	if m.questionFormIsOther {
+		body = m.otherInput.View()
+		hintKeys = questionOtherKeys
+	} else if m.questionForm != nil {
+		body = m.questionForm.View()
+		if q.MultiSelect {
+			hintKeys = questionMultiKeys
+		} else {
+			hintKeys = questionSingleKeys
+		}
+	} else {
+		return ""
+	}
+
+	// 底部快捷键提示（与权限面板一致）
+	m.help.SetWidth(innerWidth)
+	hintWrapper := lipgloss.NewStyle().Foreground(colorMuted).Width(innerWidth)
+	hint := hintWrapper.Render(m.help.ShortHelpView(hintKeys))
+
+	content := strings.Join([]string{title, "", body, "", hint}, "\n")
+
+	boxStyle := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(colorHeaderAccent).
+		Padding(1, 2).
+		Width(boxWidth)
+
+	return boxStyle.Render(content)
 }
 
 // ---------------------------------------------------------------------------

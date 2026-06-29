@@ -363,6 +363,11 @@ func (u *mockUserResponder) AskUser(ctx context.Context, toolName string, input 
 	return permission.UserChoice{Decision: permission.DecisionDeny}
 }
 
+func (u *mockUserResponder) AnswerQuestion(ctx context.Context, questions []permission.QuestionPrompt) ([]permission.QuestionResponse, error) {
+	// 默认拒绝
+	return nil, nil
+}
+
 // ============================================================================
 // 1. 基础流程测试
 // ============================================================================

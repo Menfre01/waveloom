@@ -238,6 +238,9 @@ func registerBuiltinTools(r tool.Registry, lspProvider *tool.LSPProvider, skillL
 	if skillLoader != nil {
 		r.Register(tool.Wrap(tool.NewSkillTool(skillLoader)))
 	}
+
+	// AskUserQuestion — LLM 向用户发起选择题式交互决策（TUI 模式）
+	r.Register(tool.Wrap(&tool.AskUserQuestion{}))
 }
 
 // initLSPManager 初始化 LSP Server 管理器。
