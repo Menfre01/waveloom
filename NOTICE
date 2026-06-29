@@ -1,0 +1,28 @@
+Waveloom
+Copyright 2026 Menfre01
+
+This product includes software developed at:
+
+- Charmbracelet (https://charm.sh)
+  Bubble Tea, Glamour, Lipgloss, and related libraries
+  Licensed under the MIT License
+
+- Yuin (https://github.com/yuin)
+  Goldmark Markdown parser and Goldmark-Emoji extension
+  Licensed under the MIT License
+
+- Alecthomas (https://github.com/alecthomas)
+  Chroma syntax highlighter
+  Licensed under the MIT License
+
+- Microcosm-CC (https://github.com/microcosm-cc)
+  Bluemonday HTML sanitizer
+  Licensed under the BSD 3-Clause License
+
+- Sahilm (https://github.com/sahilm)
+  Fuzzy string matching
+  Licensed under the MIT License
+
+- Gorilla (https://github.com/gorilla)
+  CSS scanner
+  Licensed under the BSD 3-Clause License
