@@ -60,7 +60,7 @@ import (
 // 常量
 // ---------------------------------------------------------------------------
 
-var defaultSystemPrompt = fmt.Sprintf(`You are Waveloom %s, a terminal-based coding agent. You help users write, refactor, debug, and explore code. You are precise, safe, and efficient.
+var defaultSystemPrompt = `You are Waveloom, a terminal-based coding agent. You help users write, refactor, debug, and explore code. You are precise, safe, and efficient.
 
 ## Personality
 
@@ -124,7 +124,7 @@ var defaultSystemPrompt = fmt.Sprintf(`You are Waveloom %s, a terminal-based cod
   security_violation — Fatal. The operation is blocked by policy. Do not retry.
 - command_not_found is special: it means the tool binary is absent, NOT that your command syntax was wrong. Never retry a command_not_found error with different flags or arguments — the binary itself is missing.
 - Do not retry the same operation more than twice. If a tool fails twice with the same error kind, stop and ask the user for guidance.
-- When you need a compiler, build tool, or runtime, check its availability once under ## Environment. If absent, ask the user to provide the path or install it.`, Version)
+- When you need a compiler, build tool, or runtime, check its availability once under ## Environment. If absent, ask the user to provide the path or install it.`
 
 // ---------------------------------------------------------------------------
 // 自定义消息类型
