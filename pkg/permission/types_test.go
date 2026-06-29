@@ -215,6 +215,11 @@ func (m *mockUserResponder) AskUser(ctx context.Context, toolName string, input 
 	return UserChoice{Decision: DecisionAllow}
 }
 
+func (m *mockUserResponder) AnswerQuestion(ctx context.Context, questions []QuestionPrompt) ([]QuestionResponse, error) {
+	// 默认返回空答案（拒绝）
+	return nil, nil
+}
+
 func TestUserResponderInterfaceTypeAssertion(t *testing.T) {
 	var u UserResponder = &mockUserResponder{}
 	_ = u // 编译期验证 mockUserResponder 实现 UserResponder 接口

@@ -1,7 +1,9 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/Menfre01/waveloom/pkg/llm"
@@ -166,6 +168,8 @@ func formatToolArgs(toolName string, argsJSON string, cwd string) string {
 			return name + " " + args
 		}
 		return name
+	case "ask_user_question":
+		return formatQuestionArgs(argsJSON)
 	default:
 		return truncateStr(argsJSON, 50)
 	}
@@ -208,6 +212,115 @@ func truncateStr(s string, maxLen int) string {
 	return string(runes[:maxLen])
 }
 
+// formatQuestionArgs 从 ask_user_question 的 JSON 参数中提取问题 header 摘要。
+// 解析失败或 header 过多时回退到截断原 JSON。
+func formatQuestionArgs(argsJSON string) string {
+	var params struct {
+		Questions []struct {
+			Header string `json:"header"`
+		} `json:"questions"`
+	}
+	if err := json.Unmarshal([]byte(argsJSON), &params); err != nil || len(params.Questions) == 0 {
+		return truncateStr(argsJSON, 50)
+	}
+	headers := make([]string, len(params.Questions))
+	for i, q := range params.Questions {
+		headers[i] = q.Header
+	}
+	return strings.Join(headers, ", ")
+}
+
+// parseQuestionResult 解析 ask_user_question 的 ToolResult JSON，
+// 返回 question→answers 的映射和问题列表（用于渲染顺序）。
+func parseQuestionResult(resultJSON string) (map[string]string, []string) {
+	var data struct {
+		Questions []struct {
+			Question string `json:"question"`
+			Header   string `json:"header"`
+		} `json:"questions"`
+		Answers map[string]string `json:"answers"`
+	}
+	if err := json.Unmarshal([]byte(resultJSON), &data); err != nil {
+		return nil, nil
+	}
+	m := make(map[string]string, len(data.Questions))
+	order := make([]string, 0, len(data.Questions))
+	for _, q := range data.Questions {
+		answer := data.Answers[q.Question]
+		m[q.Header] = answer
+		order = append(order, q.Header)
+	}
+	return m, order
+}
+
+// formatQuestionPreview 将问答结果渲染为可读预览行（折叠态）。
+func formatQuestionPreview(resultJSON string, indent string) string {
+	answers, order := parseQuestionResult(resultJSON)
+	if len(order) == 0 {
+		return ""
+	}
+	// 与其他工具预览的 "│ " 前缀保持一致，使用灰色
+	mutedStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#666666"))
+	var sb strings.Builder
+	for _, header := range order {
+		answer := answers[header]
+		if answer == "" {
+			answer = "(declined)"
+		}
+		sb.WriteString(indent)
+		sb.WriteString(mutedStyle.Render("│ "))
+		sb.WriteString(header)
+		sb.WriteString(" → ")
+		sb.WriteString(answer)
+		sb.WriteString("\n")
+	}
+	return sb.String()
+}
+
+// formatQuestionExpanded 将问答结果渲染为展开态（含完整问题文本）。
+func formatQuestionExpanded(resultJSON string, indent string, textWidth int) string {
+	var data struct {
+		Questions []struct {
+			Question string `json:"question"`
+			Header   string `json:"header"`
+			Options  []struct {
+				Label       string `json:"label"`
+				Description string `json:"description"`
+			} `json:"options"`
+		} `json:"questions"`
+		Answers map[string]string `json:"answers"`
+	}
+	if err := json.Unmarshal([]byte(resultJSON), &data); err != nil || len(data.Questions) == 0 {
+		// 回退到普通文本渲染
+		return ""
+	}
+	selStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#00d700"))
+	mutedStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#666666"))
+	headerStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#5A56E0")).Bold(true)
+	var sb strings.Builder
+	for _, q := range data.Questions {
+		answer := data.Answers[q.Question]
+		sb.WriteString(indent)
+		sb.WriteString(headerStyle.Render("▲ " + q.Header))
+		sb.WriteString("\n")
+		sb.WriteString(indent)
+		sb.WriteString("  " + q.Question)
+		sb.WriteString("\n")
+		if answer != "" {
+			sb.WriteString(indent)
+			sb.WriteString(selStyle.Render("  ▸ "))
+			sb.WriteString(answer)
+			sb.WriteString("\n")
+		} else {
+			sb.WriteString(indent)
+			sb.WriteString(mutedStyle.Render("  ▸ (declined)"))
+			sb.WriteString("\n")
+		}
+		sb.WriteString("\n")
+	}
+	return sb.String()
+}
+
 // ---------------------------------------------------------------------------
 // 工具摘要后缀格式化
 // ---------------------------------------------------------------------------
@@ -229,13 +342,11 @@ func toolSuffix(p *Paragraph) string {
 			}
 		case "web_fetch":
 			return webFetchErrorSuffix(p.ToolErrorKind, p.ToolError)
+		case "edit_file":
+			return editFileErrorSuffix(p.ToolErrorKind, p.ToolError)
 		}
-		// 通用回退：取错误首行作为后缀
-		firstLine := p.ToolError
-		if idx := strings.IndexByte(firstLine, '\n'); idx >= 0 {
-			firstLine = firstLine[:idx]
-		}
-		return fmt.Sprintf("(%s)", firstLine)
+		// 通用回退：用错误分类作为后缀，避免路径等长信息与预览区重叠
+		return fmt.Sprintf("(%s)", p.ToolErrorKind)
 	}
 	if p.ToolDenied {
 		return "(permission denied)"
@@ -307,6 +418,12 @@ func toolSuffix(p *Paragraph) string {
 		size := formatBytes(len(p.ToolResult))
 		dur := formatDuration(p.ToolDurMs)
 		return fmt.Sprintf("(%s, %s)", size, dur)
+	case "ask_user_question":
+		n := parseQuestionCount(p.ToolResult)
+		if n <= 0 {
+			n = parseQuestionCount(p.ToolArgs)
+		}
+		return fmt.Sprintf("(%d 问)", n)
 	default:
 		dur := formatDuration(p.ToolDurMs)
 		return fmt.Sprintf("(%s)", dur)
@@ -335,6 +452,39 @@ func webFetchErrorSuffix(kind, msg string) string {
 	default:
 		return fmt.Sprintf("(%s)", kind)
 	}
+}
+
+// editFileErrorSuffix 为 edit_file 错误生成简短后缀，避免与预览区完整错误内容重叠。
+func editFileErrorSuffix(kind, msg string) string {
+	switch kind {
+	case "multiple_matches":
+		// "found N matches for ..." → "(N matches)"
+		if n := parseMatchCount(msg); n > 0 {
+			return fmt.Sprintf("(%d matches)", n)
+		}
+		return "(multiple_matches)"
+	default:
+		return fmt.Sprintf("(%s)", kind)
+	}
+}
+
+// parseMatchCount 从 "found N matches" 中提取数字 N。
+func parseMatchCount(msg string) int {
+	// msg: "found 3 matches for old_string in /path; ..."
+	if !strings.HasPrefix(msg, "found ") {
+		return 0
+	}
+	rest := strings.TrimPrefix(msg, "found ")
+	// 找到第一个空格或 "matches" 之前的部分
+	idx := strings.Index(rest, " ")
+	if idx < 0 {
+		return 0
+	}
+	n, err := strconv.Atoi(rest[:idx])
+	if err != nil {
+		return 0
+	}
+	return n
 }
 
 // formatBytes 将字节数格式化为人类可读的字符串。
@@ -542,6 +692,17 @@ func extractParenInt(s, key string) int {
 		return atoi(s[start+1 : idx])
 	}
 	return 0
+}
+
+// parseQuestionCount 从 ask_user_question 的 JSON 中解析问题数量。
+func parseQuestionCount(jsonStr string) int {
+	var params struct {
+		Questions []struct{} `json:"questions"`
+	}
+	if err := json.Unmarshal([]byte(jsonStr), &params); err != nil {
+		return 0
+	}
+	return len(params.Questions)
 }
 
 // parseLocationCount 从 lsp_definition/lsp_references 输出首行提取位置数。
@@ -1294,6 +1455,15 @@ const maxPreviewWrapped = 5
 // 错误态（ToolResult 为空但 ToolError 非空）：统一以红色 "│ " 前缀渲染错误信息，
 // 与 shell 错误输出布局对齐，保证所有工具的失败信息在 TUI 中一致可见。
 func renderToolPreview(sb *strings.Builder, p *Paragraph, textWidth int, indent string) {
+	// ask_user_question 定制渲染：显示可读的问答摘要
+	if p.ToolName == "ask_user_question" && p.ToolResult != "" {
+		preview := formatQuestionPreview(p.ToolResult, indent)
+		if preview != "" {
+			sb.WriteString(preview)
+			return
+		}
+	}
+
 	result := stripToolStatusHeader(p.ToolResult)
 	isErrorOnly := false
 	if result == "" && p.ToolError != "" {
@@ -1471,6 +1641,10 @@ func renderToolFullOutput(sb *strings.Builder, p *Paragraph, textWidth int, inde
 	truncated := false
 
 	switch p.ToolName {
+	case "ask_user_question":
+		// 展开态：显示每个问题的完整信息
+		sb.WriteString(formatQuestionExpanded(p.ToolResult, indent, textWidth))
+		return
 	case "read_file":
 		codeTextWidth := textWidth - 9
 		if codeTextWidth < 1 {

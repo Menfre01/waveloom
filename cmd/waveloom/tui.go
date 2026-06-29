@@ -44,6 +44,7 @@ import (
 	"charm.land/glamour/v2"
 	"charm.land/glamour/v2/ansi"
 	glamourstyles "charm.land/glamour/v2/styles"
+	"charm.land/huh/v2"
 	"charm.land/lipgloss/v2"
 
 	"github.com/Menfre01/waveloom/pkg/agentloop"
@@ -162,6 +163,27 @@ var permKeys = []key.Binding{
 	key.NewBinding(key.WithKeys("esc"), key.WithHelp("Esc", "拒绝")),
 }
 
+// questionSingleKeys 单选问题快捷键提示。
+var questionSingleKeys = []key.Binding{
+	key.NewBinding(key.WithKeys("↑/↓"), key.WithHelp("↑/↓", "导航")),
+	key.NewBinding(key.WithKeys("enter"), key.WithHelp("Enter", "确认")),
+	key.NewBinding(key.WithKeys("esc"), key.WithHelp("Esc", "拒绝")),
+}
+
+// questionMultiKeys 多选问题快捷键提示。
+var questionMultiKeys = []key.Binding{
+	key.NewBinding(key.WithKeys("↑/↓"), key.WithHelp("↑/↓", "导航")),
+	key.NewBinding(key.WithKeys("space"), key.WithHelp("Space", "勾选")),
+	key.NewBinding(key.WithKeys("enter"), key.WithHelp("Enter", "确认")),
+	key.NewBinding(key.WithKeys("esc"), key.WithHelp("Esc", "拒绝")),
+}
+
+// questionOtherKeys Other 文本输入快捷键提示。
+var questionOtherKeys = []key.Binding{
+	key.NewBinding(key.WithKeys("enter"), key.WithHelp("Enter", "确认")),
+	key.NewBinding(key.WithKeys("esc"), key.WithHelp("Esc", "返回")),
+}
+
 var defaultKeys = keyMap{
 	Enter:         key.NewBinding(key.WithKeys("enter"), key.WithHelp("Enter", "发送消息")),
 	Interrupt:     key.NewBinding(key.WithKeys("esc"), key.WithHelp("Esc", "中断 agent loop")),
@@ -185,6 +207,12 @@ type permissionReqMsg struct {
 	reason     string
 	reasonKind permission.DecisionReason
 	reply      chan<- permission.UserChoice
+}
+
+// questionReqMsg AskUserQuestion 请求。
+type questionReqMsg struct {
+	questions []permission.QuestionPrompt
+	reply     chan<- []permission.QuestionResponse
 }
 
 // pickerScanDoneMsg 文件扫描完成消息（异步）。
@@ -286,6 +314,15 @@ type model struct {
 	permList     list.Model            // 权限选项列表（bubbles/list）
 	permDelegate *list.DefaultDelegate // 权限列表的 delegate 指针，主题切换时更新样式
 
+	questionReq         *questionReqMsg            // 当前待回答的问题
+	questionIdx         int                        // 当前问题索引（0-based）
+	questionAnswers     []permission.QuestionResponse // 已收集的答案
+	questionForm        *huh.Form                  // huh 表单（选择题部分）
+	questionPendingOther    bool                   // 是否等待 Other 自定义输入
+	questionPendingAnswers []string                // Other 输入前的临时答案（多选时合并用）
+	questionFormInitCmd tea.Cmd                    // 待返回的表单 Init 命令
+	questionFormIsOther bool                       // 当前是否展示 Other 自定义输入（直接用 textinput，非 huh）
+
 	// 主题选择器覆盖层
 	themeList     list.Model
 	themeDelegate *list.DefaultDelegate
@@ -366,6 +403,10 @@ type model struct {
 	input          textinput.Model
 	inputVisStart  int    // 输入框水平滚动起始偏移，镜像 textinput 内部 offset，仅当光标移出可视区时更新
 	inputLastValue string // 上一次同步时的输入值，变更时强制重置 inputVisStart
+
+	otherInput          textinput.Model // Other 自定义输入框
+	otherInputVisStart  int             // otherInput 水平滚动起始偏移
+	otherInputLastValue string          // otherInput 上一次同步值
 
 	// 输入历史
 	inputHistory []string // 已提交的输入，最新在前
@@ -479,6 +520,16 @@ func newTUIModel(llmClient llm.Client, registry tool.Registry, guard permission.
 	styles.Cursor.Blink = true
 	ti.SetStyles(styles)
 
+	// Other 自定义输入框（与主输入框同款 real cursor 模式）
+	otherTi := textinput.New()
+	otherTi.Prompt = "> "
+	otherTi.Placeholder = "输入自定义答案..."
+	otherTi.CharLimit = 200
+	otherTi.SetVirtualCursor(false)
+	otherStyles := otherTi.Styles()
+	otherStyles.Cursor.Blink = true
+	otherTi.SetStyles(otherStyles)
+
 	// 初始化 bubbles spinner 组件（通用 HUD）
 	sp := spinner.New()
 	sp.Spinner = spinner.Dot
@@ -548,6 +599,7 @@ func newTUIModel(llmClient llm.Client, registry tool.Registry, guard permission.
 		spTool:          spTool,
 		ctxProgress:     cp,
 		input:           ti,
+		otherInput:      otherTi,
 		historyPos:      -1,
 		overlay:         overlayNone,
 		themeMode:       theme,
@@ -767,6 +819,20 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	// ------------------------------------------------------------------
+	// AskUserQuestion 请求（由 tuiUserResponder.AnswerQuestion 推送）
+	// ------------------------------------------------------------------
+	case questionReqMsg:
+		m.overlay = overlayQuestion
+		m.questionReq = &msg
+		m.questionIdx = 0
+		m.questionAnswers = make([]agentloop.QuestionResponse, 0, len(msg.questions))
+		m.input.Blur()
+		m.buildQuestionForm()
+		initCmd := m.questionFormInitCmd
+		m.questionFormInitCmd = nil
+		return m, initCmd
+
+	// ------------------------------------------------------------------
 	// 文件扫描完成（异步）
 	// ------------------------------------------------------------------
 	case pickerScanDoneMsg:
@@ -812,6 +878,38 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		var cmd tea.Cmd
 		m.permList, cmd = m.permList.Update(msg)
 		cmds = append(cmds, cmd)
+	case overlayQuestion:
+		// Other 自定义输入：直接用 textinput（real cursor 模式，与主输入框一致）
+		if m.questionFormIsOther {
+			var cmd tea.Cmd
+			m.otherInput, cmd = m.otherInput.Update(msg)
+			cmds = append(cmds, cmd)
+			m.syncOtherInputVisibleStart()
+
+			// Enter 提交（Esc 在 handleKeyPress 中拦截）
+			if keyMsg, ok := msg.(tea.KeyPressMsg); ok {
+				if keyMsg.String() == "enter" {
+					m.handleOtherInputSubmit()
+				}
+			}
+		} else if m.questionForm != nil {
+			// huh 表单活跃时，所有消息路由到 Form.Update
+			fm, cmd := m.questionForm.Update(msg)
+			m.questionForm = fm.(*huh.Form)
+			cmds = append(cmds, cmd)
+			// 检测表单完成/取消
+			switch m.questionForm.State {
+			case huh.StateCompleted:
+				m.handleQuestionFormComplete()
+			case huh.StateAborted:
+				m.handleQuestionFormAborted()
+			}
+		}
+		// 返回待处理的 Init 命令（新表单创建时设置）
+		if m.questionFormInitCmd != nil {
+			cmds = append(cmds, m.questionFormInitCmd)
+			m.questionFormInitCmd = nil
+		}
 	case overlayThemePicker:
 		var cmd tea.Cmd
 		m.themeList, cmd = m.themeList.Update(msg)
@@ -912,6 +1010,24 @@ func (m *model) handleKeyPress(msg tea.KeyPressMsg) (bool, tea.Cmd) {
 			return true, cmd
 		}
 		return m.handlePermKey(keyStr)
+	}
+
+	// =====================================================================
+	// 3a. 选择题面板活跃时路由
+	// =====================================================================
+	if m.overlay == overlayQuestion {
+		// Esc → 拒绝回答（关闭 overlay，发送 nil）
+		if key.Matches(msg, m.keys.Interrupt) {
+			// Other 输入中取消 → 回退到选项列表
+			if m.questionFormIsOther {
+				m.handleOtherInputCancel()
+				return true, nil
+			}
+			m.handleQuestionFormAborted()
+			return true, nil
+		}
+		// 其余按键交由 huh 或 otherInput Update 处理
+		return false, nil
 	}
 
 	// =====================================================================
@@ -1151,6 +1267,250 @@ func (m *model) permListChoice() permission.UserChoice {
 	default:
 		return permission.UserChoice{Decision: permission.DecisionDeny}
 	}
+}
+
+// ---------------------------------------------------------------------------
+// AskUserQuestion 面板处理（huh 表单）
+// ---------------------------------------------------------------------------
+
+const otherOptionKey = "___other___"
+
+// overlayInnerWidth 返回覆盖层盒子内部内容可用宽度（与 renderQuestionOverlay / renderPermOverlay 一致）。
+func (m *model) overlayInnerWidth() int {
+	contentWidth := max(m.width-4, 20)
+	boxWidth := contentWidth
+	if boxWidth > 70 {
+		boxWidth = 70
+	}
+	return boxWidth - 2 - 4 // border(左右各1) + padding(左右各2)
+}
+func themeWaveloom() huh.Theme {
+	return huh.ThemeFunc(func(isDark bool) *huh.Styles {
+		t := huh.ThemeBase(isDark)
+	// 聚焦字段：与权限面板统一 —— 普通左边框 + colorOK 前景，无 ">" 选择符
+	t.Focused.Title = t.Focused.Title.Foreground(colorHeaderAccent)
+	t.Focused.Description = t.Focused.Description.Foreground(colorFooterFg)
+	t.Focused.Base = lipgloss.NewStyle().
+		PaddingLeft(1).
+		BorderStyle(lipgloss.NormalBorder()).
+		BorderLeft(true).
+		BorderForeground(colorHeaderAccent)
+	// 单选：使用 "▌" 选择符，与权限面板左边框视觉一致
+	t.Focused.SelectSelector = lipgloss.NewStyle().Foreground(colorOK).SetString("▌ ")
+	t.Blurred.SelectSelector = lipgloss.NewStyle().Foreground(colorMuted).SetString("  ")
+	// 多选：光标指示器与单选统一 "▌"，选择状态用 [✓] / [ ]
+	t.Focused.MultiSelectSelector = lipgloss.NewStyle().Foreground(colorOK).SetString("▌ ")
+	t.Blurred.MultiSelectSelector = lipgloss.NewStyle().Foreground(colorMuted).SetString("  ")
+	t.Focused.SelectedPrefix = lipgloss.NewStyle().Foreground(colorOK).SetString("[✓] ")
+	t.Focused.UnselectedPrefix = lipgloss.NewStyle().Foreground(colorMuted).SetString("[ ] ")
+	t.Blurred.SelectedPrefix = lipgloss.NewStyle().Foreground(colorMuted).SetString("[✓] ")
+	t.Blurred.UnselectedPrefix = lipgloss.NewStyle().Foreground(colorMuted).SetString("[ ] ")
+	t.Focused.TextInput.Cursor = t.Focused.TextInput.Cursor.Foreground(colorOK)
+	t.Focused.TextInput.Prompt = t.Focused.TextInput.Prompt.Foreground(colorOK)
+	// 未聚焦字段
+	t.Blurred.Title = t.Blurred.Title.Foreground(colorHeaderFg)
+	t.Blurred.Description = t.Blurred.Description.Foreground(colorFooterFg)
+	t.Blurred.Base = t.Blurred.Base.BorderForeground(lipgloss.Color("#444444"))
+	return t
+	})
+}
+
+// buildQuestionForm 使用 huh 构建当前问题的表单。
+func (m *model) buildQuestionForm() {
+	if m.questionReq == nil || m.questionIdx >= len(m.questionReq.questions) {
+		return
+	}
+	q := m.questionReq.questions[m.questionIdx]
+
+	// 构建选项列表（含 "Other..."）
+	opts := make([]huh.Option[string], len(q.Options)+1)
+	for i, opt := range q.Options {
+		key := opt.Label
+		if strings.HasSuffix(opt.Label, "(Recommended)") {
+			key = "★ " + opt.Label
+		}
+		opts[i] = huh.NewOption(key, opt.Label)
+	}
+	opts[len(q.Options)] = huh.NewOption("Other...", otherOptionKey)
+
+	theme := themeWaveloom()
+	formWidth := m.overlayInnerWidth()
+
+	if q.MultiSelect {
+		var selected []string
+		field := huh.NewMultiSelect[string]().
+			Key("answer").
+			Title(q.Question).
+			Options(opts...).
+			Value(&selected).
+			WithTheme(theme)
+
+		f := huh.NewForm(huh.NewGroup(field)).
+			WithTheme(theme).
+			WithWidth(formWidth).
+			WithShowHelp(false)
+
+		m.questionForm = f
+		m.questionFormInitCmd = f.Init()
+	} else {
+		var selected string
+		field := huh.NewSelect[string]().
+			Key("answer").
+			Title(q.Question).
+			Options(opts...).
+			Value(&selected).
+			WithTheme(theme)
+
+		f := huh.NewForm(huh.NewGroup(field)).
+			WithTheme(theme).
+			WithWidth(formWidth).
+			WithShowHelp(false)
+
+		m.questionForm = f
+		m.questionFormInitCmd = f.Init()
+	}
+}
+
+// buildOtherForm 构建 "Other" 自定义文本输入（使用 real cursor textinput，与主输入框一致）。
+func (m *model) buildOtherForm() {
+	m.questionFormIsOther = true
+	m.questionForm = nil
+	m.questionFormInitCmd = nil
+	m.otherInputVisStart = 0
+	m.otherInputLastValue = ""
+	m.otherInput.SetValue("")
+	// 宽度对齐盒子内部可用宽度：innerWidth - prompt（与 huh 表单宽度一致）
+	inputWidth := m.overlayInnerWidth() - lipgloss.Width(m.otherInput.Prompt)
+	if inputWidth < 10 {
+		inputWidth = 10
+	}
+	m.otherInput.SetWidth(inputWidth)
+	// 延迟 Focus：Init 命令在下一帧执行，避免同一帧内 Focus + SetValue 状态不一致
+	m.questionFormInitCmd = m.otherInput.Focus()
+}
+
+// handleQuestionFormComplete 在 huh 表单完成时调用，提取答案并推进流程。
+func (m *model) handleQuestionFormComplete() {
+	if m.questionReq == nil || m.questionIdx >= len(m.questionReq.questions) {
+		return
+	}
+	q := m.questionReq.questions[m.questionIdx]
+
+	answerValue := m.questionForm.Get("answer")
+
+	if q.MultiSelect {
+		// 多选结果
+		selected := answerValue.([]string)
+		var hasOther bool
+		var finalAnswers []string
+		for _, v := range selected {
+			if v == otherOptionKey {
+				hasOther = true
+			} else {
+				finalAnswers = append(finalAnswers, v)
+			}
+		}
+		if hasOther {
+			m.questionPendingOther = true
+			m.questionPendingAnswers = finalAnswers
+			m.buildOtherForm()
+			return
+		}
+		m.recordQuestionAnswer(finalAnswers)
+	} else {
+		// 单选结果
+		selected := answerValue.(string)
+		if selected == otherOptionKey {
+			m.questionPendingOther = true
+			m.questionPendingAnswers = nil
+			m.buildOtherForm()
+			return
+		}
+		m.recordQuestionAnswer([]string{selected})
+	}
+	m.advanceQuestion()
+}
+
+// handleQuestionFormAborted 在用户取消表单（Esc）时调用。
+func (m *model) handleQuestionFormAborted() {
+	// 拒绝回答
+	if m.questionReq != nil && m.questionReq.reply != nil {
+		m.questionReq.reply <- nil
+	}
+	m.closeQuestionOverlay()
+}
+
+// handleOtherInputSubmit 在用户按 Enter 提交 Other 自定义文本时调用。
+func (m *model) handleOtherInputSubmit() {
+	text := m.otherInput.Value()
+	m.questionFormIsOther = false
+	m.otherInput.Blur()
+
+	// 将 Other 文本合并到 pending answers，由 advanceQuestion 统一记录，避免重复响应覆盖
+	if m.questionPendingAnswers == nil {
+		m.questionPendingAnswers = []string{"Other: " + text}
+	} else {
+		m.questionPendingAnswers = append(m.questionPendingAnswers, "Other: "+text)
+	}
+	m.advanceQuestion()
+}
+
+// handleOtherInputCancel 在用户按 Esc 取消 Other 自定义文本时调用，回退到选项列表。
+func (m *model) handleOtherInputCancel() {
+	m.questionFormIsOther = false
+	m.questionPendingOther = false
+	m.questionPendingAnswers = nil
+	m.otherInput.Blur()
+	m.buildQuestionForm()
+}
+
+// recordQuestionAnswer 记录当前问题的答案。
+func (m *model) recordQuestionAnswer(answers []string) {
+	if m.questionReq == nil || m.questionIdx >= len(m.questionReq.questions) {
+		return
+	}
+	q := m.questionReq.questions[m.questionIdx]
+	m.questionAnswers = append(m.questionAnswers, permission.QuestionResponse{
+		Question: q.Question,
+		Answers:  answers,
+	})
+}
+
+// advanceQuestion 前进到下一个问题或提交全部答案。
+func (m *model) advanceQuestion() {
+	// 如果之前有待合并的 Other 答案，合并之
+	if m.questionPendingOther {
+		m.questionPendingOther = false
+		m.recordQuestionAnswer(m.questionPendingAnswers)
+		m.questionPendingAnswers = nil
+	}
+
+	m.questionIdx++
+	if m.questionReq == nil || m.questionIdx >= len(m.questionReq.questions) {
+		// 所有问题已回答，提交答案
+		if m.questionReq.reply != nil {
+			m.questionReq.reply <- m.questionAnswers
+		}
+		m.closeQuestionOverlay()
+		return
+	}
+	// 显示下一个问题
+	m.buildQuestionForm()
+}
+
+// closeQuestionOverlay 关闭选择题面板。
+func (m *model) closeQuestionOverlay() {
+	m.overlay = overlayNone
+	m.questionReq = nil
+	m.questionAnswers = nil
+	m.questionForm = nil
+	m.questionFormIsOther = false
+	m.questionPendingOther = false
+	m.questionPendingAnswers = nil
+	m.otherInputVisStart = 0
+	m.otherInputLastValue = ""
+	m.otherInput.Blur()
+	m.input.Focus()
 }
 
 // ---------------------------------------------------------------------------
@@ -2628,16 +2988,10 @@ func (m *model) scrollToBottom() {
 // 这确保光标在溢出文本中自由左右移动，而不是被粘滞在右边界。
 func (m *model) syncInputVisibleStart() {
 	value := m.input.Value()
-
-	// 值被外部修改（Reset / SetValue / 粘贴等）→ 重置偏移，下一次光标移动会自然调整
-	if value != m.inputLastValue {
-		m.inputVisStart = 0
-		m.inputLastValue = value
-	}
-
 	pos := m.input.Position()
 	w := m.input.Width()
 	runes := []rune(value)
+	m.inputLastValue = value
 
 	// 内容未溢出 → 起点始终为 0
 	totalWidth := 0
@@ -2647,6 +3001,15 @@ func (m *model) syncInputVisibleStart() {
 	if w <= 0 || totalWidth <= w {
 		m.inputVisStart = 0
 		return
+	}
+
+	// 钳位 inputVisStart（可能在外部 SetValue / Reset 后变成非法值）
+	if m.inputVisStart < 0 || m.inputVisStart > len(runes) {
+		m.inputVisStart = 0
+	}
+	// 如果光标在 inputVisStart 左侧，直接跟进
+	if pos < m.inputVisStart {
+		m.inputVisStart = pos
 	}
 
 	// 计算当前 inputVisStart 对应的可视终点（不含该位置字符）
@@ -2661,10 +3024,7 @@ func (m *model) syncInputVisibleStart() {
 		visEnd++
 	}
 
-	if pos < m.inputVisStart {
-		// 光标移到可视区左侧 → 起点跟进
-		m.inputVisStart = pos
-	} else if pos >= visEnd {
+	if pos >= visEnd {
 		// 光标移到可视区右侧或超出 → 反向扫描确定新起点
 		m.inputVisStart = pos
 		visWidth = 0
@@ -2678,6 +3038,55 @@ func (m *model) syncInputVisibleStart() {
 		}
 	}
 	// 光标在可视区内 → inputVisStart 保持不变
+}
+
+// syncOtherInputVisibleStart 与 syncInputVisibleStart 对称，用于 otherInput。
+func (m *model) syncOtherInputVisibleStart() {
+	value := m.otherInput.Value()
+	pos := m.otherInput.Position()
+	w := m.otherInput.Width()
+	runes := []rune(value)
+	m.otherInputLastValue = value
+
+	totalWidth := 0
+	for _, r := range runes {
+		totalWidth += lipgloss.Width(string(r))
+	}
+	if w <= 0 || totalWidth <= w {
+		m.otherInputVisStart = 0
+		return
+	}
+
+	if m.otherInputVisStart < 0 || m.otherInputVisStart > len(runes) {
+		m.otherInputVisStart = 0
+	}
+	if pos < m.otherInputVisStart {
+		m.otherInputVisStart = pos
+	}
+
+	visEnd := m.otherInputVisStart
+	visWidth := 0
+	for visEnd < len(runes) {
+		cw := lipgloss.Width(string(runes[visEnd]))
+		if visWidth+cw > w {
+			break
+		}
+		visWidth += cw
+		visEnd++
+	}
+
+	if pos >= visEnd {
+		m.otherInputVisStart = pos
+		visWidth = 0
+		for m.otherInputVisStart > 0 {
+			cw := lipgloss.Width(string(runes[m.otherInputVisStart-1]))
+			if visWidth+cw > w {
+				break
+			}
+			visWidth += cw
+			m.otherInputVisStart--
+		}
+	}
 }
 
 func (m *model) View() tea.View {
@@ -2705,6 +3114,14 @@ func (m *model) View() tea.View {
 				boxWidth = 70
 			}
 			overlayContent = m.renderPermOverlay(boxWidth)
+		}
+	case overlayQuestion:
+		if m.questionReq != nil {
+			boxWidth := contentWidth
+			if boxWidth > 70 {
+				boxWidth = 70
+			}
+			overlayContent = m.renderQuestionOverlay(boxWidth)
 		}
 	case overlayThemePicker:
 		boxWidth := contentWidth
@@ -2828,11 +3245,22 @@ func (m *model) View() tea.View {
 			pos := m.input.Position()
 			runes := []rune(value)
 
-			// 防御：syncInputVisibleStart 在 handleKeyPress 提前 return 的路径
-			//（Enter 提交、选择器确认、历史导航等）中不会被调到，inputVisStart 可能
-			// 因之前的 Reset/SetValue 变为越界值，slice 前 clamp 到 [0, pos]。
+			// 钳位 inputVisStart：可能因 handleKeyPress 提前 return 而未调用 syncInputVisibleStart，
+			// 导致 inputVisStart 越界。此处不简单归零（归零会让溢出文本的光标 X 计算包含全部
+			// 前导字符宽度，导致光标跳到最右边），而是以当前位置为基准重新计算。
 			if m.inputVisStart < 0 || m.inputVisStart > len(runes) || m.inputVisStart > pos {
-				m.inputVisStart = 0
+				m.syncInputVisibleStart()
+				// sync 后仍需防御：极端情况下 pos 可能越界（如组件未初始化完成），
+				// 或 inputVisStart 尚未被修正到 ≤ pos。
+				if pos > len(runes) {
+					pos = len(runes)
+				}
+				if m.inputVisStart < 0 {
+					m.inputVisStart = 0
+				}
+				if m.inputVisStart > pos {
+					m.inputVisStart = pos
+				}
 			}
 
 			visibleBeforeCursor := string(runes[m.inputVisStart:pos])
@@ -2845,6 +3273,44 @@ func (m *model) View() tea.View {
 			// input 行在终端中的 Y 坐标（0-based）：
 			//   styleApp top(1) + headerHeight + bodyHeight + overlayLines + pickerLines + commandPickerLines + separator(1)
 			cur.Y = 1 + headerHeight + bodyHeight + overlayLines + pickerLines + commandPickerLines + 1
+			if cur.Y >= m.height {
+				cur.Y = m.height - 1
+			}
+			v.Cursor = cur
+		}
+	} else if m.overlay == overlayQuestion && m.questionFormIsOther {
+		// Other 自定义输入：光标定位在 overlay box 内
+		// 布局：styleApp top(1) + header + 空行 + body(contentWidth) + overlay box
+		//   overlay box 内部：borderTop(0), padTop(1), title(2), 空行(3), otherInput(4)
+		if cur := m.otherInput.Cursor(); cur != nil {
+			pos := m.otherInput.Position()
+			value := m.otherInput.Value()
+			runes := []rune(value)
+			if pos > len(runes) {
+				pos = len(runes)
+			}
+			// 钳位滚动偏移（与主输入框同款防御）
+			if m.otherInputVisStart < 0 || m.otherInputVisStart > len(runes) || m.otherInputVisStart > pos {
+				m.syncOtherInputVisibleStart()
+				if pos > len(runes) {
+					pos = len(runes)
+				}
+				if m.otherInputVisStart < 0 {
+					m.otherInputVisStart = 0
+				}
+				if m.otherInputVisStart > pos {
+					m.otherInputVisStart = pos
+				}
+			}
+			visibleBeforeCursor := string(runes[m.otherInputVisStart:pos])
+			cursorX := lipgloss.Width(m.otherInput.Prompt) + lipgloss.Width(visibleBeforeCursor)
+			// X: styleApp 左 padding(2) + box border(1) + box 左 padding(2) = 5
+			cur.X = cursorX + 5
+			if cur.X > m.width-2 {
+				cur.X = m.width - 2
+			}
+			// Y: styleApp top(1) + headerHeight + bodyHeight（已含 header 后空行） + 4(box内偏移: border+pad+title+空行)
+			cur.Y = 1 + headerHeight + bodyHeight + 4
 			if cur.Y >= m.height {
 				cur.Y = m.height - 1
 			}
@@ -2987,7 +3453,7 @@ func (m *model) renderFooter() string {
 
 	// Line 1: spinner + model name + ctx progress bar
 	indicator := styleFooterLabel.Render("•") + " "
-	if m.running {
+	if m.running && m.overlay != overlayQuestion {
 		indicator = m.spinner.View() + " "
 	}
 	modelPart := indicator + styleFooterModel.Render(m.hudModel)
@@ -3168,6 +3634,29 @@ func (r *tuiUserResponder) AskUser(ctx context.Context, toolName string, input j
 	}
 }
 
+// AnswerQuestion 实现 permission.UserResponder。
+// 发送 questionReqMsg 到 TUI，阻塞等待用户回答。
+func (r *tuiUserResponder) AnswerQuestion(ctx context.Context, questions []permission.QuestionPrompt) ([]permission.QuestionResponse, error) {
+	replyCh := make(chan []permission.QuestionResponse, 1)
+
+	if r.program != nil {
+		r.program.Send(questionReqMsg{
+			questions: questions,
+			reply:     replyCh,
+		})
+	}
+
+	select {
+	case responses := <-replyCh:
+		if responses == nil {
+			return nil, fmt.Errorf("user declined to answer")
+		}
+		return responses, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
 // ---------------------------------------------------------------------------
 // TUI 入口（由 cmd/waveloom/main.go 在无 prompt 时调用）
 // ---------------------------------------------------------------------------
@@ -3246,6 +3735,15 @@ func (m *model) syncThemeComponents() {
 	inputStyles.Blurred.Placeholder = lipgloss.NewStyle().Foreground(colorMuted)
 	inputStyles.Cursor.Blink = true
 	m.input.SetStyles(inputStyles)
+
+	// 同步 otherInput 样式（与主输入框一致）
+	otherStyles := m.otherInput.Styles()
+	otherStyles.Focused.Prompt = lipgloss.NewStyle().Foreground(colorUser).Bold(true)
+	otherStyles.Blurred.Prompt = lipgloss.NewStyle().Foreground(colorUser).Bold(true)
+	otherStyles.Focused.Placeholder = lipgloss.NewStyle().Foreground(colorMuted)
+	otherStyles.Blurred.Placeholder = lipgloss.NewStyle().Foreground(colorMuted)
+	otherStyles.Cursor.Blink = true
+	m.otherInput.SetStyles(otherStyles)
 
 	// 同步 permList delegate 样式（若已构建）
 	if m.permDelegate != nil {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -206,6 +207,37 @@ func (l *Loop) executeToolCalls(ctx context.Context, calls []llm.ToolCall, state
 			Arguments:    tc.Arguments,
 		}) {
 			return nil, ReasonAborted, ctx.Err()
+		}
+
+		// 工具需要用户交互时（如 ask_user_question）：跳过权限检查 + 普通执行，
+		// 改为通过 UserResponder 进行阻塞式交互
+		if t, ok := l.toolRegistry.Get(tc.Name); ok {
+			if uit, ok := t.(tool.UserInteractionTool); ok && uit.RequiresUserInteraction() {
+				result, skipErr := l.executeAskUserQuestion(ctx, tc, state, ch)
+				results[tc.ID] = result
+				durations[tc.ID] = 0
+
+				ev := ToolCallResult{
+					Turn:         state.TurnCount,
+					ToolCallID:   tc.ID,
+					ToolCallName: tc.Name,
+					DurationMs:   0,
+				}
+				if result.IsError() {
+					ev.Error = result.Error.Message
+					ev.ErrorKind = result.Error.Kind
+				} else {
+					ev.Result = result.Content
+				}
+				if !sendEvent(ctx, ch, ev) {
+					return nil, ReasonAborted, ctx.Err()
+				}
+
+				if skipErr != nil {
+					return nil, ReasonAborted, skipErr
+				}
+				continue
+			}
 		}
 
 		if l.checkPermission(ctx, tc, results, skip) {
@@ -455,4 +487,111 @@ func (l *Loop) checkPermission(ctx context.Context, tc llm.ToolCall, results map
 		return skip[tc.ID]
 	}
 	return false
+}
+
+// executeAskUserQuestion 处理 ask_user_question 工具调用。
+// 发送通知事件后通过 UserResponder.AnswerQuestion() 阻塞等待用户回答。
+func (l *Loop) executeAskUserQuestion(ctx context.Context, tc llm.ToolCall, state *LoopState, ch chan<- TurnEvent) (*tool.ToolResult, error) {
+	// 解析问题参数
+	var params struct {
+		Questions []struct {
+			Question    string `json:"question"`
+			Header      string `json:"header"`
+			MultiSelect bool   `json:"multiSelect"`
+			Options     []struct {
+				Label       string `json:"label"`
+				Description string `json:"description"`
+			} `json:"options"`
+		} `json:"questions"`
+	}
+	if err := json.Unmarshal([]byte(tc.Arguments), &params); err != nil {
+		return &tool.ToolResult{
+			Error: &tool.ToolError{
+				Class:   tool.ErrorClassRecoverable,
+				Kind:    tool.ErrKindInvalidArgs,
+				Message: fmt.Sprintf("failed to parse questions: %v", err),
+			},
+		}, nil
+	}
+
+	// 转换为 QuestionPrompt
+	prompts := make([]QuestionPrompt, len(params.Questions))
+	for i, q := range params.Questions {
+		opts := make([]QuestionOptionPrompt, len(q.Options))
+		for j, o := range q.Options {
+			opts[j] = QuestionOptionPrompt{
+				Label:       o.Label,
+				Description: o.Description,
+			}
+		}
+		prompts[i] = QuestionPrompt{
+			Question:    q.Question,
+			Header:      q.Header,
+			Options:     opts,
+			MultiSelect: q.MultiSelect,
+		}
+	}
+
+	// 发送通知事件（非阻塞，TUI 可据此做渲染准备）
+	sendEvent(ctx, ch, AskUserQuestionEvent{
+		Turn:       state.TurnCount,
+		ToolCallID: tc.ID,
+		Questions:  prompts,
+	})
+
+	// 通过 UserResponder 阻塞等待用户回答
+	if l.config.UserResponder == nil {
+		return &tool.ToolResult{
+			Error: &tool.ToolError{
+				Class:   tool.ErrorClassRecoverable,
+				Kind:    "user_declined",
+				Message: "no user responder available",
+			},
+		}, nil
+	}
+
+	responses, err := l.config.UserResponder.AnswerQuestion(ctx, prompts)
+	if err != nil || responses == nil {
+		msg := "user declined to answer"
+		if err != nil {
+			msg = err.Error()
+		}
+		return &tool.ToolResult{
+			Error: &tool.ToolError{
+				Class:   tool.ErrorClassRecoverable,
+				Kind:    "user_declined",
+				Message: msg,
+			},
+		}, nil
+	}
+
+	// 格式化答案为 JSON（对齐 spec: {questions, answers}）
+	answerMap := make(map[string]string, len(responses))
+	for _, r := range responses {
+		answerMap[r.Question] = strings.Join(r.Answers, ", ")
+	}
+	resultJSON, err := json.Marshal(map[string]interface{}{
+		"questions": prompts,
+		"answers":   answerMap,
+	})
+	if err != nil {
+		return &tool.ToolResult{
+			Content: formatAnswersAsText(prompts, responses),
+		}, nil
+	}
+	return &tool.ToolResult{
+		Content: string(resultJSON),
+	}, nil
+}
+
+// formatAnswersAsText 将答案格式化为纯文本（JSON 序列化失败的兜底）。
+func formatAnswersAsText(questions []QuestionPrompt, responses []QuestionResponse) string {
+	var b strings.Builder
+	for _, r := range responses {
+		b.WriteString(r.Question)
+		b.WriteString(": ")
+		b.WriteString(strings.Join(r.Answers, ", "))
+		b.WriteString("\n")
+	}
+	return b.String()
 }

@@ -402,7 +402,7 @@ cmd/waveloom/config.go    — CLI 参数解析
 | 属性 | 值 |
 |------|-----|
 | **优先级** | P0——用户本地交互命令 |
-| **状态** | ⬜ 待实施 |
+| **状态** | ✅ 已实现 |
 | **职责** | 拦截 `/` 前缀输入，执行本地命令：session 重置、模型/Provider 热切换、settings 编辑覆盖层、主题切换、状态查询 |
 
 **参考：**
@@ -432,6 +432,57 @@ cmd/waveloom/config.go    — CLI 参数解析
 
 ---
 
+### 18. Skill System（可复用提示词扩展系统）
+
+| 属性 | 值 |
+|------|-----|
+| **优先级** | P0——LLM 能力扩展的基础设施 |
+| **状态** | ✅ 已实现 |
+| **职责** | SKILL.md 解析、发现、渲染、变量替换、动态注入、附属文件；用户 `/` 调用 + LLM `skill` 工具调用双路径 |
+
+**已实现功能：**
+- 100% 兼容 Claude Code SKILL.md 格式（YAML frontmatter + Markdown body）
+- `.claude/skills/` + `.waveloom/skills/` 双路径发现（个人级 + 项目级）
+- `.claude/commands/` + `.waveloom/commands/` 扁平文件兼容
+- 变量替换：`$ARGUMENTS`、`$ARGUMENTS[N]`、`$0`/`$1`、`$name`、`${WAVELOOM_SESSION_ID}`、`${WAVELOOM_SKILL_DIR}`、`${WAVELOOM_EFFORT}`
+- 动态注入：`` !`command` `` 和 ` ```! ` 块
+- 附属文件自动发现
+- `disable-model-invocation` / `user-invocable` 控制
+- Skill listing 注入 system prompt
+
+**参考：**
+- Claude Code: [Extend Claude with skills](https://docs.anthropic.com/en/docs/claude-code/skills)
+- [Agent Skills](https://agentskills.io) — 开放标准
+
+详见 `specs/skill-system.md`。
+
+---
+
+### 19. Self-Test System（元测试系统）
+
+| 属性 | 值 |
+|------|-----|
+| **优先级** | P1——dogfooding 集成测试 |
+| **状态** | ⬜ 待实施 |
+| **职责** | 用 Skill 编排 Tool，以 cold agent 端到端执行的方式验证全栈行为正确性；tool 调用拦截与断言 |
+
+**设计要点：**
+- 测试 skill 放在 `.waveloom/skills/selftest/`，`disable-model-invocation: true`
+- 嵌入式 agent loop（`agentloop.Run`）+ `RecordingRegistry` 装饰器拦截 tool 调用
+- 断言针对 tool 调用序列和文件副作用（不对 LLM 输出文本做精确断言）
+- 集成到 `make test-dogfood`（新 Makefile target）
+
+**与 Go 单元测试的关系：**
+| Go 单元测试 | Self-Test System |
+|------------|------------------|
+| 确定可回归 | 结构确定（tool 序列），文本模糊 |
+| 单个函数/包 | 全栈端到端（LLM → Loop → Tool → Context → TUI） |
+| `make test` | `make test-dogfood` |
+
+详见 `specs/selftest-system.md`。
+
+---
+
 ## 实现状态总表
 
 ```
@@ -448,13 +499,15 @@ cmd/waveloom/config.go    — CLI 参数解析
 ✅ Reference           — @ 文件引用展开
 ✅ Diff View           — edit_file 统一 diff 视图（行号、上下文、着色）
 ✅ HUD                 — Footer HUD 与 ContextManager 解耦，CompleteResult 驱动
+✅ Skill System        — SKILL.md 发现/解析/渲染/动态注入、双路径、双调用模式
 ──────────────────────────────────────────────────  ← 🎯 最小可用 Agent 分界线
 ⬜ Server / Protocol   — daemon + JSON-RPC over HTTP+SSE 待建
 🔶 Event Stream        — 基础 TurnEvent channel 就绪，ObserverBus 待建
+✅ SlashCommand         — /new /model /theme /help + /skill-name 动态注册
+⬜ Self-Test System    — skill 编排 tool 做 cold agent 端到端集成测试
 ⬜ Task Planner
 ⬜ MCP Client
 ⬜ Sub-Agent Orchestrator
-⬜ SlashCommand         — /new /model /theme /help
 ```
 
 ---
@@ -501,7 +554,24 @@ cmd/waveloom/config.go    — CLI 参数解析
               ┌──────────────┐
               │  SlashCommand │  ← /new /model /theme /help
               │  (本地命令层)  │
-              └──────────────┘
+              └──────┬───────┘
+                     │
+       ┌─────────────┼─────────────┐
+       ▼             ▼             ▼
+┌────────────┐ ┌────────────┐ ┌─────────────────┐
+│   Skill    │ │   Agent    │ │     Tool        │
+│   System   │ │   Loop     │ │    System       │
+│ (提示词扩展) │ │  (编排器)   │ │   (执行层)       │
+└─────┬──────┘ └─────┬──────┘ └────────┬────────┘
+      │              │                 │
+      └──────────────┼─────────────────┘
+                     │
+                     ▼
+             ┌───────────────┐
+             │  Self-Test    │  ← skill 编排 tool 做 cold agent 集成测试
+             │  System       │
+             │  (元测试系统)   │
+             └───────────────┘
 ```
 
 ### 依赖层次
@@ -514,8 +584,8 @@ Layer 2 — 能力+安全+状态  │  Tool System  │  Permission  │  Contex
                          │                              ← 🎯 最小可用 Agent
 Layer 3 — 接入层          │  Server + Protocol (JSON-RPC over HTTP+SSE)
                          │  TUI (Bubble Tea v2)  │  Reference  │  SlashCommand
-Layer 4 — 体验增强       │  Memory & Persistence
-Layer 5 — 生态扩展       │  Task Planner  │  MCP Client
+Layer 4 — 体验增强       │  Memory & Persistence  │  Skill System
+Layer 5 — 生态扩展       │  Task Planner  │  MCP Client  │  Self-Test System
 Layer 6 — 协作规模       │  Sub-Agent Orchestrator
 ```
 
@@ -531,9 +601,9 @@ Layer 6 — 协作规模       │  Sub-Agent Orchestrator
 
 2. **Layer 3（Server / Protocol）** 🔶 进行中：将 Go 核心拆分为 daemon server，通过 JSON-RPC over HTTP+SSE 协议对外开放。ink (TUI) 和移动端通过同一协议接入。Session 隔离、权限确认、流式输出全部走标准 JSON-RPC 语义。
 
-3. **Layer 4（Memory & Persistence）** ✅ 已实现：AGENTS.md 层级加载（home → CWD → 项目根），session 落盘/恢复/列出。
+3. **Layer 4（Memory & Persistence + Skill System）** ✅ 已实现：AGENTS.md 层级加载（home → CWD → 项目根），session 落盘/恢复/列出；Skill System 提供可复用提示词扩展，`/` 命令和 LLM `skill` 工具双路径调用。
 
-4. **Layer 5-6（Task + MCP + Sub-Agent）**：生态和规模。解锁复杂任务、外部工具和多 Agent 协作。
+4. **Layer 5-6（Task + MCP + Self-Test + Sub-Agent）**：生态和规模。Self-Test System 用 skill 编排 tool 做 dogfooding 集成测试；Task Planner 解锁复杂任务；MCP Client 接入外部工具生态；Sub-Agent Orchestrator 实现多 Agent 协作。
 
 ### 参考文件索引
 
