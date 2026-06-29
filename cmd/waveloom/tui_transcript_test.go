@@ -228,8 +228,8 @@ func TestFlushTranscriptRaceOnTrim(t *testing.T) {
 	// If transcriptWritten > len(paras) due to some bug, flushTranscript still works
 	// (the loop just exits because i < len(m.paras) is false)
 	m.flushTranscript()
-	if m.transcriptWritten == 7 {
-		// No change expected since transcriptWritten exceeds len(paras)
+	if m.transcriptWritten != 7 {
+		t.Errorf("expected transcriptWritten to be 7, got %d", m.transcriptWritten)
 	}
 }
 

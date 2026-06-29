@@ -212,10 +212,10 @@ func FormatEnvironmentSection(results []ProbeResult, osName, shellPath string, t
 	b.WriteString("\n\n## Environment\n\n")
 
 	if osName != "" {
-		b.WriteString(fmt.Sprintf("- OS: %s\n", osName))
+		fmt.Fprintf(&b, "- OS: %s\n", osName)
 	}
 	if shellPath != "" {
-		b.WriteString(fmt.Sprintf("- Shell: %s\n", shellPath))
+		fmt.Fprintf(&b, "- Shell: %s\n", shellPath)
 	}
 
 	b.WriteString("\nThe following tools were detected at startup. Do NOT attempt to run tools\n")
@@ -234,14 +234,14 @@ func FormatEnvironmentSection(results []ProbeResult, osName, shellPath string, t
 		}
 		sort.Strings(names)
 		for _, name := range names {
-			b.WriteString(fmt.Sprintf("  %-10s %s\n", name, configured[name]))
+			fmt.Fprintf(&b, "  %-10s %s\n", name, configured[name])
 		}
 	}
 
 	if len(found) > 0 {
 		b.WriteString("\nAvailable tools:\n")
 		for _, r := range found {
-			b.WriteString(fmt.Sprintf("  %-10s %s\n", r.Binary, r.Output))
+			fmt.Fprintf(&b, "  %-10s %s\n", r.Binary, r.Output)
 		}
 	}
 
@@ -250,7 +250,7 @@ func FormatEnvironmentSection(results []ProbeResult, osName, shellPath string, t
 		for i, r := range notFound {
 			names[i] = r.Binary
 		}
-		b.WriteString(fmt.Sprintf("\nNot found: %s\n", strings.Join(names, ", ")))
+		fmt.Fprintf(&b, "\nNot found: %s\n", strings.Join(names, ", "))
 	}
 
 	return b.String()

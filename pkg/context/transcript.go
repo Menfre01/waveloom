@@ -48,7 +48,7 @@ func AppendTranscriptLine(path string, line TranscriptLine) error {
 	if err != nil {
 		return fmt.Errorf("open transcript: %w", err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	data, err := json.Marshal(line)
 	if err != nil {
@@ -72,7 +72,7 @@ func LoadTranscriptLines(path string) ([]TranscriptLine, error) {
 		}
 		return nil, fmt.Errorf("open transcript: %w", err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	var all []TranscriptLine
 	scanner := bufio.NewScanner(f)

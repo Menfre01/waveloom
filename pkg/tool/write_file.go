@@ -91,16 +91,16 @@ func (t *WriteFile) Execute(ctx context.Context, p WriteFileParams) (*ToolResult
 
 	if !isUpdate {
 		// ── Create ──
-		result.WriteString(fmt.Sprintf("Created new file: %s\n", path))
-		result.WriteString(fmt.Sprintf("   Lines: %d, Size: %s\n", newLines, formatSize(int64(len(p.Content)))))
+		fmt.Fprintf(&result, "Created new file: %s\n", path)
+		fmt.Fprintf(&result, "   Lines: %d, Size: %s\n", newLines, formatSize(int64(len(p.Content))))
 		result.WriteString(renderContentPreview(p.Content))
 	} else {
 		// ── Update ──
-		result.WriteString(fmt.Sprintf("Updated file: %s\n", path))
-		result.WriteString(fmt.Sprintf("   Lines: %d → %d (%s%d)\n",
-			oldLines, newLines, changeSign(newLines-oldLines), absInt(newLines-oldLines)))
-		result.WriteString(fmt.Sprintf("   Size: %s → %s\n",
-			formatSize(int64(len(oldContent))), formatSize(int64(len(p.Content)))))
+		fmt.Fprintf(&result, "Updated file: %s\n", path)
+		fmt.Fprintf(&result, "   Lines: %d → %d (%s%d)\n",
+			oldLines, newLines, changeSign(newLines-oldLines), absInt(newLines-oldLines))
+		fmt.Fprintf(&result, "   Size: %s → %s\n",
+			formatSize(int64(len(oldContent))), formatSize(int64(len(p.Content))))
 
 		// 找出变化摘要
 		changeSummary := summarizeChange(oldContent, p.Content)
@@ -159,12 +159,12 @@ func renderContentPreview(content string) string {
 		preview = len(lines)
 	}
 	var buf strings.Builder
-	buf.WriteString(fmt.Sprintf("\n   --- Preview (first %d lines) ---\n", preview))
+	fmt.Fprintf(&buf, "\n   --- Preview (first %d lines) ---\n", preview)
 	for i := 0; i < preview; i++ {
-		buf.WriteString(fmt.Sprintf("   [%d] %s\n", i+1, lines[i]))
+		fmt.Fprintf(&buf, "   [%d] %s\n", i+1, lines[i])
 	}
 	if len(lines) > preview {
-		buf.WriteString(fmt.Sprintf("   ... (%d more lines)\n", len(lines)-preview))
+		fmt.Fprintf(&buf, "   ... (%d more lines)\n", len(lines)-preview)
 	}
 	return buf.String()
 }
@@ -195,17 +195,17 @@ func summarizeChange(old, new string) string {
 	}
 
 	var buf strings.Builder
-	buf.WriteString(fmt.Sprintf("   Lines added: %d, Removed: %d, Changed: %d\n",
-		maxInt(linesAdded, 0), maxInt(-linesAdded, 0), changedRegions))
+	fmt.Fprintf(&buf, "   Lines added: %d, Removed: %d, Changed: %d\n",
+		maxInt(linesAdded, 0), maxInt(-linesAdded, 0), changedRegions)
 
 	if changedRegions > 0 && changedRegions <= 5 {
 		buf.WriteString("   --- Diff (old → new) ---\n")
 		// 显示少量变更区域
 		for i := commonHead; i < len(oldLines)-commonTail && i < commonHead+5; i++ {
-			buf.WriteString(fmt.Sprintf("   - %s\n", oldLines[i]))
+			fmt.Fprintf(&buf, "   - %s\n", oldLines[i])
 		}
 		for i := commonHead; i < len(newLines)-commonTail && i < commonHead+5; i++ {
-			buf.WriteString(fmt.Sprintf("   + %s\n", newLines[i]))
+			fmt.Fprintf(&buf, "   + %s\n", newLines[i])
 		}
 	}
 	return buf.String()

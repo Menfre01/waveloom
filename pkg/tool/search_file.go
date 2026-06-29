@@ -191,18 +191,18 @@ func formatSearchResults(pattern, dir string, matches []string, truncated bool, 
 	sort.Strings(matches)
 
 	if len(matches) == 0 {
-		buf.WriteString(fmt.Sprintf("No files matching %q found in %s.", pattern, relOrDir(dir)))
+		fmt.Fprintf(&buf, "No files matching %q found in %s.", pattern, relOrDir(dir))
 		// 添加搜索范围提示
-		buf.WriteString(fmt.Sprintf("\nSearched under: %s", dir))
+		fmt.Fprintf(&buf, "\nSearched under: %s", dir)
 		return buf.String()
 	}
 
-	buf.WriteString(fmt.Sprintf("Found %d file(s) matching %q in %s (%s):",
-		len(matches), pattern, relOrDir(dir), duration.Round(time.Millisecond)))
+	fmt.Fprintf(&buf, "Found %d file(s) matching %q in %s (%s):",
+		len(matches), pattern, relOrDir(dir), duration.Round(time.Millisecond))
 
 	if truncated {
-		buf.WriteString(fmt.Sprintf("\nResults truncated to %d. Use a more specific pattern (e.g. path/**/*.go) to narrow results.",
-			MaxSearchResults))
+		fmt.Fprintf(&buf, "\nResults truncated to %d. Use a more specific pattern (e.g. path/**/*.go) to narrow results.",
+			MaxSearchResults)
 	}
 
 	buf.WriteByte('\n')

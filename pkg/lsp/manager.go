@@ -220,7 +220,7 @@ func (m *Manager) Close() {
 		inst.stateMu.Lock()
 		if inst.state == stateReady {
 			inst.state = stateClosed
-			inst.client.Close()
+			_ = inst.client.Close()
 		}
 		inst.stateMu.Unlock()
 	}
@@ -347,7 +347,7 @@ func (m *Manager) reap() {
 			inst.stateMu.Lock()
 			inst.state = stateClosed
 			inst.stateMu.Unlock()
-			inst.client.Close()
+			_ = inst.client.Close()
 			delete(m.instances, ext)
 		}
 	}

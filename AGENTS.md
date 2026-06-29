@@ -92,16 +92,22 @@ specs/           各组件规格书（修改前先阅读）
 
 ## 构建与测试
 
-- 编译、安装、测试统一使用 Makefile 标准操作，**禁止直接调用 `go build` / `go install` / `go test`**：
+- 编译、安装统一使用 Makefile 标准操作，**禁止直接调用 `go build` / `go install`**：
 
 | 操作 | 命令 |
 |------|------|
 | 编译 | `make build` |
 | 安装 | `make install` |
 | 运行 | `make run` |
-| 测试 | `make test` |
-| 集成测试 | `make test-integration` |
 | 清理 | `make clean` |
+
+- 测试按修改范围分级，避免每次都跑全量：
+
+| 修改范围 | 命令 |
+|----------|------|
+| 单个文件 / 单个包 | `go test ./pkg/<name>/ -run TestXxx` 或 `go test ./pkg/<name>/` |
+| 多个包 / 跨包改动 | `make test` |
+| 集成测试 | `make test-integration` |
 
 ### 注意事项
 

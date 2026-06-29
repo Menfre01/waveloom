@@ -560,3 +560,135 @@ func TestEditFileDiffHunksNoMatch(t *testing.T) {
 		t.Error("DiffHunks should be nil when no match found")
 	}
 }
+
+// ── normalizeWhitespace ──
+
+func TestNormalizeWhitespace(t *testing.T) {
+	tests := []struct {
+		input, want string
+	}{
+		{"hello world", "hello world"},
+		{"hello   world", "hello world"},
+		{"\thello\t\tworld", "hello world"},
+		{"  hello world  ", "hello world"},
+		{"line1\n\nline2", "line1 line2"},
+		{"\tfunc hello() {\n\t\tfmt.Println(\"hi\")\n\t}", "func hello() { fmt.Println(\"hi\") }"},
+	}
+	for _, tt := range tests {
+		got := normalizeWhitespace(tt.input)
+		if got != tt.want {
+			t.Errorf("normalizeWhitespace(%q) = %q, want %q", tt.input, got, tt.want)
+		}
+	}
+}
+
+// ── tryNormalizedMatch ──
+
+func TestTryNormalizedMatch_WhitespaceMismatch(t *testing.T) {
+	original := "func hello() {\n\tfmt.Println(\"hello world\")\n}"
+	oldStr := "func hello() {\n    fmt.Println(\"hello world\")\n}" // 4 spaces instead of tab
+
+	hint := tryNormalizedMatch(original, oldStr)
+	if hint == "" {
+		t.Fatal("expected hint for whitespace mismatch")
+	}
+	if !contains(hint, "Whitespace mismatch") {
+		t.Errorf("hint should mention whitespace mismatch: %s", hint)
+	}
+	if !contains(hint, "fmt.Println") {
+		t.Errorf("hint should show matching lines: %s", hint)
+	}
+}
+
+func TestTryNormalizedMatch_NoMatchAtAll(t *testing.T) {
+	original := "package main\nfunc main() {}"
+	oldStr := "completely different content"
+
+	hint := tryNormalizedMatch(original, oldStr)
+	if hint != "" {
+		t.Errorf("expected empty hint for no match, got: %s", hint)
+	}
+}
+
+func TestTryNormalizedMatch_MultipleNormalizedMatches(t *testing.T) {
+	original := "hello world\nhello world\n"
+	oldStr := "hello world"
+
+	hint := tryNormalizedMatch(original, oldStr)
+	if hint != "" {
+		t.Errorf("expected empty hint for ambiguous match, got: %s", hint)
+	}
+}
+
+// ── pickBestQueryLine ──
+
+func TestPickBestQueryLine(t *testing.T) {
+	tests := []struct {
+		input, want string
+	}{
+		{"single line", "single line"},
+		{"short\nlonger line here\n}", "longer line here"},
+		{"}\nfunc main() {\n\tfmt.Println()\n}", "func main() {"},
+	}
+	for _, tt := range tests {
+		got := pickBestQueryLine(tt.input)
+		if got != tt.want {
+			t.Errorf("pickBestQueryLine(%q) = %q, want %q", tt.input, got, tt.want)
+		}
+	}
+}
+
+// ── looksLikeLineNumberPrefix ──
+
+func TestLooksLikeLineNumberPrefix(t *testing.T) {
+	tests := []struct {
+		input string
+		want  bool
+	}{
+		{"[1] package main\n[2] import \"fmt\"", true},
+		{"[123] func hello() {}", true},
+		{"package main\nimport \"fmt\"", false},
+		{"func main() {\n\tfmt.Println()\n}", false},
+		{"[not a number] text", false},
+	}
+	for _, tt := range tests {
+		got := looksLikeLineNumberPrefix(tt.input)
+		if got != tt.want {
+			t.Errorf("looksLikeLineNumberPrefix(%q) = %v, want %v", tt.input, got, tt.want)
+		}
+	}
+}
+
+// ── edit_file with whitespace fallback ──
+
+func TestEditFileNoMatch_WhitespaceHint(t *testing.T) {
+	dir := t.TempDir()
+	filePath := filepath.Join(dir, "code.go")
+	content := "func hello() {\n\tfmt.Println(\"hello\")\n}\n"
+	if err := os.WriteFile(filePath, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	tool := &EditFile{}
+	result, err := tool.Execute(context.Background(), EditFileParams{
+		FilePath:  filePath,
+		OldString: "func hello() {\n    fmt.Println(\"hello\")\n}", // 4 spaces instead of tab
+		NewString: "func hello() {\n\tfmt.Println(\"hi\")\n}",
+	})
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if result.Error == nil {
+		t.Fatal("Error should not be nil for whitespace mismatch")
+	}
+	if result.Error.Kind != ErrKindNoMatch {
+		t.Errorf("Error.Kind = %q, want %q", result.Error.Kind, ErrKindNoMatch)
+	}
+	// 应包含空白符不匹配提示
+	if !contains(result.Error.Message, "Whitespace mismatch") {
+		t.Errorf("Error message should mention whitespace mismatch: %s", result.Error.Message)
+	}
+	if !contains(result.Error.Message, "Copy the exact text") {
+		t.Errorf("Error message should guide to copy exact text: %s", result.Error.Message)
+	}
+}
