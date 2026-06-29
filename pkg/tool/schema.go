@@ -11,7 +11,7 @@ var readFileSchema = json.RawMessage(`{
   "properties": {
     "file_path": {
       "type": "string",
-      "description": "Absolute file path"
+      "description": "File path (absolute, or relative to working_dir / workspace root)"
     },
     "offset": {
       "type": "integer",
@@ -34,7 +34,7 @@ var writeFileSchema = json.RawMessage(`{
   "properties": {
     "file_path": {
       "type": "string",
-      "description": "Absolute file path"
+      "description": "File path (absolute, or relative to working_dir / workspace root)"
     },
     "content": {
       "type": "string",
@@ -53,7 +53,7 @@ var editFileSchema = json.RawMessage(`{
   "properties": {
     "file_path": {
       "type": "string",
-      "description": "Absolute file path"
+      "description": "File path (absolute, or relative to working_dir / workspace root)"
     },
     "old_string": {
       "type": "string",

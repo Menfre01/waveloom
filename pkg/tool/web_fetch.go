@@ -48,7 +48,7 @@ func (t *WebFetch) Description() string {
 		"Binary content (images, videos, etc.) is rejected.",
 		"",
 		"Note: this tool only makes GET requests, and does not modify any remote resources.",
-	}, " ")
+	}, "\n")
 }
 
 func (t *WebFetch) client() *http.Client {

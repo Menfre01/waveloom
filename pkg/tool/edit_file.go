@@ -34,7 +34,7 @@ func (t *EditFile) Description() string {
 		"  - New files or full overwrites → use write_file",
 		"  - Always confirm old_string content with read_file before editing (including indentation and whitespace)",
 		"  - If old_string is not unique, expand the context to make it unique",
-	}, " ")
+	}, "\n")
 }
 func (t *EditFile) Schema() json.RawMessage { return editFileSchema }
 func (t *EditFile) ConcurrentSafe() bool    { return false }
@@ -313,57 +313,133 @@ func diffStats(hunks []DiffHunk) (added, removed int) {
 	return
 }
 
-// renderSearchHint 当 old_string 未匹配时，提供搜索线索——显示原文中相似的行。
+// renderSearchHint 当 old_string 未匹配时，在原文中寻找与 target 首行编辑距离最小的若干行，
+// 连同其上下各 1 行上下文一起返回，帮助 LLM 一眼看出 old_string 与原文的精确差异。
 func renderSearchHint(target, content string) string {
 	if target == "" || content == "" {
 		return ""
 	}
-	// 取 old_string 的第一行，从中提取关键词
-	firstLine := strings.SplitN(target, "\n", 2)[0]
-	keyword := extractKeyword(firstLine)
-	if len(keyword) < 4 {
+
+	query := strings.SplitN(target, "\n", 2)[0]
+	queryRunes := []rune(query)
+	if len(queryRunes) < 4 {
 		return ""
 	}
 
-	// 在原文中搜索包含该关键词的行
-	found := 0
-	var buf strings.Builder
-	lines := strings.Split(content, "\n")
-	for i, line := range lines {
-		if strings.Contains(line, keyword) {
-			buf.WriteString(fmt.Sprintf("   Similar line %d: %s\n", i+1, line))
-			found++
-			if found >= 3 {
+	fileLines := strings.Split(content, "\n")
+
+	// 找编辑距离最小的 topN 行（排除完全匹配的行，因为如果完全匹配 count 不会是 0）
+	type candidate struct {
+		index    int
+		distance int
+	}
+	const topN = 3
+	best := make([]candidate, topN)
+	for i := range best {
+		best[i] = candidate{index: -1, distance: -1}
+	}
+
+	for i, line := range fileLines {
+		if line == query {
+			continue // 完全相同的行不会导致 no_match
+		}
+		lineRunes := []rune(line)
+		dist := levenshteinDistance(queryRunes, lineRunes)
+		if dist < 0 {
+			continue
+		}
+		// 插入排序保持 topN
+		for j := 0; j < topN; j++ {
+			if best[j].index < 0 || dist < best[j].distance {
+				// 向下推移
+				for k := topN - 1; k > j; k-- {
+					best[k] = best[k-1]
+				}
+				best[j] = candidate{index: i, distance: dist}
 				break
 			}
 		}
 	}
-	if found == 0 {
+
+	// 收集 topN 结果（去重行号），附上下文
+	var buf strings.Builder
+	seen := make(map[int]bool)
+	printed := 0
+	for _, c := range best {
+		if c.index < 0 || seen[c.index] {
+			continue
+		}
+		seen[c.index] = true
+		if printed >= topN {
+			break
+		}
+		if printed > 0 {
+			buf.WriteString("\n")
+		}
+		// 前一行上下文
+		if c.index > 0 && !seen[c.index-1] {
+			buf.WriteString(fmt.Sprintf("   Line %d: %s\n", c.index, fileLines[c.index-1]))
+			seen[c.index-1] = true
+		}
+		// 相似行（高亮差异）
+		buf.WriteString(fmt.Sprintf("→  Line %d: %s  (distance=%d)\n", c.index+1, fileLines[c.index], c.distance))
+		// 后一行上下文
+		if c.index+1 < len(fileLines) && !seen[c.index+1] {
+			buf.WriteString(fmt.Sprintf("   Line %d: %s\n", c.index+2, fileLines[c.index+1]))
+			seen[c.index+1] = true
+		}
+		printed++
+	}
+
+	if printed == 0 {
 		return ""
 	}
-	return fmt.Sprintf("   Hint: found similar content in file:\n%s", buf.String())
+	return fmt.Sprintf("   Hint: closest matches to first line of old_string:\n%s", buf.String())
 }
 
-// extractKeyword 从一行代码中提取最长的连续标识符作为搜索关键词。
-func extractKeyword(line string) string {
-	// 找到最长的连续字母/点序列（匹配 fmt.Println, myFunc, process 等）
-	longest := ""
-	current := ""
-	for _, r := range line {
-		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') ||
-			(r >= '0' && r <= '9') || r == '_' || r == '.' {
-			current += string(r)
-		} else {
-			if len(current) > len(longest) {
-				longest = current
+// levenshteinDistance 计算两个 rune 序列的编辑距离。
+// 若任一长度超过 200 则返回 -1（跳过，避免长行性能开销），
+// 若任一为空则返回另一方的长度。
+func levenshteinDistance(a, b []rune) int {
+	if len(a) > 200 || len(b) > 200 {
+		return -1
+	}
+	if len(a) == 0 {
+		return len(b)
+	}
+	if len(b) == 0 {
+		return len(a)
+	}
+
+	// 用单行滚动数组，O(min(m,n)) 空间
+	if len(a) < len(b) {
+		a, b = b, a
+	}
+	m, n := len(a), len(b)
+	prev := make([]int, n+1)
+	curr := make([]int, n+1)
+	for j := 0; j <= n; j++ {
+		prev[j] = j
+	}
+	for i := 1; i <= m; i++ {
+		curr[0] = i
+		for j := 1; j <= n; j++ {
+			cost := 1
+			if a[i-1] == b[j-1] {
+				cost = 0
 			}
-			current = ""
+			min := prev[j] + 1 // deletion
+			if v := curr[j-1] + 1; v < min { // insertion
+				min = v
+			}
+			if v := prev[j-1] + cost; v < min { // substitution
+				min = v
+			}
+			curr[j] = min
 		}
+		prev, curr = curr, prev
 	}
-	if len(current) > len(longest) {
-		longest = current
-	}
-	return longest
+	return prev[n]
 }
 
 // extractHeading 从原文匹配行向前扫描，提取最接近的函数/方法/类型签名作为 hunk 头部上下文。
