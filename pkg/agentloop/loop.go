@@ -568,7 +568,7 @@ func (l *Loop) verbose(format string, args ...any) {
 	if l.config.VerboseWriter == nil {
 		return
 	}
-	fmt.Fprintf(l.config.VerboseWriter, format, args...)
+	_, _ = fmt.Fprintf(l.config.VerboseWriter, format, args...)
 }
 
 // truncateText 截断字符串到 maxLen，追加 "…"。

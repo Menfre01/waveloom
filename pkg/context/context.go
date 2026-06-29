@@ -118,9 +118,7 @@ func (cm *ContextManager) CompleteRun(messages []llm.Message, promptTokens, cont
 	cm.mu.Lock()
 
 	// 验证和存储消息（压缩已在 Loop 内完成）
-	validated, ok := llm.ValidateMessages(messages)
-	if !ok {
-	}
+	validated, _ := llm.ValidateMessages(messages)
 	cm.messages = validated
 
 	cm.stats.TotalTurns++

@@ -1392,7 +1392,7 @@ func TestRunFiltersInvalidToolCalls(t *testing.T) {
 
 func TestConcurrentToolExecutionError(t *testing.T) {
 	// 并发工具返回 registry 级 Go error → ReasonToolFatal
-	var execErr error = fmt.Errorf("simulated execution error")
+	execErr := fmt.Errorf("simulated execution error")
 	errorTool := &mockTool{
 		name:           "failing_tool",
 		desc:           "always fails",
@@ -1421,7 +1421,7 @@ func TestConcurrentToolExecutionError(t *testing.T) {
 
 func TestSerialToolExecutionError(t *testing.T) {
 	// 串行工具返回 registry 级 Go error → ReasonToolFatal
-	var execErr error = fmt.Errorf("serial execution failure")
+	execErr := fmt.Errorf("serial execution failure")
 	errorTool := &mockTool{
 		name:           "serial_failing_tool",
 		desc:           "always fails",
