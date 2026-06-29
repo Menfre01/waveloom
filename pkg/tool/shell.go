@@ -48,8 +48,17 @@ func (t *Shell) Description() string {
 		"Launch multiple independent commands as parallel shell calls in a single response.",
 		"Chain dependent commands with &&, not newlines.",
 		"",
-		"To change working directory, use the working_dir parameter. Do NOT prefix commands with cd.",
-		"Example: for ls in /tmp, pass {\"command\":\"ls\", \"working_dir\":\"/tmp\"}, not {\"command\":\"cd /tmp && ls\"}.",
+		"Commands already run in the workspace directory — cd to reach it is redundant.",
+		"For a different directory, prefer the working_dir parameter (keeps commands clean).",
+		"If you must use cd (e.g. chaining multiple directory changes), keep it minimal.",
+		"",
+		"For throwaway verification scripts: prefer python, write to /tmp, and clean up after.",
+		`Example: {"command":"python /tmp/check.py && rm /tmp/check.py"}`,
+		"",
+		"Examples:",
+		`  {"command":"make build"}                                     — runs in workspace`,
+		`  {"command":"ls", "working_dir":"/tmp"}                       — runs in /tmp, clean`,
+		`  {"command":"cd subdir && go test ./..."}                     — acceptable if needed`,
 	}, "\n")
 }
 

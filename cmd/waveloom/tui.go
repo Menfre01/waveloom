@@ -52,6 +52,7 @@ import (
 	"github.com/Menfre01/waveloom/pkg/pathutil"
 	"github.com/Menfre01/waveloom/pkg/permission"
 	"github.com/Menfre01/waveloom/pkg/reference"
+	"github.com/Menfre01/waveloom/pkg/skill"
 	"github.com/Menfre01/waveloom/pkg/slashcommand"
 	"github.com/Menfre01/waveloom/pkg/tool"
 )
@@ -81,6 +82,8 @@ var defaultSystemPrompt = `You are Waveloom, a coding agent. You help users writ
 - Edit surgically — prefer edit_file over write_file, never touch unrelated code.
 - Invoke parallel-safe tools (read_file, search_file, grep, ls, web_fetch, lsp_*) in the same response when independent — the system serializes write_file, edit_file, and shell automatically.
 - Use ls to explore directories before reading files — never pass a directory path to read_file.
+- For throwaway verification scripts: prefer python, write to /tmp, and clean up after.
+  Example: {"command":"python /tmp/check.py && rm /tmp/check.py"}
 
 ## Coding standards
 
@@ -1884,6 +1887,7 @@ func (m *model) handleToolResult(ev agentloop.ToolCallResult) {
 		if p.Type == paraTool && p.State == stateStreaming && p.ToolName == ev.ToolCallName {
 			p.ToolResult = truncateToolResult(ev.Result)
 			p.ToolError = ev.Error
+			p.ToolErrorKind = ev.ErrorKind
 			p.ToolDurMs = ev.DurationMs
 			p.ToolDenied = ev.Denied
 			p.DiffHunks = ev.DiffHunks
@@ -2257,10 +2261,10 @@ func isExpandable(p *Paragraph, contentWidth int) bool {
 		}
 		return true
 	case paraTool:
-		// 仅 shell 和 web_fetch 的输出值得展开/折叠，其他工具的输出
+		// shell / web_fetch / skill 的输出值得展开/折叠，其他工具的输出
 		// 或为结构化摘要（grep/ls/search_file/lsp_*）或通过预览行已传达完整信息。
 		switch p.ToolName {
-		case "shell", "web_fetch":
+		case "shell", "web_fetch", "skill":
 			if p.State != stateDone && p.State != stateCollapsed && p.State != stateExpanded && p.State != stateError {
 				return false
 			}
@@ -3377,6 +3381,68 @@ func (m *model) handleSlashCommand(input string) tea.Cmd {
 		case slashcommand.SideEffectModelSwitched:
 			m.hudModel = normalizeWidth(se.Detail)
 			m.reconfigureLLMClient(se.Detail)
+
+		case slashcommand.SideEffectInvokeSkill:
+			skillBody := se.Detail    // 由 SkillCommand.Execute 通过 SkillExecutor 获取
+			skillName := se.Detail2
+			skillArgs := se.Detail3
+			if skillBody == "" {
+				break
+			}
+			args := skillName
+			if skillArgs != "" {
+				args += " " + skillArgs
+			}
+			// paraTool 段落
+			m.paras = append(m.paras, Paragraph{
+				Type:       paraTool,
+				State:      stateDone,
+				ToolName:   "skill",
+				ToolArgs:   args,
+				ToolResult: truncateToolResult(skillBody),
+			})
+			m.trimParas()
+			m.flushTranscript()
+
+			// 启动 loop（复用 doTurn 逻辑，但不添加 paraUser + 不展开 @）
+			// PrepareRun 将 skill body 作为 user 消息注入并返回消息快照
+			m.closePicker()
+			m.hudTurns++
+			messagesSnapshot := m.cm.PrepareRun(skillBody)
+			m.running = true
+			m.focusIndex = -1
+			m.input.Placeholder = "Agent 执行中... Esc 中断"
+			m.runGeneration++
+			m.turnStartTime = time.Now()
+			m.scrollToBottom()
+
+			if m.cancelRun != nil {
+				m.cancelRun()
+				m.cancelRun = nil
+				m.loopPrompt = 0
+				m.loopCompl = 0
+				m.loopCacheHit = 0
+				m.loopCacheMiss = 0
+				m.loopReasoning = 0
+			}
+
+			m.input.Reset()
+
+			ctx, cancel := context.WithCancel(context.Background())
+			m.cancelRun = cancel
+			gen := m.runGeneration
+			return func() tea.Msg {
+				defer cancel()
+				for ev := range m.loop.Run(ctx, messagesSnapshot) {
+					if done, ok := ev.(agentloop.LoopDone); ok {
+						ev = agentloop.LoopDoneWithGen{LoopDone: done, Generation: gen}
+					}
+					if m.program != nil {
+						m.program.Send(ev)
+					}
+				}
+				return nil
+			}
 		}
 	}
 
@@ -3496,13 +3562,47 @@ func (c *tuiSessionCreator) NewSession() error {
 	return nil
 }
 
+// tuiSkillExecutor 实现 slashcommand.SkillExecutor，将 skill 执行委托给 tool.Registry。
+// 这样用户 /skill-name 和 LLM 调用 skill 工具走相同的代码路径。
+type tuiSkillExecutor struct {
+	registry tool.Registry
+}
+
+func (e *tuiSkillExecutor) ExecuteSkill(ctx context.Context, name, args string) (string, error) {
+	paramsJSON, err := json.Marshal(tool.SkillParams{Name: name, Arguments: args})
+	if err != nil {
+		return "", err
+	}
+	result, err := e.registry.Execute(ctx, "skill", paramsJSON)
+	if err != nil {
+		return "", err
+	}
+	if result.Error != nil {
+		return "", fmt.Errorf("%s", result.Error.Message)
+	}
+	return result.Content, nil
+}
+
 // newSlashRegistry 创建 slash command 注册表，注入 TUI 侧依赖实现。
-func newSlashRegistry(creator slashcommand.SessionCreator, store slashcommand.SettingsStore, lister slashcommand.ModelLister, currentModel string) *slashcommand.Registry {
+func newSlashRegistry(creator slashcommand.SessionCreator, store slashcommand.SettingsStore, lister slashcommand.ModelLister, currentModel string, skillLoader *skill.Loader, registry tool.Registry) *slashcommand.Registry {
 	r := slashcommand.NewRegistry()
 	r.Register(slashcommand.NewNewCommand(creator))
 	r.Register(slashcommand.NewModelCommand(store, lister, currentModel))
 	r.Register(slashcommand.NewThemeCommand())
 	r.Register(slashcommand.NewHelpCommand(r))
+
+	// 注册 user-invocable skills
+	// skill body 的加载统一走 skill 工具（通过 SkillExecutor 接口）
+	if skillLoader != nil {
+		skills, _ := skillLoader.List()
+		executor := &tuiSkillExecutor{registry: registry}
+		for _, info := range skills {
+			if info.UserInvocable {
+				r.Register(slashcommand.NewSkillCommand(info, executor))
+			}
+		}
+	}
+
 	return r
 }
 
@@ -3698,7 +3798,11 @@ func runTUI(llmClient llm.Client, registry tool.Registry, guard permission.Guard
 	m.settingsStore = store
 	lister := &tuiModelLister{client: llmClient}
 	sessionCreator := &tuiSessionCreator{m: m}
-	m.slashRegistry = newSlashRegistry(sessionCreator, store, lister, modelName)
+
+	// 构造 skill loader（用于注册 skill 命令）
+	homeDir, _ := os.UserHomeDir()
+	skillLoader := skill.NewLoader(m.cwd, homeDir, ctxMgr.SessionID(), "medium")
+	m.slashRegistry = newSlashRegistry(sessionCreator, store, lister, modelName, skillLoader, registry)
 
 	m.bypassPerm = bypassPerm
 	// 用外部创建的 ContextManager 替换 newTUIModel 内部创建的

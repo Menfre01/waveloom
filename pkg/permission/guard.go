@@ -92,10 +92,12 @@ func NewGuard(opts ...GuardOption) *GuardImpl {
 	g.toolRiskClass["edit_file"] = RiskClassWrite
 	g.toolRiskClass["shell"] = RiskClassExecute
 
-	// 默认工作目录
+	// 默认工作目录：项目根目录 + /tmp + 系统临时目录
+	g.workingDirs = make([]string, 0, 3)
 	if cwd, err := os.Getwd(); err == nil {
-		g.workingDirs = []string{cwd}
+		g.workingDirs = append(g.workingDirs, cwd)
 	}
+	g.workingDirs = append(g.workingDirs, "/tmp", os.TempDir())
 
 	for _, opt := range opts {
 		opt(g)

@@ -58,12 +58,13 @@ type Paragraph struct {
 	Text  string // 文本内容（assistant / thought / user 消息正文）
 
 	// Tool 专用字段
-	ToolName   string
-	ToolArgs   string // 格式化后的参数摘要
-	ToolResult string // 完整输出（展开时显示）
-	ToolError  string // 错误信息
-	ToolDurMs  int64  // 执行耗时（毫秒）
-	ToolDenied bool   // 权限被拒
+	ToolName      string
+	ToolArgs      string // 格式化后的参数摘要
+	ToolResult    string // 完整输出（展开时显示）
+	ToolError     string // 错误信息
+	ToolErrorKind string // 错误分类（如 timeout、command_failed 等）
+	ToolDurMs     int64  // 执行耗时（毫秒）
+	ToolDenied    bool   // 权限被拒
 	DiffHunks  []tool.DiffHunk // edit_file 结构化 diff（nil = 不适用或纯文本回退）
 
 	// Thought 专用字段
@@ -158,6 +159,13 @@ func formatToolArgs(toolName string, argsJSON string, cwd string) string {
 			return u
 		}
 		return truncateStr(argsJSON, 50)
+	case "skill":
+		name := extractField(argsJSON, "name")
+		args := extractField(argsJSON, "arguments")
+		if args != "" {
+			return name + " " + args
+		}
+		return name
 	default:
 		return truncateStr(argsJSON, 50)
 	}
@@ -212,8 +220,17 @@ func toolSuffix(p *Paragraph) string {
 	}
 
 	if p.ToolError != "" {
-		// 仅取错误首行作为摘要后缀，避免多行错误（如 not_dir 的目录列表）
-		// 撑破单行摘要布局。完整错误在预览区展示。
+		// 工具专用简短错误后缀：摘要保持简洁，完整错误在预览区展示
+		switch p.ToolName {
+		case "shell":
+			code := parseExitCode(p.ToolResult)
+			if code >= 0 {
+				return fmt.Sprintf("(exit=%d)", code)
+			}
+		case "web_fetch":
+			return webFetchErrorSuffix(p.ToolErrorKind, p.ToolError)
+		}
+		// 通用回退：取错误首行作为后缀
 		firstLine := p.ToolError
 		if idx := strings.IndexByte(firstLine, '\n'); idx >= 0 {
 			firstLine = firstLine[:idx]
@@ -286,13 +303,37 @@ func toolSuffix(p *Paragraph) string {
 		size := formatBytes(len(p.ToolResult))
 		dur := formatDuration(p.ToolDurMs)
 		return fmt.Sprintf("(%s, %s)", size, dur)
-	case "web_fetch":
+	case "web_fetch", "skill":
 		size := formatBytes(len(p.ToolResult))
 		dur := formatDuration(p.ToolDurMs)
 		return fmt.Sprintf("(%s, %s)", size, dur)
 	default:
 		dur := formatDuration(p.ToolDurMs)
 		return fmt.Sprintf("(%s)", dur)
+	}
+}
+
+// webFetchErrorSuffix 返回 web_fetch 错误的简短后缀。
+// 从 ToolError.Message 中提取 HTTP 状态码或使用错误分类。
+func webFetchErrorSuffix(kind, msg string) string {
+	switch kind {
+	case "timeout":
+		return "(timeout)"
+	case "invalid_args":
+		return "(invalid URL)"
+	case "binary_file":
+		return "(unsupported type)"
+	case "command_failed":
+		// HTTP 错误：提取状态码，如 "HTTP 404 Not Found" → "(HTTP 404)"
+		if strings.HasPrefix(msg, "HTTP ") {
+			parts := strings.SplitN(msg, " ", 3)
+			if len(parts) >= 2 {
+				return fmt.Sprintf("(HTTP %s)", parts[1])
+			}
+		}
+		return "(request failed)"
+	default:
+		return fmt.Sprintf("(%s)", kind)
 	}
 }
 
@@ -1321,7 +1362,7 @@ func renderToolPreview(sb *strings.Builder, p *Paragraph, textWidth int, indent 
 			}
 		}
 
-	case "shell":
+	case "shell", "skill":
 		lineStyle := styleToolPreview
 		if p.ToolError != "" {
 			lineStyle = styleToolPrefixErr
@@ -1397,7 +1438,7 @@ func renderToolPreview(sb *strings.Builder, p *Paragraph, textWidth int, indent 
 		// 仅可段落聚焦的工具展示 Enter 提示（shell / web_fetch），
 		// write_file / edit_file 等不可聚焦的工具仅显示截断标记。
 		switch p.ToolName {
-		case "shell", "web_fetch":
+		case "shell", "web_fetch", "skill":
 			sb.WriteString(styleToolPreviewHint.Render("··· Enter 展开全部"))
 		default:
 			sb.WriteString(styleToolPreviewHint.Render("··· (truncated)"))
