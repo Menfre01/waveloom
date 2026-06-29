@@ -11,7 +11,7 @@ var readFileSchema = json.RawMessage(`{
   "properties": {
     "file_path": {
       "type": "string",
-      "description": "File path (absolute, or relative to working_dir / workspace root)"
+      "description": "File path (absolute, or relative to working_dir / workspace root). Must be a file, not a directory — use ls first to explore directories."
     },
     "offset": {
       "type": "integer",

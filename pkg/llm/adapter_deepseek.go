@@ -348,12 +348,7 @@ func (a *deepSeekAdapter) GetBalance(ctx context.Context, httpClient *http.Clien
 		BalanceInfos: make([]CurrencyBalance, len(br.BalanceInfos)),
 	}
 	for i, b := range br.BalanceInfos {
-		result.BalanceInfos[i] = CurrencyBalance{
-			Currency:        b.Currency,
-			TotalBalance:    b.TotalBalance,
-			GrantedBalance:  b.GrantedBalance,
-			ToppedUpBalance: b.ToppedUpBalance,
-		}
+		result.BalanceInfos[i] = CurrencyBalance(b)
 	}
 	return result, nil
 }

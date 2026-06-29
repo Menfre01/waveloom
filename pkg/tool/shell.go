@@ -172,13 +172,13 @@ func formatShellResult(
 	// 头行：状态 + exit code + 耗时
 	buf.WriteString(status)
 	if exitCode >= 0 {
-		buf.WriteString(fmt.Sprintf(" (exit=%d)", exitCode))
+		fmt.Fprintf(&buf, " (exit=%d)", exitCode)
 	}
-	buf.WriteString(fmt.Sprintf("  %s\n", duration.Round(time.Millisecond)))
+	fmt.Fprintf(&buf, "  %s\n", duration.Round(time.Millisecond))
 
 	// 超时标记
 	if exitCode == -1 && isError {
-		buf.WriteString(fmt.Sprintf("   Timeout: %s\n", formatDuration(timeout)))
+		fmt.Fprintf(&buf, "   Timeout: %s\n", formatDuration(timeout))
 	}
 
 	// 输出标题
@@ -227,7 +227,7 @@ func truncateOutput(output string, maxLines int) string {
 			buf.WriteString(line)
 			buf.WriteByte('\n')
 		} else if i == head {
-			buf.WriteString(fmt.Sprintf("... [truncated: %d lines omitted]\n", len(lines)-head-tail))
+			fmt.Fprintf(&buf, "... [truncated: %d lines omitted]\n", len(lines)-head-tail)
 		}
 	}
 	return buf.String()
