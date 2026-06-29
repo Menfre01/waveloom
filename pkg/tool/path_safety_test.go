@@ -70,12 +70,12 @@ func TestIsWithinDirSelf(t *testing.T) {
 
 func TestIsWithinDirSymlinkFallback(t *testing.T) {
 	dir := t.TempDir()
-	// 不存在的文件会导致 EvalSymlinks 失败，回退到原始路径
+	// A nonexistent file under dir should still be considered "within" —
+	// it does not exist yet but is logically inside the allowed directory.
 	nonexistent := filepath.Join(dir, "nonexistent")
 
-	// IsWithinDir 对不存在的路径使用原始路径，Rel 可能失败返回 false
-	if IsWithinDir(nonexistent, dir) {
-		t.Errorf("IsWithinDir(nonexistent, dir) = true, want false")
+	if !IsWithinDir(nonexistent, dir) {
+		t.Errorf("IsWithinDir(nonexistent, dir) = false, want true")
 	}
 }
 
