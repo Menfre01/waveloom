@@ -327,7 +327,7 @@ func (a *deepSeekAdapter) GetBalance(ctx context.Context, httpClient *http.Clien
 	if err != nil {
 		return nil, fmt.Errorf("balance request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -375,7 +375,7 @@ func (a *deepSeekAdapter) ListModels(ctx context.Context, httpClient *http.Clien
 	if err != nil {
 		return nil, fmt.Errorf("list models request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {

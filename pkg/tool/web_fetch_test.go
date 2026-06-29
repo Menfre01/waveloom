@@ -12,7 +12,7 @@ import (
 func TestWebFetchSuccess(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-		w.Write([]byte("Hello, world!"))
+		_, _ = w.Write([]byte("Hello, world!"))
 	}))
 	defer server.Close()
 
@@ -37,7 +37,7 @@ func TestWebFetchSuccess(t *testing.T) {
 func TestWebFetchHTMLStripped(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		w.Write([]byte("<html><body><h1>Title</h1><p>Paragraph</p></body></html>"))
+		_, _ = w.Write([]byte("<html><body><h1>Title</h1><p>Paragraph</p></body></html>"))
 	}))
 	defer server.Close()
 
@@ -64,7 +64,7 @@ func TestWebFetchHTMLStripped(t *testing.T) {
 func TestWebFetchJSON(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{"name":"waveloom","version":"0.1.0"}`))
+		_, _ = w.Write([]byte(`{"name":"waveloom","version":"0.1.0"}`))
 	}))
 	defer server.Close()
 
@@ -86,7 +86,7 @@ func TestWebFetchJSON(t *testing.T) {
 func TestWebFetchHTTPError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
-		w.Write([]byte("not found"))
+		_, _ = w.Write([]byte("not found"))
 	}))
 	defer server.Close()
 
@@ -153,7 +153,7 @@ func TestWebFetchTimeout(t *testing.T) {
 func TestWebFetchBinaryContentType(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "image/png")
-		w.Write([]byte{0x89, 0x50, 0x4E, 0x47})
+		_, _ = w.Write([]byte{0x89, 0x50, 0x4E, 0x47})
 	}))
 	defer server.Close()
 
@@ -177,7 +177,7 @@ func TestWebFetchSizeLimit(t *testing.T) {
 		w.Header().Set("Content-Type", "text/plain")
 		// Write 100KB of data
 		data := strings.Repeat("a", 100*1024)
-		w.Write([]byte(data))
+		_, _ = w.Write([]byte(data))
 	}))
 	defer server.Close()
 
@@ -290,7 +290,7 @@ func TestWebFetchRedirectToPrivateRejected(t *testing.T) {
 			return
 		}
 		w.Header().Set("Content-Type", "text/plain")
-		w.Write([]byte("ok"))
+		_, _ = w.Write([]byte("ok"))
 	}))
 	defer server.Close()
 
@@ -314,7 +314,7 @@ func TestWebFetchRedirectToPublicAllowed(t *testing.T) {
 			return
 		}
 		w.Header().Set("Content-Type", "text/plain")
-		w.Write([]byte("redirected content"))
+		_, _ = w.Write([]byte("redirected content"))
 	}))
 	defer server.Close()
 
@@ -354,7 +354,7 @@ func TestWebFetchUnresolvableHostRejected(t *testing.T) {
 func TestWebFetchContextCancelled(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain")
-		w.Write([]byte("Hello, world!"))
+		_, _ = w.Write([]byte("Hello, world!"))
 	}))
 	defer server.Close()
 
@@ -379,7 +379,7 @@ func TestWebFetchContextCancelledDuringRead(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain")
 		// 写入初始数据块，让客户端进入 body 读取循环
-		w.Write([]byte("initial chunk\n"))
+		_, _ = w.Write([]byte("initial chunk\n"))
 		if f, ok := w.(http.Flusher); ok {
 			f.Flush()
 		}

@@ -23,7 +23,7 @@ var readFileSchema = json.RawMessage(`{
     },
     "working_dir": {
       "type": "string",
-      "description": "Working directory (optional, default: project root). Resolves relative file_path against this directory"
+      "description": "Working directory (optional)"
     }
   },
   "required": ["file_path"]
@@ -42,7 +42,7 @@ var writeFileSchema = json.RawMessage(`{
     },
     "working_dir": {
       "type": "string",
-      "description": "Working directory (optional, default: project root). Resolves relative file_path against this directory"
+      "description": "Working directory (optional)"
     }
   },
   "required": ["file_path", "content"]
@@ -70,7 +70,7 @@ var editFileSchema = json.RawMessage(`{
     },
     "working_dir": {
       "type": "string",
-      "description": "Working directory (optional, default: project root). Resolves relative file_path against this directory"
+      "description": "Working directory (optional)"
     }
   },
   "required": ["file_path", "old_string", "new_string"]
@@ -85,7 +85,7 @@ var shellSchema = json.RawMessage(`{
     },
     "working_dir": {
       "type": "string",
-      "description": "Working directory (optional, default: project root). Specify via this parameter, never prefix commands with cd."
+      "description": "Working directory (optional)"
     },
     "timeout_ms": {
       "type": "integer",
@@ -104,7 +104,7 @@ var searchFileSchema = json.RawMessage(`{
     },
     "working_dir": {
       "type": "string",
-      "description": "Search root directory (optional, default: project root)"
+      "description": "Search root directory (optional)"
     }
   },
   "required": ["pattern"]
@@ -152,7 +152,7 @@ var lsSchema = json.RawMessage(`{
     },
     "working_dir": {
       "type": "string",
-      "description": "Working directory (optional, default: project root). Resolves relative path against this directory"
+      "description": "Working directory (optional)"
     }
   },
   "required": []

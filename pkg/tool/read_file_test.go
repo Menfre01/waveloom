@@ -321,7 +321,7 @@ func TestReadFileCancelledDuringStreaming(t *testing.T) {
 		t.Fatal(err)
 	}
 	for i := 0; i < 10000; i++ {
-		f.WriteString("line " + strings.Repeat("x", 90) + "\n")
+		_, _ = f.WriteString("line " + strings.Repeat("x", 90) + "\n")
 	}
 	f.Close()
 

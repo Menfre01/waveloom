@@ -13,9 +13,9 @@ import (
 func testGuardDir(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
-	os.MkdirAll(filepath.Join(dir, "src"), 0o755)
-	os.WriteFile(filepath.Join(dir, "src", "main.go"), []byte("package main"), 0o644)
-	os.MkdirAll(filepath.Join(dir, ".git", "refs"), 0o755)
+	_ = os.MkdirAll(filepath.Join(dir, "src"), 0o755)
+	_ = os.WriteFile(filepath.Join(dir, "src", "main.go"), []byte("package main"), 0o644)
+	_ = os.MkdirAll(filepath.Join(dir, ".git", "refs"), 0o755)
 	return dir
 }
 
@@ -269,7 +269,7 @@ func TestGuard_AddRule(t *testing.T) {
 		t.Fatalf("expected default allow for read_file within working dir, got %s: %s", result.Decision, result.Message)
 	}
 
-	g.AddRule(Rule{Behavior: RuleDeny, ToolName: "read_file"}, ScopeConfig)
+	_ = g.AddRule(Rule{Behavior: RuleDeny, ToolName: "read_file"}, ScopeConfig)
 
 	result = g.Check(context.Background(), "read_file", input)
 	if result.Decision != DecisionDeny {
@@ -285,14 +285,14 @@ func TestGuard_RemoveRule(t *testing.T) {
 	g := NewGuard(WithWorkingDirs(dir))
 
 	rule := Rule{Behavior: RuleDeny, ToolName: "read_file"}
-	g.AddRule(rule, ScopeConfig)
+	_ = g.AddRule(rule, ScopeConfig)
 
 	result := g.Check(context.Background(), "read_file", input)
 	if result.Decision != DecisionDeny {
 		t.Fatal("deny rule should be active")
 	}
 
-	g.RemoveRule(rule, ScopeConfig)
+	_ = g.RemoveRule(rule, ScopeConfig)
 
 	result = g.Check(context.Background(), "read_file", input)
 	if result.Decision != DecisionAllow {
@@ -583,8 +583,8 @@ func TestGuard_Check_AllowRuleMustNotBypassSafetyHardBlock(t *testing.T) {
 func TestGuard_Check_FilePathAbsoluteVsRelativeRule(t *testing.T) {
 	dir := testGuardDir(t)
 	absFile := filepath.Join(dir, "cmd", "waveloom", "tui.go")
-	os.MkdirAll(filepath.Dir(absFile), 0o755)
-	os.WriteFile(absFile, []byte("package main"), 0o644)
+	_ = os.MkdirAll(filepath.Dir(absFile), 0o755)
+	_ = os.WriteFile(absFile, []byte("package main"), 0o644)
 
 	// 用户配置的规则使用相对路径
 	g := NewGuard(
@@ -605,8 +605,8 @@ func TestGuard_Check_FilePathAbsoluteVsRelativeRule(t *testing.T) {
 func TestGuard_Check_FilePathRelativeTargetWithAbsoluteRule(t *testing.T) {
 	dir := testGuardDir(t)
 	absPattern := filepath.Join(dir, "cmd", "waveloom", "tui.go")
-	os.MkdirAll(filepath.Dir(absPattern), 0o755)
-	os.WriteFile(absPattern, []byte("package main"), 0o644)
+	_ = os.MkdirAll(filepath.Dir(absPattern), 0o755)
+	_ = os.WriteFile(absPattern, []byte("package main"), 0o644)
 
 	// 用户配置的规则使用绝对路径
 	g := NewGuard(
@@ -724,7 +724,7 @@ func TestPersistRuleToConfig_Duplicate(t *testing.T) {
 	path := filepath.Join(dir, "settings.json")
 
 	// 写入相同规则两次
-	PersistRuleToConfig(path, Rule{Behavior: RuleAllow, ToolName: "read_file"})
+	_ = PersistRuleToConfig(path, Rule{Behavior: RuleAllow, ToolName: "read_file"})
 	err := PersistRuleToConfig(path, Rule{Behavior: RuleAllow, ToolName: "read_file"})
 	if err != nil {
 		t.Fatalf("duplicate PersistRuleToConfig should be silent no-op: %v", err)
@@ -777,9 +777,9 @@ func TestLoadRulesFromConfigFiles_ProjectOverridesGlobal(t *testing.T) {
 	projectPath := filepath.Join(dir, "project.json")
 
 	// 全局：allow shell(git *) 
-	os.WriteFile(globalPath, []byte(`{"permissions": {"allow": ["shell(git *)"]}}`), 0o644)
+	_ = os.WriteFile(globalPath, []byte(`{"permissions": {"allow": ["shell(git *)"]}}`), 0o644)
 	// 项目：allow shell(git *) → 同键，覆盖（相同规则无实际变化，但验证合并逻辑不报错）
-	os.WriteFile(projectPath, []byte(`{"permissions": {"allow": ["shell(git *)"], "deny": ["shell(rm *)"]}}`), 0o644)
+	_ = os.WriteFile(projectPath, []byte(`{"permissions": {"allow": ["shell(git *)"], "deny": ["shell(rm *)"]}}`), 0o644)
 
 	rules, err := LoadRulesFromConfigFiles(globalPath, projectPath)
 	if err != nil {

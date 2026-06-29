@@ -391,13 +391,6 @@ func permissionDeniedResult(result permission.DecisionResult) *tool.ToolResult {
 	}
 }
 
-// skippedDueToDenyResult 构造因其他工具被拒而跳过的工具结果。
-func skippedDueToDenyResult(deniedName string) *tool.ToolResult {
-	return &tool.ToolResult{
-		Content: fmt.Sprintf("Skipped: '%s' was denied permission", deniedName),
-	}
-}
-
 // checkPermission 对单个 tool call 进行权限检查。
 // 返回 true 表示该工具被拒绝，结果已写入 results 和 skip。
 func (l *Loop) checkPermission(ctx context.Context, tc llm.ToolCall, results map[string]*tool.ToolResult, skip map[string]bool) bool {
@@ -443,13 +436,13 @@ func (l *Loop) checkPermission(ctx context.Context, tc llm.ToolCall, results map
 			switch choice.RememberScope {
 			case permission.ScopeConfig:
 				// 三写：RuleEngine（当前 session）+ SessionMemory（当前 session）+ 落盘 settings.json（跨 session）
-				l.config.Guard.AddRule(rule, permission.ScopeConfig)
+				_ = l.config.Guard.AddRule(rule, permission.ScopeConfig)
 				if choice.Decision == permission.DecisionAllow {
 					l.config.Guard.SessionAllow(tc.Name, rawArgs)
 				} else {
 					l.config.Guard.SessionDeny(tc.Name, rawArgs)
 				}
-				l.config.Guard.PersistRule(rule)
+				_ = l.config.Guard.PersistRule(rule)
 			case permission.ScopeSession:
 				// 仅 SessionMemory（当前 session），不落盘
 				if choice.Decision == permission.DecisionAllow {
