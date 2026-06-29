@@ -193,7 +193,7 @@ func (cm *ContextManager) Save() {
 	cm.mu.RUnlock()
 
 	if path != "" {
-		SaveSessionToFile(path, messages, stats, &compaction)
+		_ = SaveSessionToFile(path, messages, stats, &compaction)
 	}
 }
 
@@ -206,7 +206,7 @@ func (cm *ContextManager) saveToPath(path string) {
 	compaction := cm.compactionData()
 	cm.mu.RUnlock()
 
-	SaveSessionToFile(path, messages, stats, &compaction)
+	_ = SaveSessionToFile(path, messages, stats, &compaction)
 }
 
 // compactionData 返回压缩系统的完整状态快照（调用方需持有锁）。
@@ -251,7 +251,7 @@ func (cm *ContextManager) RemoveSession() {
 	cm.mu.Unlock()
 
 	if path != "" {
-		RemoveSessionFile(path)
+		_ = RemoveSessionFile(path)
 	}
 }
 

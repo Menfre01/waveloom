@@ -34,7 +34,7 @@ func TestResolvePathCleans(t *testing.T) {
 func TestIsWithinDirInside(t *testing.T) {
 	dir := t.TempDir()
 	subDir := filepath.Join(dir, "sub")
-	os.Mkdir(subDir, 0o755)
+	_ = os.Mkdir(subDir, 0o755)
 
 	if !IsWithinDir(subDir, dir) {
 		t.Errorf("IsWithinDir(%q, %q) = false, want true", subDir, dir)
@@ -52,8 +52,8 @@ func TestIsWithinDirOutside(t *testing.T) {
 
 func TestIsWithinDirDifferentBranch(t *testing.T) {
 	dir := t.TempDir()
-	os.Mkdir(filepath.Join(dir, "a"), 0o755)
-	os.Mkdir(filepath.Join(dir, "b"), 0o755)
+	_ = os.Mkdir(filepath.Join(dir, "a"), 0o755)
+	_ = os.Mkdir(filepath.Join(dir, "b"), 0o755)
 
 	if IsWithinDir(filepath.Join(dir, "a"), filepath.Join(dir, "b")) {
 		t.Errorf("IsWithinDir(sibling) = true, want false")

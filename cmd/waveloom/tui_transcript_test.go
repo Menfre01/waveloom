@@ -139,8 +139,8 @@ func TestReplayTranscript(t *testing.T) {
 
 	// Create a transcript file
 	tp := filepath.Join(dir, "test.jsonl")
-	ctxpkg.AppendTranscriptLine(tp, ctxpkg.TranscriptLine{Type: "user", State: "done", Text: "question"})
-	ctxpkg.AppendTranscriptLine(tp, ctxpkg.TranscriptLine{Type: "assistant", State: "done", Text: "answer"})
+	_ = ctxpkg.AppendTranscriptLine(tp, ctxpkg.TranscriptLine{Type: "user", State: "done", Text: "question"})
+	_ = ctxpkg.AppendTranscriptLine(tp, ctxpkg.TranscriptLine{Type: "assistant", State: "done", Text: "answer"})
 
 	// Replay
 	m := &model{transcriptPath: tp}

@@ -167,14 +167,14 @@ func TestSetupVerboseLog_Enabled(t *testing.T) {
 	if wc == nil {
 		t.Fatal("expected non-nil writer for verbose=true")
 	}
-	wc.Close()
+	_ = wc.Close()
 
 	logPath := filepath.Join(".waveloom", "waveloom.log")
 	if _, err := os.Stat(logPath); os.IsNotExist(err) {
 		t.Error("waveloom.log not created")
 	}
 
-	os.Remove(logPath)
+	_ = os.Remove(logPath)
 	os.Remove(logPath + ".1")
 	if !origExists {
 		os.Remove(dir)
