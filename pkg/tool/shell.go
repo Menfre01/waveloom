@@ -47,11 +47,10 @@ func (t *Shell) Description() string {
 		"",
 		"Launch multiple independent commands as parallel shell calls in a single response.",
 		"Chain dependent commands with &&, not newlines.",
-		"Avoid unnecessary sleep; use run_in_background for long tasks (future support).",
 		"",
 		"To change working directory, use the working_dir parameter. Do NOT prefix commands with cd.",
 		"Example: for ls in /tmp, pass {\"command\":\"ls\", \"working_dir\":\"/tmp\"}, not {\"command\":\"cd /tmp && ls\"}.",
-	}, " ")
+	}, "\n")
 }
 
 // ── 超时常量 ──
