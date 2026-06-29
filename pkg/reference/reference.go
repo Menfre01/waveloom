@@ -279,11 +279,10 @@ func removeAtRefs(userInput string) string {
 		// idx[0] = start of full match, idx[1] = end of full match
 		// The full match includes the preceding space or line-start anchor.
 		// We want to preserve the space before @, so we capture from lastEnd to idx[1]-len(@ref)
-		fullStart := idx[0]
 		fullEnd := idx[1]
 
 		// Write text before the @, preserving the preceding space/line-start
-		leadingText := userInput[lastEnd:fullStart]
+		// leadingText computed below using atPos for correct @-boundary
 
 		// The @ref itself starts at the @ character. Find it.
 		// The pattern "(?:^|\\s)@([^\\s]+)" captures:
@@ -291,7 +290,7 @@ func removeAtRefs(userInput string) string {
 		//   group 1: just the path (without @)
 		// So idx[2] = start of group 1 (the path), idx[3] = end of group 1
 		atPos := idx[2] - 1 // position of @ character (group 1 start minus the @)
-		leadingText = userInput[lastEnd:atPos]
+		leadingText := userInput[lastEnd:atPos]
 
 		result.WriteString(leadingText)
 		lastEnd = fullEnd

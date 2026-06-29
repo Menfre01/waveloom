@@ -159,9 +159,7 @@ var (
 	styleHeaderAccent      lipgloss.Style
 	styleFooter            lipgloss.Style
 	styleApp               lipgloss.Style
-	styleInput             lipgloss.Style
 	styleOverlayTitle      lipgloss.Style
-	styleOverlayHint       lipgloss.Style
 	styleMDCode            lipgloss.Style
 	styleDiffAdd           lipgloss.Style
 	styleDiffDel           lipgloss.Style
@@ -237,11 +235,9 @@ func applyTheme(p palette) {
 	styleHeaderAccent = lipgloss.NewStyle().Foreground(colorHeaderAccent).Bold(true)
 	styleFooter = lipgloss.NewStyle().Foreground(colorFooterFg).Width(0)
 	styleApp = lipgloss.NewStyle().Padding(1, 2, 0, 2) // top(1) right(2) bottom(0) left(2)
-	styleInput = lipgloss.NewStyle().Width(0)
 
 	// 覆盖层样式
 	styleOverlayTitle = lipgloss.NewStyle().Foreground(colorHeaderAccent).Bold(true)
-	styleOverlayHint = lipgloss.NewStyle().Foreground(colorMuted)
 
 	// 工具输出代码样式
 	styleMDCode = lipgloss.NewStyle().Foreground(colorToolCode).Background(colorToolCodeBg)

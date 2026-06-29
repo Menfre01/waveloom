@@ -66,7 +66,7 @@ func (t *SearchFile) Execute(ctx context.Context, p SearchFileParams) (*ToolResu
 	var matches []string
 	truncated := false
 
-	filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
+	_ = filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
 		if err != nil || ctx.Err() != nil {
 			return nil
 		}

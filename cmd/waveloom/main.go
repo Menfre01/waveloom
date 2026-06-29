@@ -54,7 +54,7 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Warning: failed to open verbose log: %v\n", logErr)
 	}
 	if verboseLog != nil {
-		defer verboseLog.Close()
+		defer func() { _ = verboseLog.Close() }()
 	}
 
 	// 3. 解析配置文件路径（全局 + 项目）
@@ -323,8 +323,8 @@ func setupVerboseLog(verbose bool) (io.WriteCloser, error) {
 
 	// 轮换: waveloom.log → waveloom.log.1
 	if _, err := os.Stat(logPath); err == nil {
-		os.Remove(oldPath)                     // 丢弃更旧
-		os.Rename(logPath, oldPath)           // 当前 → .1
+		_ = os.Remove(oldPath)                     // 丢弃更旧
+		_ = os.Rename(logPath, oldPath)           // 当前 → .1
 	}
 
 	f, err := os.Create(logPath)
