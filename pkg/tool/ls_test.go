@@ -10,8 +10,8 @@ import (
 
 func TestLsSuccess(t *testing.T) {
 	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "file1.txt"), []byte("a"), 0o644)
-	os.WriteFile(filepath.Join(dir, "file2.go"), []byte("b"), 0o644)
+	_ = os.WriteFile(filepath.Join(dir, "file1.txt"), []byte("a"), 0o644)
+	_ = os.WriteFile(filepath.Join(dir, "file2.go"), []byte("b"), 0o644)
 	_ = os.Mkdir(filepath.Join(dir, "subdir"), 0o755)
 
 	tool := &Ls{}
@@ -54,7 +54,7 @@ func TestLsNotFound(t *testing.T) {
 func TestLsNotDir(t *testing.T) {
 	dir := t.TempDir()
 	filePath := filepath.Join(dir, "file.txt")
-	os.WriteFile(filePath, []byte("content"), 0o644)
+	_ = os.WriteFile(filePath, []byte("content"), 0o644)
 
 	tool := &Ls{}
 	result, err := tool.Execute(context.Background(), LsParams{
@@ -74,9 +74,9 @@ func TestLsNotDir(t *testing.T) {
 func TestLsRecursiveDepth(t *testing.T) {
 	dir := t.TempDir()
 	_ = os.MkdirAll(filepath.Join(dir, "a", "b", "c"), 0o755)
-	os.WriteFile(filepath.Join(dir, "a", "a.go"), []byte("1"), 0o644)
-	os.WriteFile(filepath.Join(dir, "a", "b", "b.go"), []byte("2"), 0o644)
-	os.WriteFile(filepath.Join(dir, "a", "b", "c", "c.go"), []byte("3"), 0o644)
+	_ = os.WriteFile(filepath.Join(dir, "a", "a.go"), []byte("1"), 0o644)
+	_ = os.WriteFile(filepath.Join(dir, "a", "b", "b.go"), []byte("2"), 0o644)
+	_ = os.WriteFile(filepath.Join(dir, "a", "b", "c", "c.go"), []byte("3"), 0o644)
 
 	// depth=1 只显示顶层
 	tool := &Ls{}
@@ -161,8 +161,8 @@ func TestLsEmptyDirectory(t *testing.T) {
 func TestLsSkipsHiddenDirs(t *testing.T) {
 	dir := t.TempDir()
 	_ = os.Mkdir(filepath.Join(dir, ".git"), 0o755)
-	os.WriteFile(filepath.Join(dir, ".git", "config"), []byte("git config"), 0o644)
-	os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main"), 0o644)
+	_ = os.WriteFile(filepath.Join(dir, ".git", "config"), []byte("git config"), 0o644)
+	_ = os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main"), 0o644)
 
 	tool := &Ls{}
 	result, err := tool.Execute(context.Background(), LsParams{
@@ -185,7 +185,7 @@ func TestLsSkipsHiddenDirs(t *testing.T) {
 func TestLsTruncated(t *testing.T) {
 	dir := t.TempDir()
 	for i := 0; i < MaxListEntries+10; i++ {
-		os.WriteFile(filepath.Join(dir, fmt.Sprintf("file_%04d.txt", i)), []byte("x"), 0o644)
+		_ = os.WriteFile(filepath.Join(dir, fmt.Sprintf("file_%04d.txt", i)), []byte("x"), 0o644)
 	}
 
 	tool := &Ls{}
