@@ -1,3 +1,5 @@
+version: "2"
+
 linters:
   enable:
     - errcheck
@@ -5,17 +7,8 @@ linters:
     - staticcheck
     - unused
 
-linters-settings:
-  errcheck:
-    check-type-assertions: false
-    check-blank: false
-    exclude-functions:
-      # Standard Close patterns — errors from Close are rarely actionable
-      - (*os.File).Close
-      - (*net/http.ResponseBody).Close
-      - io.Closer.Close
-      - (io.ReadCloser).Close
-      - (io.WriteCloser).Close
+formatters:
+  enable: []
 
 issues:
   exclude-rules:
