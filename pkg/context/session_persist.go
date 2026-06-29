@@ -161,7 +161,8 @@ func loadSessionFile(path string) (*sessionFile, error) {
 
 // RemoveSessionFile 删除 session 文件。
 func RemoveSessionFile(path string) error {
-	if err := _ = os.Remove(path); err != nil && !os.IsNotExist(err) {
+	err := os.Remove(path)
+	if err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("remove session file: %w", err)
 	}
 	return nil
