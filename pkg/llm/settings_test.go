@@ -225,7 +225,7 @@ func TestNewClientFromLLMSettingsMissingAPIKey(t *testing.T) {
 
 func TestNewClientFromLLMSettingsAPIKeyFallbackToEnv(t *testing.T) {
 	_ = os.Setenv("LLM_API_KEY", "sk-from-env")
-	defer os.Unsetenv("LLM_API_KEY")
+	defer func() { _ = os.Unsetenv("LLM_API_KEY") }()
 
 	// api_key 字段为空 → 回退到环境变量
 	settings := &LLMSettings{
@@ -246,7 +246,7 @@ func TestNewClientFromLLMSettingsAPIKeyFallbackToEnv(t *testing.T) {
 
 func TestNewClientFromLLMSettingsAPIKeyFromSettingsPriority(t *testing.T) {
 	_ = os.Setenv("LLM_API_KEY", "sk-from-env")
-	defer os.Unsetenv("LLM_API_KEY")
+	defer func() { _ = os.Unsetenv("LLM_API_KEY") }()
 
 	// settings.api_key 优先于环境变量
 	settings := &LLMSettings{

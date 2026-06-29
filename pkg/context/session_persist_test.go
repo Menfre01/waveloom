@@ -266,7 +266,7 @@ func TestResolveSessionDir_OverrideRelative(t *testing.T) {
 
 func TestResolveSessionDir_EnvVar(t *testing.T) {
 	_ = os.Setenv("WAVELOOM_SESSION_DIR", "/env/sessions")
-	defer os.Unsetenv("WAVELOOM_SESSION_DIR")
+	defer func() { _ = os.Unsetenv("WAVELOOM_SESSION_DIR") }()
 
 	dir, err := ResolveSessionDir("/tmp/cwd", "")
 	if err != nil {
