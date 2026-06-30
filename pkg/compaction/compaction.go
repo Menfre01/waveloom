@@ -234,7 +234,7 @@ type truncationStrategy struct {
 // toolTruncationStrategies 定义所有已知工具的 Tier 1 截断策略。
 var toolTruncationStrategies = map[string]truncationStrategy{
 	"read_file":      {200, 150, 10, 4000, 30000},
-	"shell":          {60, 20, 30, 2000, 12000},
+	"bash":           {60, 20, 30, 2000, 12000},
 	"grep":           {60, 50, 0, 2000, 15000},
 	"web_fetch":      {200, 150, 10, 4000, 30000},
 	"ls":             {100, 80, 10, 2000, 10000},
@@ -246,7 +246,7 @@ var toolTruncationStrategies = map[string]truncationStrategy{
 // truncatableTools Tier 2 中可替换为占位符的工具集合。
 var truncatableTools = map[string]bool{
 	"read_file":      true,
-	"shell":          true,
+	"bash": true,
 	"grep":           true,
 	"web_fetch":      true,
 	"ls":             true,
@@ -616,7 +616,7 @@ func compressUserCodeBlocks(content string) (string, bool) {
 			if fenceLines <= 50 {
 				if len(line) > maxCodeLineChars {
 					result.WriteString(line[:maxCodeLineChars])
-					result.WriteString(fmt.Sprintf("... [单行截断: %d → %d 字符]", len(line), maxCodeLineChars))
+					fmt.Fprintf(&result, "... [单行截断: %d → %d 字符]", len(line), maxCodeLineChars)
 					result.WriteString("\n")
 					didCompress = true
 				} else {
@@ -920,7 +920,7 @@ func FormatSummaryUserMessage(existingSummaries []string, deltaMessages []llm.Me
 	if len(existingSummaries) > 0 {
 		b.WriteString("## 已有摘要链（不可修改）\n\n")
 		for i, s := range existingSummaries {
-			b.WriteString(fmt.Sprintf("### Summary %d\n\n```json\n%s\n```\n\n", i+1, s))
+			fmt.Fprintf(&b, "### Summary %d\n\n```json\n%s\n```\n\n", i+1, s)
 		}
 		b.WriteString("---\n\n")
 	}
@@ -933,7 +933,7 @@ func FormatSummaryUserMessage(existingSummaries []string, deltaMessages []llm.Me
 		if len(content) > 2000 {
 			content = content[:2000] + "\n... [内容已截断]"
 		}
-		b.WriteString(fmt.Sprintf("### [%s]\n\n%s\n\n", role, content))
+		fmt.Fprintf(&b, "### [%s]\n\n%s\n\n", role, content)
 	}
 
 	return b.String()

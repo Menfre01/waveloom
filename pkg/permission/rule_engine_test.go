@@ -9,11 +9,11 @@ import (
 func TestRuleEngine_DenyPriority(t *testing.T) {
 	re := NewRuleEngine()
 	re.LoadRules([]RuleEntry{
-		{Rule: Rule{Behavior: RuleDeny, ToolName: "shell"}, Source: SourceConfig, Scope: ScopeConfig},
-		{Rule: Rule{Behavior: RuleAllow, ToolName: "shell"}, Source: SourceConfig, Scope: ScopeConfig},
+		{Rule: Rule{Behavior: RuleDeny, ToolName: "bash"}, Source: SourceConfig, Scope: ScopeConfig},
+		{Rule: Rule{Behavior: RuleAllow, ToolName: "bash"}, Source: SourceConfig, Scope: ScopeConfig},
 	})
 
-	result, found := re.CheckDeny("shell", nil)
+	result, found := re.CheckDeny("bash", nil)
 	if !found {
 		t.Error("CheckDeny should find deny rule")
 	}
@@ -51,13 +51,13 @@ func TestRuleEngine_ToolLevelMatch(t *testing.T) {
 func TestRuleEngine_ContentLevelMatch(t *testing.T) {
 	re := NewRuleEngine()
 	re.LoadRules([]RuleEntry{
-		{Rule: Rule{Behavior: RuleAllow, ToolName: "shell", Pattern: "git *"}, Source: SourceConfig, Scope: ScopeConfig},
-		{Rule: Rule{Behavior: RuleDeny, ToolName: "shell", Pattern: "rm *"}, Source: SourceConfig, Scope: ScopeConfig},
+		{Rule: Rule{Behavior: RuleAllow, ToolName: "bash", Pattern: "git *"}, Source: SourceConfig, Scope: ScopeConfig},
+		{Rule: Rule{Behavior: RuleDeny, ToolName: "bash", Pattern: "rm *"}, Source: SourceConfig, Scope: ScopeConfig},
 	})
 
 	// allow git commands
 	input := json.RawMessage(`{"command": "git status"}`)
-	result, found := re.CheckAllow("shell", input)
+	result, found := re.CheckAllow("bash", input)
 	if !found {
 		t.Error("CheckAllow should find 'git *' allow rule")
 	}
@@ -67,7 +67,7 @@ func TestRuleEngine_ContentLevelMatch(t *testing.T) {
 
 	// deny rm commands
 	input = json.RawMessage(`{"command": "rm file.txt"}`)
-	result, found = re.CheckDeny("shell", input)
+	result, found = re.CheckDeny("bash", input)
 	if !found {
 		t.Error("CheckDeny should find 'rm *' deny rule")
 	}
@@ -77,7 +77,7 @@ func TestRuleEngine_ContentLevelMatch(t *testing.T) {
 
 	// non-matching command should not find content-level rule
 	input = json.RawMessage(`{"command": "ls -la"}`)
-	_, found = re.CheckAllow("shell", input)
+	_, found = re.CheckAllow("bash", input)
 	if found {
 		t.Error("CheckAllow should not match 'ls -la' against 'git *' rule")
 	}
@@ -162,26 +162,26 @@ func TestRuleEngine_ToolLevelBeforeContentLevel(t *testing.T) {
 	re := NewRuleEngine()
 	re.LoadRules([]RuleEntry{
 		// 内容级规则在前
-		{Rule: Rule{Behavior: RuleAllow, ToolName: "shell", Pattern: "git *"}, Source: SourceConfig, Scope: ScopeConfig},
+		{Rule: Rule{Behavior: RuleAllow, ToolName: "bash", Pattern: "git *"}, Source: SourceConfig, Scope: ScopeConfig},
 		// 工具级规则在后
-		{Rule: Rule{Behavior: RuleAllow, ToolName: "shell"}, Source: SourceConfig, Scope: ScopeConfig},
+		{Rule: Rule{Behavior: RuleAllow, ToolName: "bash"}, Source: SourceConfig, Scope: ScopeConfig},
 	})
 
 	// 工具级规则应优先匹配（即使内容级在数组前面）
-	result, found := re.CheckAllow("shell", json.RawMessage(`{"command": "make"}`))
+	result, found := re.CheckAllow("bash", json.RawMessage(`{"command": "make"}`))
 	if !found {
 		t.Error("should find tool-level rule")
 	}
-	// 工具级匹配时 Rule 字段应为 "shell"（不含 pattern）
-	if result.Rule != "shell" {
-		t.Errorf("tool-level match: Rule = %q, want %q", result.Rule, "shell")
+	// 工具级匹配时 Rule 字段应为 "bash"（不含 pattern）
+	if result.Rule != "bash" {
+		t.Errorf("tool-level match: Rule = %q, want %q", result.Rule, "bash")
 	}
 }
 
 func TestRuleEngine_AllRules(t *testing.T) {
 	re := NewRuleEngine()
 	re.LoadRules([]RuleEntry{
-		{Rule: Rule{Behavior: RuleDeny, ToolName: "shell", Pattern: "rm *"}, Source: SourceConfig, Scope: ScopeConfig},
+		{Rule: Rule{Behavior: RuleDeny, ToolName: "bash", Pattern: "rm *"}, Source: SourceConfig, Scope: ScopeConfig},
 		{Rule: Rule{Behavior: RuleAsk, ToolName: "write_file"}, Source: SourceConfig, Scope: ScopeConfig},
 		{Rule: Rule{Behavior: RuleAllow, ToolName: "read_file"}, Source: SourceConfig, Scope: ScopeConfig},
 	})
@@ -226,25 +226,25 @@ func TestRuleEngine_ConcurrentAddAndCheck(t *testing.T) {
 
 func TestMatchContent_ShellPrefixExactMatch(t *testing.T) {
 	// "make build *" 应匹配精确命令 "make build"（无参数）
-	result := matchContent("shell", "make build *", json.RawMessage(`{"command": "make build"}`))
+	result := matchContent("bash", "make build *", json.RawMessage(`{"command": "make build"}`))
 	if !result {
 		t.Error(`"make build *" should match exact command "make build"`)
 	}
 
 	// "make build *" 应匹配带参数的命令 "make build all"
-	result = matchContent("shell", "make build *", json.RawMessage(`{"command": "make build all"}`))
+	result = matchContent("bash", "make build *", json.RawMessage(`{"command": "make build all"}`))
 	if !result {
 		t.Error(`"make build *" should match "make build all"`)
 	}
 
 	// "make build *" 不应匹配 "make buildx"
-	result = matchContent("shell", "make build *", json.RawMessage(`{"command": "make buildx"}`))
+	result = matchContent("bash", "make build *", json.RawMessage(`{"command": "make buildx"}`))
 	if result {
 		t.Error(`"make build *" should NOT match "make buildx"`)
 	}
 
 	// "git *" 应匹配精确命令 "git"（无参数）
-	result = matchContent("shell", "git *", json.RawMessage(`{"command": "git"}`))
+	result = matchContent("bash", "git *", json.RawMessage(`{"command": "git"}`))
 	if !result {
 		t.Error(`"git *" should match exact command "git"`)
 	}
@@ -252,14 +252,14 @@ func TestMatchContent_ShellPrefixExactMatch(t *testing.T) {
 
 func TestMatchContent_EmptyInput(t *testing.T) {
 	// 空输入不应匹配任何 pattern
-	result := matchContent("shell", "git *", json.RawMessage(`{}`))
+	result := matchContent("bash", "git *", json.RawMessage(`{}`))
 	if result {
 		t.Error("empty input should not match")
 	}
 }
 
 func TestMatchContent_InvalidJSON(t *testing.T) {
-	result := matchContent("shell", "git *", json.RawMessage(`invalid`))
+	result := matchContent("bash", "git *", json.RawMessage(`invalid`))
 	if result {
 		t.Error("invalid JSON should not match")
 	}
@@ -290,11 +290,11 @@ func TestRuleEngine_CheckAsk_ToolLevel(t *testing.T) {
 func TestRuleEngine_CheckAsk_ContentLevel(t *testing.T) {
 	re := NewRuleEngine()
 	re.LoadRules([]RuleEntry{
-		{Rule: Rule{Behavior: RuleAsk, ToolName: "shell", Pattern: "docker *"}, Source: SourceConfig, Scope: ScopeConfig},
+		{Rule: Rule{Behavior: RuleAsk, ToolName: "bash", Pattern: "docker *"}, Source: SourceConfig, Scope: ScopeConfig},
 	})
 
 	input := json.RawMessage(`{"command": "docker build ."}`)
-	result, found := re.CheckAsk("shell", input)
+	result, found := re.CheckAsk("bash", input)
 	if !found {
 		t.Error("CheckAsk should find content-level ask rule for docker")
 	}
@@ -303,7 +303,7 @@ func TestRuleEngine_CheckAsk_ContentLevel(t *testing.T) {
 	}
 
 	// 不匹配的命令不应命中
-	_, found = re.CheckAsk("shell", json.RawMessage(`{"command": "git status"}`))
+	_, found = re.CheckAsk("bash", json.RawMessage(`{"command": "git status"}`))
 	if found {
 		t.Error("CheckAsk should not match 'git status' against 'docker *' rule")
 	}

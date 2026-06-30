@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"html"
 	"io"
 	"net"
 	"net/http"
@@ -48,7 +49,7 @@ func (t *WebFetch) Description() string {
 		"Binary content (images, videos, etc.) is rejected.",
 		"",
 		"Note: this tool only makes GET requests, and does not modify any remote resources.",
-	}, " ")
+	}, "\n")
 }
 
 func (t *WebFetch) client() *http.Client {
@@ -143,7 +144,7 @@ func (t *WebFetch) Execute(ctx context.Context, p WebFetchParams) (*ToolResult, 
 		return toolError(ErrorClassRecoverable, ErrKindCommandFailed,
 			fmt.Sprintf("request failed: %v", err), err), nil
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	// ── Step 6: 检查 Content-Type ──
 	contentType := resp.Header.Get("Content-Type")
@@ -155,18 +156,25 @@ func (t *WebFetch) Execute(ctx context.Context, p WebFetchParams) (*ToolResult, 
 
 	// ── Step 7: 读取响应体（受大小限制，分块检查 context 取消）──
 	limitedReader := io.LimitReader(resp.Body, int64(maxSize)+1)
-	bodyBytes, err := readHTTPBodyWithContext(reqCtx, limitedReader)
-	if err != nil {
-		if reqCtx.Err() != nil {
-			return nil, reqCtx.Err()
-		}
-		return toolError(ErrorClassRecoverable, ErrKindCommandFailed,
-			fmt.Sprintf("error reading response: %v", err), err), nil
-	}
+	bodyBytes, readErr := readHTTPBodyWithContext(reqCtx, limitedReader)
 
+	// 大小截断
 	truncated := len(bodyBytes) > maxSize
 	if truncated {
 		bodyBytes = bodyBytes[:maxSize]
+	}
+
+	// 超时截断：保留已读取的部分内容
+	timeoutTruncated := false
+	if readErr != nil {
+		if len(bodyBytes) == 0 || reqCtx.Err() != context.DeadlineExceeded {
+			if reqCtx.Err() != nil {
+				return nil, reqCtx.Err()
+			}
+			return toolError(ErrorClassRecoverable, ErrKindCommandFailed,
+				fmt.Sprintf("error reading response: %v", readErr), readErr), nil
+		}
+		timeoutTruncated = true
 	}
 
 	duration := time.Since(start)
@@ -197,12 +205,15 @@ func (t *WebFetch) Execute(ctx context.Context, p WebFetchParams) (*ToolResult, 
 
 	// ── Step 10: 格式化输出 ──
 	var buf bytes.Buffer
-	buf.WriteString(fmt.Sprintf("Fetched %s  HTTP %d", p.URL, resp.StatusCode))
-	buf.WriteString(fmt.Sprintf("  %s", duration.Round(time.Millisecond)))
-	buf.WriteString(fmt.Sprintf("\nContent-Type: %s", contentType))
-	buf.WriteString(fmt.Sprintf("\nSize: %s", formatSize(int64(len(bodyBytes)))))
+	fmt.Fprintf(&buf, "Fetched %s  HTTP %d", p.URL, resp.StatusCode)
+	fmt.Fprintf(&buf, "  %s", duration.Round(time.Millisecond))
+	fmt.Fprintf(&buf, "\nContent-Type: %s", contentType)
+	fmt.Fprintf(&buf, "\nSize: %s", formatSize(int64(len(bodyBytes))))
 	if truncated {
-		buf.WriteString(fmt.Sprintf(" [truncated from > %s]", formatSize(int64(maxSize))))
+		fmt.Fprintf(&buf, " [truncated from > %s]", formatSize(int64(maxSize)))
+	}
+	if timeoutTruncated {
+		fmt.Fprintf(&buf, " [truncated: %v]", readErr)
 	}
 	buf.WriteString("\n\n")
 	buf.WriteString(bodyText)
@@ -219,6 +230,10 @@ func (t *WebFetch) Execute(ctx context.Context, p WebFetchParams) (*ToolResult, 
 // ── Content-Type helpers ──
 
 func isTextContentType(contentType string) bool {
+	// 缺失 Content-Type 头时按 text/plain 容错处理
+	if contentType == "" {
+		return true
+	}
 	// 提取 media type（去除参数如 charset）
 	mediaType := strings.ToLower(contentType)
 	if idx := strings.Index(mediaType, ";"); idx >= 0 {
@@ -320,7 +335,7 @@ func stripHTML(s string) string {
 			cleaned = append(cleaned, trimmed)
 		}
 	}
-	return strings.Join(cleaned, "\n")
+	return html.UnescapeString(strings.Join(cleaned, "\n"))
 }
 
 var blockTags = map[string]bool{
@@ -424,13 +439,14 @@ func checkIPAllowed(ip net.IP) error {
 
 // readHTTPBodyWithContext 从 reader 分块读取数据，每 64KB 检查 ctx 是否取消。
 // 用于替代 io.ReadAll，支持 context 中断。
+// ctx 取消时返回已读取的部分数据，超时场景不浪费已下载内容。
 func readHTTPBodyWithContext(ctx context.Context, reader io.Reader) ([]byte, error) {
 	var buf bytes.Buffer
 	chunk := make([]byte, 64*1024) // 64KB chunks
 
 	for {
 		if err := ctx.Err(); err != nil {
-			return nil, err
+			return buf.Bytes(), err
 		}
 		n, readErr := reader.Read(chunk)
 		if n > 0 {
@@ -440,7 +456,7 @@ func readHTTPBodyWithContext(ctx context.Context, reader io.Reader) ([]byte, err
 			break
 		}
 		if readErr != nil {
-			return nil, readErr
+			return buf.Bytes(), readErr
 		}
 	}
 

@@ -2,6 +2,7 @@ package agentloop
 
 import (
 	"github.com/Menfre01/waveloom/pkg/llm"
+	"github.com/Menfre01/waveloom/pkg/permission"
 	"github.com/Menfre01/waveloom/pkg/tool"
 )
 
@@ -124,6 +125,29 @@ type BalanceUpdate struct {
 }
 
 func (BalanceUpdate) turnEvent() {}
+
+// ---------------------------------------------------------------------------
+// AskUserQuestionEvent — 用户选择题交互通知
+// ---------------------------------------------------------------------------
+
+// QuestionPrompt / QuestionOptionPrompt / QuestionResponse 的类型别名，
+// 实际定义在 pkg/permission/types.go 中。
+type (
+	QuestionPrompt       = permission.QuestionPrompt
+	QuestionOptionPrompt = permission.QuestionOptionPrompt
+	QuestionResponse     = permission.QuestionResponse
+)
+
+// AskUserQuestionEvent 通知 TUI 即将展示选择题界面。
+// 实际的阻塞式交互通过 UserResponder.AnswerQuestion() 完成，
+// 此事件用于 TUI 在渲染前做准备工作（如清空状态）。
+type AskUserQuestionEvent struct {
+	Turn       int
+	ToolCallID string
+	Questions  []QuestionPrompt
+}
+
+func (AskUserQuestionEvent) turnEvent() {}
 
 // ---------------------------------------------------------------------------
 // LoopDone — 循环终止

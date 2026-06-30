@@ -62,6 +62,86 @@ func TestSaveAndLoad_RoundTrip(t *testing.T) {
 	}
 }
 
+func TestSaveAndLoad_RoundTripWithToolCalls(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "session_tc.json")
+
+	messages := []llm.Message{
+		{Role: llm.RoleSystem, Content: "You are helpful."},
+		{Role: llm.RoleUser, Content: "read a file"},
+		{
+			Role:             llm.RoleAssistant,
+			ReasoningContent: "I need to read the file.",
+			ToolCalls: []llm.ToolCall{
+				{ID: "call_1", Name: "read_file", Arguments: `{"path":"/tmp/test"}`},
+				{ID: "call_2", Name: "grep", Arguments: `{"pattern":"foo"}`},
+			},
+		},
+		{Role: llm.RoleTool, ToolCallID: "call_1", Name: "read_file", Content: "file contents here"},
+		{Role: llm.RoleTool, ToolCallID: "call_2", Name: "grep", Content: "no matches"},
+		{Role: llm.RoleAssistant, Content: "The file contains..."},
+	}
+	stats := Stats{TotalTurns: 1, TotalPromptTokens: 500, TotalCompletionTokens: 200, MessageCount: 6}
+
+	if err := SaveSessionToFile(path, messages, stats, nil); err != nil {
+		t.Fatalf("SaveSessionToFile: %v", err)
+	}
+
+	loaded, _, _, _, err := LoadSessionFromFile(path)
+	if err != nil {
+		t.Fatalf("LoadSessionFromFile: %v", err)
+	}
+	if len(loaded) != 6 {
+		t.Fatalf("expected 6 messages, got %d", len(loaded))
+	}
+
+	// 验证 assistant 消息的 tool_calls 完整恢复
+	asstMsg := loaded[2]
+	if asstMsg.Role != llm.RoleAssistant {
+		t.Fatalf("expected assistant at index 2, got %s", asstMsg.Role)
+	}
+	if asstMsg.ReasoningContent != "I need to read the file." {
+		t.Errorf("ReasoningContent = %q, want %q", asstMsg.ReasoningContent, "I need to read the file.")
+	}
+	if len(asstMsg.ToolCalls) != 2 {
+		t.Fatalf("expected 2 ToolCalls, got %d", len(asstMsg.ToolCalls))
+	}
+	if asstMsg.ToolCalls[0].ID != "call_1" {
+		t.Errorf("ToolCalls[0].ID = %q, want call_1", asstMsg.ToolCalls[0].ID)
+	}
+	if asstMsg.ToolCalls[0].Name != "read_file" {
+		t.Errorf("ToolCalls[0].Name = %q, want read_file", asstMsg.ToolCalls[0].Name)
+	}
+	if asstMsg.ToolCalls[0].Arguments != `{"path":"/tmp/test"}` {
+		t.Errorf("ToolCalls[0].Arguments = %q, want %q", asstMsg.ToolCalls[0].Arguments, `{"path":"/tmp/test"}`)
+	}
+	if asstMsg.ToolCalls[1].ID != "call_2" {
+		t.Errorf("ToolCalls[1].ID = %q, want call_2", asstMsg.ToolCalls[1].ID)
+	}
+	if asstMsg.ToolCalls[1].Name != "grep" {
+		t.Errorf("ToolCalls[1].Name = %q, want grep", asstMsg.ToolCalls[1].Name)
+	}
+	if asstMsg.ToolCalls[1].Arguments != `{"pattern":"foo"}` {
+		t.Errorf("ToolCalls[1].Arguments = %q, want %q", asstMsg.ToolCalls[1].Arguments, `{"pattern":"foo"}`)
+	}
+
+	// 验证 tool 消息完整
+	tool1 := loaded[3]
+	if tool1.Role != llm.RoleTool || tool1.ToolCallID != "call_1" || tool1.Content != "file contents here" {
+		t.Errorf("tool1 mismatch: role=%s tool_call_id=%s content=%s", tool1.Role, tool1.ToolCallID, tool1.Content)
+	}
+	tool2 := loaded[4]
+	if tool2.Role != llm.RoleTool || tool2.ToolCallID != "call_2" || tool2.Content != "no matches" {
+		t.Errorf("tool2 mismatch: role=%s tool_call_id=%s content=%s", tool2.Role, tool2.ToolCallID, tool2.Content)
+	}
+
+	// 验证最终 assistant 消息
+	final := loaded[5]
+	if final.Content != "The file contains..." {
+		t.Errorf("final content = %q", final.Content)
+	}
+}
+
 func TestSaveAndLoad_WithCompaction(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "session_cp.json")
@@ -83,7 +163,7 @@ func TestSaveAndLoad_WithCompaction(t *testing.T) {
 			Tier3Cursor:  3,
 		},
 		Summaries:  []string{"summary 1"},
-		TotalTurns: 1,
+		TotalTurns: 5,
 	}
 
 	if err := SaveSessionToFile(path, messages, stats, compData); err != nil {
@@ -99,6 +179,9 @@ func TestSaveAndLoad_WithCompaction(t *testing.T) {
 	}
 	if loadedComp == nil {
 		t.Fatal("compaction data not loaded")
+	}
+	if loadedComp.TotalTurns != 5 {
+		t.Errorf("CompactionData.TotalTurns mismatch: %d, want 5", loadedComp.TotalTurns)
 	}
 	if len(loadedComp.Summaries) != 1 || loadedComp.Summaries[0] != "summary 1" {
 		t.Errorf("summaries mismatch: %v", loadedComp.Summaries)

@@ -90,5 +90,6 @@ func NewDefaultRegistry() Registry {
 	r.Register(Wrap(&LSPDefinition{}))
 	r.Register(Wrap(&LSPReferences{}))
 	r.Register(Wrap(&LSPHover{}))
+	r.Register(Wrap(&AskUserQuestion{}))
 	return r
 }

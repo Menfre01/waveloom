@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -99,9 +100,9 @@ func TestEditFileSearchHint(t *testing.T) {
 	if result.Error.Kind != ErrKindNoMatch {
 		t.Errorf("Error.Kind = %q, want %q", result.Error.Kind, ErrKindNoMatch)
 	}
-	// 应包含搜索线索 — "fmt.Println" 是共同关键字
-	if !contains(result.Error.Message, "Similar line") {
-		t.Errorf("Error should include similar line hint: %s", result.Error.Message)
+	// 应包含搜索线索 — 输出编辑距离最接近的行
+	if !contains(result.Error.Message, "closest matches") {
+		t.Errorf("Error should include closest matches hint: %s", result.Error.Message)
 	}
 }
 
@@ -558,5 +559,196 @@ func TestEditFileDiffHunksNoMatch(t *testing.T) {
 	}
 	if result.Meta.DiffHunks != nil {
 		t.Error("DiffHunks should be nil when no match found")
+	}
+}
+
+// ── normalizeWhitespace ──
+
+func TestNormalizeWhitespace(t *testing.T) {
+	tests := []struct {
+		input, want string
+	}{
+		{"hello world", "hello world"},
+		{"hello   world", "hello world"},
+		{"\thello\t\tworld", "hello world"},
+		{"  hello world  ", "hello world"},
+		{"line1\n\nline2", "line1 line2"},
+		{"\tfunc hello() {\n\t\tfmt.Println(\"hi\")\n\t}", "func hello() { fmt.Println(\"hi\") }"},
+	}
+	for _, tt := range tests {
+		got := normalizeWhitespace(tt.input)
+		if got != tt.want {
+			t.Errorf("normalizeWhitespace(%q) = %q, want %q", tt.input, got, tt.want)
+		}
+	}
+}
+
+// ── tryNormalizedMatch ──
+
+func TestTryNormalizedMatch_WhitespaceMismatch(t *testing.T) {
+	original := "func hello() {\n\tfmt.Println(\"hello world\")\n}"
+	oldStr := "func hello() {\n    fmt.Println(\"hello world\")\n}" // 4 spaces instead of tab
+
+	hint := tryNormalizedMatch(original, oldStr)
+	if hint == "" {
+		t.Fatal("expected hint for whitespace mismatch")
+	}
+	if !contains(hint, "Whitespace mismatch") {
+		t.Errorf("hint should mention whitespace mismatch: %s", hint)
+	}
+	if !contains(hint, "fmt.Println") {
+		t.Errorf("hint should show matching lines: %s", hint)
+	}
+}
+
+func TestTryNormalizedMatch_NoMatchAtAll(t *testing.T) {
+	original := "package main\nfunc main() {}"
+	oldStr := "completely different content"
+
+	hint := tryNormalizedMatch(original, oldStr)
+	if hint != "" {
+		t.Errorf("expected empty hint for no match, got: %s", hint)
+	}
+}
+
+func TestTryNormalizedMatch_MultipleNormalizedMatches(t *testing.T) {
+	original := "hello world\nhello world\n"
+	oldStr := "hello world"
+
+	hint := tryNormalizedMatch(original, oldStr)
+	if hint != "" {
+		t.Errorf("expected empty hint for ambiguous match, got: %s", hint)
+	}
+}
+
+// ── pickBestQueryLine ──
+
+func TestPickBestQueryLine(t *testing.T) {
+	tests := []struct {
+		input, want string
+	}{
+		{"single line", "single line"},
+		{"short\nlonger line here\n}", "longer line here"},
+		{"}\nfunc main() {\n\tfmt.Println()\n}", "func main() {"},
+	}
+	for _, tt := range tests {
+		got := pickBestQueryLine(tt.input)
+		if got != tt.want {
+			t.Errorf("pickBestQueryLine(%q) = %q, want %q", tt.input, got, tt.want)
+		}
+	}
+}
+
+// ── looksLikeLineNumberPrefix ──
+
+func TestLooksLikeLineNumberPrefix(t *testing.T) {
+	tests := []struct {
+		input string
+		want  bool
+	}{
+		{"[1] package main\n[2] import \"fmt\"", true},
+		{"[123] func hello() {}", true},
+		{"package main\nimport \"fmt\"", false},
+		{"func main() {\n\tfmt.Println()\n}", false},
+		{"[not a number] text", false},
+	}
+	for _, tt := range tests {
+		got := looksLikeLineNumberPrefix(tt.input)
+		if got != tt.want {
+			t.Errorf("looksLikeLineNumberPrefix(%q) = %v, want %v", tt.input, got, tt.want)
+		}
+	}
+}
+
+// ── edit_file with whitespace fallback ──
+
+// TestEditFileAutoFixWhitespace 验证空白归一化匹配唯一时自动修复成功，
+// 不再返回错误让 LLM 重试。
+func TestEditFileAutoFixWhitespace(t *testing.T) {
+	dir := t.TempDir()
+	filePath := filepath.Join(dir, "code.go")
+	content := "func hello() {\n\tfmt.Println(\"hello\")\n}\n"
+	if err := os.WriteFile(filePath, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	tool := &EditFile{}
+	result, err := tool.Execute(context.Background(), EditFileParams{
+		FilePath:  filePath,
+		OldString: "func hello() {\n    fmt.Println(\"hello\")\n}", // 4 spaces instead of tab
+		NewString: "func hello() {\n\tfmt.Println(\"hi\")\n}",
+	})
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	// 自动修复成功 — 不应返回 Error
+	if result.Error != nil {
+		t.Fatalf("Execute() result.Error = %v, want nil (auto-fix should succeed)", result.Error)
+	}
+
+	// 验证文件内容已被正确替换
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	if !contains(string(data), `fmt.Println("hi")`) {
+		t.Errorf("file should contain the replacement, got: %s", string(data))
+	}
+	if !contains(string(data), "\tfmt.Println") {
+		t.Errorf("file should preserve tab indentation, got: %s", string(data))
+	}
+
+	// 验证 Content 中标注了自动修复
+	if !contains(result.Content, "Auto-corrected whitespace") {
+		t.Errorf("Content should mention auto-corrected whitespace: %s", result.Content)
+	}
+	if !contains(result.Content, "Matched lines") {
+		t.Errorf("Content should mention matched lines: %s", result.Content)
+	}
+
+	// 验证 DiffHunks
+	if len(result.Meta.DiffHunks) != 1 {
+		t.Fatalf("DiffHunks count = %d, want 1", len(result.Meta.DiffHunks))
+	}
+	a, r := result.Meta.DiffHunks[0].Stats()
+	if a != 3 || r != 3 { // 替换了三行（func 声明 + fmt.Println 行 + 闭括号）
+		t.Errorf("stats = (+%d -%d), want (+3 -3)", a, r)
+	}
+}
+
+// TestEditFileNoMatch_WhitespaceHint 验证归一化匹配不唯一时仍返回 hint 错误，
+// 不会触发自动修复（因为无法确定替换哪个）。
+func TestEditFileNoMatch_WhitespaceHint(t *testing.T) {
+	dir := t.TempDir()
+	filePath := filepath.Join(dir, "code.go")
+	// 两个相同的函数 — 归一化后 old_string 命中两处，不能自动修复
+	content := "func hello() {\n\tfmt.Println(\"hello\")\n}\nfunc hello() {\n\tfmt.Println(\"hello\")\n}\n"
+	if err := os.WriteFile(filePath, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	tool := &EditFile{}
+	result, err := tool.Execute(context.Background(), EditFileParams{
+		FilePath:  filePath,
+		OldString: "func hello() {\n    fmt.Println(\"hello\")\n}", // 空格缩进
+		NewString: "func hello() {\n\tfmt.Println(\"hi\")\n}",
+	})
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	// 不唯一 → 不触发自动修复 → 应返回 Error（走 renderSearchHint 路径）
+	if result.Error == nil {
+		t.Fatal("Error should not be nil for ambiguous whitespace mismatch")
+	}
+	if result.Error.Kind != ErrKindNoMatch {
+		t.Errorf("Error.Kind = %q, want %q", result.Error.Kind, ErrKindNoMatch)
+	}
+	// 归一化匹配不唯一时走 renderSearchHint，应包含 closest matches 提示
+	if !contains(result.Error.Message, "closest matches") {
+		t.Errorf("Error message should include closest matches hint: %s", result.Error.Message)
+	}
+	// 两处重复函数都在 hint 中
+	if strings.Count(result.Error.Message, "fmt.Println") < 2 {
+		t.Errorf("Error message should show both ambiguous matches: %s", result.Error.Message)
 	}
 }

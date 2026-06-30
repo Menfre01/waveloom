@@ -141,12 +141,25 @@ Waveloom 内置以下工具，Agent 根据任务自主调用：
 | `ls` | 列出目录内容 |
 | `shell` | 执行任意 Shell 命令 |
 | `web_fetch` | 获取在线文档、API 参考 |
+| `ask_user_question` | 向用户发起选择题（单选/多选/自定义输入） |
+| `skill` | 调用用户安装的 Skill（`/skill-name`） |
 | `lsp_diagnostic` | 获取文件编译错误和 lint 提示 |
 | `lsp_definition` | 跳转到符号定义 |
 | `lsp_references` | 查找符号的所有引用位置 |
 | `lsp_hover` | 获取符号类型签名和文档 |
 
 > **LSP 前置条件**：LSP 工具需要对应语言的 LSP Server 在 PATH 中可用。对于 Go 项目，请确保安装了 [gopls](https://pkg.go.dev/golang.org/x/tools/gopls)（`go install golang.org/x/tools/gopls@latest`）。Agent 在首次调用 LSP 工具时会自动启动 LSP Server。
+
+### Skill 系统
+
+Waveloom 兼容 Claude Code Skill 格式，自动加载 `~/.claude/skills/` 目录中已有 Skill，无需任何迁移。创建 Skill 只需在目录下放置 `SKILL.md`，用 YAML frontmatter 声明参数和权限，Agent 通过 `/skill-name` 调用：
+
+```
+~/.claude/skills/deploy/
+└── SKILL.md          # frontmatter + body，支持 $ARGUMENTS 变量替换
+```
+
+Skill 支持 `!` 动态命令注入、`allowed-tools` Bash 白名单、`paths` 条件激活。
 
 典型场景：给你写单元测试、重构一个模块、排查 bug、解释某段代码的设计意图、添加新功能。
 

@@ -196,7 +196,7 @@ func TestBuildViewportContent_ToolDone(t *testing.T) {
 		{
 			Type:       paraTool,
 			State:      stateDone,
-			ToolName:   "shell",
+			ToolName:   "bash",
 			ToolArgs:   "go test ./...",
 			ToolResult: "✅ Command succeeded (exit=0)  123ms\nok  waveloom/pkg/auth  0.234s",
 			ToolDurMs:  123,
@@ -208,7 +208,7 @@ func TestBuildViewportContent_ToolDone(t *testing.T) {
 	if len(lines) < 1 {
 		t.Fatal("expected at least 1 line for done tool")
 	}
-	if !strings.Contains(lines[0], "shell") {
+	if !strings.Contains(lines[0], "bash") {
 		t.Errorf("expected tool name, got %q", lines[0])
 	}
 	// Should contain suffix with duration
@@ -229,7 +229,7 @@ func TestBuildViewportContent_ToolError(t *testing.T) {
 		{
 			Type:      paraTool,
 			State:     stateError,
-			ToolName:  "shell",
+			ToolName:  "bash",
 			ToolArgs:  "bad command",
 			ToolError: "command not found",
 		},
@@ -446,5 +446,218 @@ func TestSkipAnsiSequence_PlainText(t *testing.T) {
 	n := skipAnsiSequence(runes)
 	if n != 0 {
 		t.Fatalf("expected 0 for plain text, got %d", n)
+	}
+}
+
+// ── stripToolStatusHeader ──
+
+func TestStripToolStatusHeader_ShellFailed(t *testing.T) {
+	input := "Command failed (exit=1)  120ms\n   stderr/stdout:\n     error: something broke\n"
+	got := stripToolStatusHeader(input)
+	if strings.Contains(got, "Command failed") {
+		t.Errorf("should strip shell status header, got: %q", got)
+	}
+	if !strings.Contains(got, "error: something broke") {
+		t.Errorf("should keep error output, got: %q", got)
+	}
+}
+
+func TestStripToolStatusHeader_ShellSucceeded(t *testing.T) {
+	input := "Command succeeded (exit=0)  50ms\n   stdout:\n     build ok\n"
+	got := stripToolStatusHeader(input)
+	if strings.Contains(got, "Command succeeded") {
+		t.Errorf("should strip shell status header, got: %q", got)
+	}
+	if !strings.Contains(got, "build ok") {
+		t.Errorf("should keep stdout output, got: %q", got)
+	}
+}
+
+func TestStripToolStatusHeader_ShellTimedOut(t *testing.T) {
+	input := "Command timed out  120s\n   Timeout: 120s\n   stderr/stdout:\n     partial output\n"
+	got := stripToolStatusHeader(input)
+	if strings.Contains(got, "Command timed out") {
+		t.Errorf("should strip timeout header, got: %q", got)
+	}
+	if strings.Contains(got, "Timeout:") {
+		t.Errorf("should strip timeout label, got: %q", got)
+	}
+	if !strings.Contains(got, "partial output") {
+		t.Errorf("should keep partial output, got: %q", got)
+	}
+}
+
+func TestStripToolStatusHeader_Emoji(t *testing.T) {
+	input := "✅ Tool executed\nsome content"
+	got := stripToolStatusHeader(input)
+	if strings.Contains(got, "\u2705") {
+		t.Errorf("should strip emoji header, got: %q", got)
+	}
+	if !strings.Contains(got, "some content") {
+		t.Errorf("should keep content, got: %q", got)
+	}
+}
+
+func TestStripToolStatusHeader_NoHeader(t *testing.T) {
+	input := "just some output\nwith multiple lines"
+	got := stripToolStatusHeader(input)
+	if got != "just some output\nwith multiple lines" {
+		t.Errorf("should return unchanged, got: %q", got)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// formatQuestionArgs — ask_user_question 参数摘要提取
+// ---------------------------------------------------------------------------
+
+func TestFormatQuestionArgs_SingleQuestion(t *testing.T) {
+	args := `{"questions":[{"question":"Which library?","header":"Library","options":[{"label":"A","description":"desc"}]}]}`
+	got := formatQuestionArgs(args)
+	if got != "Library" {
+		t.Errorf("formatQuestionArgs = %q, want %q", got, "Library")
+	}
+}
+
+func TestFormatQuestionArgs_MultipleQuestions(t *testing.T) {
+	args := `{"questions":[
+		{"question":"Q1?","header":"Language","options":[{"label":"Go","description":"fast"}]},
+		{"question":"Q2?","header":"Framework","options":[{"label":"Fiber","description":"light"}]}
+	]}`
+	got := formatQuestionArgs(args)
+	if got != "Language, Framework" {
+		t.Errorf("formatQuestionArgs = %q, want %q", got, "Language, Framework")
+	}
+}
+
+func TestFormatQuestionArgs_InvalidJSON(t *testing.T) {
+	args := `{invalid`
+	got := formatQuestionArgs(args)
+	if got != `{invalid` {
+		t.Errorf("formatQuestionArgs with invalid JSON should fallback to truncated original, got %q", got)
+	}
+}
+
+func TestFormatQuestionArgs_EmptyQuestions(t *testing.T) {
+	args := `{"questions":[]}`
+	got := formatQuestionArgs(args)
+	if got != `{"questions":[]}` {
+		t.Errorf("formatQuestionArgs with empty questions should fallback to truncated original, got %q", got)
+	}
+}
+
+func TestFormatQuestionArgs_LongArgsTruncation(t *testing.T) {
+	// 构造超过 50 字符的非法 JSON → 应截断为 50 字符
+	longStr := `{` + strings.Repeat("x", 100) + `}`
+	got := formatQuestionArgs(longStr)
+	runes := []rune(got)
+	if len(runes) > 50 {
+		t.Errorf("formatQuestionArgs truncation: got %d runes, want ≤50", len(runes))
+	}
+}
+
+// ---------------------------------------------------------------------------
+// parseQuestionResult — ask_user_question 结果解析
+// ---------------------------------------------------------------------------
+
+func TestParseQuestionResult_SingleAnswer(t *testing.T) {
+	result := `{"questions":[{"question":"Which lib?","header":"Lib"}],"answers":{"Which lib?":"Go"}}`
+	answers, order := parseQuestionResult(result)
+	if len(order) != 1 || order[0] != "Lib" {
+		t.Fatalf("order = %v, want [Lib]", order)
+	}
+	if answers["Lib"] != "Go" {
+		t.Errorf("answers[Lib] = %q, want %q", answers["Lib"], "Go")
+	}
+}
+
+func TestParseQuestionResult_MultipleAnswers(t *testing.T) {
+	result := `{"questions":[
+		{"question":"Lang?","header":"Language"},
+		{"question":"FW?","header":"Framework"}
+	],"answers":{"Lang?":"Go","FW?":"Fiber"}}`
+	answers, order := parseQuestionResult(result)
+	if len(order) != 2 {
+		t.Fatalf("order len = %d, want 2", len(order))
+	}
+	if order[0] != "Language" || order[1] != "Framework" {
+		t.Errorf("order = %v, want [Language Framework]", order)
+	}
+	if answers["Language"] != "Go" {
+		t.Errorf("answers[Language] = %q, want %q", answers["Language"], "Go")
+	}
+	if answers["Framework"] != "Fiber" {
+		t.Errorf("answers[Framework] = %q, want %q", answers["Framework"], "Fiber")
+	}
+}
+
+func TestParseQuestionResult_OrderPreserved(t *testing.T) {
+	// 验证 order 与 questions 数组顺序严格一致
+	result := `{"questions":[
+		{"question":"Q3?","header":"Third"},
+		{"question":"Q1?","header":"First"},
+		{"question":"Q2?","header":"Second"}
+	],"answers":{"Q1?":"a1","Q2?":"a2","Q3?":"a3"}}`
+	_, order := parseQuestionResult(result)
+	if len(order) != 3 {
+		t.Fatalf("order len = %d, want 3", len(order))
+	}
+	if order[0] != "Third" || order[1] != "First" || order[2] != "Second" {
+		t.Errorf("order = %v, want [Third First Second]", order)
+	}
+}
+
+func TestParseQuestionResult_InvalidJSON(t *testing.T) {
+	answers, order := parseQuestionResult(`{bad json`)
+	if answers != nil || order != nil {
+		t.Errorf("parseQuestionResult invalid JSON: (%v, %v), want (nil, nil)", answers, order)
+	}
+}
+
+func TestParseQuestionResult_EmptyQuestions(t *testing.T) {
+	result := `{"questions":[],"answers":{}}`
+	answers, order := parseQuestionResult(result)
+	if len(answers) != 0 || len(order) != 0 {
+		t.Errorf("parseQuestionResult empty: answers=%v, order=%v, want both empty", answers, order)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// parseQuestionCount — ask_user_question 问题数量解析
+// ---------------------------------------------------------------------------
+
+func TestParseQuestionCount_ThreeQuestions(t *testing.T) {
+	jsonStr := `{"questions":[{},{},{}]}`
+	n := parseQuestionCount(jsonStr)
+	if n != 3 {
+		t.Errorf("parseQuestionCount = %d, want 3", n)
+	}
+}
+
+func TestParseQuestionCount_SingleQuestion(t *testing.T) {
+	jsonStr := `{"questions":[{"question":"Q?","header":"H","options":[{"label":"A","description":"d"}]}]}`
+	n := parseQuestionCount(jsonStr)
+	if n != 1 {
+		t.Errorf("parseQuestionCount = %d, want 1", n)
+	}
+}
+
+func TestParseQuestionCount_ZeroQuestions(t *testing.T) {
+	n := parseQuestionCount(`{"questions":[]}`)
+	if n != 0 {
+		t.Errorf("parseQuestionCount = %d, want 0", n)
+	}
+}
+
+func TestParseQuestionCount_InvalidJSON(t *testing.T) {
+	n := parseQuestionCount(`not json`)
+	if n != 0 {
+		t.Errorf("parseQuestionCount = %d, want 0", n)
+	}
+}
+
+func TestParseQuestionCount_EmptyString(t *testing.T) {
+	n := parseQuestionCount(``)
+	if n != 0 {
+		t.Errorf("parseQuestionCount = %d, want 0", n)
 	}
 }

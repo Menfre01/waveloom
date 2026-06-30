@@ -407,3 +407,102 @@ func TestWebFetchContextCancelledDuringRead(t *testing.T) {
 		t.Errorf("expected context.Canceled, got: %v", err)
 	}
 }
+
+// ── 新增功能测试 ──
+
+func TestWebFetchMissingContentType(t *testing.T) {
+	// 服务端不设置 Content-Type 头，应容错按 text/plain 处理
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// 显式不设置 Content-Type
+		_, _ = w.Write([]byte("plain text without content-type"))
+	}))
+	defer server.Close()
+
+	tool := &WebFetch{skipHostCheck: true}
+	result, err := tool.Execute(context.Background(), WebFetchParams{
+		URL: server.URL + "/no-ct",
+	})
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if result.Error != nil {
+		t.Fatalf("unexpected error: %v", result.Error)
+	}
+	if !strings.Contains(result.Content, "plain text without content-type") {
+		t.Errorf("expected content to contain body, got %q", result.Content)
+	}
+}
+
+func TestWebFetchHTMLEntitiesDecoded(t *testing.T) {
+	// HTML 实体（&amp; &lt; &gt; &quot; &#39;）应在 stripHTML 后被解码
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = w.Write([]byte(`<html><body><p>a &amp; b &lt; c &gt; d &quot;e&quot; f&#39;</p></body></html>`))
+	}))
+	defer server.Close()
+
+	tool := &WebFetch{skipHostCheck: true}
+	result, err := tool.Execute(context.Background(), WebFetchParams{
+		URL: server.URL + "/entities.html",
+	})
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if result.Error != nil {
+		t.Fatalf("unexpected error: %v", result.Error)
+	}
+
+	// 原始实体不应出现在输出中
+	for _, entity := range []string{"&amp;", "&lt;", "&gt;", "&quot;", "&#39;"} {
+		if strings.Contains(result.Content, entity) {
+			t.Errorf("HTML entity %q should have been decoded, got %q", entity, result.Content)
+		}
+	}
+	// 解码后的字符应出现
+	for _, want := range []string{"&", "<", ">", `"`, "'"} {
+		if !strings.Contains(result.Content, want) {
+			t.Errorf("expected decoded character %q in output, got %q", want, result.Content)
+		}
+	}
+}
+
+func TestWebFetchBodyReadTimeout(t *testing.T) {
+	// 服务端先发送 headers 和部分 body，然后阻塞。
+	// 客户端应在 body 读取阶段超时，返回已读取的部分内容。
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/plain")
+		// 写入初始数据并 flush，让客户端进入 body 读取阶段
+		_, _ = w.Write([]byte("partial content before timeout\n"))
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
+		// 阻塞直到客户端超时断开，通过 ctx 感知取消
+		select {
+		case <-time.After(10 * time.Second):
+		case <-r.Context().Done():
+		}
+	}))
+	defer server.Close()
+
+	tool := &WebFetch{skipHostCheck: true}
+	result, err := tool.Execute(context.Background(), WebFetchParams{
+		URL:       server.URL + "/slow-body",
+		TimeoutMs: 100,
+	})
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+
+	// 应返回成功（部分内容），而非错误
+	if result.Error != nil {
+		t.Fatalf("expected partial content on body read timeout, got error: %v", result.Error)
+	}
+	// 应包含已读取的部分内容
+	if !strings.Contains(result.Content, "partial content before timeout") {
+		t.Errorf("expected partial content in output, got %q", result.Content)
+	}
+	// 应包含超时截断标记
+	if !strings.Contains(result.Content, "[truncated:") {
+		t.Errorf("expected timeout truncated marker in output, got %q", result.Content)
+	}
+}
