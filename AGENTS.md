@@ -28,164 +28,91 @@ specs/           各组件规格书（修改前先阅读）
 
 ## 编码规范
 
-- 遵循 Go 社区惯例（Effective Go，标准库 project layout）
-- 不要过度设计，保持简单，按需重构
-- 命名清晰，避免缩写
-- 错误统一处理，不外泄堆栈到客户端
-- 查询 API 时优先使用 `go doc` 命令，避免凭记忆猜测接口签名
+- 遵循 Go 社区惯例（Effective Go，标准库 project layout），不过度设计，命名清晰避免缩写
+- 错误统一处理，不外泄堆栈到客户端；查询 API 优先用 `go doc`
 
 ## Agent 操作规范
 
-执行代码修改任务时，必须遵守以下操作顺序，减少试错。
+### 修改前后检查清单
 
-### 修改前（MUST DO）
-
-1. **定位**：用 `search_file` 定位目标文件，用 `grep` 定位具体符号
-2. **确认**：用 `read_file` 阅读当前文件内容（即使刚读过，编辑前必须重新确认行号和内容，尤其是缩进）
-3. **基线**：用 `lsp_diagnostic` 查看文件现有诊断，建立错误/警告基线
-
-### 修改后（MUST DO）
-
-1. **诊断**：用 `lsp_diagnostic` 检查是否引入新错误
-2. **编译**：涉及 Go 项目时运行 `make build`
-3. **测试**：涉及 `pkg/` 代码时运行 `make test`
-
-### 重构前（MUST DO）
-
-1. `lsp_references` 确认所有引用点
-2. `lsp_hover` 确认类型签名
-3. 评估影响范围后再动手
+| 阶段 | 操作 |
+|------|------|
+| 修改前 | `search_file` / `grep` 定位 → `read_file` 确认内容 → `lsp_diagnostic` 建基线 |
+| 修改后 | `lsp_diagnostic` 查新错误 → `make build` 编译 → `make test`（涉及 `pkg/` 时） |
+| 重构前 | `lsp_references` + `lsp_hover` → 评估影响范围 |
 
 ### 工具调用原则
 
-- **并行优先**：多个独立只读操作（read_file、grep、search_file、lsp_*）应在同一轮并行发起，减少等待
-- **串行必须**：写操作（write_file、edit_file、shell）必须串行，且不与写操作同轮混合
+- **独立只读操作并行**（read_file、grep、search_file、lsp_*），写操作串行
 - **优先专用工具**：能用 read_file/grep/search_file/ls 的场景，禁止用 shell 替代
-- **edit_file 优先**：对现有文件做局部修改用 edit_file，只有创建新文件或完全覆写时才用 write_file
-- `no_match` 时不要盲目重试 — 先用 read_file 重新确认 old_string 的精确内容（含缩进和空白符）
-- `security_violation` 是致命错误，停止当前路径，不要尝试绕过
+- **局部修改用 edit_file**，新建或完全覆写才用 write_file
+- `no_match` → 先 read_file 确认 old_string 精确内容（含缩进），再重试
+- `security_violation` → 致命错误，停止当前路径
 
 ## 开发流程
 
-### 组件化 Wave 开发流程
+### Wave 开发
 
-- 任务拆分以**单个组件高内聚、组件之间低耦合**为基本原则。
-- 每个任务独立作为一个 **Wave** 推进，按"组件开发 → 组件测试 → 组件验收 → 逐步组装"的顺序执行。
-- 每个 Wave 开始前必须产出任务规格书，明确：
-  - 新增 / 修改 / 删除哪些文件；
-  - 组件边界、输入输出、依赖关系和不变量；
-  - 与既有组件的集成点。
-- 每个 Wave 的测试内容必须明确，并以**启动 cold agent 进行测试**为验收执行方式。
-- 每个 Wave 的验收标准必须明确，并以**启动 cold agent 进行 review** 为最终确认方式。
-- 只有当前 Wave 的组件测试和组件验收通过后，才进入下一个 Wave 或进行组件组装。
+- 每个任务拆为独立 Wave，按"组件开发 → 测试 → 验收 → 组装"推进
+- Wave 开始前产出规格书（文件清单、组件边界/依赖/不变量、集成点），完成后由 cold agent 执行测试和 review
+- 同一 Wave 内不应修改同一文件；子任务完成时列出修改文件路径
 
-### TDD（测试驱动开发）
+### TDD
 
-- Red → Green → Refactor 循环
-- 先写测试，再写实现，保持测试通过
-- 测试覆盖率目标 = 100%（OS/文件系统错误路径、impossible 分支等不可模拟路径除外，97%+ 视为达标）
+- Red → Green → Refactor；测试覆盖率 ≥97%（排除 OS/文件系统不可模拟路径）
 
 ### Bug 修复回归防护
 
-- 每个 Bug 修复完成后**必须**附加回归防护：
-  - **可测**：编写 `TestRegression_<简述>`，断言直接命中根因路径
+- 每个 Bug 修复**必须**附加回归防护：
+  - **可测**：编写 `TestRegression_<简述>`，断言命中根因
   - **不可测**：修复点上方加 `// REGRESSION: <根因>。无法单测：<理由>`
-
-## 文档规范
-
-- 涉及架构、流程、数据模型的图表统一先使用 ascii 绘制再转换为 Mermaid 语法
-
+- 同一代码区域累积 ≥3 条 → 视为脆弱模块，优先重构而非继续修补
 
 ## 构建与测试
 
-- 编译、安装统一使用 Makefile 标准操作，**禁止直接调用 `go build` / `go install`**：
+**禁止直接调用 `go build` / `go install`**，统一使用 Makefile：
 
-| 操作 | 命令 |
-|------|------|
-| 编译 | `make build` |
-| 安装 | `make install` |
-| 运行 | `make run` |
-| 清理 | `make clean` |
+| 操作 | 命令 | | 测试范围 | 命令 |
+|------|------|---|----------|------|
+| 编译 | `make build` | | 单文件/单包 | `go test ./pkg/<name>/ -run TestXxx` |
+| 安装 | `make install` | | 多包/跨包 | `make test` |
+| 运行 | `make run` | | 集成测试 | `make test-integration` |
+| 清理 | `make clean` | | | |
 
-- 测试按修改范围分级，避免每次都跑全量：
+## 文档规范
 
-| 修改范围 | 命令 |
-|----------|------|
-| 单个文件 / 单个包 | `go test ./pkg/<name>/ -run TestXxx` 或 `go test ./pkg/<name>/` |
-| 多个包 / 跨包改动 | `make test` |
-| 集成测试 | `make test-integration` |
-
-### 注意事项
-
-- 同一 Wave 内的子任务不应修改同一文件，避免合并冲突
-- 主 agent 负责协调 Wave 边界，等待关键依赖完成后才推进
-- 子任务完成时须明确列出修改的文件路径，便于整合
+- 架构/流程/数据模型先用 ASCII 绘制，再转换为 Mermaid
 
 ## 提交策略
 
-**禁止自动提交**。任何代码修改后，无论修改范围大小、是否通过测试，均不得自动执行 `git add`、`git commit`、`git push` 或任何其他会修改 Git 历史的操作。必须等待用户明确给出提交指令（如"提交"、"commit"）后方可执行。
-
-此规则适用于所有场景，包括但不限于：
-- 修复 bug 后
-- 测试通过后
-- 文档更新后
-- 用户说"完成了"但未明确要求提交时
+**禁止自动提交**。必须等待用户明确给出指令（如"提交"、"commit"）后方可执行 `git add` / `git commit` / `git push`。
 
 ## Commit 规范
 
-遵循 [Conventional Commits](https://www.conventionalcommits.org/zh-hans/v1.0.0/) v1.0.0。
-
-### 格式
+[Conventional Commits](https://www.conventionalcommits.org/zh-hans/v1.0.0/) v1.0.0：
 
 ```
 <type>(<scope>): <subject>
 ```
 
 - `type`: `feat` / `fix` / `refactor` / `test` / `docs` / `chore`
-- `scope`: 组件或包名（`llm` / `loop` / `tool` / `perm` / `tui` / `cli` / `context` / `compaction` / `lsp` / `memory`）；允许多 scope 用 `/` 分隔
+- `scope`: 包名（`llm` / `loop` / `tool` / `tui` / `context` / `compaction` / …），多 scope 用 `/` 分隔
 - `subject`: 中文祈使句，≤72 字符，不以句号结尾
-
-### 示例
 
 ```
 feat(loop): Run() 增加 VerboseWriter 支持
-feat(tui): eventCh 增加 listenEventChannel 链路
-fix(cli): 修复 os.IsNotExist 跨包装错误检测失败
-refactor(llm): 移除 NewClientFromEnv
-chore: 新增 Makefile
+fix(context): ToolCall UnmarshalJSON 缺失导致 --resume 加载时 tool_calls 丢失
 ```
 
 ## Release 规范
 
-发布 Release 时应对 commit 分类汇总，按以下粒度输出 release notes：
+Release notes 以用户可感知的功能变化为描述单位，分类汇总：
 
-- **新增功能** — 列出新增的特性、模块、命令
-- **修复** — 列出修复的 bug
-- **重构** — 列出重大重构的模块
-- **性能优化** — 列出性能相关优化
+- **新增功能** — 新特性、模块、命令
+- **修复** — Bug 修复
+- **重构** — 重大模块重构
+- **性能优化** — 性能相关
 
-以下类型不列入 release notes：
+`docs` / `chore` / `test` 类型不列入。
 
-- `docs` — 文档修改
-- `chore` — 工程杂务
-- `test` — 纯测试补充
-
-不逐条罗列 commit，以用户可感知的功能变化为描述单位。
-
-### 发布流程
-
-发布由 GitHub Actions 自动完成（`.github/workflows/release.yml`），触发条件为 tag push `v*`。
-
-手动步骤（release workflow 之前完成，按顺序）：
-
-1. **汇总 changelog** — 从上次 tag 到 HEAD 扫描 commit，按上述分类（新增功能/修复/重构/性能优化）汇总，更新 `CHANGELOG.md` 和 `CHANGELOG.en.md`
-2. **审查 README** — 检查 `README.md` 和 `docs/README.en.md` 是否需要同步新功能、新命令、新 flag
-3. **审查双语文档** — 检查 `CONTRIBUTING` / `SECURITY` / `docs/` 下中英双语是否同步
-4. **文档提交** — 如有文档修改，先 commit（类型 `docs`）
-5. **打 tag 并推送** — `git tag vX.Y.Z && git push origin dev && git push origin vX.Y.Z`
-
-自动化步骤（release workflow 接管）：
-
-5. **交叉编译** — `make release`（darwin/linux × amd64/arm64）
-6. **创建 GitHub Release** — `gh release create` 上传 tarball 和 checksums
-7. **同步 Homebrew 公式** — 从 checksums.txt 生成公式并推送到 `Menfre01/homebrew-tap`
+发布由 GitHub Actions 自动完成（tag push `v*` → `.github/workflows/release.yml`）。
