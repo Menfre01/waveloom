@@ -37,7 +37,7 @@ specs/           各组件规格书（修改前先阅读）
 
 | 阶段 | 操作 |
 |------|------|
-| 修改前 | `search_file` / `grep` 定位 → `read_file` 确认内容 → `lsp_diagnostic` 建基线 |
+| 修改前 | `search_file` / `grep` 定位 → `read_file` 确认行号和内容 → `lsp_diagnostic` 建基线 |
 | 修改后 | `lsp_diagnostic` 查新错误 → `make build` 编译 → `make test`（涉及 `pkg/` 时） |
 | 重构前 | `lsp_references` + `lsp_hover` → 评估影响范围 |
 
@@ -46,16 +46,16 @@ specs/           各组件规格书（修改前先阅读）
 - **独立只读操作并行**（read_file、grep、search_file、lsp_*），写操作串行
 - **优先专用工具**：能用 read_file/grep/search_file/ls 的场景，禁止用 shell 替代
 - **局部修改用 edit_file**，新建或完全覆写才用 write_file
-- `no_match` → 先 read_file 确认 old_string 精确内容（含缩进），再重试
+- `no_match` → 不要盲目重试，先 read_file 确认 old_string 精确内容（含缩进），再重试
 - `security_violation` → 致命错误，停止当前路径
 
 ## 开发流程
 
 ### Wave 开发
 
-- 每个任务拆为独立 Wave，按"组件开发 → 测试 → 验收 → 组装"推进
+- 任务拆分以单个组件高内聚、组件之间低耦合为原则，每个任务拆为独立 Wave，按"组件开发 → 测试 → 验收 → 组装"推进
 - Wave 开始前产出规格书（文件清单、组件边界/依赖/不变量、集成点），完成后由 cold agent 执行测试和 review
-- 同一 Wave 内不应修改同一文件；子任务完成时列出修改文件路径
+- 主 agent 负责协调 Wave 边界，等待关键依赖完成后才推进；同一 Wave 内不应修改同一文件，子任务完成时列出修改文件路径
 
 ### TDD
 
@@ -74,7 +74,7 @@ specs/           各组件规格书（修改前先阅读）
 
 | 操作 | 命令 | | 测试范围 | 命令 |
 |------|------|---|----------|------|
-| 编译 | `make build` | | 单文件/单包 | `go test ./pkg/<name>/ -run TestXxx` |
+| 编译 | `make build` | | 单文件/单包 | `go test ./pkg/<name>/ -run TestXxx` 或 `go test ./pkg/<name>/` |
 | 安装 | `make install` | | 多包/跨包 | `make test` |
 | 运行 | `make run` | | 集成测试 | `make test-integration` |
 | 清理 | `make clean` | | | |
@@ -116,3 +116,11 @@ Release notes 以用户可感知的功能变化为描述单位，分类汇总：
 `docs` / `chore` / `test` 类型不列入。
 
 发布由 GitHub Actions 自动完成（tag push `v*` → `.github/workflows/release.yml`）。
+
+手动步骤（release workflow 之前完成）：
+
+1. **汇总 changelog** — 从上次 tag 到 HEAD 扫描 commit，按分类汇总，更新 `CHANGELOG.md` 和 `CHANGELOG.en.md`
+2. **审查 README** — 检查 `README.md` 和 `docs/README.en.md` 是否需要同步新功能
+3. **审查双语文档** — 检查 `CONTRIBUTING` / `SECURITY` / `docs/` 下中英双语是否同步
+4. **文档提交** — 如有文档修改，先 commit（类型 `docs`）
+5. **打 tag 并推送** — `git tag vX.Y.Z && git push origin dev && git push origin vX.Y.Z`
