@@ -141,12 +141,25 @@ Waveloom has the following built-in tools that the agent invokes autonomously:
 | `ls` | List directory contents |
 | `shell` | Execute arbitrary shell commands |
 | `web_fetch` | Fetch online docs, API references |
+| `ask_user_question` | Ask the user multiple-choice questions (single/multi-select, custom input) |
+| `skill` | Invoke user-installed Skills (`/skill-name`) |
 | `lsp_diagnostic` | Get compile errors and lint hints |
 | `lsp_definition` | Jump to symbol definition |
 | `lsp_references` | Find all references to a symbol |
 | `lsp_hover` | Get symbol type signature and documentation |
 
 > **LSP Prerequisites**: LSP tools require the corresponding language server available in PATH. For Go projects, install [gopls](https://pkg.go.dev/golang.org/x/tools/gopls) (`go install golang.org/x/tools/gopls@latest`). The agent automatically starts the LSP server on first LSP tool invocation.
+
+### Skill System
+
+Extend agent capabilities with Skills — create a `SKILL.md` under `~/.claude/skills/` with YAML frontmatter for parameters and permissions, then invoke via `/skill-name`:
+
+```
+~/.claude/skills/deploy/
+└── SKILL.md          # frontmatter + body, supports $ARGUMENTS variable substitution
+```
+
+Skills support `!` dynamic command injection, `allowed-tools` Bash whitelist, and `paths` conditional activation.
 
 Typical use cases: writing unit tests, refactoring a module, debugging an issue, explaining design intent behind a piece of code, adding new features.
 
