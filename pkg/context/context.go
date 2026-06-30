@@ -9,6 +9,8 @@
 package context
 
 import (
+	"fmt"
+	"os"
 	"strings"
 	"sync"
 
@@ -216,10 +218,29 @@ func (cm *ContextManager) compactionData() compaction.CompactionData {
 // 返回 true 表示成功恢复，false 表示文件不存在或格式无效。
 // 恢复后自动将 sessionPath 设为该文件路径，后续 CompleteRun 自动落盘。
 // 同时恢复压缩决策表和摘要链。
+//
+// 反序列化后执行完整性校验（llm.ValidateMessages），自动修复：
+//   - 非法 Role 的消息
+//   - 空 assistant 消息（无 content 且无 tool_calls）
+//   - 残缺 ToolCall（缺少 ID/Name）
+//   - 孤儿 tool_calls / tool 消息配对异常
+//
+// 修复详情通过 stderr 输出（静默修复不阻塞恢复流程）。
 func (cm *ContextManager) LoadFromFile(path string) bool {
 	messages, stats, compactionData, _, err := LoadSessionFromFile(path)
 	if err != nil || messages == nil {
 		return false
+	}
+
+	// 反序列化后完整性校验
+	cleaned, report := llm.ValidateMessages(messages)
+	if len(report) > 0 {
+		// 静默修复：输出修复详情到 stderr，不阻塞恢复
+		for _, entry := range report {
+			fmt.Fprintf(os.Stderr, "session 修复: msg[%d] role=%s action=%s — %s\n",
+				entry.Index, entry.Role, entry.Action, entry.Detail)
+		}
+		messages = cleaned
 	}
 
 	cm.mu.Lock()
