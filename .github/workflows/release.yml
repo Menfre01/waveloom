@@ -23,11 +23,20 @@ jobs:
       - name: Build release artifacts
         run: make release
 
+      - name: Extract changelog for version
+        run: |
+          awk -v ver="${{ github.ref_name }}" '
+            BEGIN { found=0 }
+            $0 ~ "^## \\[" ver "\\]" { found=1; print; next }
+            found && $0 ~ "^## \\[" { exit }
+            found { print }
+          ' CHANGELOG.md > /tmp/release-notes.md
+
       - name: Create GitHub Release
         run: |
           gh release create "${{ github.ref_name }}" dist/*.tar.gz dist/checksums.txt \
             --title "${{ github.ref_name }}" \
-            --generate-notes
+            --notes-file /tmp/release-notes.md
         env:
           GH_TOKEN: ${{ github.token }}
 
