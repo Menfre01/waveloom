@@ -994,7 +994,7 @@ func (l *Loader) FormatSkillListing() string {
 		}
 		// 替换表格中的 |
 		desc = strings.ReplaceAll(desc, "|", "\\|")
-		b.WriteString(fmt.Sprintf("| /%s | %s |\n", info.Name, desc))
+		fmt.Fprintf(&b, "| /%s | %s |\n", info.Name, desc)
 	}
 
 	b.WriteString("\nTo invoke a skill, either type /skill-name [arguments] to invoke directly,\n")

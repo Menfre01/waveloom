@@ -53,10 +53,14 @@ func TestSkillWhitelistFullPathMatch(t *testing.T) {
 
 	// 创建模拟脚本
 	scriptDir := filepath.Join(home, ".claude", "skills", "gstack", "bin")
-	os.MkdirAll(scriptDir, 0o755)
+	if err := os.MkdirAll(scriptDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	scriptPath := filepath.Join(scriptDir, "gstack-update-check")
 	writeFile(t, scriptPath, "#!/bin/sh\necho \"gstack: no updates available\"")
-	os.Chmod(scriptPath, 0o755)
+	if err := os.Chmod(scriptPath, 0o755); err != nil {
+		t.Fatal(err)
+	}
 
 	// 创建 SKILL.md，whitelist pattern 匹配脚本名
 	skillDir := filepath.Join(home, ".claude", "skills", "gstack-check")
@@ -82,7 +86,7 @@ func TestSkillWhitelistFullPathMatch(t *testing.T) {
 	}
 
 	// 清理
-	os.RemoveAll(filepath.Join(home, ".claude", "skills", "gstack"))
+	_ = os.RemoveAll(filepath.Join(home, ".claude", "skills", "gstack"))
 }
 
 // TestSkillWhitelistClearsOnNextLoad 验证：
@@ -123,8 +127,7 @@ func TestSkillWhitelistClearsOnNextLoad(t *testing.T) {
 		t.Errorf("echo should NOT be whitelisted after loading skill-b, got: %q", output)
 	}
 	output = l.runCommand("ls /tmp", "/tmp")
-	if !strings.Contains(output, "skill command denied") {
-		// ls 应该被 whitelist 放行，但如果 ls 本身在 default 策略被 ASK 也合理
-		// 这里只验证 ls 没有被 deny 规则拦截
-	}
+	// ls 应该被 whitelist 放行，但如果 ls 本身在 default 策略被 ASK 也合理
+	// 这里只验证 ls 没有被 deny 规则拦截
+	_ = output
 }
