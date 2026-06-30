@@ -61,7 +61,7 @@ func TestValidateMessages(t *testing.T) {
 				// No tool message for tc1
 				{Role: RoleUser, Content: "next"},
 			},
-			wantMsg: 3,
+			wantMsg: 2, // orphan tc stripped → assistant empty → skipped
 			wantOK:  false,
 		},
 		{
@@ -72,7 +72,7 @@ func TestValidateMessages(t *testing.T) {
 					{ID: "", Name: "read_file", Arguments: `{}`},
 				}},
 			},
-			wantMsg: 2,
+			wantMsg: 1, // invalid tc stripped → assistant empty → skipped
 			wantOK:  false,
 		},
 		{
@@ -90,11 +90,67 @@ func TestValidateMessages(t *testing.T) {
 			wantMsg: 4,
 			wantOK:  false,
 		},
+		{
+			name: "invalid role skipped",
+			input: []Message{
+				{Role: RoleSystem, Content: "system"},
+				{Role: Role(""), Content: "bad role"},
+				{Role: RoleUser, Content: "hello"},
+			},
+			wantMsg: 2, // empty role skipped
+			wantOK:  false,
+		},
+		{
+			name: "empty assistant skipped",
+			input: []Message{
+				{Role: RoleUser, Content: "hello"},
+				{Role: RoleAssistant, Content: "", ToolCalls: nil},
+				{Role: RoleUser, Content: "next"},
+			},
+			wantMsg: 2, // empty assistant skipped
+			wantOK:  false,
+		},
+		{
+			name: "orphan tool message skipped",
+			input: []Message{
+				{Role: RoleUser, Content: "do"},
+				{Role: RoleTool, Content: "result", ToolCallID: "tc_missing", Name: "read_file"},
+				{Role: RoleAssistant, Content: "done"},
+			},
+			wantMsg: 2, // orphan tool message skipped
+			wantOK:  false,
+		},
+		{
+			name: "tool_call with empty Name stripped",
+			input: []Message{
+				{Role: RoleUser, Content: "do"},
+				{Role: RoleAssistant, Content: "", ToolCalls: []ToolCall{
+					{ID: "tc1", Name: "", Arguments: `{}`},
+				}},
+				{Role: RoleTool, Content: "result", ToolCallID: "tc1", Name: "read_file"},
+				{Role: RoleAssistant, Content: "done"},
+			},
+			wantMsg: 2, // tc empty Name stripped → assistant empty → skipped, tool orphan → skipped
+			wantOK:  false,
+		},
+		{
+			name: "nil input returns nil",
+			input: nil,
+			wantMsg: 0,
+			wantOK:  true,
+		},
+		{
+			name: "empty input returns nil",
+			input: []Message{},
+			wantMsg: 0,
+			wantOK:  true,
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, ok := ValidateMessages(tt.input)
+			got, report := ValidateMessages(tt.input)
+			ok := len(report) == 0
 			if len(got) != tt.wantMsg {
 				t.Errorf("got %d messages, want %d", len(got), tt.wantMsg)
 				for i, m := range got {
