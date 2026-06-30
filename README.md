@@ -152,7 +152,7 @@ Waveloom 内置以下工具，Agent 根据任务自主调用：
 
 ### Skill 系统
 
-通过 Skill 扩展 Agent 能力——在 `~/.claude/skills/` 下创建 `SKILL.md`，用 YAML frontmatter 声明参数和权限，Agent 通过 `/skill-name` 调用：
+Waveloom 兼容 Claude Code Skill 格式，自动加载 `~/.claude/skills/` 目录中已有 Skill，无需任何迁移。创建 Skill 只需在目录下放置 `SKILL.md`，用 YAML frontmatter 声明参数和权限，Agent 通过 `/skill-name` 调用：
 
 ```
 ~/.claude/skills/deploy/
