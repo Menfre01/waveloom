@@ -152,7 +152,7 @@ Waveloom has the following built-in tools that the agent invokes autonomously:
 
 ### Skill System
 
-Extend agent capabilities with Skills — create a `SKILL.md` under `~/.claude/skills/` with YAML frontmatter for parameters and permissions, then invoke via `/skill-name`:
+Waveloom is compatible with the Claude Code Skill format — existing skills under `~/.claude/skills/` are auto-loaded with zero migration. Create a Skill by placing a `SKILL.md` with YAML frontmatter for parameters and permissions, then invoke via `/skill-name`:
 
 ```
 ~/.claude/skills/deploy/

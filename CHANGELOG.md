@@ -3,7 +3,7 @@
 ## [v0.1.0-alpha.6] — 2026-06-30
 
 ### 新增功能
-- **Skill 系统**：Skill 文件解析（YAML frontmatter）、变量替换（`$ARGUMENTS` / `$0` / `$first`）、`!` 动态命令注入、附属文件支持
+- **Skill 系统**：兼容 Claude Code Skill 格式，自动加载 `~/.claude/skills/` 目录中已有 Skill，无需任何迁移
 - **Skill 白名单与条件激活**：`allowed-tools` Bash 命令白名单、`paths` 条件激活（gitignore-style glob）、Guard 权限集成
 - **AskUserQuestion 选择题**：LLM 向用户发起单选/多选/Other 自定义输入/拒绝交互，TUI overlay 渲染
 - **edit_file 空白归一化**：匹配唯一时自动修复空白差异，减少 LLM 重试轮次

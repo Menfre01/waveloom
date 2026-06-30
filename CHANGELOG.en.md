@@ -3,7 +3,7 @@
 ## [v0.1.0-alpha.6] — 2026-06-30
 
 ### Added
-- **Skill system**: Skill file parsing (YAML frontmatter), variable substitution (`$ARGUMENTS` / `$0` / `$first`), `!` dynamic command injection, auxiliary file support
+- **Skill system**: Claude Code Skill format compatible — auto-loads existing skills from `~/.claude/skills/` with zero migration
 - **Skill whitelist & conditional activation**: `allowed-tools` Bash command whitelist, `paths` conditional activation (gitignore-style glob), Guard permission integration
 - **AskUserQuestion**: LLM-initiated single/multi-select, Other custom input, and decline interaction, TUI overlay rendering
 - **edit_file whitespace normalization**: auto-fix whitespace differences on unique match, reducing LLM retry rounds
