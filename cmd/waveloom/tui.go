@@ -4346,6 +4346,8 @@ func runTUI(llmClient llm.Client, registry tool.Registry, guard permission.Guard
 	// 恢复会话级 HUD 累积值
 	m.hudCacheHit = ctxMgr.Stats().TotalCacheHitTokens
 	m.hudCacheMiss = ctxMgr.Stats().TotalCacheMissTokens
+	// REGRESSION: --resume 后 hudTurns 未从 Stats.TotalTurns 恢复，状态栏计数从 0 开始。
+	// 无法单测：runTUI 依赖 Bubble Tea Program 实例。
 	m.hudTurns = ctxMgr.Stats().TotalTurns
 	// ctx bar 初始为 0，首个 TurnStats 会用 API 精确值更新
 	m.lastPromptTokens = 0
