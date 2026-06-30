@@ -106,6 +106,14 @@ fix(context): ToolCall UnmarshalJSON 缺失导致 --resume 加载时 tool_calls 
 
 ## Release 规范
 
+**发布前置校验**（必须全部通过后方可继续发布流程）：
+
+```sh
+make build && make test && make lint
+```
+
+任一失败 → 先修复，再重新走校验。
+
 Release notes 以用户可感知的功能变化为描述单位，分类汇总：
 
 - **新增功能** — 新特性、模块、命令
