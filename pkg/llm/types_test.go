@@ -61,7 +61,7 @@ func TestValidateMessages(t *testing.T) {
 				// No tool message for tc1
 				{Role: RoleUser, Content: "next"},
 			},
-			wantMsg: 3,
+			wantMsg: 2, // orphan tc stripped → assistant empty → skipped
 			wantOK:  false,
 		},
 		{
@@ -72,7 +72,7 @@ func TestValidateMessages(t *testing.T) {
 					{ID: "", Name: "read_file", Arguments: `{}`},
 				}},
 			},
-			wantMsg: 2,
+			wantMsg: 1, // invalid tc stripped → assistant empty → skipped
 			wantOK:  false,
 		},
 		{
@@ -90,11 +90,67 @@ func TestValidateMessages(t *testing.T) {
 			wantMsg: 4,
 			wantOK:  false,
 		},
+		{
+			name: "invalid role skipped",
+			input: []Message{
+				{Role: RoleSystem, Content: "system"},
+				{Role: Role(""), Content: "bad role"},
+				{Role: RoleUser, Content: "hello"},
+			},
+			wantMsg: 2, // empty role skipped
+			wantOK:  false,
+		},
+		{
+			name: "empty assistant skipped",
+			input: []Message{
+				{Role: RoleUser, Content: "hello"},
+				{Role: RoleAssistant, Content: "", ToolCalls: nil},
+				{Role: RoleUser, Content: "next"},
+			},
+			wantMsg: 2, // empty assistant skipped
+			wantOK:  false,
+		},
+		{
+			name: "orphan tool message skipped",
+			input: []Message{
+				{Role: RoleUser, Content: "do"},
+				{Role: RoleTool, Content: "result", ToolCallID: "tc_missing", Name: "read_file"},
+				{Role: RoleAssistant, Content: "done"},
+			},
+			wantMsg: 2, // orphan tool message skipped
+			wantOK:  false,
+		},
+		{
+			name: "tool_call with empty Name stripped",
+			input: []Message{
+				{Role: RoleUser, Content: "do"},
+				{Role: RoleAssistant, Content: "", ToolCalls: []ToolCall{
+					{ID: "tc1", Name: "", Arguments: `{}`},
+				}},
+				{Role: RoleTool, Content: "result", ToolCallID: "tc1", Name: "read_file"},
+				{Role: RoleAssistant, Content: "done"},
+			},
+			wantMsg: 2, // tc empty Name stripped → assistant empty → skipped, tool orphan → skipped
+			wantOK:  false,
+		},
+		{
+			name: "nil input returns nil",
+			input: nil,
+			wantMsg: 0,
+			wantOK:  true,
+		},
+		{
+			name: "empty input returns nil",
+			input: []Message{},
+			wantMsg: 0,
+			wantOK:  true,
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, ok := ValidateMessages(tt.input)
+			got, report := ValidateMessages(tt.input)
+			ok := len(report) == 0
 			if len(got) != tt.wantMsg {
 				t.Errorf("got %d messages, want %d", len(got), tt.wantMsg)
 				for i, m := range got {
@@ -195,6 +251,94 @@ func TestFilterValidToolCalls(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestToolCallMarshalUnmarshalRoundTrip(t *testing.T) {
+	tests := []struct {
+		name string
+		tc   ToolCall
+	}{
+		{
+			name: "basic",
+			tc:   ToolCall{ID: "call_123", Name: "read_file", Arguments: `{"path":"/tmp/test"}`},
+		},
+		{
+			name: "empty_arguments",
+			tc:   ToolCall{ID: "call_456", Name: "ls", Arguments: `{}`},
+		},
+		{
+			name: "with_index",
+			tc:   ToolCall{Index: 3, ID: "call_789", Name: "grep", Arguments: `{"pattern":"foo"}`},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			data, err := tt.tc.MarshalJSON()
+			if err != nil {
+				t.Fatalf("MarshalJSON: %v", err)
+			}
+
+			var loaded ToolCall
+			if err := loaded.UnmarshalJSON(data); err != nil {
+				t.Fatalf("UnmarshalJSON: %v", err)
+			}
+
+			// Index 不参与序列化，反序列化后应为 0
+			if loaded.ID != tt.tc.ID {
+				t.Errorf("ID = %q, want %q", loaded.ID, tt.tc.ID)
+			}
+			if loaded.Name != tt.tc.Name {
+				t.Errorf("Name = %q, want %q", loaded.Name, tt.tc.Name)
+			}
+			if loaded.Arguments != tt.tc.Arguments {
+				t.Errorf("Arguments = %q, want %q", loaded.Arguments, tt.tc.Arguments)
+			}
+			if loaded.Index != 0 {
+				t.Errorf("Index = %d, want 0 (not serialized)", loaded.Index)
+			}
+		})
+	}
+}
+
+func TestToolCallUnmarshalInvalidJSON(t *testing.T) {
+	var tc ToolCall
+	if err := tc.UnmarshalJSON([]byte(`{invalid}`)); err == nil {
+		t.Error("expected error for invalid JSON")
+	}
+}
+
+func TestToolCallMarshalProducesOpenAIFormat(t *testing.T) {
+	tc := ToolCall{ID: "c1", Name: "read_file", Arguments: `{"path":"/f"}`}
+	data, err := tc.MarshalJSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 验证输出包含 OpenAI 必需的字段
+	s := string(data)
+	if !contains(s, `"type":"function"`) {
+		t.Error("missing type:function")
+	}
+	if !contains(s, `"function"`) {
+		t.Error("missing function wrapper")
+	}
+	// Index 不应出现在输出中
+	if contains(s, `"Index"`) || contains(s, `"index"`) {
+		t.Error("Index should not appear in output")
+	}
+}
+
+func contains(s, sub string) bool {
+	return len(s) >= len(sub) && searchSub(s, sub)
+}
+
+func searchSub(s, sub string) bool {
+	for i := 0; i <= len(s)-len(sub); i++ {
+		if s[i:i+len(sub)] == sub {
+			return true
+		}
+	}
+	return false
 }
 
 func messagesEqual(a, b []Message) bool {

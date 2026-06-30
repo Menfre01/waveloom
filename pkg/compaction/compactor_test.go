@@ -528,11 +528,8 @@ func TestCompressUserCodeBlocks_LargeFence(t *testing.T) {
 		t.Fatalf("expected placeholder in compressed output, got: %s", result)
 	}
 	// 前 50 行保留
-	for i := 0; i < 50; i++ {
-		if !strings.Contains(result, "  some code") {
-			t.Fatalf("first 50 lines should be preserved")
-		}
-		break
+	if !strings.Contains(result, "  some code") {
+		t.Fatalf("first 50 lines should be preserved")
 	}
 	// 结尾 after 应保留
 	if !strings.Contains(result, "after") {

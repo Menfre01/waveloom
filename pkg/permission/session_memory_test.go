@@ -23,9 +23,9 @@ func TestSessionMemory_ToolLevelRemember(t *testing.T) {
 func TestSessionMemory_ContentLevelRemember(t *testing.T) {
 	sm := NewSessionMemory()
 
-	sm.Remember("shell", "git *", DecisionAllow)
+	sm.Remember("bash", "git *", DecisionAllow)
 
-	d, found := sm.Lookup("shell", "git *")
+	d, found := sm.Lookup("bash", "git *")
 	if !found {
 		t.Error("Lookup(shell, 'git *') should find content-level memory")
 	}
@@ -38,12 +38,12 @@ func TestSessionMemory_ContentLevelTakesPrecedence(t *testing.T) {
 	sm := NewSessionMemory()
 
 	// 先设工具级为 deny
-	sm.Remember("shell", "", DecisionDeny)
+	sm.Remember("bash", "", DecisionDeny)
 	// 再设内容级为 allow
-	sm.Remember("shell", "git *", DecisionAllow)
+	sm.Remember("bash", "git *", DecisionAllow)
 
 	// 查找 "git *" 应返回内容级 allow（优先于工具级 deny）
-	d, found := sm.Lookup("shell", "git *")
+	d, found := sm.Lookup("bash", "git *")
 	if !found {
 		t.Error("should find memory")
 	}
@@ -52,7 +52,7 @@ func TestSessionMemory_ContentLevelTakesPrecedence(t *testing.T) {
 	}
 
 	// 查找 "make" 没有内容级记忆，应返回工具级 deny
-	d, found = sm.Lookup("shell", "make")
+	d, found = sm.Lookup("bash", "make")
 	if !found {
 		t.Error("should find tool-level memory")
 	}
@@ -85,7 +85,7 @@ func TestSessionMemory_Len(t *testing.T) {
 		t.Errorf("after 1 insert, Len = %d, want 1", sm.Len())
 	}
 
-	sm.Remember("shell", "git *", DecisionAllow)
+	sm.Remember("bash", "git *", DecisionAllow)
 	if sm.Len() != 2 {
 		t.Errorf("after 2 inserts, Len = %d, want 2", sm.Len())
 	}
@@ -95,7 +95,7 @@ func TestSessionMemory_Clear(t *testing.T) {
 	sm := NewSessionMemory()
 
 	sm.Remember("write_file", "", DecisionAllow)
-	sm.Remember("shell", "git *", DecisionAllow)
+	sm.Remember("bash", "git *", DecisionAllow)
 	sm.Clear()
 
 	if sm.Len() != 0 {
@@ -111,7 +111,7 @@ func TestSessionMemory_Clear(t *testing.T) {
 func TestSessionMemory_Entries(t *testing.T) {
 	sm := NewSessionMemory()
 	sm.Remember("write_file", "", DecisionAllow)
-	sm.Remember("shell", "git *", DecisionDeny)
+	sm.Remember("bash", "git *", DecisionDeny)
 
 	entries := sm.Entries()
 	if len(entries) != 2 {
@@ -138,7 +138,7 @@ func TestSessionMemory_ConcurrentSafety(t *testing.T) {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			sm.Remember("shell", string(rune('a'+i%26))+"*", DecisionAllow)
+			sm.Remember("bash", string(rune('a'+i%26))+"*", DecisionAllow)
 		}(i)
 	}
 
@@ -147,7 +147,7 @@ func TestSessionMemory_ConcurrentSafety(t *testing.T) {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			sm.Lookup("shell", string(rune('a'+i%26))+"*")
+			sm.Lookup("bash", string(rune('a'+i%26))+"*")
 		}(i)
 	}
 
@@ -162,10 +162,10 @@ func TestSessionMemory_ConcurrentSafety(t *testing.T) {
 func TestSessionMemory_ShellPrefixMatch_StoredExactLookupWithArgs(t *testing.T) {
 	sm := NewSessionMemory()
 	// 用户批准 "make build" 并记住
-	sm.Remember("shell", "make build", DecisionAllow)
+	sm.Remember("bash", "make build", DecisionAllow)
 
 	// 后续 LLM 调用 "make build 2>&1" → 应通过 prefix 匹配命中
-	d, found := sm.Lookup("shell", "make build 2>&1")
+	d, found := sm.Lookup("bash", "make build 2>&1")
 	if !found {
 		t.Error("shell prefix match: 'make build' should match 'make build 2>&1'")
 	}
@@ -177,10 +177,10 @@ func TestSessionMemory_ShellPrefixMatch_StoredExactLookupWithArgs(t *testing.T) 
 func TestSessionMemory_ShellPrefixMatch_StoredWithArgsLookupExact(t *testing.T) {
 	sm := NewSessionMemory()
 	// 用户批准 "make build 2>&1" 并记住
-	sm.Remember("shell", "make build 2>&1", DecisionAllow)
+	sm.Remember("bash", "make build 2>&1", DecisionAllow)
 
 	// 后续 LLM 调用 "make build" → 应通过 prefix 匹配命中（双向匹配）
-	d, found := sm.Lookup("shell", "make build")
+	d, found := sm.Lookup("bash", "make build")
 	if !found {
 		t.Error("shell prefix match: 'make build 2>&1' should match 'make build' (bidirectional)")
 	}
@@ -191,10 +191,10 @@ func TestSessionMemory_ShellPrefixMatch_StoredWithArgsLookupExact(t *testing.T) 
 
 func TestSessionMemory_ShellPrefixMatch_NoMatchDifferentCommand(t *testing.T) {
 	sm := NewSessionMemory()
-	sm.Remember("shell", "make build", DecisionAllow)
+	sm.Remember("bash", "make build", DecisionAllow)
 
 	// 不同命令不应匹配
-	_, found := sm.Lookup("shell", "git status")
+	_, found := sm.Lookup("bash", "git status")
 	if found {
 		t.Error("shell prefix match: 'make build' should NOT match 'git status'")
 	}
@@ -202,9 +202,9 @@ func TestSessionMemory_ShellPrefixMatch_NoMatchDifferentCommand(t *testing.T) {
 
 func TestSessionMemory_ShellPrefixMatch_ExactMatchStillWorks(t *testing.T) {
 	sm := NewSessionMemory()
-	sm.Remember("shell", "go test ./...", DecisionAllow)
+	sm.Remember("bash", "go test ./...", DecisionAllow)
 
-	d, found := sm.Lookup("shell", "go test ./...")
+	d, found := sm.Lookup("bash", "go test ./...")
 	if !found {
 		t.Error("exact match should still work")
 	}

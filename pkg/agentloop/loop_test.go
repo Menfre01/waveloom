@@ -363,6 +363,11 @@ func (u *mockUserResponder) AskUser(ctx context.Context, toolName string, input 
 	return permission.UserChoice{Decision: permission.DecisionDeny}
 }
 
+func (u *mockUserResponder) AnswerQuestion(ctx context.Context, questions []permission.QuestionPrompt) ([]permission.QuestionResponse, error) {
+	// 默认拒绝
+	return nil, nil
+}
+
 // ============================================================================
 // 1. 基础流程测试
 // ============================================================================
@@ -2745,6 +2750,50 @@ func TestRunEmptyResponse_RecoversAfterNonEmpty(t *testing.T) {
 	}
 	if done.Reason != ReasonCompleted {
 		t.Fatalf("expected ReasonCompleted (counter reset), got %s", done.Reason)
+	}
+}
+
+// TestRegression_EmptyResponseNoReasoningPreserved 验证空响应占位消息
+// 不含 reasoning_content。回归 DeepSeek V4 thinking 模式下连续空响应问题：
+// 若回传 reasoning_content，模型在下一轮看到自己的推理 + "(empty response)"
+// 伪造消息会产生认知冲突，导致持续空输出。
+func TestRegression_EmptyResponseNoReasoningPreserved(t *testing.T) {
+	client := &mockLLMClient{
+		responses: []*llm.Response{
+			{Content: "", ReasoningContent: "let me think about this...", Usage: &llm.UsageInfo{PromptTokens: 100}},
+			{Content: "", ReasoningContent: "still thinking...", Usage: &llm.UsageInfo{PromptTokens: 100}},
+			{Content: "", ReasoningContent: "one more thought...", Usage: &llm.UsageInfo{PromptTokens: 100}},
+			{Content: "", ReasoningContent: "final reasoning...", Usage: &llm.UsageInfo{PromptTokens: 100}},
+		},
+	}
+
+	loop := New(client, newTestRegistry(), Config{MaxTurns: 0})
+	events := loop.Run(context.Background(), []llm.Message{
+		{Role: llm.RoleSystem, Content: "test"},
+		{Role: llm.RoleUser, Content: "go"},
+	})
+
+	var done *LoopDone
+	for ev := range events {
+		if ld, ok := ev.(LoopDone); ok {
+			done = &ld
+		}
+	}
+	if done == nil {
+		t.Fatal("expected LoopDone")
+	}
+	if done.Reason != ReasonModelError {
+		t.Fatalf("expected ReasonModelError, got %s", done.Reason)
+	}
+
+	// 验证：所有占位 assistant 消息不含 reasoning_content
+	for i, msg := range done.Messages {
+		if msg.Role == llm.RoleAssistant && msg.Content == "(empty response)" {
+			if msg.ReasoningContent != "" {
+				t.Errorf("message[%d]: placeholder message MUST NOT preserve reasoning_content, got %q",
+					i, msg.ReasoningContent)
+			}
+		}
 	}
 }
 

@@ -24,11 +24,11 @@ func TestGuard_Check_DenyRule(t *testing.T) {
 	g := NewGuard(
 		WithWorkingDirs(dir),
 		WithRules([]RuleEntry{
-			{Rule: Rule{Behavior: RuleDeny, ToolName: "shell"}, Source: SourceConfig, Scope: ScopeConfig},
+			{Rule: Rule{Behavior: RuleDeny, ToolName: "bash"}, Source: SourceConfig, Scope: ScopeConfig},
 		}),
 	)
 
-	result := g.Check(context.Background(), "shell", json.RawMessage(`{"command": "ls"}`))
+	result := g.Check(context.Background(), "bash", json.RawMessage(`{"command": "ls"}`))
 	if result.Decision != DecisionDeny {
 		t.Errorf("deny rule: Decision = %s, want %s", result.Decision, DecisionDeny)
 	}
@@ -60,11 +60,11 @@ func TestGuard_Check_AllowRule(t *testing.T) {
 	g := NewGuard(
 		WithWorkingDirs(dir),
 		WithRules([]RuleEntry{
-			{Rule: Rule{Behavior: RuleAllow, ToolName: "shell"}, Source: SourceConfig, Scope: ScopeConfig},
+			{Rule: Rule{Behavior: RuleAllow, ToolName: "bash"}, Source: SourceConfig, Scope: ScopeConfig},
 		}),
 	)
 
-	result := g.Check(context.Background(), "shell", json.RawMessage(`{"command": "ls"}`))
+	result := g.Check(context.Background(), "bash", json.RawMessage(`{"command": "ls"}`))
 	if result.Decision != DecisionAllow {
 		t.Errorf("allow rule + low risk: Decision = %s, want %s", result.Decision, DecisionAllow)
 	}
@@ -76,7 +76,7 @@ func TestGuard_Check_AllowRuleDoesNotBypassSafety(t *testing.T) {
 		WithWorkingDirs(dir),
 	)
 
-	result := g.Check(context.Background(), "shell", json.RawMessage(`{"command": "rm -rf /"}`))
+	result := g.Check(context.Background(), "bash", json.RawMessage(`{"command": "rm -rf /"}`))
 	if result.Decision != DecisionDeny {
 		t.Errorf("high risk command: Decision = %s, want %s", result.Decision, DecisionDeny)
 	}
@@ -89,7 +89,7 @@ func TestGuard_Check_ShellSafeCommand(t *testing.T) {
 	dir := testGuardDir(t)
 	g := NewGuard(WithWorkingDirs(dir))
 
-	result := g.Check(context.Background(), "shell", json.RawMessage(`{"command": "git status"}`))
+	result := g.Check(context.Background(), "bash", json.RawMessage(`{"command": "git status"}`))
 	if result.Decision != DecisionAsk {
 		t.Errorf("safe shell command: Decision = %s, want %s (default ask for execute)", result.Decision, DecisionAsk)
 	}
@@ -184,13 +184,13 @@ func TestGuard_Check_BypassMode(t *testing.T) {
 	}
 
 	// bypass 模式下 shell 安全命令 → allow
-	result = g.Check(context.Background(), "shell", json.RawMessage(`{"command": "ls"}`))
+	result = g.Check(context.Background(), "bash", json.RawMessage(`{"command": "ls"}`))
 	if result.Decision != DecisionAllow {
 		t.Errorf("bypass shell: Decision = %s, want %s", result.Decision, DecisionAllow)
 	}
 
 	// bypass 模式：高危命令仍被安全检查拦截（deny 不可 bypass）
-	result = g.Check(context.Background(), "shell", json.RawMessage(`{"command": "rm -rf /"}`))
+	result = g.Check(context.Background(), "bash", json.RawMessage(`{"command": "rm -rf /"}`))
 	if result.Decision != DecisionDeny {
 		t.Errorf("bypass + high risk: Decision = %s, want %s", result.Decision, DecisionDeny)
 	}
@@ -201,11 +201,11 @@ func TestGuard_Check_ContentLevelRule(t *testing.T) {
 	g := NewGuard(
 		WithWorkingDirs(dir),
 		WithRules([]RuleEntry{
-			{Rule: Rule{Behavior: RuleAllow, ToolName: "shell", Pattern: "git *"}, Source: SourceConfig, Scope: ScopeConfig},
+			{Rule: Rule{Behavior: RuleAllow, ToolName: "bash", Pattern: "git *"}, Source: SourceConfig, Scope: ScopeConfig},
 		}),
 	)
 
-	result := g.Check(context.Background(), "shell", json.RawMessage(`{"command": "git status"}`))
+	result := g.Check(context.Background(), "bash", json.RawMessage(`{"command": "git status"}`))
 	if result.Decision != DecisionAllow {
 		t.Errorf("content-level allow: Decision = %s, want %s", result.Decision, DecisionAllow)
 	}
@@ -245,14 +245,14 @@ func TestGuard_Check_SessionMemoryContentLevel(t *testing.T) {
 	dir := testGuardDir(t)
 	g := NewGuard(WithWorkingDirs(dir))
 
-	g.sessionMemory.Remember("shell", "git status", DecisionAllow)
+	g.sessionMemory.Remember("bash", "git status", DecisionAllow)
 
-	result := g.Check(context.Background(), "shell", json.RawMessage(`{"command": "git status"}`))
+	result := g.Check(context.Background(), "bash", json.RawMessage(`{"command": "git status"}`))
 	if result.Decision != DecisionAllow {
 		t.Errorf("session content-level: Decision = %s, want %s", result.Decision, DecisionAllow)
 	}
 
-	result = g.Check(context.Background(), "shell", json.RawMessage(`{"command": "make build"}`))
+	result = g.Check(context.Background(), "bash", json.RawMessage(`{"command": "make build"}`))
 	if result.Decision == DecisionAllow && result.Reason == ReasonSession {
 		t.Errorf("make build should not match git status session memory")
 	}
@@ -376,53 +376,53 @@ func TestGuard_NewGuard_Options(t *testing.T) {
 
 func TestExtractContentPattern_Shell(t *testing.T) {
 	// 精确匹配：返回完整归一化命令
-	pattern := ExtractPattern("shell", json.RawMessage(`{"command": "git status"}`))
+	pattern := ExtractPattern("bash", json.RawMessage(`{"command": "git status"}`))
 	if pattern != "git status" {
 		t.Errorf("extractContentPattern shell 'git status' = %q, want %q", pattern, "git status")
 	}
 
-	pattern = ExtractPattern("shell", json.RawMessage(`{"command": "git add file.txt"}`))
+	pattern = ExtractPattern("bash", json.RawMessage(`{"command": "git add file.txt"}`))
 	if pattern != "git add file.txt" {
 		t.Errorf("extractContentPattern shell 'git add file.txt' = %q, want %q", pattern, "git add file.txt")
 	}
 
-	pattern = ExtractPattern("shell", json.RawMessage(`{"command": "docker compose up -d"}`))
+	pattern = ExtractPattern("bash", json.RawMessage(`{"command": "docker compose up -d"}`))
 	if pattern != "docker compose up -d" {
 		t.Errorf("extractContentPattern shell 'docker compose up -d' = %q, want %q", pattern, "docker compose up -d")
 	}
 
-	pattern = ExtractPattern("shell", json.RawMessage(`{"command": "ls"}`))
+	pattern = ExtractPattern("bash", json.RawMessage(`{"command": "ls"}`))
 	if pattern != "ls" {
 		t.Errorf("extractContentPattern shell 'ls' = %q, want %q", pattern, "ls")
 	}
 
-	pattern = ExtractPattern("shell", json.RawMessage(`{"command": "npm install"}`))
+	pattern = ExtractPattern("bash", json.RawMessage(`{"command": "npm install"}`))
 	if pattern != "npm install" {
 		t.Errorf("extractContentPattern shell 'npm install' = %q, want %q", pattern, "npm install")
 	}
 
-	pattern = ExtractPattern("shell", json.RawMessage(`{"command": "npm install express"}`))
+	pattern = ExtractPattern("bash", json.RawMessage(`{"command": "npm install express"}`))
 	if pattern != "npm install express" {
 		t.Errorf("extractContentPattern shell 'npm install express' = %q, want %q", pattern, "npm install express")
 	}
 
 	// 归一化 cd 前缀后返回完整命令
-	pattern = ExtractPattern("shell", json.RawMessage(`{"command": "cd /app && go test ./..."}`))
+	pattern = ExtractPattern("bash", json.RawMessage(`{"command": "cd /app && go test ./..."}`))
 	if pattern != "go test ./..." {
 		t.Errorf("extractContentPattern shell 'cd /app && go test ./...' = %q, want %q", pattern, "go test ./...")
 	}
 
-	pattern = ExtractPattern("shell", json.RawMessage(`{"command": "cd /tmp; ls"}`))
+	pattern = ExtractPattern("bash", json.RawMessage(`{"command": "cd /tmp; ls"}`))
 	if pattern != "ls" {
 		t.Errorf("extractContentPattern shell 'cd /tmp; ls' = %q, want %q", pattern, "ls")
 	}
 
-	pattern = ExtractPattern("shell", json.RawMessage(`{"command": "cd /app && go build"}`))
+	pattern = ExtractPattern("bash", json.RawMessage(`{"command": "cd /app && go build"}`))
 	if pattern != "go build" {
 		t.Errorf("extractContentPattern shell 'cd /app && go build' = %q, want %q", pattern, "go build")
 	}
 
-	pattern = ExtractPattern("shell", json.RawMessage(`{}`))
+	pattern = ExtractPattern("bash", json.RawMessage(`{}`))
 	if pattern != "" {
 		t.Errorf("extractContentPattern shell empty = %q, want empty", pattern)
 	}
@@ -563,11 +563,11 @@ func TestGuard_Check_AllowRuleMustNotBypassSafetyHardBlock(t *testing.T) {
 	g := NewGuard(
 		WithWorkingDirs(dir),
 		WithRules([]RuleEntry{
-			{Rule: Rule{Behavior: RuleAllow, ToolName: "shell", Pattern: "rm -rf *"}, Source: SourceConfig, Scope: ScopeConfig},
+			{Rule: Rule{Behavior: RuleAllow, ToolName: "bash", Pattern: "rm -rf *"}, Source: SourceConfig, Scope: ScopeConfig},
 		}),
 	)
 
-	result := g.Check(context.Background(), "shell", json.RawMessage(`{"command": "rm -rf /"}`))
+	result := g.Check(context.Background(), "bash", json.RawMessage(`{"command": "rm -rf /"}`))
 	if result.Decision != DecisionDeny {
 		t.Errorf("allow rule must NOT bypass safety hard block: Decision = %s, want %s", result.Decision, DecisionDeny)
 	}
@@ -673,7 +673,7 @@ func TestSessionMemoryLen_Empty(t *testing.T) {
 
 func TestPersistRule_NoConfigPath(t *testing.T) {
 	g := NewGuard()
-	err := g.PersistRule(Rule{Behavior: RuleAllow, ToolName: "shell"})
+	err := g.PersistRule(Rule{Behavior: RuleAllow, ToolName: "bash"})
 	if err != nil {
 		t.Errorf("PersistRule without config path should return nil, got %v", err)
 	}
@@ -707,14 +707,14 @@ func TestPersistRuleToConfig_Append(t *testing.T) {
 		t.Fatal(err)
 	}
 	// 第二次写入（不同规则）
-	if err := PersistRuleToConfig(path, Rule{Behavior: RuleDeny, ToolName: "shell", Pattern: "rm -rf *"}); err != nil {
+	if err := PersistRuleToConfig(path, Rule{Behavior: RuleDeny, ToolName: "bash", Pattern: "rm -rf *"}); err != nil {
 		t.Fatal(err)
 	}
 
 	// 验证文件包含两条规则
 	data, _ := os.ReadFile(path)
 	content := string(data)
-	if !containsSubstr(content, "read_file") || !containsSubstr(content, "shell") {
+	if !containsSubstr(content, "read_file") || !containsSubstr(content, "bash") {
 		t.Error("config should contain both rules")
 	}
 }
@@ -743,16 +743,16 @@ func TestContainsRule_ToolLevel(t *testing.T) {
 
 func TestContainsRule_ExactMatch(t *testing.T) {
 	rules := []string{"shell(git *)"}
-	if !containsRule(rules, "shell", "git *") {
+	if !containsRule(rules, "bash", "git *") {
 		t.Error("exact match should return true")
 	}
-	if containsRule(rules, "shell", "rm *") {
+	if containsRule(rules, "bash", "rm *") {
 		t.Error("non-matching pattern should return false")
 	}
 }
 
 func TestContainsRule_EmptyList(t *testing.T) {
-	if containsRule(nil, "shell", "") {
+	if containsRule(nil, "bash", "") {
 		t.Error("empty list should return false")
 	}
 }
@@ -793,13 +793,13 @@ func TestLoadRulesFromConfigFiles_ProjectOverridesGlobal(t *testing.T) {
 }
 
 func TestRuleEntryKey(t *testing.T) {
-	e := RuleEntry{Rule: Rule{Behavior: RuleAllow, ToolName: "shell", Pattern: "git *"}}
+	e := RuleEntry{Rule: Rule{Behavior: RuleAllow, ToolName: "bash", Pattern: "git *"}}
 	key := ruleEntryKey(e)
 	if key == "" {
 		t.Error("ruleEntryKey should not be empty")
 	}
 	// 不同 Behavior 应产生不同 key
-	e2 := RuleEntry{Rule: Rule{Behavior: RuleDeny, ToolName: "shell", Pattern: "git *"}}
+	e2 := RuleEntry{Rule: Rule{Behavior: RuleDeny, ToolName: "bash", Pattern: "git *"}}
 	key2 := ruleEntryKey(e2)
 	if key == key2 {
 		t.Error("different behaviors should produce different keys")
@@ -850,4 +850,22 @@ func containsSubstr(s, sub string) bool {
 		}
 	}
 	return false
+}
+
+// ---------------------------------------------------------------------------
+// REGRESSION: ask_user_question builtin allow
+// ---------------------------------------------------------------------------
+
+func TestGuard_Check_BuiltinAllowAskUserQuestion(t *testing.T) {
+	g := NewGuard()
+
+	args := json.RawMessage(`{"questions":[{"question":"Which lib?","header":"Lib","options":[{"label":"A","description":"desc"},{"label":"B","description":"desc2"}]}]}`)
+
+	result := g.Check(context.Background(), "ask_user_question", args)
+	if result.Decision != DecisionAllow {
+		t.Errorf("ask_user_question: Decision = %s, want %s", result.Decision, DecisionAllow)
+	}
+	if result.Reason != ReasonBuiltinAllow {
+		t.Errorf("ask_user_question: Reason = %s, want %s", result.Reason, ReasonBuiltinAllow)
+	}
 }

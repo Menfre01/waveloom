@@ -44,6 +44,7 @@ import (
 	"charm.land/glamour/v2"
 	"charm.land/glamour/v2/ansi"
 	glamourstyles "charm.land/glamour/v2/styles"
+	"charm.land/huh/v2"
 	"charm.land/lipgloss/v2"
 
 	"github.com/Menfre01/waveloom/pkg/agentloop"
@@ -52,6 +53,7 @@ import (
 	"github.com/Menfre01/waveloom/pkg/pathutil"
 	"github.com/Menfre01/waveloom/pkg/permission"
 	"github.com/Menfre01/waveloom/pkg/reference"
+	"github.com/Menfre01/waveloom/pkg/skill"
 	"github.com/Menfre01/waveloom/pkg/slashcommand"
 	"github.com/Menfre01/waveloom/pkg/tool"
 )
@@ -70,15 +72,19 @@ var defaultSystemPrompt = `You are Waveloom, a coding agent. You help users writ
 
 ## Capabilities
 
-- Query LSP diagnostics, definitions, references, and hover for precise code understanding.
+- Query LSP diagnostics, definitions, references, and hover for precise code understanding (use lsp_diagnostic / lsp_definition / lsp_references / lsp_hover).
 - Fetch online documentation, API references, and package registries via web_fetch.
 
 ## How you work
 
 - Read before you write — explore with search_file and grep, confirm with read_file before editing.
-- Verify before you claim — compile, run lsp_diagnostic, check diffs after every change.
+- Verify before you claim — run tests/lint/build via shell when applicable, run lsp_diagnostic, check diffs after every change.
 - Check before you guess — confirm tool availability in ## Environment before calling any binary.
 - Edit surgically — prefer edit_file over write_file, never touch unrelated code.
+- Invoke parallel-safe tools (read_file, search_file, grep, ls, web_fetch, lsp_*) in the same response when independent — the system serializes write_file, edit_file, and shell automatically.
+- Use ls to explore directories before reading files — never pass a directory path to read_file.
+- For throwaway verification scripts: prefer python, write to /tmp, and clean up after.
+  Example: {"command":"python /tmp/check.py && rm /tmp/check.py"}
 
 ## Coding standards
 
@@ -95,9 +101,10 @@ var defaultSystemPrompt = `You are Waveloom, a coding agent. You help users writ
 ## Tool Error Handling
 
 - On error, identify the kind, then decide: retry once or stop.
-- Fatal (do not retry): command_not_found, security_violation.
-- Recoverable (retry once with corrected input): command_failed, timeout, file_not_found, invalid_args, permission_denied.
-- For no_match: re-read the file and copy text verbatim — never retry from memory.
+- Fatal (do not retry): permission_denied, security_violation, disk_full.
+- Recoverable (retry once with corrected input): command_failed, command_not_found, command_permission_denied, timeout, file_not_found, invalid_args, no_match, no_results, not_dir, binary_file, multiple_matches.
+- For not_dir: the error message includes a directory listing — pick a file from it and retry immediately.
+- For no_match: the error includes a hint with the closest matching lines and line numbers — use read_file to verify the exact content at those lines, then copy text verbatim (including indentation).
 - Stop and ask for guidance when errors keep repeating — the loop enforces a hard limit.`
 
 // ---------------------------------------------------------------------------
@@ -128,7 +135,7 @@ All file paths are resolved relative to this directory unless a working_dir is s
 - The workspace directory is fixed for the entire session.
 - Shell commands run in isolated subprocesses — "cd" inside a shell command has NO effect on subsequent commands.
 - To operate in a different directory, use the working_dir parameter: {"command":"ls", "working_dir":"/tmp"}
-- Never prefix commands with "cd <path> &&" — this breaks permission pattern matching and is unnecessary.`, cwd)
+- Never prefix commands with "cd <path> &&" — use the working_dir parameter instead. cd breaks permission pattern matching.`, cwd)
 	return defaultSystemPrompt + cwdInfo
 }
 
@@ -156,6 +163,27 @@ var permKeys = []key.Binding{
 	key.NewBinding(key.WithKeys("esc"), key.WithHelp("Esc", "拒绝")),
 }
 
+// questionSingleKeys 单选问题快捷键提示。
+var questionSingleKeys = []key.Binding{
+	key.NewBinding(key.WithKeys("↑/↓"), key.WithHelp("↑/↓", "导航")),
+	key.NewBinding(key.WithKeys("enter"), key.WithHelp("Enter", "确认")),
+	key.NewBinding(key.WithKeys("esc"), key.WithHelp("Esc", "拒绝")),
+}
+
+// questionMultiKeys 多选问题快捷键提示。
+var questionMultiKeys = []key.Binding{
+	key.NewBinding(key.WithKeys("↑/↓"), key.WithHelp("↑/↓", "导航")),
+	key.NewBinding(key.WithKeys("space"), key.WithHelp("Space", "勾选")),
+	key.NewBinding(key.WithKeys("enter"), key.WithHelp("Enter", "确认")),
+	key.NewBinding(key.WithKeys("esc"), key.WithHelp("Esc", "拒绝")),
+}
+
+// questionOtherKeys Other 文本输入快捷键提示。
+var questionOtherKeys = []key.Binding{
+	key.NewBinding(key.WithKeys("enter"), key.WithHelp("Enter", "确认")),
+	key.NewBinding(key.WithKeys("esc"), key.WithHelp("Esc", "返回")),
+}
+
 var defaultKeys = keyMap{
 	Enter:         key.NewBinding(key.WithKeys("enter"), key.WithHelp("Enter", "发送消息")),
 	Interrupt:     key.NewBinding(key.WithKeys("esc"), key.WithHelp("Esc", "中断 agent loop")),
@@ -179,6 +207,12 @@ type permissionReqMsg struct {
 	reason     string
 	reasonKind permission.DecisionReason
 	reply      chan<- permission.UserChoice
+}
+
+// questionReqMsg AskUserQuestion 请求。
+type questionReqMsg struct {
+	questions []permission.QuestionPrompt
+	reply     chan<- []permission.QuestionResponse
 }
 
 // pickerScanDoneMsg 文件扫描完成消息（异步）。
@@ -264,6 +298,7 @@ type model struct {
 	guard         permission.Guard
 	expander      *reference.Expander
 	slashRegistry *slashcommand.Registry
+	skillLoader   *skill.Loader
 	cwd           string
 	verboseLog io.Writer // --verbose 日志输出（nil = 不记录）
 	loop       *agentloop.Loop
@@ -279,6 +314,16 @@ type model struct {
 	permReq      *permissionReqMsg     // 当前待确认的权限请求
 	permList     list.Model            // 权限选项列表（bubbles/list）
 	permDelegate *list.DefaultDelegate // 权限列表的 delegate 指针，主题切换时更新样式
+
+	questionReq         *questionReqMsg            // 当前待回答的问题
+	questionIdx         int                        // 当前问题索引（0-based）
+	questionAnswers     []permission.QuestionResponse // 已收集的答案
+	questionForm        *huh.Form                  // huh 表单（选择题部分）
+	questionFormMaxHeight int                      // 表单自适应最大高度（resize 时复用）
+	questionPendingOther    bool                   // 是否等待 Other 自定义输入
+	questionPendingAnswers []string                // Other 输入前的临时答案（多选时合并用）
+	questionFormInitCmd tea.Cmd                    // 待返回的表单 Init 命令
+	questionFormIsOther bool                       // 当前是否展示 Other 自定义输入（直接用 textinput，非 huh）
 
 	// 主题选择器覆盖层
 	themeList     list.Model
@@ -358,6 +403,12 @@ type model struct {
 	spTool         spinner.Model  // tool 执行中前缀动画
 	ctxProgress    progress.Model // ctx 窗口进度条（bubbles progress 组件）
 	input          textinput.Model
+	inputVisStart  int    // 输入框水平滚动起始偏移，镜像 textinput 内部 offset，仅当光标移出可视区时更新
+	inputLastValue string // 上一次同步时的输入值，变更时强制重置 inputVisStart
+
+	otherInput          textinput.Model // Other 自定义输入框
+	otherInputVisStart  int             // otherInput 水平滚动起始偏移
+	otherInputLastValue string          // otherInput 上一次同步值
 
 	// 输入历史
 	inputHistory []string // 已提交的输入，最新在前
@@ -418,7 +469,7 @@ func waveloomGlamourStyle(p palette) ansi.StyleConfig {
 	base.Code.BackgroundColor = &toolCodeBg
 
 	// 代码块文本 → ToolCode
-	base.CodeBlock.StylePrimitive.Color = &toolCode
+	base.CodeBlock.Color = &toolCode
 
 	// 代码块 Chroma 背景 → ToolCodeBg，文本 → ToolCode
 	if base.CodeBlock.Chroma != nil {
@@ -470,6 +521,16 @@ func newTUIModel(llmClient llm.Client, registry tool.Registry, guard permission.
 	styles := ti.Styles()
 	styles.Cursor.Blink = true
 	ti.SetStyles(styles)
+
+	// Other 自定义输入框（与主输入框同款 real cursor 模式）
+	otherTi := textinput.New()
+	otherTi.Prompt = "> "
+	otherTi.Placeholder = "输入自定义答案..."
+	otherTi.CharLimit = 200
+	otherTi.SetVirtualCursor(false)
+	otherStyles := otherTi.Styles()
+	otherStyles.Cursor.Blink = true
+	otherTi.SetStyles(otherStyles)
 
 	// 初始化 bubbles spinner 组件（通用 HUD）
 	sp := spinner.New()
@@ -540,6 +601,7 @@ func newTUIModel(llmClient llm.Client, registry tool.Registry, guard permission.
 		spTool:          spTool,
 		ctxProgress:     cp,
 		input:           ti,
+		otherInput:      otherTi,
 		historyPos:      -1,
 		overlay:         overlayNone,
 		themeMode:       theme,
@@ -759,6 +821,20 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	// ------------------------------------------------------------------
+	// AskUserQuestion 请求（由 tuiUserResponder.AnswerQuestion 推送）
+	// ------------------------------------------------------------------
+	case questionReqMsg:
+		m.overlay = overlayQuestion
+		m.questionReq = &msg
+		m.questionIdx = 0
+		m.questionAnswers = make([]agentloop.QuestionResponse, 0, len(msg.questions))
+		m.input.Blur()
+		m.buildQuestionForm()
+		initCmd := m.questionFormInitCmd
+		m.questionFormInitCmd = nil
+		return m, initCmd
+
+	// ------------------------------------------------------------------
 	// 文件扫描完成（异步）
 	// ------------------------------------------------------------------
 	case pickerScanDoneMsg:
@@ -787,6 +863,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			newValue := current[:pos] + insert + current[pos:]
 			m.input.SetValue(newValue)
 			m.input.SetCursor(pos + len(insert))
+			m.syncInputVisibleStart()
 		}
 		return m, nil
 	}
@@ -797,11 +874,53 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		var cmd tea.Cmd
 		m.input, cmd = m.input.Update(msg)
 		cmds = append(cmds, cmd)
+		m.syncInputVisibleStart()
 	case overlayPermission:
 		// 权限面板活跃时，将按键传给 list 组件（↑↓ 导航）
 		var cmd tea.Cmd
 		m.permList, cmd = m.permList.Update(msg)
 		cmds = append(cmds, cmd)
+	case overlayQuestion:
+		// Other 自定义输入：直接用 textinput（real cursor 模式，与主输入框一致）
+		if m.questionFormIsOther {
+			var cmd tea.Cmd
+			m.otherInput, cmd = m.otherInput.Update(msg)
+			cmds = append(cmds, cmd)
+			m.syncOtherInputVisibleStart()
+
+			// Enter 提交（Esc 在 handleKeyPress 中拦截）
+			if keyMsg, ok := msg.(tea.KeyPressMsg); ok {
+				if keyMsg.String() == "enter" {
+					m.handleOtherInputSubmit()
+				}
+			}
+		} else if m.questionForm != nil {
+			// huh 表单活跃时，所有消息路由到 Form.Update。
+			// WindowSizeMsg 需缩放高度：表单嵌在 overlay 盒子内，可用高度小于终端全高。
+			formMsg := msg
+			if wsMsg, ok := msg.(tea.WindowSizeMsg); ok {
+				// resize 时用当前选项数重新计算自适应高度
+				q := m.questionReq.questions[m.questionIdx]
+				formMaxHeight := m.overlayMaxFormHeight(len(q.Options) + 1)
+				m.questionFormMaxHeight = formMaxHeight
+				formMsg = tea.WindowSizeMsg{Width: wsMsg.Width, Height: formMaxHeight}
+			}
+			fm, cmd := m.questionForm.Update(formMsg)
+			m.questionForm = fm.(*huh.Form)
+			cmds = append(cmds, cmd)
+			// 检测表单完成/取消
+			switch m.questionForm.State {
+			case huh.StateCompleted:
+				m.handleQuestionFormComplete()
+			case huh.StateAborted:
+				m.handleQuestionFormAborted()
+			}
+		}
+		// 返回待处理的 Init 命令（新表单创建时设置）
+		if m.questionFormInitCmd != nil {
+			cmds = append(cmds, m.questionFormInitCmd)
+			m.questionFormInitCmd = nil
+		}
 	case overlayThemePicker:
 		var cmd tea.Cmd
 		m.themeList, cmd = m.themeList.Update(msg)
@@ -905,6 +1024,24 @@ func (m *model) handleKeyPress(msg tea.KeyPressMsg) (bool, tea.Cmd) {
 	}
 
 	// =====================================================================
+	// 3a. 选择题面板活跃时路由
+	// =====================================================================
+	if m.overlay == overlayQuestion {
+		// Esc → 拒绝回答（关闭 overlay，发送 nil）
+		if key.Matches(msg, m.keys.Interrupt) {
+			// Other 输入中取消 → 回退到选项列表
+			if m.questionFormIsOther {
+				m.handleOtherInputCancel()
+				return true, nil
+			}
+			m.handleQuestionFormAborted()
+			return true, nil
+		}
+		// 其余按键交由 huh 或 otherInput Update 处理
+		return false, nil
+	}
+
+	// =====================================================================
 	// 3b. 主题选择器活跃时路由
 	// =====================================================================
 	if m.overlay == overlayThemePicker {
@@ -981,11 +1118,7 @@ func (m *model) handleKeyPress(msg tea.KeyPressMsg) (bool, tea.Cmd) {
 		// 立即中断当前 loop，将输入内容作为新任务启动。
 		userInput := strings.TrimSpace(m.input.Value())
 		if userInput == "" {
-			// 空输入 → 仅中断，不发新任务
-			if m.cancelRun != nil {
-				m.cancelRun()
-				m.cancelRun = nil
-			}
+			// 空输入 → 不做任何响应，不中断运行中的 session
 			return true, nil
 		}
 		m.input.Reset()
@@ -1145,6 +1278,284 @@ func (m *model) permListChoice() permission.UserChoice {
 	default:
 		return permission.UserChoice{Decision: permission.DecisionDeny}
 	}
+}
+
+// ---------------------------------------------------------------------------
+// AskUserQuestion 面板处理（huh 表单）
+// ---------------------------------------------------------------------------
+
+const otherOptionKey = "___other___"
+func (m *model) overlayInnerWidth() int {
+	contentWidth := max(m.width-4, 20)
+	boxWidth := contentWidth
+	if boxWidth > 70 {
+		boxWidth = 70
+	}
+	return boxWidth - 2 - 4 // border(左右各1) + padding(左右各2)
+}
+
+// overlayMaxFormHeight 返回 huh 表单在 overlay 内的自适应最大高度。
+// 选项少时紧凑显示全部，选项多时撑开到合理上限，超出由 huh 内部滚动。
+func (m *model) overlayMaxFormHeight(optionCount int) int {
+	// 固定外壳开销：styleApp padding(1) + header(8) + 底部(5) + overlay chrome(8)
+	const fixedOverhead = 1 + 8 + 5 + 8
+	maxAvailable := m.height - fixedOverhead
+	if maxAvailable < 5 {
+		maxAvailable = 5
+	}
+	// 所需高度：每个选项约 1 行 + 标题 2 行 + 过滤栏 1 行
+	needed := optionCount + 3
+	if needed < 5 {
+		needed = 5
+	}
+	// 取 needed 和 maxAvailable 的较小值，但不超过 20 行（约 15+ 选项可见，不侵占聊天区）
+	const absoluteMax = 20
+	h := min(needed, maxAvailable)
+	if h > absoluteMax {
+		h = absoluteMax
+	}
+	return h
+}
+func themeWaveloom() huh.Theme {
+	return huh.ThemeFunc(func(isDark bool) *huh.Styles {
+		t := huh.ThemeBase(isDark)
+	// 聚焦字段：与权限面板统一 —— 普通左边框 + colorOK 前景，无 ">" 选择符
+	t.Focused.Title = t.Focused.Title.Foreground(colorHeaderAccent)
+	t.Focused.Description = t.Focused.Description.Foreground(colorFooterFg)
+	t.Focused.Base = lipgloss.NewStyle().
+		PaddingLeft(1).
+		BorderStyle(lipgloss.NormalBorder()).
+		BorderLeft(true).
+		BorderForeground(colorHeaderAccent)
+	// 单选：使用 "▌" 选择符，与权限面板左边框视觉一致
+	t.Focused.SelectSelector = lipgloss.NewStyle().Foreground(colorOK).SetString("▌ ")
+	t.Blurred.SelectSelector = lipgloss.NewStyle().Foreground(colorMuted).SetString("  ")
+	// 多选：光标指示器与单选统一 "▌"，选择状态用 [✓] / [ ]
+	t.Focused.MultiSelectSelector = lipgloss.NewStyle().Foreground(colorOK).SetString("▌ ")
+	t.Blurred.MultiSelectSelector = lipgloss.NewStyle().Foreground(colorMuted).SetString("  ")
+	t.Focused.SelectedPrefix = lipgloss.NewStyle().Foreground(colorOK).SetString("[✓] ")
+	t.Focused.UnselectedPrefix = lipgloss.NewStyle().Foreground(colorMuted).SetString("[ ] ")
+	t.Blurred.SelectedPrefix = lipgloss.NewStyle().Foreground(colorMuted).SetString("[✓] ")
+	t.Blurred.UnselectedPrefix = lipgloss.NewStyle().Foreground(colorMuted).SetString("[ ] ")
+	t.Focused.TextInput.Cursor = t.Focused.TextInput.Cursor.Foreground(colorOK)
+	t.Focused.TextInput.Prompt = t.Focused.TextInput.Prompt.Foreground(colorOK)
+	// 未聚焦字段
+	t.Blurred.Title = t.Blurred.Title.Foreground(colorHeaderFg)
+	t.Blurred.Description = t.Blurred.Description.Foreground(colorFooterFg)
+	t.Blurred.Base = t.Blurred.Base.BorderForeground(lipgloss.Color("#444444"))
+	return t
+	})
+}
+
+// buildQuestionForm 使用 huh 构建当前问题的表单。
+func (m *model) buildQuestionForm() {
+	if m.questionReq == nil || m.questionIdx >= len(m.questionReq.questions) {
+		return
+	}
+	q := m.questionReq.questions[m.questionIdx]
+
+	// 构建选项列表（含 "Other..."）
+	opts := make([]huh.Option[string], len(q.Options)+1)
+	for i, opt := range q.Options {
+		key := opt.Label
+		if strings.HasSuffix(opt.Label, "(Recommended)") {
+			key = "★ " + opt.Label
+		}
+		opts[i] = huh.NewOption(key, opt.Label)
+	}
+	opts[len(q.Options)] = huh.NewOption("Other...", otherOptionKey)
+
+	theme := themeWaveloom()
+	formWidth := m.overlayInnerWidth()
+	optionCount := len(opts)
+	formMaxHeight := m.overlayMaxFormHeight(optionCount)
+	m.questionFormMaxHeight = formMaxHeight
+
+	if q.MultiSelect {
+		var selected []string
+		field := huh.NewMultiSelect[string]().
+			Key("answer").
+			Title(q.Question).
+			Options(opts...).
+			Value(&selected).
+			WithTheme(theme).
+			WithHeight(formMaxHeight)
+
+		f := huh.NewForm(huh.NewGroup(field)).
+			WithTheme(theme).
+			WithWidth(formWidth).
+			WithShowHelp(false)
+
+		m.questionForm = f
+		// 表单在 WindowSizeMsg 之后动态创建，需手动注入尺寸让其计算视口高度。
+		// 使用 overlayMaxFormHeight 而非终端全高 m.height，避免视口计算过大导致选项被裁剪。
+		m.questionFormInitCmd = tea.Batch(
+			f.Init(),
+			func() tea.Msg { return tea.WindowSizeMsg{Width: formWidth, Height: formMaxHeight} },
+		)
+	} else {
+		var selected string
+		field := huh.NewSelect[string]().
+			Key("answer").
+			Title(q.Question).
+			Options(opts...).
+			Value(&selected).
+			WithTheme(theme).
+			WithHeight(formMaxHeight)
+
+		f := huh.NewForm(huh.NewGroup(field)).
+			WithTheme(theme).
+			WithWidth(formWidth).
+			WithShowHelp(false)
+
+		m.questionForm = f
+		m.questionFormInitCmd = tea.Batch(
+			f.Init(),
+			func() tea.Msg { return tea.WindowSizeMsg{Width: formWidth, Height: formMaxHeight} },
+		)
+	}
+}
+
+// buildOtherForm 构建 "Other" 自定义文本输入（使用 real cursor textinput，与主输入框一致）。
+func (m *model) buildOtherForm() {
+	m.questionFormIsOther = true
+	m.questionForm = nil
+	m.questionFormInitCmd = nil
+	m.otherInputVisStart = 0
+	m.otherInputLastValue = ""
+	m.otherInput.SetValue("")
+	// 宽度对齐盒子内部可用宽度：innerWidth - prompt（与 huh 表单宽度一致）
+	inputWidth := m.overlayInnerWidth() - lipgloss.Width(m.otherInput.Prompt)
+	if inputWidth < 10 {
+		inputWidth = 10
+	}
+	m.otherInput.SetWidth(inputWidth)
+	// 延迟 Focus：Init 命令在下一帧执行，避免同一帧内 Focus + SetValue 状态不一致
+	m.questionFormInitCmd = m.otherInput.Focus()
+}
+
+// handleQuestionFormComplete 在 huh 表单完成时调用，提取答案并推进流程。
+func (m *model) handleQuestionFormComplete() {
+	if m.questionReq == nil || m.questionIdx >= len(m.questionReq.questions) {
+		return
+	}
+	q := m.questionReq.questions[m.questionIdx]
+
+	answerValue := m.questionForm.Get("answer")
+
+	if q.MultiSelect {
+		// 多选结果
+		selected := answerValue.([]string)
+		var hasOther bool
+		var finalAnswers []string
+		for _, v := range selected {
+			if v == otherOptionKey {
+				hasOther = true
+			} else {
+				finalAnswers = append(finalAnswers, v)
+			}
+		}
+		if hasOther {
+			m.questionPendingOther = true
+			m.questionPendingAnswers = finalAnswers
+			m.buildOtherForm()
+			return
+		}
+		m.recordQuestionAnswer(finalAnswers)
+	} else {
+		// 单选结果
+		selected := answerValue.(string)
+		if selected == otherOptionKey {
+			m.questionPendingOther = true
+			m.questionPendingAnswers = nil
+			m.buildOtherForm()
+			return
+		}
+		m.recordQuestionAnswer([]string{selected})
+	}
+	m.advanceQuestion()
+}
+
+// handleQuestionFormAborted 在用户取消表单（Esc）时调用。
+func (m *model) handleQuestionFormAborted() {
+	// 拒绝回答
+	if m.questionReq != nil && m.questionReq.reply != nil {
+		m.questionReq.reply <- nil
+	}
+	m.closeQuestionOverlay()
+}
+
+// handleOtherInputSubmit 在用户按 Enter 提交 Other 自定义文本时调用。
+func (m *model) handleOtherInputSubmit() {
+	text := m.otherInput.Value()
+	m.questionFormIsOther = false
+	m.otherInput.Blur()
+
+	// 将 Other 文本合并到 pending answers，由 advanceQuestion 统一记录，避免重复响应覆盖
+	if m.questionPendingAnswers == nil {
+		m.questionPendingAnswers = []string{"Other: " + text}
+	} else {
+		m.questionPendingAnswers = append(m.questionPendingAnswers, "Other: "+text)
+	}
+	m.advanceQuestion()
+}
+
+// handleOtherInputCancel 在用户按 Esc 取消 Other 自定义文本时调用，回退到选项列表。
+func (m *model) handleOtherInputCancel() {
+	m.questionFormIsOther = false
+	m.questionPendingOther = false
+	m.questionPendingAnswers = nil
+	m.otherInput.Blur()
+	m.buildQuestionForm()
+}
+
+// recordQuestionAnswer 记录当前问题的答案。
+func (m *model) recordQuestionAnswer(answers []string) {
+	if m.questionReq == nil || m.questionIdx >= len(m.questionReq.questions) {
+		return
+	}
+	q := m.questionReq.questions[m.questionIdx]
+	m.questionAnswers = append(m.questionAnswers, permission.QuestionResponse{
+		Question: q.Question,
+		Answers:  answers,
+	})
+}
+
+// advanceQuestion 前进到下一个问题或提交全部答案。
+func (m *model) advanceQuestion() {
+	// 如果之前有待合并的 Other 答案，合并之
+	if m.questionPendingOther {
+		m.questionPendingOther = false
+		m.recordQuestionAnswer(m.questionPendingAnswers)
+		m.questionPendingAnswers = nil
+	}
+
+	m.questionIdx++
+	if m.questionReq == nil || m.questionIdx >= len(m.questionReq.questions) {
+		// 所有问题已回答，提交答案
+		if m.questionReq.reply != nil {
+			m.questionReq.reply <- m.questionAnswers
+		}
+		m.closeQuestionOverlay()
+		return
+	}
+	// 显示下一个问题
+	m.buildQuestionForm()
+}
+
+// closeQuestionOverlay 关闭选择题面板。
+func (m *model) closeQuestionOverlay() {
+	m.overlay = overlayNone
+	m.questionReq = nil
+	m.questionAnswers = nil
+	m.questionForm = nil
+	m.questionFormIsOther = false
+	m.questionPendingOther = false
+	m.questionPendingAnswers = nil
+	m.otherInputVisStart = 0
+	m.otherInputLastValue = ""
+	m.otherInput.Blur()
+	m.input.Focus()
 }
 
 // ---------------------------------------------------------------------------
@@ -1881,6 +2292,7 @@ func (m *model) handleToolResult(ev agentloop.ToolCallResult) {
 		if p.Type == paraTool && p.State == stateStreaming && p.ToolName == ev.ToolCallName {
 			p.ToolResult = truncateToolResult(ev.Result)
 			p.ToolError = ev.Error
+			p.ToolErrorKind = ev.ErrorKind
 			p.ToolDurMs = ev.DurationMs
 			p.ToolDenied = ev.Denied
 			p.DiffHunks = ev.DiffHunks
@@ -1893,12 +2305,43 @@ func (m *model) handleToolResult(ev agentloop.ToolCallResult) {
 			}
 			p.renderDirty = true
 
+			// 条件 skill 激活：文件操作工具完成后检查路径匹配
+			if m.skillLoader != nil {
+				filePaths := extractToolFilePaths(ev.ToolCallName, p.ToolArgs)
+				if len(filePaths) > 0 {
+					if activated := m.skillLoader.ActivateForPaths(filePaths); len(activated) > 0 {
+						m.paras = append(m.paras, Paragraph{
+							Type:      paraSystem,
+							State:     stateDone,
+							Text:      fmt.Sprintf("Skills activated: %s", strings.Join(activated, ", ")),
+							NotifKind: notifInfo,
+						})
+					}
+				}
+			}
+
 			return
 		}
 	}
 }
 
-// truncateToolResult 将超长工具结果截断到 maxToolResultBytes，末尾追加截断提示。
+// extractToolFilePaths 从已格式化的 ToolArgs 中提取涉及的文件路径。
+// ToolArgs 来自 formatToolArgs，对于文件操作工具直接返回目标路径。
+func extractToolFilePaths(toolName string, toolArgs string) []string {
+	switch toolName {
+	case "read_file", "write_file", "edit_file":
+		if toolArgs != "" && !strings.HasPrefix(toolArgs, "{") {
+			return []string{toolArgs}
+		}
+	case "search_file":
+		// search_file: toolArgs 格式为 "pattern in dir" 或 "dir"
+		if idx := strings.LastIndex(toolArgs, " in "); idx > 0 {
+			return []string{toolArgs[idx+4:]}
+		}
+		return []string{toolArgs}
+	}
+	return nil
+}
 // shortTokens 将 token 数格式化为短格式（≥1000 时用 k 后缀，保留一位小数）。
 func shortTokens(n int) string {
 	if n < 1000 {
@@ -2254,20 +2697,26 @@ func isExpandable(p *Paragraph, contentWidth int) bool {
 		}
 		return true
 	case paraTool:
-		// 仅 shell 和 web_fetch 的输出值得展开/折叠，其他工具的输出
+		// shell / web_fetch / skill 的输出值得展开/折叠，其他工具的输出
 		// 或为结构化摘要（grep/ls/search_file/lsp_*）或通过预览行已传达完整信息。
 		switch p.ToolName {
-		case "shell", "web_fetch":
-			if p.State != stateDone && p.State != stateCollapsed && p.State != stateExpanded {
+		case "bash", "web_fetch", "skill":
+			if p.State != stateDone && p.State != stateCollapsed && p.State != stateExpanded && p.State != stateError {
 				return false
 			}
 			// 折叠预览至多展示 maxPreviewWrapped 行，若全部输出未溢出则无需展开。
 			// 阈值与 renderToolPreview 中 writeWrappedPreview 的截断条件保持一致。
-			if p.State == stateDone || p.State == stateCollapsed {
+			if p.State == stateDone || p.State == stateCollapsed || p.State == stateError {
 				body := stripToolStatusHeader(p.ToolResult)
+				if body == "" && p.ToolError != "" {
+					body = p.ToolError
+				}
 				if p.ToolName == "web_fetch" {
 					// web_fetch 预览跳过空行，计数时也跳过
 					body = parseWebFetchBody(p.ToolResult)
+					if body == "" && p.ToolError != "" {
+						body = p.ToolError
+					}
 					return countWrappedLinesNonEmpty(body, contentWidth-2) >= maxPreviewWrapped
 				}
 				return countWrappedLines(body, contentWidth-2) >= maxPreviewWrapped
@@ -2403,8 +2852,14 @@ func (m *model) toggleParagraphFocus() {
 		switch p.State {
 		case stateDone, stateCollapsed:
 			p.State = stateExpanded
+		case stateError:
+			p.State = stateExpanded
 		case stateExpanded:
-			p.State = stateDone
+			if p.ToolError != "" || p.ToolDenied {
+				p.State = stateError
+			} else {
+				p.State = stateDone
+			}
 		}
 	}
 	p.renderDirty = true
@@ -2604,29 +3059,110 @@ func (m *model) scrollToBottom() {
 // 视图
 // ---------------------------------------------------------------------------
 
-// visibleOffset 计算 textinput 水平滚动后在可视范围内光标的起始偏移量。
-// textinput 内容超出可视宽度时内部维护 offset（未公开），通过从光标位置
-// 反向扫描累积显示宽度到等于输入框宽度来确定可视起点。
-func visibleOffset(value string, pos int, maxWidth int) int {
+// syncInputVisibleStart 镜像 textinput 内部 handleOverflow 的 sticky offset 逻辑：
+// 仅当光标移出当前可视窗口时才调整 inputVisStart，否则保持不变。
+// 这确保光标在溢出文本中自由左右移动，而不是被粘滞在右边界。
+func (m *model) syncInputVisibleStart() {
+	value := m.input.Value()
+	pos := m.input.Position()
+	w := m.input.Width()
 	runes := []rune(value)
-	if pos > len(runes) {
-		pos = len(runes)
+	m.inputLastValue = value
+
+	// 内容未溢出 → 起点始终为 0
+	totalWidth := 0
+	for _, r := range runes {
+		totalWidth += lipgloss.Width(string(r))
 	}
-	if maxWidth <= 0 {
-		return 0
+	if w <= 0 || totalWidth <= w {
+		m.inputVisStart = 0
+		return
 	}
 
-	width := 0
-	offset := pos
-	for offset > 0 {
-		w := lipgloss.Width(string(runes[offset-1]))
-		if width+w > maxWidth {
+	// 钳位 inputVisStart（可能在外部 SetValue / Reset 后变成非法值）
+	if m.inputVisStart < 0 || m.inputVisStart > len(runes) {
+		m.inputVisStart = 0
+	}
+	// 如果光标在 inputVisStart 左侧，直接跟进
+	if pos < m.inputVisStart {
+		m.inputVisStart = pos
+	}
+
+	// 计算当前 inputVisStart 对应的可视终点（不含该位置字符）
+	visEnd := m.inputVisStart
+	visWidth := 0
+	for visEnd < len(runes) {
+		cw := lipgloss.Width(string(runes[visEnd]))
+		if visWidth+cw > w {
 			break
 		}
-		width += w
-		offset--
+		visWidth += cw
+		visEnd++
 	}
-	return offset
+
+	if pos >= visEnd {
+		// 光标移到可视区右侧或超出 → 反向扫描确定新起点
+		m.inputVisStart = pos
+		visWidth = 0
+		for m.inputVisStart > 0 {
+			cw := lipgloss.Width(string(runes[m.inputVisStart-1]))
+			if visWidth+cw > w {
+				break
+			}
+			visWidth += cw
+			m.inputVisStart--
+		}
+	}
+	// 光标在可视区内 → inputVisStart 保持不变
+}
+
+// syncOtherInputVisibleStart 与 syncInputVisibleStart 对称，用于 otherInput。
+func (m *model) syncOtherInputVisibleStart() {
+	value := m.otherInput.Value()
+	pos := m.otherInput.Position()
+	w := m.otherInput.Width()
+	runes := []rune(value)
+	m.otherInputLastValue = value
+
+	totalWidth := 0
+	for _, r := range runes {
+		totalWidth += lipgloss.Width(string(r))
+	}
+	if w <= 0 || totalWidth <= w {
+		m.otherInputVisStart = 0
+		return
+	}
+
+	if m.otherInputVisStart < 0 || m.otherInputVisStart > len(runes) {
+		m.otherInputVisStart = 0
+	}
+	if pos < m.otherInputVisStart {
+		m.otherInputVisStart = pos
+	}
+
+	visEnd := m.otherInputVisStart
+	visWidth := 0
+	for visEnd < len(runes) {
+		cw := lipgloss.Width(string(runes[visEnd]))
+		if visWidth+cw > w {
+			break
+		}
+		visWidth += cw
+		visEnd++
+	}
+
+	if pos >= visEnd {
+		m.otherInputVisStart = pos
+		visWidth = 0
+		for m.otherInputVisStart > 0 {
+			cw := lipgloss.Width(string(runes[m.otherInputVisStart-1]))
+			if visWidth+cw > w {
+				break
+			}
+			visWidth += cw
+			m.otherInputVisStart--
+		}
+	}
 }
 
 func (m *model) View() tea.View {
@@ -2654,6 +3190,14 @@ func (m *model) View() tea.View {
 				boxWidth = 70
 			}
 			overlayContent = m.renderPermOverlay(boxWidth)
+		}
+	case overlayQuestion:
+		if m.questionReq != nil {
+			boxWidth := contentWidth
+			if boxWidth > 70 {
+				boxWidth = 70
+			}
+			overlayContent = m.renderQuestionOverlay(boxWidth)
 		}
 	case overlayThemePicker:
 		boxWidth := contentWidth
@@ -2775,19 +3319,76 @@ func (m *model) View() tea.View {
 		if cur := m.input.Cursor(); cur != nil {
 			value := m.input.Value()
 			pos := m.input.Position()
-			offset := visibleOffset(value, pos, m.input.Width())
-			visibleBeforeCursor := string([]rune(value)[offset:pos])
+			runes := []rune(value)
+
+			// 钳位 inputVisStart：可能因 handleKeyPress 提前 return 而未调用 syncInputVisibleStart，
+			// 导致 inputVisStart 越界。此处不简单归零（归零会让溢出文本的光标 X 计算包含全部
+			// 前导字符宽度，导致光标跳到最右边），而是以当前位置为基准重新计算。
+			if m.inputVisStart < 0 || m.inputVisStart > len(runes) || m.inputVisStart > pos {
+				m.syncInputVisibleStart()
+				// sync 后仍需防御：极端情况下 pos 可能越界（如组件未初始化完成），
+				// 或 inputVisStart 尚未被修正到 ≤ pos。
+				if pos > len(runes) {
+					pos = len(runes)
+				}
+				if m.inputVisStart < 0 {
+					m.inputVisStart = 0
+				}
+				if m.inputVisStart > pos {
+					m.inputVisStart = pos
+				}
+			}
+
+			visibleBeforeCursor := string(runes[m.inputVisStart:pos])
 			cursorX := lipgloss.Width(m.input.Prompt) + lipgloss.Width(visibleBeforeCursor)
-			cur.Position.X = cursorX + 2 // styleApp 左 padding
-			if cur.Position.X > m.width-2 {
-				cur.Position.X = m.width - 2
+			cur.X = cursorX + 2 // styleApp 左 padding
+			if cur.X > m.width-2 {
+				cur.X = m.width - 2
 			}
 			// 在 alt screen 下，header + body + overlays + separator 之后是 input 行
 			// input 行在终端中的 Y 坐标（0-based）：
 			//   styleApp top(1) + headerHeight + bodyHeight + overlayLines + pickerLines + commandPickerLines + separator(1)
-			cur.Position.Y = 1 + headerHeight + bodyHeight + overlayLines + pickerLines + commandPickerLines + 1
-			if cur.Position.Y >= m.height {
-				cur.Position.Y = m.height - 1
+			cur.Y = 1 + headerHeight + bodyHeight + overlayLines + pickerLines + commandPickerLines + 1
+			if cur.Y >= m.height {
+				cur.Y = m.height - 1
+			}
+			v.Cursor = cur
+		}
+	} else if m.overlay == overlayQuestion && m.questionFormIsOther {
+		// Other 自定义输入：光标定位在 overlay box 内
+		// 布局：styleApp top(1) + header + 空行 + body(contentWidth) + overlay box
+		//   overlay box 内部：borderTop(0), padTop(1), title(2), 空行(3), otherInput(4)
+		if cur := m.otherInput.Cursor(); cur != nil {
+			pos := m.otherInput.Position()
+			value := m.otherInput.Value()
+			runes := []rune(value)
+			if pos > len(runes) {
+				pos = len(runes)
+			}
+			// 钳位滚动偏移（与主输入框同款防御）
+			if m.otherInputVisStart < 0 || m.otherInputVisStart > len(runes) || m.otherInputVisStart > pos {
+				m.syncOtherInputVisibleStart()
+				if pos > len(runes) {
+					pos = len(runes)
+				}
+				if m.otherInputVisStart < 0 {
+					m.otherInputVisStart = 0
+				}
+				if m.otherInputVisStart > pos {
+					m.otherInputVisStart = pos
+				}
+			}
+			visibleBeforeCursor := string(runes[m.otherInputVisStart:pos])
+			cursorX := lipgloss.Width(m.otherInput.Prompt) + lipgloss.Width(visibleBeforeCursor)
+			// X: styleApp 左 padding(2) + box border(1) + box 左 padding(2) = 5
+			cur.X = cursorX + 5
+			if cur.X > m.width-2 {
+				cur.X = m.width - 2
+			}
+			// Y: styleApp top(1) + headerHeight + bodyHeight（已含 header 后空行） + 4(box内偏移: border+pad+title+空行)
+			cur.Y = 1 + headerHeight + bodyHeight + 4
+			if cur.Y >= m.height {
+				cur.Y = m.height - 1
 			}
 			v.Cursor = cur
 		}
@@ -2928,7 +3529,7 @@ func (m *model) renderFooter() string {
 
 	// Line 1: spinner + model name + ctx progress bar
 	indicator := styleFooterLabel.Render("•") + " "
-	if m.running {
+	if m.running && m.overlay != overlayQuestion {
 		indicator = m.spinner.View() + " "
 	}
 	modelPart := indicator + styleFooterModel.Render(m.hudModel)
@@ -3073,7 +3674,7 @@ func (r *tuiUserResponder) AskUser(ctx context.Context, toolName string, input j
 
 	// 格式化参数摘要；shell 命令做 cd 归一化后再展示，避免权限面板显示冗长的 cd 前缀
 	argsSummary := formatToolArgs(toolName, string(input), r.cwd)
-	if toolName == "shell" && argsSummary != "" {
+	if toolName == "bash" && argsSummary != "" {
 		if normalized, _ := pathutil.NormalizeShellCommand(argsSummary); normalized != "" {
 			argsSummary = normalized
 		}
@@ -3106,6 +3707,29 @@ func (r *tuiUserResponder) AskUser(ctx context.Context, toolName string, input j
 		return choice
 	case <-ctx.Done():
 		return permission.UserChoice{Decision: permission.DecisionDeny}
+	}
+}
+
+// AnswerQuestion 实现 permission.UserResponder。
+// 发送 questionReqMsg 到 TUI，阻塞等待用户回答。
+func (r *tuiUserResponder) AnswerQuestion(ctx context.Context, questions []permission.QuestionPrompt) ([]permission.QuestionResponse, error) {
+	replyCh := make(chan []permission.QuestionResponse, 1)
+
+	if r.program != nil {
+		r.program.Send(questionReqMsg{
+			questions: questions,
+			reply:     replyCh,
+		})
+	}
+
+	select {
+	case responses := <-replyCh:
+		if responses == nil {
+			return nil, fmt.Errorf("user declined to answer")
+		}
+		return responses, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
 	}
 }
 
@@ -3187,6 +3811,15 @@ func (m *model) syncThemeComponents() {
 	inputStyles.Blurred.Placeholder = lipgloss.NewStyle().Foreground(colorMuted)
 	inputStyles.Cursor.Blink = true
 	m.input.SetStyles(inputStyles)
+
+	// 同步 otherInput 样式（与主输入框一致）
+	otherStyles := m.otherInput.Styles()
+	otherStyles.Focused.Prompt = lipgloss.NewStyle().Foreground(colorUser).Bold(true)
+	otherStyles.Blurred.Prompt = lipgloss.NewStyle().Foreground(colorUser).Bold(true)
+	otherStyles.Focused.Placeholder = lipgloss.NewStyle().Foreground(colorMuted)
+	otherStyles.Blurred.Placeholder = lipgloss.NewStyle().Foreground(colorMuted)
+	otherStyles.Cursor.Blink = true
+	m.otherInput.SetStyles(otherStyles)
 
 	// 同步 permList delegate 样式（若已构建）
 	if m.permDelegate != nil {
@@ -3322,6 +3955,86 @@ func (m *model) handleSlashCommand(input string) tea.Cmd {
 		case slashcommand.SideEffectModelSwitched:
 			m.hudModel = normalizeWidth(se.Detail)
 			m.reconfigureLLMClient(se.Detail)
+
+		case slashcommand.SideEffectInvokeSkill:
+			skillBody := se.Detail    // 由 SkillCommand.Execute 通过 SkillExecutor 获取
+			skillName := se.Detail2
+			skillArgs := se.Detail3
+			skillError := se.Detail4  // 加载失败时的错误消息
+			if skillBody == "" {
+				// 加载失败：渲染为 paraTool 错误态（与 LLM 调用 skill 工具失败一致）
+				if skillError != "" {
+					args := skillName
+					if skillArgs != "" {
+						args += " " + skillArgs
+					}
+					m.paras = append(m.paras, Paragraph{
+						Type:         paraTool,
+						State:        stateError,
+						ToolName:     "skill",
+						ToolArgs:     args,
+						ToolError:    "Skill load failed: " + skillName + " — " + skillError,
+						ToolErrorKind: "no_results",
+					})
+					m.trimParas()
+					m.flushTranscript()
+				}
+				break
+			}
+			args := skillName
+			if skillArgs != "" {
+				args += " " + skillArgs
+			}
+			// paraTool 段落
+			m.paras = append(m.paras, Paragraph{
+				Type:       paraTool,
+				State:      stateDone,
+				ToolName:   "skill",
+				ToolArgs:   args,
+				ToolResult: truncateToolResult(skillBody),
+			})
+			m.trimParas()
+			m.flushTranscript()
+
+			// 启动 loop（复用 doTurn 逻辑，但不添加 paraUser + 不展开 @）
+			// PrepareRun 将 skill body 作为 user 消息注入并返回消息快照
+			m.closePicker()
+			m.hudTurns++
+			messagesSnapshot := m.cm.PrepareRun(skillBody)
+			m.running = true
+			m.focusIndex = -1
+			m.input.Placeholder = "Agent 执行中... Esc 中断"
+			m.runGeneration++
+			m.turnStartTime = time.Now()
+			m.scrollToBottom()
+
+			if m.cancelRun != nil {
+				m.cancelRun()
+				m.cancelRun = nil
+				m.loopPrompt = 0
+				m.loopCompl = 0
+				m.loopCacheHit = 0
+				m.loopCacheMiss = 0
+				m.loopReasoning = 0
+			}
+
+			m.input.Reset()
+
+			ctx, cancel := context.WithCancel(context.Background())
+			m.cancelRun = cancel
+			gen := m.runGeneration
+			return func() tea.Msg {
+				defer cancel()
+				for ev := range m.loop.Run(ctx, messagesSnapshot) {
+					if done, ok := ev.(agentloop.LoopDone); ok {
+						ev = agentloop.LoopDoneWithGen{LoopDone: done, Generation: gen}
+					}
+					if m.program != nil {
+						m.program.Send(ev)
+					}
+				}
+				return nil
+			}
 		}
 	}
 
@@ -3441,13 +4154,47 @@ func (c *tuiSessionCreator) NewSession() error {
 	return nil
 }
 
+// tuiSkillExecutor 实现 slashcommand.SkillExecutor，将 skill 执行委托给 tool.Registry。
+// 这样用户 /skill-name 和 LLM 调用 skill 工具走相同的代码路径。
+type tuiSkillExecutor struct {
+	registry tool.Registry
+}
+
+func (e *tuiSkillExecutor) ExecuteSkill(ctx context.Context, name, args string) (string, error) {
+	paramsJSON, err := json.Marshal(tool.SkillParams{Name: name, Arguments: args})
+	if err != nil {
+		return "", err
+	}
+	result, err := e.registry.Execute(ctx, "skill", paramsJSON)
+	if err != nil {
+		return "", err
+	}
+	if result.Error != nil {
+		return "", fmt.Errorf("%s", result.Error.Message)
+	}
+	return result.Content, nil
+}
+
 // newSlashRegistry 创建 slash command 注册表，注入 TUI 侧依赖实现。
-func newSlashRegistry(creator slashcommand.SessionCreator, store slashcommand.SettingsStore, lister slashcommand.ModelLister, currentModel string) *slashcommand.Registry {
+func newSlashRegistry(creator slashcommand.SessionCreator, store slashcommand.SettingsStore, lister slashcommand.ModelLister, currentModel string, skillLoader *skill.Loader, registry tool.Registry) *slashcommand.Registry {
 	r := slashcommand.NewRegistry()
 	r.Register(slashcommand.NewNewCommand(creator))
 	r.Register(slashcommand.NewModelCommand(store, lister, currentModel))
 	r.Register(slashcommand.NewThemeCommand())
 	r.Register(slashcommand.NewHelpCommand(r))
+
+	// 注册 user-invocable skills
+	// skill body 的加载统一走 skill 工具（通过 SkillExecutor 接口）
+	if skillLoader != nil {
+		skills, _ := skillLoader.List()
+		executor := &tuiSkillExecutor{registry: registry}
+		for _, info := range skills {
+			if info.UserInvocable {
+				r.Register(slashcommand.NewSkillCommand(info, executor))
+			}
+		}
+	}
+
 	return r
 }
 
@@ -3618,9 +4365,7 @@ func (m *model) commitModelSwitch(modelID string) {
 		settings = &llm.LLMSettings{}
 	}
 	settings.Model = modelID
-	if err := m.settingsStore.SaveLLM(settings); err != nil {
-		// 忽略写入错误，用户感知到 HUD 已更新
-	}
+	_ = m.settingsStore.SaveLLM(settings) // 忽略写入错误，用户感知到 HUD 已更新
 	m.hudModel = normalizeWidth(modelID)
 	m.reconfigureLLMClient(modelID)
 }
@@ -3645,7 +4390,12 @@ func runTUI(llmClient llm.Client, registry tool.Registry, guard permission.Guard
 	m.settingsStore = store
 	lister := &tuiModelLister{client: llmClient}
 	sessionCreator := &tuiSessionCreator{m: m}
-	m.slashRegistry = newSlashRegistry(sessionCreator, store, lister, modelName)
+
+	// 构造 skill loader（用于注册 skill 命令）
+	homeDir, _ := os.UserHomeDir()
+	skillLoader := skill.NewLoader(m.cwd, homeDir, ctxMgr.SessionID(), "medium", guard)
+	m.slashRegistry = newSlashRegistry(sessionCreator, store, lister, modelName, skillLoader, registry)
+	m.skillLoader = skillLoader
 
 	m.bypassPerm = bypassPerm
 	// 用外部创建的 ContextManager 替换 newTUIModel 内部创建的
@@ -3653,6 +4403,9 @@ func runTUI(llmClient llm.Client, registry tool.Registry, guard permission.Guard
 	// 恢复会话级 HUD 累积值
 	m.hudCacheHit = ctxMgr.Stats().TotalCacheHitTokens
 	m.hudCacheMiss = ctxMgr.Stats().TotalCacheMissTokens
+	// REGRESSION: --resume 后 hudTurns 未从 Stats.TotalTurns 恢复，状态栏计数从 0 开始。
+	// 无法单测：runTUI 依赖 Bubble Tea Program 实例。
+	m.hudTurns = ctxMgr.Stats().TotalTurns
 	// ctx bar 初始为 0，首个 TurnStats 会用 API 精确值更新
 	m.lastPromptTokens = 0
 
@@ -3670,9 +4423,7 @@ func runTUI(llmClient llm.Client, registry tool.Registry, guard permission.Guard
 	// 写入 recent.json（TUI 启动时唯一写入点）
 	if sid := ctxMgr.SessionID(); sid != "" {
 		stats := ctxMgr.Stats()
-		if err := ctxpkg.UpdateRecentSessions(sessionDir, sid, stats.MessageCount); err != nil {
-			// 静默失败
-		}
+		_ = ctxpkg.UpdateRecentSessions(sessionDir, sid, stats.MessageCount) // 静默失败
 	}
 
 	p := tea.NewProgram(m)
