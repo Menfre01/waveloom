@@ -3,6 +3,7 @@ package tool
 import (
 	"context"
 	"encoding/json"
+	"strings"
 
 	"github.com/Menfre01/waveloom/pkg/skill"
 )
@@ -37,11 +38,16 @@ func (t *SkillTool) Schema() json.RawMessage {
 func (t *SkillTool) Execute(ctx context.Context, p SkillParams) (*ToolResult, error) {
 	loaded, err := t.loader.Load(p.Name, p.Arguments)
 	if err != nil {
+		msg := "Skill load failed: " + p.Name + " — " + err.Error()
+		// 区分“skill 不存在”和“加载失败（如白名单拦截）”
+		if strings.Contains(err.Error(), "skill not found") {
+			msg = "Skill not found: " + p.Name
+		}
 		return &ToolResult{
 			Error: &ToolError{
 				Class:   ErrorClassRecoverable,
 				Kind:    ErrKindNoResults,
-				Message: "Skill not found: " + p.Name,
+				Message: msg,
 				Cause:   err,
 			},
 		}, nil

@@ -129,7 +129,7 @@ func formatToolArgs(toolName string, argsJSON string, cwd string) string {
 		return stripCWDPrefix(extractField(argsJSON, "file_path"), cwd)
 	case "edit_file":
 		return stripCWDPrefix(extractField(argsJSON, "file_path"), cwd)
-	case "shell":
+	case "bash":
 		return extractField(argsJSON, "command")
 	case "grep":
 		pattern := extractField(argsJSON, "pattern")
@@ -335,7 +335,7 @@ func toolSuffix(p *Paragraph) string {
 	if p.ToolError != "" {
 		// 工具专用简短错误后缀：摘要保持简洁，完整错误在预览区展示
 		switch p.ToolName {
-		case "shell":
+		case "bash":
 			code := parseExitCode(p.ToolResult)
 			if code >= 0 {
 				return fmt.Sprintf("(exit=%d)", code)
@@ -370,7 +370,7 @@ func toolSuffix(p *Paragraph) string {
 			added, removed = countDiffLines(p.ToolResult)
 		}
 		return fmt.Sprintf("(+%d -%d lines, %s)", added, removed, dur)
-	case "shell":
+	case "bash":
 		code := parseExitCode(p.ToolResult)
 		dur := formatDuration(p.ToolDurMs)
 		if code >= 0 {
@@ -1532,7 +1532,7 @@ func renderToolPreview(sb *strings.Builder, p *Paragraph, textWidth int, indent 
 			}
 		}
 
-	case "shell", "skill":
+	case "bash", "skill":
 		lineStyle := styleToolPreview
 		if p.ToolError != "" {
 			lineStyle = styleToolPrefixErr
@@ -1608,7 +1608,7 @@ func renderToolPreview(sb *strings.Builder, p *Paragraph, textWidth int, indent 
 		// 仅可段落聚焦的工具展示 Enter 提示（shell / web_fetch），
 		// write_file / edit_file 等不可聚焦的工具仅显示截断标记。
 		switch p.ToolName {
-		case "shell", "web_fetch", "skill":
+		case "bash", "web_fetch", "skill":
 			sb.WriteString(styleToolPreviewHint.Render("··· Enter 展开全部"))
 		default:
 			sb.WriteString(styleToolPreviewHint.Render("··· (truncated)"))
@@ -1701,7 +1701,7 @@ func renderToolFullOutput(sb *strings.Builder, p *Paragraph, textWidth int, inde
 			}
 		}
 
-	case "shell":
+	case "bash":
 		rawLines := strings.Split(result, "\n")
 		for _, line := range rawLines {
 			line = strings.TrimLeft(line, " ")
@@ -1763,7 +1763,7 @@ func renderToolFullOutput(sb *strings.Builder, p *Paragraph, textWidth int, inde
 
 	// 折叠提示 — 仅可段落聚焦的工具（shell / web_fetch）展示 Enter 提示
 	switch p.ToolName {
-	case "shell", "web_fetch":
+	case "bash", "web_fetch":
 		sb.WriteString(indent)
 		sb.WriteString(styleToolPreviewHint.Render("▼ Enter 折叠"))
 		sb.WriteString("\n")

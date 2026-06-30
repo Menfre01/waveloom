@@ -28,8 +28,18 @@ func (c *SkillCommand) Aliases() []string        { return nil }
 func (c *SkillCommand) Execute(ctx context.Context, args string) (*Result, error) {
 	body, err := c.executor.ExecuteSkill(ctx, c.info.Name, args)
 	if err != nil {
+		// 加载失败：通过 SideEffectInvokeSkill + 空 Detail 传递错误，
+		// TUI 侧渲染为 paraTool 错误态（红色 │ 前缀），而非 paraSystem 通知。
 		return &Result{
-			Text: "Skill 不可用: " + err.Error(),
+			SideEffects: []SideEffect{
+				{
+					Kind:    SideEffectInvokeSkill,
+					Detail:  "",              // 空 body = 加载失败
+					Detail2: c.info.Name,     // skill name
+					Detail3: args,             // skill args
+					Detail4: err.Error(),      // 错误消息
+				},
+			},
 		}, nil
 	}
 

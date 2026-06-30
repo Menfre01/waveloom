@@ -17,7 +17,7 @@ func newTestModelForPerm() *model {
 	m := &model{
 		themeMode: "dark",
 		permReq: &permissionReqMsg{
-			toolName:   "shell",
+			toolName:   "bash",
 			args:       "go test ./...",
 			reason:     "需要确认外部命令执行",
 			reasonKind: permission.ReasonRule,
@@ -113,7 +113,7 @@ func TestFormatToolArgs_ReadFile(t *testing.T) {
 }
 
 func TestFormatToolArgs_Shell(t *testing.T) {
-	result := formatToolArgs("shell", `{"command":"go test ./..."}`, "/tmp")
+	result := formatToolArgs("bash", `{"command":"go test ./..."}`, "/tmp")
 	if result != "go test ./..." {
 		t.Errorf("expected 'go test ./...', got %q", result)
 	}
@@ -184,7 +184,7 @@ func TestToolSuffix_ReadFile(t *testing.T) {
 
 func TestToolSuffix_ShellExitCode(t *testing.T) {
 	p := &Paragraph{
-		ToolName:   "shell",
+		ToolName:   "bash",
 		ToolResult: "✅ Command succeeded (exit=0)  120ms\nok  ...",
 		ToolDurMs:  120,
 		State:      stateDone,
@@ -197,7 +197,7 @@ func TestToolSuffix_ShellExitCode(t *testing.T) {
 
 func TestToolSuffix_Denied(t *testing.T) {
 	p := &Paragraph{
-		ToolName:   "shell",
+		ToolName:   "bash",
 		ToolDenied: true,
 		State:      stateError,
 	}
@@ -209,7 +209,7 @@ func TestToolSuffix_Denied(t *testing.T) {
 
 func TestToolSuffix_Error(t *testing.T) {
 	p := &Paragraph{
-		ToolName:      "shell",
+		ToolName:      "bash",
 		ToolError:     "command not found",
 		ToolErrorKind: "command_not_found",
 		State:         stateError,

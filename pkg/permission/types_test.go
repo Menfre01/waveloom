@@ -131,8 +131,8 @@ func TestRuleString(t *testing.T) {
 		},
 		{
 			"content-level deny",
-			Rule{Behavior: RuleDeny, ToolName: "shell", Pattern: "rm -rf *"},
-			"deny:shell(rm -rf *)",
+			Rule{Behavior: RuleDeny, ToolName: "bash", Pattern: "rm -rf *"},
+			"deny:bash(rm -rf *)",
 		},
 		{
 			"content-level ask",

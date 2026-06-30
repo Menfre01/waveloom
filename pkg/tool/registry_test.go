@@ -138,7 +138,7 @@ func TestNewDefaultRegistry(t *testing.T) {
 
 	expectedTools := []string{
 		"read_file", "write_file", "edit_file",
-		"shell", "search_file", "grep", "ls",
+		"bash", "search_file", "grep", "ls",
 		"web_fetch",
 		"lsp_diagnostic", "lsp_definition", "lsp_references", "lsp_hover",
 		"ask_user_question",

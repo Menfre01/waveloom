@@ -25,7 +25,7 @@ type ShellParams struct {
 
 type Shell struct{}
 
-func (t *Shell) Name() string    { return "shell" }
+func (t *Shell) Name() string    { return "bash" }
 func (t *Shell) Schema() json.RawMessage { return shellSchema }
 func (t *Shell) ConcurrentSafe() bool    { return false }
 
@@ -34,7 +34,7 @@ func (t *Shell) Description() string {
 	return strings.Join([]string{
 		"Execute a shell command in a subprocess. Configurable timeout (default 120s, max 600s), captures stdout and stderr.",
 		"",
-		"Unix/macOS uses sh -c, Windows uses cmd /c.",
+		"Unix/macOS uses bash -c (sh fallback), Windows uses cmd /c.",
 		"Command syntax must target the correct platform (Windows does not support ; for multi-command, use &&).",
 		"",
 		"Prefer dedicated tools over shell:",
@@ -48,9 +48,9 @@ func (t *Shell) Description() string {
 		"Launch multiple independent commands as parallel shell calls in a single response.",
 		"Chain dependent commands with &&, not newlines.",
 		"",
-		"Commands already run in the workspace directory — cd to reach it is redundant.",
-		"For a different directory, prefer the working_dir parameter (keeps commands clean).",
-		"If you must use cd (e.g. chaining multiple directory changes), keep it minimal.",
+		"Commands already run in the workspace directory.",
+		"To operate in a different directory, use the working_dir parameter — do NOT prefix commands with cd.",
+		"cd breaks permission pattern matching. Only use cd when chaining several directory changes in one command.",
 		"",
 		"For throwaway verification scripts: prefer python, write to /tmp, and clean up after.",
 		`Example: {"command":"python /tmp/check.py && rm /tmp/check.py"}`,
@@ -58,7 +58,7 @@ func (t *Shell) Description() string {
 		"Examples:",
 		`  {"command":"make build"}                                     — runs in workspace`,
 		`  {"command":"ls", "working_dir":"/tmp"}                       — runs in /tmp, clean`,
-		`  {"command":"cd subdir && go test ./..."}                     — acceptable if needed`,
+		`  {"command":"cd subdir && go test ./..."}                     — only when chaining multiple directories`,
 	}, "\n")
 }
 
@@ -73,11 +73,15 @@ const (
 
 // shellInterpreter 根据当前 OS 返回用于执行 Shell 命令的解释器和参数。
 //
-// Unix/macOS: sh -c
+// Unix/macOS: bash -c（优先 bash 兼容脚本中的 pipefail / local 等特性；
+//             bash 不可用时回退到 sh）
 // Windows:    cmd /c（始终可用，无需额外安装）
 func shellInterpreter() (binary string, args []string) {
 	if runtime.GOOS == "windows" {
 		return "cmd", []string{"/c"}
+	}
+	if _, err := exec.LookPath("bash"); err == nil {
+		return "bash", []string{"-c"}
 	}
 	return "sh", []string{"-c"}
 }

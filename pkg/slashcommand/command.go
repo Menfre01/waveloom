@@ -73,9 +73,10 @@ const (
 // SideEffect 描述命令执行后需要 TUI 执行的副作用。
 type SideEffect struct {
 	Kind    SideEffectKind
-	Detail  string // model_switched → 新模型名；open_model_picker → 模型列表 JSON；invoke_skill → skill body
+	Detail  string // model_switched → 新模型名；open_model_picker → 模型列表 JSON；invoke_skill → skill body（空表示加载失败）
 	Detail2 string // invoke_skill → skill name
 	Detail3 string // invoke_skill → skill args
+	Detail4 string // invoke_skill → error message（仅 Detail 为空时有效）
 }
 
 // Result 是命令执行的结果。

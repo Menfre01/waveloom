@@ -7,14 +7,18 @@ package skill
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
+
+	"github.com/Menfre01/waveloom/pkg/permission"
 
 	"gopkg.in/yaml.v3"
 )
@@ -47,6 +51,8 @@ type frontmatter struct {
 	WhenToUse             string `yaml:"when_to_use"`
 	ArgumentHint          string `yaml:"argument-hint"`
 	Arguments             any    `yaml:"arguments"` // string or []string
+	AllowedTools          []string `yaml:"allowed-tools"`
+	Paths                 []string `yaml:"paths"` // 条件激活路径（gitignore-style glob）
 	DisableModelInvocation bool   `yaml:"disable-model-invocation"`
 	UserInvocable         *bool  `yaml:"user-invocable"` // pointer to detect unset
 }
@@ -61,15 +67,24 @@ type Loader struct {
 	HomeDir   string
 	SessionID string
 	Effort    string
+	Guard     permission.Guard // 权限守门人（nil = skill 中 shell 命令免校验直接执行）
+	// conditionalSkills 存储有条件 paths 的 skill（未被激活前不出现在 List 中）
+	conditionalSkills map[string]*LoadedSkill
+	// activatedConditionalNames 记录已激活的条件 skill 名称（跨 List 调用持久）
+	activatedConditionalNames map[string]bool
 }
 
 // NewLoader 创建一个新的 Loader。
-func NewLoader(cwd, homeDir, sessionID, effort string) *Loader {
+// guard 可选为 nil —— nil 时 skill 中的 !`cmd` 直接执行（不推荐）。
+func NewLoader(cwd, homeDir, sessionID, effort string, guard permission.Guard) *Loader {
 	return &Loader{
-		CWD:       cwd,
-		HomeDir:   homeDir,
-		SessionID: sessionID,
-		Effort:    effort,
+		CWD:                       cwd,
+		HomeDir:                   homeDir,
+		SessionID:                 sessionID,
+		Effort:                    effort,
+		Guard:                     guard,
+		conditionalSkills:         make(map[string]*LoadedSkill),
+		activatedConditionalNames: make(map[string]bool),
 	}
 }
 
@@ -140,7 +155,24 @@ func (l *Loader) scanSkillsDir(dir string, priority int, seen map[string]bool) [
 			continue
 		}
 		skillFile := filepath.Join(dir, entry.Name(), "SKILL.md")
-		info, ok := l.parseSkillInfo(skillFile, entry.Name(), false)
+		skillName := entry.Name()
+
+		// 检查是否为条件 skill（有 paths frontmatter）
+		if l.isConditional(skillFile) {
+			// 已激活 → 正常加载；未激活 → 存储并跳过
+			if l.activatedConditionalNames[skillName] {
+				info, ok := l.parseSkillInfo(skillFile, skillName, false)
+				if ok && !seen[info.Name] {
+					seen[info.Name] = true
+					infos = append(infos, info)
+				}
+			} else {
+				l.storeConditional(skillFile, skillName)
+			}
+			continue
+		}
+
+		info, ok := l.parseSkillInfo(skillFile, skillName, false)
 		if !ok {
 			continue
 		}
@@ -173,6 +205,21 @@ func (l *Loader) scanCommandsDir(dir string, priority int, seen map[string]bool)
 			continue
 		}
 		skillFile := filepath.Join(dir, entry.Name())
+
+		// 检查是否为条件 skill
+		if l.isConditional(skillFile) {
+			if l.activatedConditionalNames[name] {
+				info, ok := l.parseSkillInfo(skillFile, name, true)
+				if ok && !seen[info.Name] {
+					seen[info.Name] = true
+					infos = append(infos, info)
+				}
+			} else {
+				l.storeConditional(skillFile, name)
+			}
+			continue
+		}
+
 		info, ok := l.parseSkillInfo(skillFile, name, true)
 		if !ok {
 			continue
@@ -181,6 +228,84 @@ func (l *Loader) scanCommandsDir(dir string, priority int, seen map[string]bool)
 		infos = append(infos, info)
 	}
 	return infos
+}
+
+// isConditional 检查 SKILL.md 是否有 paths frontmatter（条件 skill）。
+func (l *Loader) isConditional(filePath string) bool {
+	fm, _, _, _, err := parseSKILLmd(filePath, false)
+	if err != nil {
+		return false
+	}
+	return len(fm.Paths) > 0
+}
+
+// storeConditional 将条件 skill 存入 conditionalSkills map（供后续文件匹配激活）。
+// name 为 skill 目录名（或 commands 扁平文件名），用于 ActivateForPaths 匹配后的 Load。
+func (l *Loader) storeConditional(filePath, name string) {
+	// 已激活则不再存储
+	if l.activatedConditionalNames[name] {
+		return
+	}
+	// 暂存文件路径和名称，延迟到激活时再完整 Load
+	l.conditionalSkills[name] = &LoadedSkill{
+		Info: SkillInfo{
+			Name: name,
+		},
+		// 用 DirPath 暂存文件路径（Load 时使用）
+		DirPath: filePath,
+	}
+}
+
+// ActivateForPaths 检查条件 skill 的 paths 是否匹配给定的文件路径列表，
+// 匹配成功则激活该 skill（后续 List() 将包含它）。
+// 返回新激活的 skill 名称列表。
+func (l *Loader) ActivateForPaths(filePaths []string) []string {
+	if len(l.conditionalSkills) == 0 || len(filePaths) == 0 {
+		return nil
+	}
+
+	var activated []string
+	for name, entry := range l.conditionalSkills {
+		if entry == nil {
+			continue
+		}
+		// 解析 paths frontmatter
+		fm, _, _, _, err := parseSKILLmd(entry.DirPath, false)
+		if err != nil || len(fm.Paths) == 0 {
+			continue
+		}
+		if matchAnyPath(filePaths, fm.Paths) {
+			l.activatedConditionalNames[name] = true
+			delete(l.conditionalSkills, name)
+			activated = append(activated, name)
+		}
+	}
+	return activated
+}
+
+// matchAnyPath 检查 filePaths 中是否有匹配 glob patterns 中任意一个的路径。
+func matchAnyPath(filePaths []string, patterns []string) bool {
+	for _, fp := range filePaths {
+		for _, pattern := range patterns {
+			// 尝试直接 glob 匹配
+			if matched, _ := filepath.Match(pattern, fp); matched {
+				return true
+			}
+			// 尝试匹配路径的 base 部分
+			if matched, _ := filepath.Match(pattern, filepath.Base(fp)); matched {
+				return true
+			}
+			// 尝试对相对路径匹配（去掉前导路径段逐一尝试）
+			parts := strings.Split(fp, string(filepath.Separator))
+			for i := range parts {
+				suffix := strings.Join(parts[i:], string(filepath.Separator))
+				if matched, _ := filepath.Match(pattern, suffix); matched {
+					return true
+				}
+			}
+		}
+	}
+	return false
 }
 
 // parseSkillInfo 解析 SKILL.md 或 command.md 的 frontmatter，返回 SkillInfo。
@@ -279,19 +404,40 @@ func (l *Loader) Load(name string, args string) (*LoadedSkill, error) {
 		}
 	}
 
+	var lastErr error
 	for _, c := range uniqueCandidates {
 		loaded, err := l.loadFromFile(c.path, name, args, c.isFlatFile)
 		if err == nil {
 			return loaded, nil
 		}
+		// 记录第一个非"文件不存在"级别的错误，用于透传诊断信息
+		if lastErr == nil {
+			lastErr = err
+		}
 	}
 
+	if lastErr != nil {
+		return nil, lastErr
+	}
 	return nil, fmt.Errorf("skill not found: %s", name)
 }
 
 func (l *Loader) loadFromFile(filePath, skillName, args string, isFlatFile bool) (*LoadedSkill, error) {
 	fm, body, dirPath, supportingFiles, err := parseSKILLmd(filePath, isFlatFile)
 	if err != nil {
+		return nil, err
+	}
+
+	// 清除上一轮 skill 的 Guard 白名单，然后注册本轮的白名单
+	l.clearGuardSkillWhitelist()
+	patterns := permission.ParseAllowedBashPatterns(fm.AllowedTools)
+	if len(patterns) > 0 {
+		l.setGuardSkillWhitelist(patterns)
+	}
+
+	// 注入命令安全校验：解析阶段 lint，不通过则拒绝加载（fail fast）
+	if err := l.lintInjections(body, patterns); err != nil {
+		l.clearGuardSkillWhitelist()
 		return nil, err
 	}
 
@@ -305,7 +451,8 @@ func (l *Loader) loadFromFile(filePath, skillName, args string, isFlatFile bool)
 	argsList := shellSplit(args)
 	namedArgs := parseArgumentsList(fm.Arguments)
 
-	body = l.substituteVariables(body, args, argsList, namedArgs, dirPath)
+	var substituted bool
+	body, substituted = l.substituteVariables(body, args, argsList, namedArgs, dirPath)
 
 	// 动态注入
 	body = l.executeDynamicInjections(body, dirPath)
@@ -321,7 +468,8 @@ func (l *Loader) loadFromFile(filePath, skillName, args string, isFlatFile bool)
 	}
 
 	// $ARGUMENTS 无痛追加
-	if args != "" && !strings.Contains(body, args) && !strings.Contains(body, "$ARGUMENTS") {
+	// 且 args 非空时自动追加。
+	if args != "" && !substituted {
 		body += "\n\nARGUMENTS: " + args
 	}
 
@@ -429,58 +577,203 @@ func scanSupportingFiles(dirPath string) []string {
 }
 
 // ---------------------------------------------------------------------------
+// 代码片段保护
+// ---------------------------------------------------------------------------
+
+// codeSpanPlaceholder 是用于代码片段保护的占位符前缀。
+// 使用 \x00 确保不与正常 Markdown 文本冲突。
+const codeSpanPlaceholder = "\x00WVCSPAN"
+
+// escapedDollarPlaceholder 用于保护转义的 \$，防止变量替换时误匹配 $N。
+const escapedDollarPlaceholder = "\x00WVCDOLLAR\x00"
+
+// fencedCodeBlockRegex 匹配整段围栏代码块（``` 起止）。
+var fencedCodeBlockRegex = regexp.MustCompile("(?s)```.*?```")
+
+// inlineCodeSpanRegex 匹配行内代码片段（`...`，不含换行）。
+var inlineCodeSpanRegex = regexp.MustCompile("`[^`\n]+`")
+
+// indexArgRegex 匹配 $ARGUMENTS[N] 形式的索引参数占位符。
+var indexArgRegex = regexp.MustCompile(`\$ARGUMENTS\[(\d+)\]`)
+
+// indexShorthandRegex 匹配 $N 形式的索引参数占位符。
+// Go RE2 不支持 lookahead，使用 \b 词边界替代：
+// $1 xyz → 匹配（1 和空格之间有边界）
+// $1abc  → 不匹配（1 和 a 之间无边界）
+// $1     → 匹配（行尾边界）
+var indexShorthandRegex = regexp.MustCompile(`\$(\d+)\b`)
+
+// protectCodeSpans 将 body 中的围栏代码块和行内代码片段替换为占位符，
+// 避免变量替换时误改代码示例中的 $ARGUMENTS 等文本。
+// 返回受保护后的 body 和占位符 → 原文的映射。
+func protectCodeSpans(body string) (string, map[string]string) {
+	protected := make(map[string]string)
+	counter := 0
+	next := func() string {
+		counter++
+		return fmt.Sprintf("%s_%d\x00", codeSpanPlaceholder, counter)
+	}
+
+	// 先保护围栏代码块（长匹配优先）
+	body = fencedCodeBlockRegex.ReplaceAllStringFunc(body, func(match string) string {
+		ph := next()
+		protected[ph] = match
+		return ph
+	})
+
+	// 再保护行内代码片段
+	body = inlineCodeSpanRegex.ReplaceAllStringFunc(body, func(match string) string {
+		ph := next()
+		protected[ph] = match
+		return ph
+	})
+
+	return body, protected
+}
+
+// restoreCodeSpans 将占位符还原为原始代码片段。
+func restoreCodeSpans(body string, protected map[string]string) string {
+	for ph, original := range protected {
+		body = strings.ReplaceAll(body, ph, original)
+	}
+	return body
+}
+
+// indexFromBrackets 从 $ARGUMENTS[N] 匹配中提取索引 N。
+func indexFromBrackets(match string) int {
+	// match 格式: $ARGUMENTS[N]
+	parts := strings.TrimPrefix(match, "$ARGUMENTS[")
+	parts = strings.TrimSuffix(parts, "]")
+	n, err := strconv.Atoi(parts)
+	if err != nil {
+		return -1
+	}
+	return n
+}
+
+// indexFromShorthand 从 $N 匹配中提取索引 N。
+func indexFromShorthand(match string) int {
+	// match 格式: $N
+	n, err := strconv.Atoi(match[1:])
+	if err != nil {
+		return -1
+	}
+	return n
+}
+
+// isWordChar 判断字符是否为单词字符（字母、数字、下划线）。
+// 对标 \w 正则元字符行为。
+func isWordChar(c byte) bool {
+	return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_'
+}
+
+// ---------------------------------------------------------------------------
 // 变量替换
 // ---------------------------------------------------------------------------
 
-func (l *Loader) substituteVariables(body, args string, argsList, namedArgs []string, dirPath string) string {
+func (l *Loader) substituteVariables(body, args string, argsList, namedArgs []string, dirPath string) (string, bool) {
 
-	// 1. $ARGUMENTS[N] 和 $N（先替换索引形式，避免被 $ARGUMENTS 整体替换误伤）
-	// 2. 命名参数 $name
-	// 3. $ARGUMENTS
-	// 4. ${CLAUDE_SESSION_ID} / ${WAVELOOM_SESSION_ID}
-	// 5. ${CLAUDE_SKILL_DIR} / ${WAVELOOM_SKILL_DIR}
-	// 6. ${CLAUDE_EFFORT} / ${WAVELOOM_EFFORT}
-	// 7. \$ → $（恢复字面 $）
+	// 1. 命名参数 $name（先于索引参数，避免 $name 被 $N 误匹配）
+	// 2. $ARGUMENTS[N]
+	// 3. $N
+	// 4. $ARGUMENTS
+	// 5. ${CLAUDE_SESSION_ID} / ${WAVELOOM_SESSION_ID}
+	// 6. ${CLAUDE_SKILL_DIR} / ${WAVELOOM_SKILL_DIR}
+	// 7. ${CLAUDE_EFFORT} / ${WAVELOOM_EFFORT}
+	// 8. \$ → $（恢复字面 $）
+	//
+	// 代码片段（围栏块和行内 code span）中的变量不替换。
+	// \$ 转义序列中的 $ 不参与变量替换（先保护，后还原）。
+	//
 
-	// 1. 索引参数
-	for i, val := range argsList {
-		// $N
-		placeholder := fmt.Sprintf("$%d", i)
-		body = strings.ReplaceAll(body, placeholder, val)
-		// $ARGUMENTS[N]
-		indexed := fmt.Sprintf("$ARGUMENTS[%d]", i)
-		body = strings.ReplaceAll(body, indexed, val)
-	}
+	// - $ARGUMENTS[N] 和 $N 使用全局正则替换；越界索引 → 替换为空字符串
+	// - 无参时（argsList 为空）所有 $N / $ARGUMENTS[N] / $ARGUMENTS → 空字符串
+	// - 返回 substituted 指示是否有占位符被实际替换（用于 auto-append 判定）
 
-	// 2. 命名参数
+	var substituted bool
+
+	// 保护代码片段和转义 $
+	body, protected := protectCodeSpans(body)
+
+	// 保护 \$ → 占位符，防止变量替换误伤 $N
+	body = strings.ReplaceAll(body, `\$`, escapedDollarPlaceholder)
+
+	// 1. 命名参数
 	for i, name := range namedArgs {
 		val := ""
 		if i < len(argsList) {
 			val = argsList[i]
 		}
-		body = strings.ReplaceAll(body, "$"+name, val)
+		// $name 但不是 $name[...] 或 $nameXxx（word boundary）
+		// Go RE2 不支持 lookahead，手动检查匹配后字符。
+		re := regexp.MustCompile(`\$` + regexp.QuoteMeta(name))
+		matches := re.FindAllStringIndex(body, -1)
+		for m := len(matches) - 1; m >= 0; m-- {
+			start, end := matches[m][0], matches[m][1]
+
+			// $name[0] → 不认为 $name 是占位符
+			// $nameXxx → 不认为 $name 是占位符
+			if end < len(body) {
+				next := body[end]
+				if next == '[' || isWordChar(next) {
+					continue
+				}
+			}
+			body = body[:start] + val + body[end:]
+			substituted = true
+		}
 	}
 
-	// 3. $ARGUMENTS
+	// 2. $ARGUMENTS[N] → 越界索引替换为空字符串
+	if indexArgRegex.MatchString(body) {
+		substituted = true
+	}
+	body = indexArgRegex.ReplaceAllStringFunc(body, func(match string) string {
+		idx := indexFromBrackets(match)
+		if idx >= 0 && idx < len(argsList) {
+			return argsList[idx]
+		}
+		return ""
+	})
+
+	// 3. $N（shorthand，等价 $ARGUMENTS[N]）→ 越界索引替换为空字符串
+	if indexShorthandRegex.MatchString(body) {
+		substituted = true
+	}
+	body = indexShorthandRegex.ReplaceAllStringFunc(body, func(match string) string {
+		idx := indexFromShorthand(match)
+		if idx >= 0 && idx < len(argsList) {
+			return argsList[idx]
+		}
+		return ""
+	})
+
+	// 4. $ARGUMENTS
+	if strings.Contains(body, "$ARGUMENTS") {
+		substituted = true
+	}
 	body = strings.ReplaceAll(body, "$ARGUMENTS", args)
 
-	// 4. Session ID
+	// 5. Session ID
 	sid := l.SessionID
 	body = strings.ReplaceAll(body, "${CLAUDE_SESSION_ID}", sid)
 	body = strings.ReplaceAll(body, "${WAVELOOM_SESSION_ID}", sid)
 
-	// 5. Skill dir
+	// 6. Skill dir
 	body = strings.ReplaceAll(body, "${CLAUDE_SKILL_DIR}", dirPath)
 	body = strings.ReplaceAll(body, "${WAVELOOM_SKILL_DIR}", dirPath)
 
-	// 6. Effort
+	// 7. Effort
 	body = strings.ReplaceAll(body, "${CLAUDE_EFFORT}", l.Effort)
 	body = strings.ReplaceAll(body, "${WAVELOOM_EFFORT}", l.Effort)
 
-	// 7. 转义 \$
-	body = strings.ReplaceAll(body, `\$`, "$")
+	// 8. 转义 \$：将占位符还原为字面 $
+	body = strings.ReplaceAll(body, escapedDollarPlaceholder, "$")
 
-	return body
+	// 还原代码片段
+	body = restoreCodeSpans(body, protected)
+
+	return body, substituted
 }
 
 // ---------------------------------------------------------------------------
@@ -488,48 +781,142 @@ func (l *Loader) substituteVariables(body, args string, argsList, namedArgs []st
 // ---------------------------------------------------------------------------
 
 // inlineCmdRegex 匹配行内动态注入 !`command`
-var inlineCmdRegex = regexp.MustCompile(`^(\s*)!` + "`([^`]+)`")
+// Go RE2 不支持 lookbehind，改用捕获前缀 (^|\s) 再在替换时拼接
+var inlineCmdRegex = regexp.MustCompile(`(^|\s)!` + "`([^`]+)`")
+
+// multilineInjectionRegex 匹配 ```! ... ```
+var multilineInjectionRegex = regexp.MustCompile("(?s)```!\n(.*?)```")
+
+// extractInjectionCommands 提取 body 中所有动态注入命令。
+// 行内注入返回完整命令字符串；多行注入按行拆分，每行作为一个独立命令。
+func extractInjectionCommands(body string) []string {
+	var commands []string
+
+	// 1. 多行注入：每行作为一个命令
+	for _, match := range multilineInjectionRegex.FindAllStringSubmatch(body, -1) {
+		if len(match) > 1 {
+			for _, line := range strings.Split(match[1], "\n") {
+				line = strings.TrimSpace(line)
+				if line != "" && !strings.HasPrefix(line, "#") {
+					commands = append(commands, line)
+				}
+			}
+		}
+	}
+
+	// 2. 行内注入：完整命令
+	for _, line := range strings.Split(body, "\n") {
+		if matches := inlineCmdRegex.FindStringSubmatch(line); matches != nil {
+			cmd := strings.TrimSpace(matches[2])
+			if cmd != "" {
+				commands = append(commands, cmd)
+			}
+		}
+	}
+
+	return commands
+}
+
+// lintInjections 校验 body 中所有注入命令是否被 allowed-tools 白名单覆盖。
+// Guard 为 nil 时跳过校验（开发/测试模式）；白名单为空时拒绝所有注入。
+func (l *Loader) lintInjections(body string, patterns []string) error {
+	if l.Guard == nil {
+		return nil
+	}
+
+	commands := extractInjectionCommands(body)
+	if len(commands) == 0 {
+		return nil
+	}
+
+	if len(patterns) == 0 {
+		return fmt.Errorf("skill contains dynamic injection but has no allowed-tools Bash whitelist; add e.g. allowed-tools: [\"Bash(echo *)\"]")
+	}
+
+	for _, cmd := range commands {
+		matched := false
+		for _, pattern := range patterns {
+			if permission.MatchBashPattern(cmd, pattern) {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			return fmt.Errorf("injection command %q is not covered by allowed-tools Bash whitelist; add Bash(<pattern>) covering this command to allowed-tools", cmd)
+		}
+	}
+
+	return nil
+}
 
 // executeDynamicInjections 执行 body 中的 !`cmd` 和 ```! block。
 func (l *Loader) executeDynamicInjections(body, dirPath string) string {
 	// 1. 处理多行代码块 ```! ... ```
-	body = replaceMultilineInjections(body, dirPath)
+	body = l.replaceMultilineInjections(body, dirPath)
 
 	// 2. 处理行内 !`command`
+	// Go RE2 不支持 lookbehind，改用捕获前缀并在 ReplaceAllStringFunc 中拼接。
+	// 使用 ReplaceAllStringFunc 而非整行替换，确保只替换匹配部分，保留行内其他文本。
 	lines := strings.Split(body, "\n")
 	for i, line := range lines {
-		if matches := inlineCmdRegex.FindStringSubmatch(line); matches != nil {
-			indent := matches[1]
-			cmd := matches[2]
-			output := runCommand(cmd, dirPath)
-			// 替换整行
-			if output != "" {
-				lines[i] = indent + output
+		lines[i] = inlineCmdRegex.ReplaceAllStringFunc(line, func(match string) string {
+			submatches := inlineCmdRegex.FindStringSubmatch(match)
+			if submatches == nil {
+				return match
 			}
-		}
+			prefix := submatches[1] // "" (行首匹配) 或空白字符
+			cmd := submatches[2]
+			output := l.runCommand(cmd, dirPath)
+			if output == "" {
+				return match
+			}
+			return prefix + output
+		})
 	}
 
 	return strings.Join(lines, "\n")
 }
 
-// multilineInjectionRegex 匹配 ```! ... ```
-var multilineInjectionRegex = regexp.MustCompile("(?s)```!\n(.*?)```")
-
-func replaceMultilineInjections(body, dirPath string) string {
+func (l *Loader) replaceMultilineInjections(body, dirPath string) string {
 	return multilineInjectionRegex.ReplaceAllStringFunc(body, func(match string) string {
 		// 提取 ```! 和 ``` 之间的内容
 		inner := match[5 : len(match)-3] // 去掉 ```!\n 和 结尾 ```
 		inner = strings.TrimSuffix(inner, "\n")
-		return runCommand(inner, dirPath)
+		return l.runCommand(inner, dirPath)
 	})
 }
 
 // runCommand 执行 shell 命令，30s 超时。
-func runCommand(command, dir string) string {
+// 若 l.Guard 非 nil，通过 Guard.Check 验证权限（skill 白名单在 shellSafetyCheck 中优先放行）。
+// Guard 为 nil 时直接执行（测试 / 无权限场景）。
+func (l *Loader) runCommand(command, dir string) string {
+	if l.Guard != nil {
+		shellInput, _ := json.Marshal(map[string]string{"command": command})
+		result := l.Guard.Check(context.Background(), "bash", shellInput)
+		if result.Decision != permission.DecisionAllow {
+			reason := result.Message
+			if reason == "" {
+				reason = string(result.Decision)
+			}
+			return fmt.Sprintf("[skill command denied: %s]", reason)
+		}
+	}
+
+	return l.execShell(command, dir)
+}
+
+// execShell 执行 shell 命令并返回输出。
+// 优先使用 bash（兼容 skill 脚本中的 bash 专有特性如 pipefail/local），
+// 不可用时回退到 sh。
+func (l *Loader) execShell(command, dir string) string {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, "sh", "-c", command)
+	shellBin := "bash"
+	if _, err := exec.LookPath("bash"); err != nil {
+		shellBin = "sh"
+	}
+	cmd := exec.CommandContext(ctx, shellBin, "-c", command)
 	cmd.Dir = dir
 
 	output, err := cmd.CombinedOutput()
@@ -549,6 +936,31 @@ func runCommand(command, dir string) string {
 	}
 
 	return strings.TrimSpace(string(output))
+}
+
+// ---------------------------------------------------------------------------
+// Guard skill whitelist helpers
+// ---------------------------------------------------------------------------
+
+// skillBashWhitelister 是 Guard 可选实现的接口，用于注册 skill 级 Bash 白名单。
+type skillBashWhitelister interface {
+	SetSkillBashWhitelist(patterns []string)
+	ClearSkillBashWhitelist()
+}
+
+// setGuardSkillWhitelist 将 skill 白名单注册到 Guard（若 Guard 支持）。
+// 注册后，shellSafetyCheck 会在高危拦截前优先放行白名单命令。
+func (l *Loader) setGuardSkillWhitelist(patterns []string) {
+	if sw, ok := l.Guard.(skillBashWhitelister); ok {
+		sw.SetSkillBashWhitelist(patterns)
+	}
+}
+
+// clearGuardSkillWhitelist 清空 Guard 中注册的 skill 白名单。
+func (l *Loader) clearGuardSkillWhitelist() {
+	if sw, ok := l.Guard.(skillBashWhitelister); ok {
+		sw.ClearSkillBashWhitelist()
+	}
 }
 
 // ---------------------------------------------------------------------------

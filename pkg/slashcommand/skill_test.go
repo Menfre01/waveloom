@@ -35,7 +35,7 @@ argument-hint: env
 Deploy $ARGUMENTS`), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	loader := skill.NewLoader(home, home, "test-sid", "medium")
+	loader := skill.NewLoader(home, home, "test-sid", "medium", nil)
 	infos, err := loader.List()
 	if err != nil || len(infos) != 1 {
 		t.Fatalf("List failed: %v, %d skills", err, len(infos))
@@ -95,7 +95,7 @@ func TestSkillCommand_ExecuteNoArgs(t *testing.T) {
 
 func TestSkillCommand_ExecuteError(t *testing.T) {
 	home := t.TempDir()
-	loader := skill.NewLoader(home, home, "test-sid", "medium")
+	loader := skill.NewLoader(home, home, "test-sid", "medium", nil)
 	infos, _ := loader.List()
 	info := skill.SkillInfo{Name: "gone", Description: "Gone"}
 	if len(infos) > 0 {
@@ -107,7 +107,24 @@ func TestSkillCommand_ExecuteError(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Text == "" {
-		t.Error("expected error text in result")
+	// 错误不再走 result.Text（paraSystem），改为走 SideEffectInvokeSkill（paraTool 错误态）
+	if result.Text != "" {
+		t.Errorf("Text should be empty for error case, got: %s", result.Text)
+	}
+	if len(result.SideEffects) != 1 {
+		t.Fatalf("expected 1 side effect, got %d", len(result.SideEffects))
+	}
+	se := result.SideEffects[0]
+	if se.Kind != SideEffectInvokeSkill {
+		t.Errorf("kind = %q, want %q", se.Kind, SideEffectInvokeSkill)
+	}
+	if se.Detail != "" {
+		t.Errorf("Detail should be empty for error case, got: %s", se.Detail)
+	}
+	if se.Detail2 != "gone" {
+		t.Errorf("Detail2 (skill name) = %q, want %q", se.Detail2, "gone")
+	}
+	if se.Detail4 == "" {
+		t.Error("Detail4 (error message) should not be empty")
 	}
 }

@@ -27,7 +27,7 @@ func TestParagraphToTranscriptLineRoundTrip(t *testing.T) {
 		},
 		{
 			name: "tool paragraph done",
-			p:    Paragraph{Type: paraTool, State: stateDone, ToolName: "shell", ToolArgs: "echo hello", ToolResult: "hello\n", ToolDurMs: 42},
+			p:    Paragraph{Type: paraTool, State: stateDone, ToolName: "bash", ToolArgs: "echo hello", ToolResult: "hello\n", ToolDurMs: 42},
 		},
 		{
 			name: "tool paragraph error",
@@ -76,7 +76,7 @@ func TestTranscriptFileRoundTrip(t *testing.T) {
 	// Write some paragraphs
 	p1 := Paragraph{Type: paraUser, State: stateDone, Text: "hello"}
 	p2 := Paragraph{Type: paraAssistant, State: stateDone, Text: "hi there"}
-	p3 := Paragraph{Type: paraTool, State: stateDone, ToolName: "shell", ToolArgs: "ls", ToolResult: "file.txt\n"}
+	p3 := Paragraph{Type: paraTool, State: stateDone, ToolName: "bash", ToolArgs: "ls", ToolResult: "file.txt\n"}
 
 	for _, p := range []*Paragraph{&p1, &p2, &p3} {
 		line := paragraphToTranscriptLine(p)
@@ -101,7 +101,7 @@ func TestTranscriptFileRoundTrip(t *testing.T) {
 	if lines[1].Type != "assistant" || lines[1].Text != "hi there" {
 		t.Errorf("line 1: %+v", lines[1])
 	}
-	if lines[2].Type != "tool" || lines[2].ToolName != "shell" {
+	if lines[2].Type != "tool" || lines[2].ToolName != "bash" {
 		t.Errorf("line 2: %+v", lines[2])
 	}
 }
@@ -175,7 +175,7 @@ func TestFlushTranscriptSkipsStreaming(t *testing.T) {
 	}
 
 	// Step 2: handleToolStart adds tool para (streaming)
-	m.paras = append(m.paras, Paragraph{Type: paraTool, State: stateStreaming, ToolName: "shell"})
+	m.paras = append(m.paras, Paragraph{Type: paraTool, State: stateStreaming, ToolName: "bash"})
 	m.flushTranscript() // skips streaming tool
 	if m.transcriptWritten != 1 {
 		t.Fatalf("step 2: transcriptWritten = %d, want 1 (streaming skipped)", m.transcriptWritten)
