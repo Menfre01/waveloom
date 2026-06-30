@@ -81,7 +81,7 @@ var shellSchema = json.RawMessage(`{
   "properties": {
     "command": {
       "type": "string",
-      "description": "Shell command to execute. Unix/macOS uses sh -c, Windows uses cmd /c. Windows does not support ; for multi-command, use &&."
+      "description": "Shell command to execute. Unix/macOS uses bash -c (sh fallback), Windows uses cmd /c. Windows does not support ; for multi-command, use &&."
     },
     "working_dir": {
       "type": "string",

@@ -141,7 +141,7 @@ func matchContent(toolName, pattern string, input json.RawMessage) bool {
 	var workingDir string
 
 	switch toolName {
-	case "shell":
+	case "bash":
 		var params struct {
 			Command string `json:"command"`
 		}
@@ -184,8 +184,8 @@ func matchContent(toolName, pattern string, input json.RawMessage) bool {
 		return false
 	}
 
-	// 对 shell 命令，支持前缀匹配（"git *" 匹配 "git status" 和 "git"）
-	if toolName == "shell" {
+	// 对 bash 命令，支持前缀匹配（"git *" 匹配 "git status" 和 "git"）
+	if toolName == "bash" {
 		if strings.HasSuffix(pattern, "*") {
 			prefix := strings.TrimRight(strings.TrimSuffix(pattern, "*"), " ")
 			// target 必须精确等于 prefix（无参数），或以 prefix + " " 开头（有参数），

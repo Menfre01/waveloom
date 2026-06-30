@@ -135,7 +135,7 @@ All file paths are resolved relative to this directory unless a working_dir is s
 - The workspace directory is fixed for the entire session.
 - Shell commands run in isolated subprocesses — "cd" inside a shell command has NO effect on subsequent commands.
 - To operate in a different directory, use the working_dir parameter: {"command":"ls", "working_dir":"/tmp"}
-- Never prefix commands with "cd <path> &&" — this breaks permission pattern matching and is unnecessary.`, cwd)
+- Never prefix commands with "cd <path> &&" — use the working_dir parameter instead. cd breaks permission pattern matching.`, cwd)
 	return defaultSystemPrompt + cwdInfo
 }
 
@@ -319,6 +319,7 @@ type model struct {
 	questionIdx         int                        // 当前问题索引（0-based）
 	questionAnswers     []permission.QuestionResponse // 已收集的答案
 	questionForm        *huh.Form                  // huh 表单（选择题部分）
+	questionFormMaxHeight int                      // 表单自适应最大高度（resize 时复用）
 	questionPendingOther    bool                   // 是否等待 Other 自定义输入
 	questionPendingAnswers []string                // Other 输入前的临时答案（多选时合并用）
 	questionFormInitCmd tea.Cmd                    // 待返回的表单 Init 命令
@@ -894,8 +895,17 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 		} else if m.questionForm != nil {
-			// huh 表单活跃时，所有消息路由到 Form.Update
-			fm, cmd := m.questionForm.Update(msg)
+			// huh 表单活跃时，所有消息路由到 Form.Update。
+			// WindowSizeMsg 需缩放高度：表单嵌在 overlay 盒子内，可用高度小于终端全高。
+			formMsg := msg
+			if wsMsg, ok := msg.(tea.WindowSizeMsg); ok {
+				// resize 时用当前选项数重新计算自适应高度
+				q := m.questionReq.questions[m.questionIdx]
+				formMaxHeight := m.overlayMaxFormHeight(len(q.Options) + 1)
+				m.questionFormMaxHeight = formMaxHeight
+				formMsg = tea.WindowSizeMsg{Width: wsMsg.Width, Height: formMaxHeight}
+			}
+			fm, cmd := m.questionForm.Update(formMsg)
 			m.questionForm = fm.(*huh.Form)
 			cmds = append(cmds, cmd)
 			// 检测表单完成/取消
@@ -1283,6 +1293,29 @@ func (m *model) overlayInnerWidth() int {
 	}
 	return boxWidth - 2 - 4 // border(左右各1) + padding(左右各2)
 }
+
+// overlayMaxFormHeight 返回 huh 表单在 overlay 内的自适应最大高度。
+// 选项少时紧凑显示全部，选项多时撑开到合理上限，超出由 huh 内部滚动。
+func (m *model) overlayMaxFormHeight(optionCount int) int {
+	// 固定外壳开销：styleApp padding(1) + header(8) + 底部(5) + overlay chrome(8)
+	const fixedOverhead = 1 + 8 + 5 + 8
+	maxAvailable := m.height - fixedOverhead
+	if maxAvailable < 5 {
+		maxAvailable = 5
+	}
+	// 所需高度：每个选项约 1 行 + 标题 2 行 + 过滤栏 1 行
+	needed := optionCount + 3
+	if needed < 5 {
+		needed = 5
+	}
+	// 取 needed 和 maxAvailable 的较小值，但不超过 20 行（约 15+ 选项可见，不侵占聊天区）
+	const absoluteMax = 20
+	h := min(needed, maxAvailable)
+	if h > absoluteMax {
+		h = absoluteMax
+	}
+	return h
+}
 func themeWaveloom() huh.Theme {
 	return huh.ThemeFunc(func(isDark bool) *huh.Styles {
 		t := huh.ThemeBase(isDark)
@@ -1334,6 +1367,9 @@ func (m *model) buildQuestionForm() {
 
 	theme := themeWaveloom()
 	formWidth := m.overlayInnerWidth()
+	optionCount := len(opts)
+	formMaxHeight := m.overlayMaxFormHeight(optionCount)
+	m.questionFormMaxHeight = formMaxHeight
 
 	if q.MultiSelect {
 		var selected []string
@@ -1342,7 +1378,8 @@ func (m *model) buildQuestionForm() {
 			Title(q.Question).
 			Options(opts...).
 			Value(&selected).
-			WithTheme(theme)
+			WithTheme(theme).
+			WithHeight(formMaxHeight)
 
 		f := huh.NewForm(huh.NewGroup(field)).
 			WithTheme(theme).
@@ -1350,10 +1387,11 @@ func (m *model) buildQuestionForm() {
 			WithShowHelp(false)
 
 		m.questionForm = f
-		// 表单在 WindowSizeMsg 之后动态创建，需手动注入尺寸让其计算视口高度
+		// 表单在 WindowSizeMsg 之后动态创建，需手动注入尺寸让其计算视口高度。
+		// 使用 overlayMaxFormHeight 而非终端全高 m.height，避免视口计算过大导致选项被裁剪。
 		m.questionFormInitCmd = tea.Batch(
 			f.Init(),
-			func() tea.Msg { return tea.WindowSizeMsg{Width: m.width, Height: m.height} },
+			func() tea.Msg { return tea.WindowSizeMsg{Width: formWidth, Height: formMaxHeight} },
 		)
 	} else {
 		var selected string
@@ -1362,7 +1400,8 @@ func (m *model) buildQuestionForm() {
 			Title(q.Question).
 			Options(opts...).
 			Value(&selected).
-			WithTheme(theme)
+			WithTheme(theme).
+			WithHeight(formMaxHeight)
 
 		f := huh.NewForm(huh.NewGroup(field)).
 			WithTheme(theme).
@@ -1372,7 +1411,7 @@ func (m *model) buildQuestionForm() {
 		m.questionForm = f
 		m.questionFormInitCmd = tea.Batch(
 			f.Init(),
-			func() tea.Msg { return tea.WindowSizeMsg{Width: m.width, Height: m.height} },
+			func() tea.Msg { return tea.WindowSizeMsg{Width: formWidth, Height: formMaxHeight} },
 		)
 	}
 }
@@ -2661,7 +2700,7 @@ func isExpandable(p *Paragraph, contentWidth int) bool {
 		// shell / web_fetch / skill 的输出值得展开/折叠，其他工具的输出
 		// 或为结构化摘要（grep/ls/search_file/lsp_*）或通过预览行已传达完整信息。
 		switch p.ToolName {
-		case "shell", "web_fetch", "skill":
+		case "bash", "web_fetch", "skill":
 			if p.State != stateDone && p.State != stateCollapsed && p.State != stateExpanded && p.State != stateError {
 				return false
 			}
@@ -3635,7 +3674,7 @@ func (r *tuiUserResponder) AskUser(ctx context.Context, toolName string, input j
 
 	// 格式化参数摘要；shell 命令做 cd 归一化后再展示，避免权限面板显示冗长的 cd 前缀
 	argsSummary := formatToolArgs(toolName, string(input), r.cwd)
-	if toolName == "shell" && argsSummary != "" {
+	if toolName == "bash" && argsSummary != "" {
 		if normalized, _ := pathutil.NormalizeShellCommand(argsSummary); normalized != "" {
 			argsSummary = normalized
 		}
@@ -3921,7 +3960,25 @@ func (m *model) handleSlashCommand(input string) tea.Cmd {
 			skillBody := se.Detail    // 由 SkillCommand.Execute 通过 SkillExecutor 获取
 			skillName := se.Detail2
 			skillArgs := se.Detail3
+			skillError := se.Detail4  // 加载失败时的错误消息
 			if skillBody == "" {
+				// 加载失败：渲染为 paraTool 错误态（与 LLM 调用 skill 工具失败一致）
+				if skillError != "" {
+					args := skillName
+					if skillArgs != "" {
+						args += " " + skillArgs
+					}
+					m.paras = append(m.paras, Paragraph{
+						Type:         paraTool,
+						State:        stateError,
+						ToolName:     "skill",
+						ToolArgs:     args,
+						ToolError:    "Skill load failed: " + skillName + " — " + skillError,
+						ToolErrorKind: "no_results",
+					})
+					m.trimParas()
+					m.flushTranscript()
+				}
 				break
 			}
 			args := skillName

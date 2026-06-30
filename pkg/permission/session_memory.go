@@ -55,8 +55,8 @@ func (sm *SessionMemory) Lookup(toolName, pattern string) (Decision, bool) {
 		}
 	}
 
-	// 2. 对 shell 工具：prefix 模糊匹配（shell 命令的参数/重定向变化不应破坏 session 记忆）
-	if toolName == "shell" && pattern != "" {
+	// 2. 对 bash 工具：prefix 模糊匹配（命令的参数/重定向变化不应破坏 session 记忆）
+	if toolName == "bash" && pattern != "" {
 		for k, d := range sm.store {
 			if k.ToolName != toolName || k.Pattern == "" {
 				continue

@@ -414,9 +414,9 @@ func TestIsExpandable(t *testing.T) {
 		{"thought collapsed long", Paragraph{Type: paraThought, State: stateCollapsed, Text: strings.Repeat("a ", 100)}, true},
 		{"thought expanded", Paragraph{Type: paraThought, State: stateExpanded, Text: "any"}, true},
 		{"thought streaming", Paragraph{Type: paraThought, State: stateStreaming}, false},
-		{"shell done short", Paragraph{Type: paraTool, State: stateDone, ToolName: "shell", ToolResult: "ok"}, false},
-		{"shell done long", Paragraph{Type: paraTool, State: stateDone, ToolName: "shell", ToolResult: strings.Repeat("line\n", 10)}, true},
-		{"shell expanded", Paragraph{Type: paraTool, State: stateExpanded, ToolName: "shell"}, true},
+		{"shell done short", Paragraph{Type: paraTool, State: stateDone, ToolName: "bash", ToolResult: "ok"}, false},
+		{"shell done long", Paragraph{Type: paraTool, State: stateDone, ToolName: "bash", ToolResult: strings.Repeat("line\n", 10)}, true},
+		{"shell expanded", Paragraph{Type: paraTool, State: stateExpanded, ToolName: "bash"}, true},
 		{"web_fetch done short", Paragraph{Type: paraTool, State: stateDone, ToolName: "web_fetch", ToolResult: "short"}, false},
 		{"web_fetch done long", Paragraph{Type: paraTool, State: stateDone, ToolName: "web_fetch", ToolResult: "Fetched url\n\n" + strings.Repeat("line\n", 10)}, true},
 		{"web_fetch expanded", Paragraph{Type: paraTool, State: stateExpanded, ToolName: "web_fetch"}, true},
@@ -473,7 +473,7 @@ func TestFocusNext_CyclicRing(t *testing.T) {
 	paras := []Paragraph{
 		{Type: paraThought, State: stateCollapsed, ThoughtTokens: 100, Text: strings.Repeat("long text ", 50)},   // 可展开（溢出）
 		{Type: paraAssistant, State: stateDone},
-		{Type: paraTool, State: stateDone, ToolName: "shell", ToolResult: strings.Repeat("line\n", 10)}, // 可展开（溢出）
+		{Type: paraTool, State: stateDone, ToolName: "bash", ToolResult: strings.Repeat("line\n", 10)}, // 可展开（溢出）
 		{Type: paraThought, State: stateExpanded, ThoughtTokens: 200, Text: "expanded"},                // 可展开（已展开）
 	}
 	m := &model{paras: paras, focusIndex: -1, width: 120}
@@ -504,7 +504,7 @@ func TestFocusPrev_CyclicRing(t *testing.T) {
 	paras := []Paragraph{
 		{Type: paraThought, State: stateCollapsed, ThoughtTokens: 100, Text: strings.Repeat("long text ", 50)},   // 可展开（溢出）
 		{Type: paraAssistant, State: stateDone},
-		{Type: paraTool, State: stateDone, ToolName: "shell", ToolResult: strings.Repeat("line\n", 10)}, // 可展开（溢出）
+		{Type: paraTool, State: stateDone, ToolName: "bash", ToolResult: strings.Repeat("line\n", 10)}, // 可展开（溢出）
 	}
 	m := &model{paras: paras, focusIndex: -1, width: 120}
 
@@ -552,7 +552,7 @@ func TestToggleParagraphFocus_Thought(t *testing.T) {
 func TestToggleParagraphFocus_Tool(t *testing.T) {
 	m := &model{
 		paras: []Paragraph{
-			{Type: paraTool, State: stateDone, ToolName: "shell"},
+			{Type: paraTool, State: stateDone, ToolName: "bash"},
 		},
 		focusIndex: 0,
 	}
@@ -673,7 +673,7 @@ func TestFocusUpDown_Navigation(t *testing.T) {
 	paras := []Paragraph{
 		{Type: paraThought, State: stateCollapsed, ThoughtTokens: 100, Text: strings.Repeat("overflowing thought content ", 30)},
 		{Type: paraAssistant, State: stateDone},
-		{Type: paraTool, State: stateDone, ToolName: "shell", ToolResult: strings.Repeat("line\n", 10)},
+		{Type: paraTool, State: stateDone, ToolName: "bash", ToolResult: strings.Repeat("line\n", 10)},
 	}
 	m := &model{
 		paras:      paras,

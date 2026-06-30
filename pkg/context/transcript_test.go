@@ -17,7 +17,7 @@ func TestTranscriptAppendAndLoad(t *testing.T) {
 	lines := []TranscriptLine{
 		{Type: "user", State: "done", Text: "hello"},
 		{Type: "assistant", State: "done", Text: "hi there"},
-		{Type: "tool", State: "done", ToolName: "shell", ToolArgs: "echo ok", ToolResult: "ok\n"},
+		{Type: "tool", State: "done", ToolName: "bash", ToolArgs: "echo ok", ToolResult: "ok\n"},
 	}
 
 	for _, l := range lines {
@@ -36,8 +36,8 @@ func TestTranscriptAppendAndLoad(t *testing.T) {
 	if loaded[0].Text != "hello" {
 		t.Errorf("line 0 text = %q, want %q", loaded[0].Text, "hello")
 	}
-	if loaded[2].ToolName != "shell" {
-		t.Errorf("line 2 tool = %q, want %q", loaded[2].ToolName, "shell")
+	if loaded[2].ToolName != "bash" {
+		t.Errorf("line 2 tool = %q, want %q", loaded[2].ToolName, "bash")
 	}
 }
 

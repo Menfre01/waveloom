@@ -16,7 +16,7 @@ import (
 // 示例：
 //
 //	"read_file"       → Rule{ToolName: "read_file", Pattern: ""}
-//	"Bash(git *)"     → Rule{ToolName: "shell", Pattern: "git *"}
+//	"Bash(git *)"     → Rule{ToolName: "bash", Pattern: "git *"}
 //	"write_file(src/**)" → Rule{ToolName: "write_file", Pattern: "src/**"}
 //
 // 兼容性：Bash(...) 自动映射为 shell(...)
@@ -56,10 +56,15 @@ func ParseRule(s string, behavior RuleBehavior) (Rule, error) {
 	}, nil
 }
 
-// normalizeToolName 处理 "Bash" → "shell" 兼容映射。
+// normalizeToolName 兼容映射：Bash / Shell / shell → "bash"。
+// 用户配置中的 "Bash(git *)" 和 "Shell(git *)" 均自动归一化为 "bash(git *)"。
 func normalizeToolName(name string) string {
-	if strings.EqualFold(name, "Bash") {
-		return "shell"
+	if strings.EqualFold(name, "Bash") || strings.EqualFold(name, "Shell") {
+		return "bash"
+	}
+	// 兼容存量配置中的小写 "shell"
+	if name == "shell" {
+		return "bash"
 	}
 	return name
 }

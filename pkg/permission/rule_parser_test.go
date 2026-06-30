@@ -24,7 +24,7 @@ func TestParseRule_ToolLevel(t *testing.T) {
 		{
 			"shell deny",
 			"shell", RuleDeny,
-			Rule{Behavior: RuleDeny, ToolName: "shell", Pattern: ""},
+			Rule{Behavior: RuleDeny, ToolName: "bash", Pattern: ""},
 		},
 		{
 			"grep allow",
@@ -60,12 +60,12 @@ func TestParseRule_ContentLevel(t *testing.T) {
 		{
 			"Bash git pattern",
 			"Bash(git *)", RuleAllow,
-			Rule{Behavior: RuleAllow, ToolName: "shell", Pattern: "git *"},
+			Rule{Behavior: RuleAllow, ToolName: "bash", Pattern: "git *"},
 		},
 		{
 			"shell go pattern",
 			"shell(go *)", RuleAllow,
-			Rule{Behavior: RuleAllow, ToolName: "shell", Pattern: "go *"},
+			Rule{Behavior: RuleAllow, ToolName: "bash", Pattern: "go *"},
 		},
 		{
 			"write_file path pattern",
@@ -75,7 +75,7 @@ func TestParseRule_ContentLevel(t *testing.T) {
 		{
 			"shell rm deny",
 			"shell(rm -rf *)", RuleDeny,
-			Rule{Behavior: RuleDeny, ToolName: "shell", Pattern: "rm -rf *"},
+			Rule{Behavior: RuleDeny, ToolName: "bash", Pattern: "rm -rf *"},
 		},
 		{
 			"read_file path pattern",
@@ -102,10 +102,10 @@ func TestParseRule_BashCompatibility(t *testing.T) {
 		input string
 		want  string // 期望的 ToolName
 	}{
-		{"Bash", "Bash", "shell"},
-		{"bash", "bash", "shell"},
-		{"BASH", "BASH", "shell"},
-		{"Bash(git status)", "Bash(git status)", "shell"},
+		{"Bash", "Bash", "bash"},
+		{"bash", "bash", "bash"},
+		{"BASH", "BASH", "bash"},
+		{"Bash(git status)", "Bash(git status)", "bash"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -126,9 +126,9 @@ func TestParseRule_Errors(t *testing.T) {
 		input string
 	}{
 		{"empty string", ""},
-		{"empty parentheses", "shell()"},
-		{"missing closing paren", "shell(git *"},
-		{"only open paren", "shell("},
+		{"empty parentheses", "bash()"},
+		{"missing closing paren", "bash(git *"},
+		{"only open paren", "bash("},
 		{"whitespace only", "  "},
 	}
 	for _, tt := range tests {
@@ -155,7 +155,7 @@ func TestParseRule_Whitespace(t *testing.T) {
 		{
 			name:  "pattern with spaces inside",
 			input: "shell(git status)",
-			want:  Rule{Behavior: RuleAllow, ToolName: "shell", Pattern: "git status"},
+			want:  Rule{Behavior: RuleAllow, ToolName: "bash", Pattern: "git status"},
 		},
 	}
 	for _, tt := range tests {
@@ -184,8 +184,8 @@ func TestFormatRule(t *testing.T) {
 		},
 		{
 			"content-level",
-			Rule{ToolName: "shell", Pattern: "git *"},
-			"shell(git *)",
+			Rule{ToolName: "bash", Pattern: "git *"},
+			"bash(git *)",
 		},
 	}
 	for _, tt := range tests {
