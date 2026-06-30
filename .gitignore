@@ -29,3 +29,13 @@ dist/
 
 # 视频脚本（不纳入发布版本）
 docs/video-script.md
+
+# 营销素材
+marketing/
+
+# Benchmark（本地数据，不入仓库）
+benchmark_results/
+cmd/benchmark-cache/
+cmd/cache-proxy/
+benchmark-cache
+cache-proxy
