@@ -25,6 +25,26 @@ make test
 - 先写测试，再写实现
 - 修改 `pkg/` 代码后运行 `make test` 确保所有测试通过
 
+## 项目结构
+
+```
+waveloom/
+├── cmd/waveloom/          # CLI 入口 + TUI
+├── pkg/
+│   ├── agentloop/         # Think-Act-Observe 循环
+│   ├── compaction/        # 四级水位线上下文压缩
+│   ├── context/           # 跨轮次消息历史
+│   ├── environment/       # 编译/运行时工具链探测
+│   ├── llm/               # LLM Client（DeepSeek + OpenAI）
+│   ├── memory/            # AGENTS.md 层级加载
+│   ├── permission/        # 权限守门人
+│   ├── reference/         # @ 文件引用展开
+│   └── tool/              # 内置工具系统
+├── specs/                 # 各组件设计规格书（修改前先阅读）
+├── docs/                  # 文档
+└── Makefile
+```
+
 ## 编码规范
 
 - 遵循 [Effective Go](https://go.dev/doc/effective_go) 和 Go 社区惯例
@@ -60,3 +80,9 @@ make test
 - 保持 PR 小而聚焦，一个 PR 解决一个问题
 - 确保 CI 通过后再请求 review
 - Review 者会检查代码风格、测试覆盖、文档同步
+
+## 参考文档
+
+- [`docs/system-prompt.md`](./docs/system-prompt.md) — System Prompt 完整内容及设计原则
+- [`docs/tool-descriptions.md`](./docs/tool-descriptions.md) — 14 个内置工具的 Schema 定义
+- [`specs/`](./specs/) — 各组件设计规格书（修改前先阅读）

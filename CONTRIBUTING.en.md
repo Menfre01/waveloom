@@ -25,6 +25,26 @@ make test
 - Write tests first, then implement
 - Run `make test` after modifying `pkg/` code to ensure all tests pass
 
+## Project Structure
+
+```
+waveloom/
+├── cmd/waveloom/          # CLI entry point + TUI
+├── pkg/
+│   ├── agentloop/         # Think-Act-Observe loop
+│   ├── compaction/        # Four-tier watermark context compaction
+│   ├── context/           # Cross-turn message history
+│   ├── environment/       # Build/runtime toolchain probing
+│   ├── llm/               # LLM Client (DeepSeek + OpenAI)
+│   ├── memory/            # AGENTS.md hierarchical loading
+│   ├── permission/        # Permission gatekeeper
+│   ├── reference/         # @ file reference expansion
+│   └── tool/              # Built-in tool system
+├── specs/                 # Component design specs (read before modifying)
+├── docs/                  # Documentation
+└── Makefile
+```
+
 ## Coding Standards
 
 - Follow [Effective Go](https://go.dev/doc/effective_go) and Go community conventions
@@ -60,3 +80,9 @@ Follow [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/) v1
 - Keep PRs small and focused — one PR solves one problem
 - Ensure CI passes before requesting review
 - Reviewers will check code style, test coverage, and documentation sync
+
+## Reference Docs
+
+- [`docs/system-prompt.md`](./docs/system-prompt.md) — Full System Prompt content and design principles
+- [`docs/tool-descriptions.md`](./docs/tool-descriptions.md) — Schema definitions for all 14 built-in tools
+- [`specs/`](./specs/) — Component design specs (read before modifying)
