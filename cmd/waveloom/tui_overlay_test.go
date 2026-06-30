@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 
+	"charm.land/bubbles/v2/textinput"
+
 	"github.com/Menfre01/waveloom/pkg/permission"
 )
 
@@ -15,7 +17,7 @@ func newTestModelForPerm() *model {
 	m := &model{
 		themeMode: "dark",
 		permReq: &permissionReqMsg{
-			toolName:   "shell",
+			toolName:   "bash",
 			args:       "go test ./...",
 			reason:     "需要确认外部命令执行",
 			reasonKind: permission.ReasonRule,
@@ -111,7 +113,7 @@ func TestFormatToolArgs_ReadFile(t *testing.T) {
 }
 
 func TestFormatToolArgs_Shell(t *testing.T) {
-	result := formatToolArgs("shell", `{"command":"go test ./..."}`, "/tmp")
+	result := formatToolArgs("bash", `{"command":"go test ./..."}`, "/tmp")
 	if result != "go test ./..." {
 		t.Errorf("expected 'go test ./...', got %q", result)
 	}
@@ -182,7 +184,7 @@ func TestToolSuffix_ReadFile(t *testing.T) {
 
 func TestToolSuffix_ShellExitCode(t *testing.T) {
 	p := &Paragraph{
-		ToolName:   "shell",
+		ToolName:   "bash",
 		ToolResult: "✅ Command succeeded (exit=0)  120ms\nok  ...",
 		ToolDurMs:  120,
 		State:      stateDone,
@@ -195,7 +197,7 @@ func TestToolSuffix_ShellExitCode(t *testing.T) {
 
 func TestToolSuffix_Denied(t *testing.T) {
 	p := &Paragraph{
-		ToolName:   "shell",
+		ToolName:   "bash",
 		ToolDenied: true,
 		State:      stateError,
 	}
@@ -207,13 +209,14 @@ func TestToolSuffix_Denied(t *testing.T) {
 
 func TestToolSuffix_Error(t *testing.T) {
 	p := &Paragraph{
-		ToolName:  "shell",
-		ToolError: "command not found",
-		State:     stateError,
+		ToolName:      "bash",
+		ToolError:     "command not found",
+		ToolErrorKind: "command_not_found",
+		State:         stateError,
 	}
 	suffix := toolSuffix(p)
-	if !strings.Contains(suffix, "command not found") {
-		t.Errorf("expected error message, got %q", suffix)
+	if !strings.Contains(suffix, "command_not_found") {
+		t.Errorf("expected error kind in suffix, got %q", suffix)
 	}
 }
 
@@ -564,4 +567,337 @@ func TestFuzzyFilter_SubstringFallback(t *testing.T) {
 	if len(result) < 1 || result[0].Path != "cmd/waveloom/main.go" {
 		t.Errorf("expected substring match, got %v", result)
 	}
+}
+
+// ---------------------------------------------------------------------------
+// AskUserQuestion — huh 表单覆盖层
+// ---------------------------------------------------------------------------
+
+func newTestModelForQuestion() *model {
+	ti := textinput.New()
+	ti.Prompt = "> "
+
+	otherTi := textinput.New()
+	otherTi.Prompt = "> "
+	otherTi.SetVirtualCursor(false)
+	otherTi.Placeholder = "输入自定义答案..."
+
+	m := &model{
+		themeMode: "dark",
+		input:     ti,
+		otherInput: otherTi,
+		questionReq: &questionReqMsg{
+			questions: []permission.QuestionPrompt{
+				{
+					Question:    "What is your preferred language?",
+					Header:      "Language",
+					Options: []permission.QuestionOptionPrompt{
+						{Label: "Go", Description: "Fast, simple concurrency"},
+						{Label: "Rust (Recommended)", Description: "Memory safe, zero-cost abstractions"},
+					},
+					MultiSelect: false,
+				},
+			},
+		},
+		width: 80,
+	}
+	return m
+}
+
+func TestThemeWaveloom_ReturnsNonNil(t *testing.T) {
+	theme := themeWaveloom()
+	if theme == nil {
+		t.Fatal("expected non-nil theme")
+	}
+	styles := theme.Theme(true)
+	if styles == nil {
+		t.Fatal("expected non-nil styles")
+	}
+}
+
+func TestBuildQuestionForm_SingleSelect(t *testing.T) {
+	m := newTestModelForQuestion()
+	m.buildQuestionForm()
+
+	if m.questionForm == nil {
+		t.Fatal("expected non-nil questionForm")
+	}
+	// Single-select form has one group with a Select field
+	view := m.questionForm.View()
+	if view == "" {
+		t.Fatal("expected non-empty form view")
+	}
+	// Options including "Other..." should be present
+	if !containsAny(view, "Go", "★ Rust") {
+		t.Error("expected options in form view")
+	}
+}
+
+func TestBuildQuestionForm_MultiSelect(t *testing.T) {
+	m := newTestModelForQuestion()
+	m.questionReq.questions[0].MultiSelect = true
+	m.buildQuestionForm()
+
+	if m.questionForm == nil {
+		t.Fatal("expected non-nil questionForm")
+	}
+	view := m.questionForm.View()
+	if view == "" {
+		t.Fatal("expected non-empty form view")
+	}
+	if !containsAny(view, "Go", "Rust") {
+		t.Error("expected multi-select options in form view")
+	}
+}
+
+func TestBuildOtherForm(t *testing.T) {
+	m := newTestModelForQuestion()
+	m.buildOtherForm()
+
+	if !m.questionFormIsOther {
+		t.Fatal("expected questionFormIsOther to be true")
+	}
+	if m.questionForm != nil {
+		t.Error("expected nil questionForm (bypasses huh for Other input)")
+	}
+	// Verify otherInput is focused and empty
+	if m.otherInput.Value() != "" {
+		t.Errorf("expected empty otherInput, got %q", m.otherInput.Value())
+	}
+}
+
+func TestRenderQuestionOverlay_NilQuestionReq(t *testing.T) {
+	m := &model{themeMode: "dark"}
+	content := m.renderQuestionOverlay(70)
+	if content != "" {
+		t.Errorf("expected empty string for nil questionReq, got %q", content)
+	}
+}
+
+func TestRenderQuestionOverlay_NilForm(t *testing.T) {
+	m := newTestModelForQuestion()
+	// questionReq set but questionForm is nil
+	content := m.renderQuestionOverlay(70)
+	if content != "" {
+		t.Errorf("expected empty string for nil form, got %q", content)
+	}
+}
+
+func TestRenderQuestionOverlay_WithForm(t *testing.T) {
+	m := newTestModelForQuestion()
+	m.buildQuestionForm()
+
+	content := m.renderQuestionOverlay(70)
+	if content == "" {
+		t.Fatal("expected non-empty overlay content")
+	}
+	if !containsAny(content, "▲ Language") {
+		t.Error("expected header in overlay")
+	}
+	if !containsAny(content, "Go") {
+		t.Error("expected option in overlay")
+	}
+}
+
+func TestRenderQuestionOverlay_MultiQuestionProgress(t *testing.T) {
+	m := newTestModelForQuestion()
+	m.questionReq.questions = append(m.questionReq.questions, permission.QuestionPrompt{
+		Question: "Second question?",
+		Header:   "Second",
+		Options: []permission.QuestionOptionPrompt{
+			{Label: "A", Description: "Option A"},
+			{Label: "B", Description: "Option B"},
+		},
+	})
+	m.buildQuestionForm()
+
+	content := m.renderQuestionOverlay(70)
+	if !containsAny(content, "(1/2)") {
+		t.Error("expected progress indicator for multi-question form")
+	}
+}
+
+func TestQuestionCloseOverlay_CleansUp(t *testing.T) {
+	m := newTestModelForQuestion()
+	m.buildQuestionForm()
+	m.overlay = overlayQuestion
+	m.questionAnswers = []permission.QuestionResponse{{Question: "Q", Answers: []string{"A"}}}
+
+	m.closeQuestionOverlay()
+
+	if m.overlay != overlayNone {
+		t.Error("expected overlayNone")
+	}
+	if m.questionReq != nil {
+		t.Error("expected nil questionReq")
+	}
+	if m.questionAnswers != nil {
+		t.Error("expected nil questionAnswers")
+	}
+	if m.questionForm != nil {
+		t.Error("expected nil questionForm")
+	}
+	if m.questionPendingOther {
+		t.Error("expected false questionPendingOther")
+	}
+	if m.questionPendingAnswers != nil {
+		t.Error("expected nil questionPendingAnswers")
+	}
+}
+
+func TestQuestionRecordAnswer(t *testing.T) {
+	m := newTestModelForQuestion()
+	m.questionAnswers = make([]permission.QuestionResponse, 0)
+
+	m.recordQuestionAnswer([]string{"Go"})
+
+	if len(m.questionAnswers) != 1 {
+		t.Fatalf("expected 1 answer, got %d", len(m.questionAnswers))
+	}
+	if m.questionAnswers[0].Question != "What is your preferred language?" {
+		t.Errorf("expected question text, got %q", m.questionAnswers[0].Question)
+	}
+	if len(m.questionAnswers[0].Answers) != 1 || m.questionAnswers[0].Answers[0] != "Go" {
+		t.Errorf("expected ['Go'], got %v", m.questionAnswers[0].Answers)
+	}
+}
+
+func TestQuestionAdvanceToNext(t *testing.T) {
+	m := newTestModelForQuestion()
+	m.questionReq.questions = append(m.questionReq.questions, permission.QuestionPrompt{
+		Question: "Second?",
+		Header:   "Second",
+		Options: []permission.QuestionOptionPrompt{
+			{Label: "X", Description: "X desc"},
+			{Label: "Y", Description: "Y desc"},
+		},
+	})
+	m.questionAnswers = make([]permission.QuestionResponse, 0)
+	m.recordQuestionAnswer([]string{"Go"})
+	m.overlay = overlayQuestion
+
+	m.advanceQuestion()
+
+	if m.questionIdx != 1 {
+		t.Errorf("expected questionIdx 1, got %d", m.questionIdx)
+	}
+	if m.questionForm == nil {
+		t.Fatal("expected non-nil questionForm for next question")
+	}
+	if m.overlay != overlayQuestion {
+		t.Error("expected overlay to remain on question")
+	}
+}
+
+func TestQuestionAdvanceFinal_SubmitsToChannel(t *testing.T) {
+	replyCh := make(chan []permission.QuestionResponse, 1)
+
+	m := newTestModelForQuestion()
+	m.questionReq.reply = replyCh
+	m.questionAnswers = make([]permission.QuestionResponse, 0)
+	m.recordQuestionAnswer([]string{"Go"})
+
+	m.advanceQuestion()
+
+	// After advancing past the last question, answer should be sent to reply channel
+	select {
+	case answers := <-replyCh:
+		if len(answers) != 1 {
+			t.Errorf("expected 1 answer, got %d", len(answers))
+		}
+		if answers[0].Answers[0] != "Go" {
+			t.Errorf("expected 'Go', got %q", answers[0].Answers[0])
+		}
+	default:
+		t.Error("expected answer on reply channel")
+	}
+
+	if m.overlay != overlayNone {
+		t.Error("expected overlayNone after submit")
+	}
+}
+
+func TestQuestionAdvance_PendingOtherMerge(t *testing.T) {
+	m := newTestModelForQuestion()
+	m.questionReq.questions = append(m.questionReq.questions, permission.QuestionPrompt{
+		Question: "Second?",
+		Header:   "Second",
+		Options: []permission.QuestionOptionPrompt{
+			{Label: "X", Description: "X desc"},
+			{Label: "Y", Description: "Y desc"},
+		},
+	})
+	m.questionAnswers = make([]permission.QuestionResponse, 0)
+	// Simulate pending Other: question was answered in buildQuestionForm, then Other form completed
+	m.questionPendingOther = true
+	m.questionPendingAnswers = []string{"Other: custom text"}
+
+	m.advanceQuestion()
+
+	// The pending Other answer should have been recorded
+	if len(m.questionAnswers) != 1 {
+		t.Fatalf("expected 1 answer after pending merge, got %d", len(m.questionAnswers))
+	}
+	if len(m.questionAnswers[0].Answers) != 1 || m.questionAnswers[0].Answers[0] != "Other: custom text" {
+		t.Errorf("expected ['Other: custom text'], got %v", m.questionAnswers[0].Answers)
+	}
+	if m.questionPendingOther {
+		t.Error("expected questionPendingOther to be cleared")
+	}
+}
+
+func TestQuestionHandleFormAborted_Declines(t *testing.T) {
+	replyCh := make(chan []permission.QuestionResponse, 1)
+	m := newTestModelForQuestion()
+	m.questionReq.reply = replyCh
+	m.overlay = overlayQuestion
+
+	m.handleQuestionFormAborted()
+
+	// User declined → nil sent to reply channel
+	select {
+	case answers := <-replyCh:
+		if answers != nil {
+			t.Errorf("expected nil on decline, got %v", answers)
+		}
+	default:
+		t.Error("expected nil on reply channel after decline")
+	}
+
+	if m.overlay != overlayNone {
+		t.Error("expected overlayNone after decline")
+	}
+}
+
+func TestQuestionHandleFormAborted_BackFromOther(t *testing.T) {
+	m := newTestModelForQuestion()
+	m.questionPendingOther = true
+	m.questionPendingAnswers = nil
+	m.overlay = overlayQuestion
+
+	m.handleOtherInputCancel()
+
+	// Should revert to question form, not close
+	if m.questionPendingOther {
+		t.Error("expected questionPendingOther to be cleared")
+	}
+	if m.questionFormIsOther {
+		t.Error("expected questionFormIsOther to be cleared")
+	}
+	if m.questionForm == nil {
+		t.Fatal("expected questionForm to be rebuilt")
+	}
+	if m.overlay != overlayQuestion {
+		t.Error("expected overlay to stay on question")
+	}
+}
+
+// containsAny checks if s contains any of the substrings.
+func containsAny(s string, subs ...string) bool {
+	for _, sub := range subs {
+		if strings.Contains(s, sub) {
+			return true
+		}
+	}
+	return false
 }

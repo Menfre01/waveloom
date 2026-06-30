@@ -14,11 +14,11 @@ var lspDiagnosticSchema = json.RawMessage(`{
   "properties": {
     "file_path": {
       "type": "string",
-      "description": "Absolute file path"
+      "description": "File path (absolute, or relative to working_dir / workspace root)"
     },
     "working_dir": {
       "type": "string",
-      "description": "Working directory (optional, for LSP server project context)"
+      "description": "Working directory (optional)"
     }
   },
   "required": ["file_path"]

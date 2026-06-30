@@ -167,7 +167,7 @@ func searchInFile(path string, re *regexp.Regexp, contextLines int) ([]grepMatch
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	if contextLines <= 0 {
 		// 无上下文 → 流式匹配
@@ -228,17 +228,17 @@ func formatGrepResults(matches []grepMatch, dir string, pattern string, truncate
 	var buf strings.Builder
 
 	if len(matches) == 0 {
-		buf.WriteString(fmt.Sprintf("No matches found for %q in %s.\n", pattern, relOrDir(dir)))
-		buf.WriteString(fmt.Sprintf("Searched under: %s", dir))
+		fmt.Fprintf(&buf, "No matches found for %q in %s.\n", pattern, relOrDir(dir))
+		fmt.Fprintf(&buf, "Searched under: %s", dir)
 		return buf.String()
 	}
 
-	buf.WriteString(fmt.Sprintf("Found %d match(es) for %q in %s (%s):",
-		len(matches), pattern, relOrDir(dir), duration.Round(time.Millisecond)))
+	fmt.Fprintf(&buf, "Found %d match(es) for %q in %s (%s):",
+		len(matches), pattern, relOrDir(dir), duration.Round(time.Millisecond))
 
 	if truncated {
-		buf.WriteString(fmt.Sprintf("\nResults truncated to %d. Narrow the pattern or use include to reduce results.",
-			MaxGrepMatches))
+		fmt.Fprintf(&buf, "\nResults truncated to %d. Narrow the pattern or use include to reduce results.",
+			MaxGrepMatches)
 	}
 
 	// 按文件分组输出
@@ -251,9 +251,9 @@ func formatGrepResults(matches []grepMatch, dir string, pattern string, truncate
 
 		if rel != currentFile {
 			currentFile = rel
-			buf.WriteString(fmt.Sprintf("\n── %s ──", rel))
+			fmt.Fprintf(&buf, "\n── %s ──", rel)
 		}
-		buf.WriteString(fmt.Sprintf("\n  %d: %s", m.lineNum, m.text))
+		fmt.Fprintf(&buf, "\n  %d: %s", m.lineNum, m.text)
 	}
 	buf.WriteByte('\n')
 

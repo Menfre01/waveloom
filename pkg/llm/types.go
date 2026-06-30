@@ -36,17 +36,21 @@ type ToolCall struct {
 	Arguments string // JSON 编码的调用参数
 }
 
+// openaiToolCall 是 ToolCall 序列化/反序列化的中间结构，
+// 映射 OpenAI 兼容格式 {id, type:"function", function:{name, arguments}}。
+type openaiToolCall struct {
+	ID       string `json:"id"`
+	Type     string `json:"type"`
+	Function struct {
+		Name      string `json:"name"`
+		Arguments string `json:"arguments"`
+	} `json:"function"`
+}
+
 // MarshalJSON 输出 OpenAI 兼容格式 {id, type:"function", function:{name, arguments}}。
 // Index（内部字段，用于流式分片累积）不出现在输出中。
 func (tc ToolCall) MarshalJSON() ([]byte, error) {
-	return json.Marshal(struct {
-		ID       string `json:"id"`
-		Type     string `json:"type"`
-		Function struct {
-			Name      string `json:"name"`
-			Arguments string `json:"arguments"`
-		} `json:"function"`
-	}{
+	return json.Marshal(openaiToolCall{
 		ID:   tc.ID,
 		Type: "function",
 		Function: struct {
@@ -57,6 +61,20 @@ func (tc ToolCall) MarshalJSON() ([]byte, error) {
 			Arguments: tc.Arguments,
 		},
 	})
+}
+
+// UnmarshalJSON 从 OpenAI 兼容格式 {id, type:"function", function:{name, arguments}} 反序列化。
+// Index 不在输入格式中，保持零值。
+func (tc *ToolCall) UnmarshalJSON(data []byte) error {
+	var o openaiToolCall
+	if err := json.Unmarshal(data, &o); err != nil {
+		return err
+	}
+	tc.Index = 0
+	tc.ID = o.ID
+	tc.Name = o.Function.Name
+	tc.Arguments = o.Function.Arguments
+	return nil
 }
 
 // ToolSpec 定义一个可供 LLM 调用的工具。
@@ -169,54 +187,153 @@ type StreamingEvent struct {
 	Err            error      // 流处理中的错误（仅在 Done=true 且出错时非 nil）
 }
 
-// ValidateMessages 检查消息配对不变量：每条含 tool_calls 的 assistant 消息
-// 之后必须有对应 tool_call_id 的 tool 消息。违反时剔除无法配对的 tool_calls。
-// 返回可能被修改的消息切片和校验结果是否通过。
-func ValidateMessages(msgs []Message) ([]Message, bool) {
-	clean := make([]Message, 0, len(msgs))
-	changed := false
+// RepairAction 描述校验/修复操作的类型。
+type RepairAction string
 
-	for i := 0; i < len(msgs); i++ {
-		msg := msgs[i]
-		if msg.Role != RoleAssistant || len(msg.ToolCalls) == 0 {
+const (
+	RepairSkipInvalidRole    RepairAction = "skip_invalid_role"     // 消息 Role 为空或非法
+	RepairSkipEmptyAssistant RepairAction = "skip_empty_assistant"  // assistant 消息无 content 且无 tool_calls
+	RepairStripToolCall      RepairAction = "strip_tool_call"       // ToolCall 缺少 ID / Name
+	RepairStripOrphanCall    RepairAction = "strip_orphan_call"     // ToolCall 无对应 tool 结果消息
+	RepairSkipOrphanTool     RepairAction = "skip_orphan_tool"      // tool 消息无对应 assistant tool_call
+)
+
+// RepairEntry 描述单条校验/修复操作。
+type RepairEntry struct {
+	Index  int          // 原始消息索引（未修复前）
+	Role   Role         // 消息角色
+	Action RepairAction // 操作类型
+	Detail string       // 可读描述
+}
+
+var validRoles = map[Role]bool{
+	RoleSystem:    true,
+	RoleUser:      true,
+	RoleAssistant: true,
+	RoleTool:      true,
+}
+
+// ValidateMessages 对消息历史执行完整性校验和修复。
+//
+// 检查项目：
+//  1. Role 合法性 — 空或非法 Role 的消息直接跳过
+//  2. ToolCall 字段 — 剔除 ID/Name 为空的 tool_calls
+//  3. 空 assistant — 无 content 且无 tool_calls 的 assistant 消息跳过
+//  4. tool_calls 配对 — 无对应 tool 结果的 tool_calls 剔除
+//  5. tool 消息配对 — 无对应 assistant tool_call 的 tool 消息跳过
+//
+// 返回修复后的消息切片和修复报告。
+// 调用方可通过 len(report) > 0 判断是否有数据被修复。
+func ValidateMessages(msgs []Message) ([]Message, []RepairEntry) {
+	if len(msgs) == 0 {
+		return nil, nil
+	}
+
+	// --- Pass 1: 收集所有 assistant tool_call ID（用于配对检查）---
+	validToolCallIDs := make(map[string]bool, len(msgs)/2)
+	for _, msg := range msgs {
+		if msg.Role == RoleAssistant {
+			for _, tc := range msg.ToolCalls {
+				if tc.ID != "" && tc.Name != "" {
+					validToolCallIDs[tc.ID] = true
+				}
+			}
+		}
+	}
+
+	// --- Pass 2: 逐条清洗 ---
+	clean := make([]Message, 0, len(msgs))
+	var report []RepairEntry
+	origIdx := 0 // 原始消息索引（始终递增，因为可能跳过消息）
+
+	for _, msg := range msgs {
+		idx := origIdx
+		origIdx++
+
+		// 1. Role 合法性
+		if !validRoles[msg.Role] {
+			report = append(report, RepairEntry{
+				Index: idx, Role: msg.Role, Action: RepairSkipInvalidRole,
+				Detail: "invalid role",
+			})
+			continue
+		}
+
+		// 2. Tool 消息配对 — 无对应 assistant tool_call 则跳过
+		if msg.Role == RoleTool {
+			if msg.ToolCallID == "" || !validToolCallIDs[msg.ToolCallID] {
+				report = append(report, RepairEntry{
+					Index: idx, Role: msg.Role, Action: RepairSkipOrphanTool,
+					Detail: "tool message without matching assistant tool_call",
+				})
+				continue
+			}
 			clean = append(clean, msg)
 			continue
 		}
 
-		// 收集后续 tool 消息的 tool_call_id 集合
-		toolIDs := make(map[string]bool, len(msg.ToolCalls))
-		for j := i + 1; j < len(msgs); j++ {
-			if msgs[j].Role == RoleTool && msgs[j].ToolCallID != "" {
-				toolIDs[msgs[j].ToolCallID] = true
+		// 3. Assistant 消息：校验 tool_calls 字段完整性
+		if msg.Role == RoleAssistant && len(msg.ToolCalls) > 0 {
+			var valid []ToolCall
+			for _, tc := range msg.ToolCalls {
+				if tc.ID == "" || tc.Name == "" {
+					report = append(report, RepairEntry{
+						Index: idx, Role: msg.Role, Action: RepairStripToolCall,
+						Detail: "tool_call missing ID or Name",
+					})
+					continue
+				}
+				// 配对检查：只在有 tool 消息集合可供比较时剔除孤儿
+				if len(validToolCallIDs) > 0 {
+					// 检查后续是否有对应的 tool 消息
+					hasPair := false
+					for j := origIdx; j < len(msgs); j++ {
+						if msgs[j].Role == RoleTool && msgs[j].ToolCallID == tc.ID {
+							hasPair = true
+							break
+						}
+						if msgs[j].Role == RoleAssistant || msgs[j].Role == RoleUser {
+							break
+						}
+					}
+					if !hasPair {
+						report = append(report, RepairEntry{
+							Index: idx, Role: msg.Role, Action: RepairStripOrphanCall,
+							Detail: "tool_call " + tc.ID + " has no matching tool result",
+						})
+						continue
+					}
+				}
+				valid = append(valid, tc)
 			}
-			// 遇到下一条 assistant 或 user 消息停止搜索
-			if msgs[j].Role == RoleAssistant || msgs[j].Role == RoleUser {
-				break
-			}
-		}
+			msg.ToolCalls = valid
 
-		// 保留有配对的 tool_calls
-		var valid []ToolCall
-		for _, tc := range msg.ToolCalls {
-			if tc.ID == "" {
-				changed = true
+			// 如果所有 tool_calls 被剔除且 content 为空 → 退化为空 assistant
+			if len(msg.ToolCalls) == 0 && msg.Content == "" {
+				report = append(report, RepairEntry{
+					Index: idx, Role: msg.Role, Action: RepairSkipEmptyAssistant,
+					Detail: "assistant message empty after stripping invalid tool_calls",
+				})
 				continue
 			}
-			if toolIDs[tc.ID] {
-				valid = append(valid, tc)
-			} else {
-				changed = true
-			}
 		}
 
-		msg.ToolCalls = valid
+		// 4. 空 assistant（无 content 且无 tool_calls）— 占位 "(empty response)" 或反序列化残留
+		if msg.Role == RoleAssistant && msg.Content == "" && len(msg.ToolCalls) == 0 {
+			report = append(report, RepairEntry{
+				Index: idx, Role: msg.Role, Action: RepairSkipEmptyAssistant,
+				Detail: "assistant message with no content and no tool_calls",
+			})
+			continue
+		}
+
 		clean = append(clean, msg)
 	}
 
-	if !changed {
-		return msgs, true
+	if len(report) == 0 {
+		return msgs, nil
 	}
-	return clean, false
+	return clean, report
 }
 
 // ---------------------------------------------------------------------------

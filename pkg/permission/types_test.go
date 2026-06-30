@@ -131,8 +131,8 @@ func TestRuleString(t *testing.T) {
 		},
 		{
 			"content-level deny",
-			Rule{Behavior: RuleDeny, ToolName: "shell", Pattern: "rm -rf *"},
-			"deny:shell(rm -rf *)",
+			Rule{Behavior: RuleDeny, ToolName: "bash", Pattern: "rm -rf *"},
+			"deny:bash(rm -rf *)",
 		},
 		{
 			"content-level ask",
@@ -200,9 +200,7 @@ func (m *mockGuard) SessionMemoryLen() int                       { return 0 }
 
 func TestGuardInterfaceTypeAssertion(t *testing.T) {
 	var g Guard = &mockGuard{}
-	if g == nil {
-		t.Error("mockGuard is nil")
-	}
+	_ = g // 编译期验证 mockGuard 实现 Guard 接口
 }
 
 // mockUserResponder 用于验证 UserResponder 接口类型断言。
@@ -217,9 +215,12 @@ func (m *mockUserResponder) AskUser(ctx context.Context, toolName string, input 
 	return UserChoice{Decision: DecisionAllow}
 }
 
+func (m *mockUserResponder) AnswerQuestion(ctx context.Context, questions []QuestionPrompt) ([]QuestionResponse, error) {
+	// 默认返回空答案（拒绝）
+	return nil, nil
+}
+
 func TestUserResponderInterfaceTypeAssertion(t *testing.T) {
 	var u UserResponder = &mockUserResponder{}
-	if u == nil {
-		t.Error("mockUserResponder is nil")
-	}
+	_ = u // 编译期验证 mockUserResponder 实现 UserResponder 接口
 }

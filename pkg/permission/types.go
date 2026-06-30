@@ -38,11 +38,12 @@ const (
 type DecisionReason string
 
 const (
-	ReasonRule    DecisionReason = "rule"    // 匹配了显式规则
-	ReasonDefault DecisionReason = "default" // 无匹配规则，走默认策略
-	ReasonSafety  DecisionReason = "safety"  // 安全检查拦截
-	ReasonSession DecisionReason = "session" // 会话级记忆
-	ReasonBypass  DecisionReason = "bypass"  // bypass 模式（测试/CI）
+	ReasonRule        DecisionReason = "rule"          // 匹配了显式规则
+	ReasonDefault     DecisionReason = "default"       // 无匹配规则，走默认策略
+	ReasonSafety      DecisionReason = "safety"        // 安全检查拦截
+	ReasonSession     DecisionReason = "session"       // 会话级记忆
+	ReasonBypass      DecisionReason = "bypass"        // bypass 模式（测试/CI）
+	ReasonBuiltinAllow DecisionReason = "builtin_allow" // 内置白名单直接放行
 )
 
 // ---------------------------------------------------------------------------
@@ -134,6 +135,34 @@ type UserChoice struct {
 type UserResponder interface {
 	// AskUser 向用户请求决策。
 	AskUser(ctx context.Context, toolName string, input json.RawMessage, result DecisionResult) UserChoice
+
+	// AnswerQuestion 向用户发起选择题交互。
+	// 阻塞直到用户回答完毕或拒绝。返回 nil, nil 表示用户拒绝。
+	AnswerQuestion(ctx context.Context, questions []QuestionPrompt) ([]QuestionResponse, error)
+}
+
+// ---------------------------------------------------------------------------
+// QuestionPrompt / QuestionResponse — 选择题类型
+// ---------------------------------------------------------------------------
+
+// QuestionPrompt 是向用户展示的单个选择题。
+type QuestionPrompt struct {
+	Question    string                `json:"question"`    // 完整问题，以 ? 结尾
+	Header      string                `json:"header"`      // 简短标签，≤12 chars
+	Options     []QuestionOptionPrompt `json:"options"`     // 2-4 项，label 唯一
+	MultiSelect bool                  `json:"multiSelect"` // 是否多选，默认 false
+}
+
+// QuestionOptionPrompt 是选择题的单个选项。
+type QuestionOptionPrompt struct {
+	Label       string `json:"label"`       // 显示文本，1-5 words
+	Description string `json:"description"` // 选项解释
+}
+
+// QuestionResponse 是用户对单个问题的回答。
+type QuestionResponse struct {
+	Question string   `json:"question"` // 问题文本（与 QuestionPrompt.Question 对应）
+	Answers  []string `json:"answers"`  // 选中的选项 label 列表；单选时为 1 个元素
 }
 
 // ---------------------------------------------------------------------------

@@ -184,7 +184,7 @@ func (c *client) readStream(ctx context.Context, req *http.Request, ch chan<- St
 		}}
 		return
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		body, _ := io.ReadAll(resp.Body)
@@ -200,7 +200,7 @@ func (c *client) readStream(ctx context.Context, req *http.Request, ch chan<- St
 	defer streamCancel()
 	go func() {
 		<-streamCtx.Done()
-		resp.Body.Close()
+		_ = resp.Body.Close()
 	}()
 
 	scanner := bufio.NewScanner(resp.Body)
@@ -413,7 +413,7 @@ func (c *client) doRequest(req *http.Request) (*Response, error) {
 			Cause:      err,
 		}
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {

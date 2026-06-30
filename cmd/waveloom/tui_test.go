@@ -5,7 +5,9 @@ import (
 	"strings"
 	"testing"
 
+	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
 	ctxpkg "github.com/Menfre01/waveloom/pkg/context"
 	"github.com/Menfre01/waveloom/pkg/llm"
@@ -370,6 +372,34 @@ func TestHardLimitGuard_AllowsEnterWhenNotReached(t *testing.T) {
 	}
 }
 
+func TestEnter_EmptyInputWhenRunning_NoInterrupt(t *testing.T) {
+	m := &model{
+		cm:      newTestCM(),
+		keys:    defaultKeys,
+		paras:   []Paragraph{},
+		running: true,
+		width:   120,
+		height:  40,
+	}
+	// 设置 cancelRun 可以取消
+	cancelCalled := false
+	m.cancelRun = func() { cancelCalled = true }
+	// 输入框为空
+	m.input.SetValue("")
+
+	handled, cmd := m.handleKeyPress(tea.KeyPressMsg(tea.Key{Code: tea.KeyEnter}))
+
+	if !handled {
+		t.Error("expected handled=true for Enter with empty input when running")
+	}
+	if cmd != nil {
+		t.Error("expected nil cmd (no doTurn) for empty input when running")
+	}
+	if cancelCalled {
+		t.Error("cancelRun should NOT be called for empty input when running")
+	}
+}
+
 // ── 段落焦点导航测试 ──
 
 func TestIsExpandable(t *testing.T) {
@@ -384,9 +414,9 @@ func TestIsExpandable(t *testing.T) {
 		{"thought collapsed long", Paragraph{Type: paraThought, State: stateCollapsed, Text: strings.Repeat("a ", 100)}, true},
 		{"thought expanded", Paragraph{Type: paraThought, State: stateExpanded, Text: "any"}, true},
 		{"thought streaming", Paragraph{Type: paraThought, State: stateStreaming}, false},
-		{"shell done short", Paragraph{Type: paraTool, State: stateDone, ToolName: "shell", ToolResult: "ok"}, false},
-		{"shell done long", Paragraph{Type: paraTool, State: stateDone, ToolName: "shell", ToolResult: strings.Repeat("line\n", 10)}, true},
-		{"shell expanded", Paragraph{Type: paraTool, State: stateExpanded, ToolName: "shell"}, true},
+		{"shell done short", Paragraph{Type: paraTool, State: stateDone, ToolName: "bash", ToolResult: "ok"}, false},
+		{"shell done long", Paragraph{Type: paraTool, State: stateDone, ToolName: "bash", ToolResult: strings.Repeat("line\n", 10)}, true},
+		{"shell expanded", Paragraph{Type: paraTool, State: stateExpanded, ToolName: "bash"}, true},
 		{"web_fetch done short", Paragraph{Type: paraTool, State: stateDone, ToolName: "web_fetch", ToolResult: "short"}, false},
 		{"web_fetch done long", Paragraph{Type: paraTool, State: stateDone, ToolName: "web_fetch", ToolResult: "Fetched url\n\n" + strings.Repeat("line\n", 10)}, true},
 		{"web_fetch expanded", Paragraph{Type: paraTool, State: stateExpanded, ToolName: "web_fetch"}, true},
@@ -443,7 +473,7 @@ func TestFocusNext_CyclicRing(t *testing.T) {
 	paras := []Paragraph{
 		{Type: paraThought, State: stateCollapsed, ThoughtTokens: 100, Text: strings.Repeat("long text ", 50)},   // 可展开（溢出）
 		{Type: paraAssistant, State: stateDone},
-		{Type: paraTool, State: stateDone, ToolName: "shell", ToolResult: strings.Repeat("line\n", 10)}, // 可展开（溢出）
+		{Type: paraTool, State: stateDone, ToolName: "bash", ToolResult: strings.Repeat("line\n", 10)}, // 可展开（溢出）
 		{Type: paraThought, State: stateExpanded, ThoughtTokens: 200, Text: "expanded"},                // 可展开（已展开）
 	}
 	m := &model{paras: paras, focusIndex: -1, width: 120}
@@ -474,7 +504,7 @@ func TestFocusPrev_CyclicRing(t *testing.T) {
 	paras := []Paragraph{
 		{Type: paraThought, State: stateCollapsed, ThoughtTokens: 100, Text: strings.Repeat("long text ", 50)},   // 可展开（溢出）
 		{Type: paraAssistant, State: stateDone},
-		{Type: paraTool, State: stateDone, ToolName: "shell", ToolResult: strings.Repeat("line\n", 10)}, // 可展开（溢出）
+		{Type: paraTool, State: stateDone, ToolName: "bash", ToolResult: strings.Repeat("line\n", 10)}, // 可展开（溢出）
 	}
 	m := &model{paras: paras, focusIndex: -1, width: 120}
 
@@ -522,7 +552,7 @@ func TestToggleParagraphFocus_Thought(t *testing.T) {
 func TestToggleParagraphFocus_Tool(t *testing.T) {
 	m := &model{
 		paras: []Paragraph{
-			{Type: paraTool, State: stateDone, ToolName: "shell"},
+			{Type: paraTool, State: stateDone, ToolName: "bash"},
 		},
 		focusIndex: 0,
 	}
@@ -643,7 +673,7 @@ func TestFocusUpDown_Navigation(t *testing.T) {
 	paras := []Paragraph{
 		{Type: paraThought, State: stateCollapsed, ThoughtTokens: 100, Text: strings.Repeat("overflowing thought content ", 30)},
 		{Type: paraAssistant, State: stateDone},
-		{Type: paraTool, State: stateDone, ToolName: "shell", ToolResult: strings.Repeat("line\n", 10)},
+		{Type: paraTool, State: stateDone, ToolName: "bash", ToolResult: strings.Repeat("line\n", 10)},
 	}
 	m := &model{
 		paras:      paras,
@@ -758,3 +788,206 @@ type testError struct {
 
 func (e *testError) Error() string { return e.msg }
 func (e *testError) Unwrap() error { return e.wrapped }
+
+// ---------------------------------------------------------------------------
+// syncInputVisibleStart 测试
+// ---------------------------------------------------------------------------
+
+// newInputTestModel 创建一个仅初始化 input 相关字段的最小 model。
+func newInputTestModel(value string, cursorPos int, width int) *model {
+	ti := textinput.New()
+	ti.SetValue(value)
+	ti.SetCursor(cursorPos)
+	ti.SetWidth(width)
+
+	return &model{
+		input:          ti,
+		inputVisStart:  0,
+		inputLastValue: value,
+	}
+}
+
+// runeDisplayWidth 计算字符串中所有 rune 的 lipgloss 显示宽度之和。
+func runeDisplayWidth(s string) int {
+	w := 0
+	for _, r := range s {
+		w += lipgloss.Width(string(r))
+	}
+	return w
+}
+
+func TestSyncInputVisibleStart_ValueUnchanged_ContentFits(t *testing.T) {
+	m := newInputTestModel("hello", 3, 20)
+	m.syncInputVisibleStart()
+
+	if m.inputVisStart != 0 {
+		t.Errorf("expected inputVisStart=0, got %d", m.inputVisStart)
+	}
+}
+
+func TestSyncInputVisibleStart_ValueUnchanged_EmptyValue(t *testing.T) {
+	m := newInputTestModel("", 0, 20)
+	m.syncInputVisibleStart()
+
+	if m.inputVisStart != 0 {
+		t.Errorf("expected inputVisStart=0, got %d", m.inputVisStart)
+	}
+}
+
+func TestSyncInputVisibleStart_ValueUnchanged_WidthZero(t *testing.T) {
+	m := newInputTestModel("hello world", 5, 0)
+	m.inputVisStart = 3
+	m.syncInputVisibleStart()
+
+	if m.inputVisStart != 0 {
+		t.Errorf("expected inputVisStart=0, got %d", m.inputVisStart)
+	}
+}
+
+func TestSyncInputVisibleStart_ValueUnchanged_WidthNegative(t *testing.T) {
+	m := newInputTestModel("hello world", 5, -1)
+	m.inputVisStart = 3
+	m.syncInputVisibleStart()
+
+	if m.inputVisStart != 0 {
+		t.Errorf("expected inputVisStart=0, got %d", m.inputVisStart)
+	}
+}
+
+func TestSyncInputVisibleStart_ValueChanged_ResetsToZero(t *testing.T) {
+	m := newInputTestModel("hello", 2, 5)
+	m.inputVisStart = 3
+	m.inputLastValue = "old value"
+
+	m.syncInputVisibleStart()
+
+	if m.inputVisStart != 0 {
+		t.Errorf("expected inputVisStart=0 after value change, got %d", m.inputVisStart)
+	}
+	if m.inputLastValue != "hello" {
+		t.Errorf("expected inputLastValue to sync to 'hello', got %q", m.inputLastValue)
+	}
+}
+
+func TestSyncInputVisibleStart_CursorInVisibleWindow_StaysPut(t *testing.T) {
+	m := newInputTestModel("0123456789", 4, 5)
+	m.inputVisStart = 2
+	m.syncInputVisibleStart()
+
+	if m.inputVisStart != 2 {
+		t.Errorf("expected inputVisStart=2 (unchanged), got %d", m.inputVisStart)
+	}
+}
+
+func TestSyncInputVisibleStart_CursorAtVisStart_StaysPut(t *testing.T) {
+	m := newInputTestModel("0123456789", 2, 5)
+	m.inputVisStart = 2
+	m.syncInputVisibleStart()
+
+	if m.inputVisStart != 2 {
+		t.Errorf("expected inputVisStart=2 (unchanged), got %d", m.inputVisStart)
+	}
+}
+
+func TestSyncInputVisibleStart_CursorLeftOfWindow_FollowsCursor(t *testing.T) {
+	m := newInputTestModel("0123456789", 1, 5)
+	m.inputVisStart = 2
+	m.syncInputVisibleStart()
+
+	if m.inputVisStart != 1 {
+		t.Errorf("expected inputVisStart=1 (follows cursor left), got %d", m.inputVisStart)
+	}
+}
+
+func TestSyncInputVisibleStart_CursorRightOfWindow_ShiftsRight(t *testing.T) {
+	m := newInputTestModel("0123456789", 9, 5)
+	m.inputVisStart = 2
+	m.syncInputVisibleStart()
+
+	if m.inputVisStart != 4 {
+		t.Errorf("expected inputVisStart=4 (shifted right), got %d", m.inputVisStart)
+	}
+}
+
+func TestSyncInputVisibleStart_CursorRightOfWindow_ExactWidth(t *testing.T) {
+	m := newInputTestModel("ABCDEFGHIJ", 9, 5)
+	m.inputVisStart = 0
+	m.syncInputVisibleStart()
+
+	if m.inputVisStart != 4 {
+		t.Errorf("expected inputVisStart=4, got %d", m.inputVisStart)
+	}
+}
+
+func TestSyncInputVisibleStart_CursorAtEnd_ShiftedToShowEnd(t *testing.T) {
+	m := newInputTestModel("0123456789", 10, 5)
+	m.inputVisStart = 0
+	m.syncInputVisibleStart()
+
+	if m.inputVisStart != 5 {
+		t.Errorf("expected inputVisStart=5, got %d", m.inputVisStart)
+	}
+}
+
+func TestSyncInputVisibleStart_CJKCharacters_Width2(t *testing.T) {
+	m := newInputTestModel("你好世界测试", 3, 5)
+	m.inputVisStart = 0
+	m.syncInputVisibleStart()
+
+	if m.inputVisStart != 1 {
+		t.Errorf("expected inputVisStart=1 for CJK, got %d", m.inputVisStart)
+	}
+}
+
+func TestSyncInputVisibleStart_CJK_MoveLeft(t *testing.T) {
+	m := newInputTestModel("你好世界测试", 0, 5)
+	m.inputVisStart = 2
+	m.syncInputVisibleStart()
+
+	if m.inputVisStart != 0 {
+		t.Errorf("expected inputVisStart=0, got %d", m.inputVisStart)
+	}
+}
+
+func TestSyncInputVisibleStart_CursorAtBeginning(t *testing.T) {
+	m := newInputTestModel("0123456789", 0, 5)
+	m.inputVisStart = 3
+	m.syncInputVisibleStart()
+
+	if m.inputVisStart != 0 {
+		t.Errorf("expected inputVisStart=0, got %d", m.inputVisStart)
+	}
+}
+
+func TestSyncInputVisibleStart_ValueChangedThenCursorMove(t *testing.T) {
+	m := newInputTestModel("0123456789", 9, 5)
+	m.inputVisStart = 100
+	m.inputLastValue = "old"
+
+	m.syncInputVisibleStart()
+	if m.inputVisStart != 4 {
+		t.Errorf("expected inputVisStart=4 after value-change + cursor adjust, got %d", m.inputVisStart)
+	}
+	if m.inputLastValue != "0123456789" {
+		t.Errorf("expected inputLastValue to sync, got %q", m.inputLastValue)
+	}
+}
+
+func TestRuneDisplayWidth_ASCII(t *testing.T) {
+	if w := runeDisplayWidth("hello"); w != 5 {
+		t.Errorf("expected width=5, got %d", w)
+	}
+}
+
+func TestRuneDisplayWidth_CJK(t *testing.T) {
+	if w := runeDisplayWidth("你好"); w != 4 {
+		t.Errorf("expected width=4, got %d", w)
+	}
+}
+
+func TestRuneDisplayWidth_Mixed(t *testing.T) {
+	w := runeDisplayWidth("a你b好")
+	if w != 6 {
+		t.Errorf("expected width=6, got %d", w)
+	}
+}

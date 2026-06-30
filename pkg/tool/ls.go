@@ -126,7 +126,7 @@ func listDir(path, prefix string, currentDepth int, s *listState) {
 
 	entries, err := os.ReadDir(path)
 	if err != nil {
-		s.buf.WriteString(fmt.Sprintf("%s(error: cannot read directory)\n", prefix))
+		fmt.Fprintf(s.buf, "%s(error: cannot read directory)\n", prefix)
 		return
 	}
 
@@ -153,11 +153,11 @@ func listDir(path, prefix string, currentDepth int, s *listState) {
 		s.count++
 
 		if entry.IsDir() {
-			s.buf.WriteString(fmt.Sprintf("%s%s/\n", prefix, name))
+			fmt.Fprintf(s.buf, "%s%s/\n", prefix, name)
 			childPath := path + string(os.PathSeparator) + name
 			listDir(childPath, prefix+"  ", currentDepth+1, s)
 		} else {
-			s.buf.WriteString(fmt.Sprintf("%s%s\n", prefix, name))
+			fmt.Fprintf(s.buf, "%s%s\n", prefix, name)
 		}
 	}
 }

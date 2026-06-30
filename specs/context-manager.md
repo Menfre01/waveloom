@@ -139,6 +139,13 @@ func (cm *ContextManager) Save()
 // LoadFromFile 从 session 文件恢复 ContextManager 的内部状态。
 // 恢复后自动将 sessionPath 设为该文件路径，后续 CompleteRun 自动落盘。
 // 同时恢复压缩决策表和摘要链。
+//
+// 反序列化后执行 llm.ValidateMessages 完整性校验，自动修复：
+//   - 非法 Role 的消息（跳过）
+//   - 空 assistant 消息（跳过，含反序列化残留的 "(empty response)" 占位）
+//   - 残缺 ToolCall（缺少 ID/Name，剥离）
+//   - 孤儿 tool_calls / tool 消息配对异常（剥离/跳过）
+// 修复详情输出到 stderr，不阻塞恢复流程。
 func (cm *ContextManager) LoadFromFile(path string) bool
 
 // RemoveSession 删除当前的 session 落盘文件并关闭自动落盘。
@@ -320,6 +327,7 @@ DeepSeek 的前缀缓存按以下规则工作：
 6. **Reset 保留 system：** Reset 后 messages 回到 `[system]` 状态，instructionsInjected 重置
 7. **线程安全：** 所有公开方法受 RWMutex 保护
 8. **压缩生命周期一致：** compactor 状态随 session 持久化/恢复
+9. **Session 完整性校验：** LoadFromFile 后自动执行 llm.ValidateMessages，剔除反序列化损坏/残缺的消息，确保传给 LLM 的数据完整性
 
 ---
 

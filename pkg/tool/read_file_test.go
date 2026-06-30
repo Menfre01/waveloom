@@ -98,6 +98,15 @@ func TestReadFileNotFound(t *testing.T) {
 
 func TestReadFileIsDir(t *testing.T) {
 	dir := t.TempDir()
+	// Create a file inside the dir so the listing is non-empty
+	if err := os.WriteFile(filepath.Join(dir, "example.go"), []byte("package main"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Create a subdirectory too
+	if err := os.MkdirAll(filepath.Join(dir, "subdir"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
 	tool := &ReadFile{}
 	result, err := tool.Execute(context.Background(), ReadFileParams{FilePath: dir})
 	if err != nil {
@@ -108,6 +117,13 @@ func TestReadFileIsDir(t *testing.T) {
 	}
 	if result.Error.Kind != ErrKindNotDir {
 		t.Errorf("Error.Kind = %q, want %q", result.Error.Kind, ErrKindNotDir)
+	}
+	// Error message should include the directory listing
+	if !strings.Contains(result.Error.Message, "example.go") {
+		t.Errorf("Error message should contain 'example.go', got: %s", result.Error.Message)
+	}
+	if !strings.Contains(result.Error.Message, "subdir/") {
+		t.Errorf("Error message should contain 'subdir/', got: %s", result.Error.Message)
 	}
 }
 
@@ -323,7 +339,7 @@ func TestReadFileCancelledDuringStreaming(t *testing.T) {
 	for i := 0; i < 10000; i++ {
 		_, _ = f.WriteString("line " + strings.Repeat("x", 90) + "\n")
 	}
-	f.Close()
+	_ = f.Close()
 
 	ctx, cancel := context.WithCancel(context.Background())
 
