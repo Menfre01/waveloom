@@ -26,8 +26,8 @@ func TestShellInterpreter(t *testing.T) {
 			t.Errorf("Windows: expected /c, got %s", args[0])
 		}
 	} else {
-		if bin != "sh" {
-			t.Errorf("Unix: expected sh, got %s", bin)
+		if bin != "bash" && bin != "sh" {
+			t.Errorf("Unix: expected bash or sh, got %s", bin)
 		}
 		if args[0] != "-c" {
 			t.Errorf("Unix: expected -c, got %s", args[0])

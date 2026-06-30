@@ -1,10 +1,14 @@
 package skill
 
 import (
+	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/Menfre01/waveloom/pkg/permission"
 )
 
 // ---------------------------------------------------------------------------
@@ -32,7 +36,7 @@ func writeFile(t *testing.T, path, content string) {
 }
 
 func newTestLoader(homeDir, cwd string) *Loader {
-	return NewLoader(cwd, homeDir, "test-session-123", "medium")
+	return NewLoader(cwd, homeDir, "test-session-123", "medium", nil)
 }
 
 // ---------------------------------------------------------------------------
@@ -767,6 +771,77 @@ Deploy now.
 	}
 }
 
+// TestLoad_EmptyArgsWithPlaceholders 验证无参时所有占位符替换为空字符串。
+// 对标 Claude Code args="" → parsedArgs=[] → 所有索引/命名/整体变量 → 空字符串。
+func TestLoad_EmptyArgsWithPlaceholders(t *testing.T) {
+	home := tmpDir(t)
+	writeFile(t, filepath.Join(home, ".claude", "skills", "test", "SKILL.md"), `---
+name: test
+arguments: [who, mood]
+---
+$ARGUMENTS|$0|$1|$ARGUMENTS[0]|$ARGUMENTS[1]|$who|$mood
+`)
+	l := newTestLoader(home, home)
+	loaded, err := l.Load("test", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 所有占位符均应替换为空，只留下分隔符 "||||||"
+	expected := "||||||"
+	if loaded.Body != expected {
+		t.Errorf("empty args should replace all placeholders with empty string: got %q", loaded.Body)
+	}
+	if strings.Contains(loaded.Body, "ARGUMENTS:") {
+		t.Error("should not auto-append ARGUMENTS for empty args even when placeholders present")
+	}
+}
+
+// TestRegression_CodeSpanProtected 验证代码片段中的 $ARGUMENTS 不被替换，
+// 且不影响代码片段外的正常替换。
+func TestRegression_CodeSpanProtected(t *testing.T) {
+	home := tmpDir(t)
+	writeFile(t, filepath.Join(home, ".claude", "skills", "test", "SKILL.md"), "---\nname: test\n---\n"+
+		"Deploy `$ARGUMENTS` to $ARGUMENTS now.\n")
+	l := newTestLoader(home, home)
+	loaded, err := l.Load("test", "production")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 代码片段内的 $ARGUMENTS 应保持字面
+	if !strings.Contains(loaded.Body, "`$ARGUMENTS`") {
+		t.Errorf("$ARGUMENTS in code span should remain literal: %s", loaded.Body)
+	}
+	// 代码片段外的 $ARGUMENTS 应被替换
+	if !strings.Contains(loaded.Body, "to production now") {
+		t.Errorf("$ARGUMENTS outside code span should be replaced: %s", loaded.Body)
+	}
+	// $ARGUMENTS 在代码片段外已出现，不应自动追加 ARGUMENTS 行
+	if strings.Contains(loaded.Body, "ARGUMENTS:") {
+		t.Error("should not auto-append when $ARGUMENTS is present outside code spans")
+	}
+}
+
+// TestRegression_CodeSpanAutoAppend 验证仅代码片段含 $ARGUMENTS 字面时
+// 仍触发自动追加（因为没有真正的 $ARGUMENTS 变量消费参数）。
+func TestRegression_CodeSpanAutoAppend(t *testing.T) {
+	home := tmpDir(t)
+	writeFile(t, filepath.Join(home, ".claude", "skills", "test", "SKILL.md"), "---\nname: test\n---\n"+
+		"这个 body 中不包含 `$ARGUMENTS` 变量。\n")
+	l := newTestLoader(home, home)
+	loaded, err := l.Load("test", "deploy to staging")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 代码片段内的 $ARGUMENTS 应保持字面
+	if !strings.Contains(loaded.Body, "`$ARGUMENTS`") {
+		t.Errorf("$ARGUMENTS in code span should remain literal: %s", loaded.Body)
+	}
+	// 应自动追加 ARGUMENTS 行（因为 body 中无真正的 $ARGUMENTS 变量）
+	if !strings.Contains(loaded.Body, "ARGUMENTS: deploy to staging") {
+		t.Errorf("should auto-append ARGUMENTS when $ARGUMENTS only in code span: %s", loaded.Body)
+	}
+}
+
 func TestLoad_IndexOutOfRange(t *testing.T) {
 	home := tmpDir(t)
 	writeFile(t, filepath.Join(home, ".claude", "skills", "test", "SKILL.md"), `---
@@ -779,17 +854,10 @@ First: $0, Second: $1, Third: $2
 	if err != nil {
 		t.Fatal(err)
 	}
-	// $2 超出范围应保持字面
-	if !strings.Contains(loaded.Body, "$2") {
-		t.Errorf("$2 should remain as literal when only 1 arg provided: %s", loaded.Body)
-	}
-	// $1 也应保持字面
-	if !strings.Contains(loaded.Body, "$1") {
-		t.Errorf("$1 should remain as literal: %s", loaded.Body)
-	}
-	// $0 应被替换
-	if !strings.Contains(loaded.Body, "First: onlyone") {
-		t.Errorf("$0 should be replaced: %s", loaded.Body)
+	// 对标 Claude Code：越界索引 → 空字符串（parsedArgs[index] ?? ''）
+	expected := "First: onlyone, Second: , Third: "
+	if loaded.Body != expected {
+		t.Errorf("out-of-range index args should be empty string: got %q, want %q", loaded.Body, expected)
 	}
 }
 
@@ -852,16 +920,181 @@ func TestLoad_DynamicInjectionNotAtLineStart(t *testing.T) {
 	writeFile(t, filepath.Join(home, ".claude", "skills", "test", "SKILL.md"), `---
 name: test
 ---
-Some text !` + "`echo bad`" + ` should not execute
+Some text!` + "`echo bad`" + ` should not execute
 `)
 	l := newTestLoader(home, home)
 	loaded, err := l.Load("test", "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	// 非行首的 !`...` 不应被执行，仍保留为字面文本
+	// 对标 Claude Code: ! 前非空白/非行首时保留为字面文本
+	// "text!`cmd`" 中 ! 前是 't'，不匹配 → 不执行
 	if !strings.Contains(loaded.Body, "!`echo bad`") {
-		t.Error("non-line-start !`...` should be preserved as literal text")
+		t.Error("non-whitespace-prefixed !`...` should be preserved as literal text")
+	}
+	// 确认没有被执行
+	if strings.Contains(loaded.Body, "Some textbad") {
+		t.Error("should not have executed the command")
+	}
+}
+
+// TestRegression_InlineInjectionAfterText 对标 Claude Code：
+// 行中 ! 前为空白字符时，触发动态注入。
+// 例如 "当前时间: !`date '+%H:%M:%S'`" 中 ! 前是空格 → 应执行。
+func TestRegression_InlineInjectionAfterText(t *testing.T) {
+	home := tmpDir(t)
+	writeFile(t, filepath.Join(home, ".claude", "skills", "test", "SKILL.md"), `---
+name: test
+---
+当前时间: !` + "`echo 2025-01-01`" + `
+`)
+	l := newTestLoader(home, home)
+	loaded, err := l.Load("test", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 行中空白前缀的 !`cmd` 应被执行
+	if !strings.Contains(loaded.Body, "当前时间: 2025-01-01") {
+		t.Errorf("whitespace-prefixed inline injection should be executed, got: %s", loaded.Body)
+	}
+	// 不应残留命令原文
+	if strings.Contains(loaded.Body, "!`") {
+		t.Error("command placeholder should be replaced")
+	}
+}
+
+// ===========================================================================
+// 动态注入 Lint 测试（Guard 存在时解析阶段校验白名单）
+// ===========================================================================
+
+func TestLintInjections_NoWhitelist_Rejected(t *testing.T) {
+	// Guard 存在 + body 有注入 + 无 allowed-tools → Load 应失败
+	home := tmpDir(t)
+	writeFile(t, filepath.Join(home, ".claude", "skills", "test", "SKILL.md"), `---
+name: test
+---
+!`+"`echo hello`"+`
+`)
+	guard := permission.NewGuard()
+	l := newTestLoaderWithGuard(home, home, guard)
+	_, err := l.Load("test", "")
+	if err == nil {
+		t.Fatal("expected Load to fail: skill has injection but no allowed-tools whitelist")
+	}
+	if !strings.Contains(err.Error(), "no allowed-tools Bash whitelist") {
+		t.Errorf("error should mention missing whitelist, got: %v", err)
+	}
+}
+
+func TestLintInjections_UnmatchedCommand_Rejected(t *testing.T) {
+	// Guard 存在 + body 有注入 + allowed-tools 不覆盖 → Load 应失败
+	home := tmpDir(t)
+	writeFile(t, filepath.Join(home, ".claude", "skills", "test", "SKILL.md"), `---
+name: test
+allowed-tools:
+  - "Bash(echo *)"
+---
+!`+"`date '+%Y-%m-%d'`"+`
+`)
+	guard := permission.NewGuard()
+	l := newTestLoaderWithGuard(home, home, guard)
+	_, err := l.Load("test", "")
+	if err == nil {
+		t.Fatal("expected Load to fail: date command not whitelisted")
+	}
+	if !strings.Contains(err.Error(), "is not covered by allowed-tools") {
+		t.Errorf("error should mention uncovered command, got: %v", err)
+	}
+}
+
+func TestLintInjections_MatchedCommand_Passes(t *testing.T) {
+	// Guard 存在 + body 有注入 + allowed-tools 覆盖 → Load 成功
+	home := tmpDir(t)
+	writeFile(t, filepath.Join(home, ".claude", "skills", "test", "SKILL.md"), `---
+name: test
+allowed-tools:
+  - "Bash(echo *)"
+  - "Bash(date *)"
+---
+!`+"`echo hello`"+`
+`)
+	guard := permission.NewGuard()
+	l := newTestLoaderWithGuard(home, home, guard)
+	loaded, err := l.Load("test", "")
+	if err != nil {
+		t.Fatalf("Load should succeed with matched whitelist, got: %v", err)
+	}
+	if !strings.Contains(loaded.Body, "hello") {
+		t.Errorf("injection not executed: %s", loaded.Body)
+	}
+}
+
+func TestLintInjections_BareBash_AllAllowed(t *testing.T) {
+	// allowed-tools: ["Bash"] 无 pattern → 所有命令放行
+	home := tmpDir(t)
+	writeFile(t, filepath.Join(home, ".claude", "skills", "test", "SKILL.md"), `---
+name: test
+allowed-tools:
+  - "Bash"
+---
+!`+"`echo all-good`"+`
+`)
+	guard := permission.NewGuard()
+	l := newTestLoaderWithGuard(home, home, guard)
+	loaded, err := l.Load("test", "")
+	if err != nil {
+		t.Fatalf("bare Bash should allow all commands, got: %v", err)
+	}
+	if !strings.Contains(loaded.Body, "all-good") {
+		t.Errorf("injection not executed: %s", loaded.Body)
+	}
+}
+
+func TestLintInjections_MultilineWithGuard_ProperWhitelist(t *testing.T) {
+	// Guard 存在 + 多行注入 + 完整白名单 → Load 成功
+	home := tmpDir(t)
+	writeFile(t, filepath.Join(home, ".claude", "skills", "test", "SKILL.md"), "---\nname: test\nallowed-tools:\n  - \"Bash(echo *)\"\n  - \"Bash(uname *)\"\n  - \"Bash(df *)\"\n  - \"Bash(tail *)\"\n---\n```!\necho \"=== info ===\"\nuname -s\ndf -h / | tail -1\n```\n")
+	guard := permission.NewGuard()
+	l := newTestLoaderWithGuard(home, home, guard)
+	loaded, err := l.Load("test", "")
+	if err != nil {
+		t.Fatalf("multiline with full whitelist should pass lint, got: %v", err)
+	}
+	if !strings.Contains(loaded.Body, "=== info ===") {
+		t.Errorf("multiline injection not executed: %s", loaded.Body)
+	}
+}
+
+func TestLintInjections_MultilinePartialWhitelist_Rejected(t *testing.T) {
+	// Guard 存在 + 多行注入 + 白名单只覆盖部分命令 → Load 应失败
+	home := tmpDir(t)
+	writeFile(t, filepath.Join(home, ".claude", "skills", "test", "SKILL.md"), "---\nname: test\nallowed-tools:\n  - \"Bash(echo *)\"\n---\n```!\necho hello\nuname -s\n```\n")
+	guard := permission.NewGuard()
+	l := newTestLoaderWithGuard(home, home, guard)
+	_, err := l.Load("test", "")
+	if err == nil {
+		t.Fatal("expected Load to fail: uname not whitelisted")
+	}
+	if !strings.Contains(err.Error(), "uname") {
+		t.Errorf("error should mention uname command, got: %v", err)
+	}
+}
+
+func TestLintInjections_NoGuard_SkipsLint(t *testing.T) {
+	// Guard 为 nil 时 lint 跳过 → 注入正常执行（测试/开发模式）
+	home := tmpDir(t)
+	writeFile(t, filepath.Join(home, ".claude", "skills", "test", "SKILL.md"), `---
+name: test
+---
+!`+"`echo no-guard-ok`"+`
+`)
+	l := newTestLoader(home, home) // nil guard
+	loaded, err := l.Load("test", "")
+	if err != nil {
+		t.Fatalf("no-guard loader should skip lint, got: %v", err)
+	}
+	if !strings.Contains(loaded.Body, "no-guard-ok") {
+		t.Errorf("injection should execute when guard is nil: %s", loaded.Body)
 	}
 }
 
@@ -1117,5 +1350,674 @@ body
 	}
 	if !found {
 		t.Error("new skill not found after reload")
+	}
+}
+
+// ===========================================================================
+// allowed-tools / 白名单 / 权限测试
+// ===========================================================================
+
+func TestParseAllowedBashPatterns_BashWithPattern(t *testing.T) {
+	patterns := permission.ParseAllowedBashPatterns([]string{"Bash(git *)", "Bash(npm *)"})
+	if len(patterns) != 2 {
+		t.Fatalf("expected 2 patterns, got %d: %v", len(patterns), patterns)
+	}
+	if patterns[0] != "git *" {
+		t.Errorf("patterns[0] = %q, want %q", patterns[0], "git *")
+	}
+	if patterns[1] != "npm *" {
+		t.Errorf("patterns[1] = %q, want %q", patterns[1], "npm *")
+	}
+}
+
+func TestParseAllowedBashPatterns_BashBare(t *testing.T) {
+	patterns := permission.ParseAllowedBashPatterns([]string{"Bash"})
+	if len(patterns) != 1 || patterns[0] != "*" {
+		t.Errorf("expected [*], got %v", patterns)
+	}
+}
+
+func TestParseAllowedBashPatterns_Mixed(t *testing.T) {
+	patterns := permission.ParseAllowedBashPatterns([]string{"Bash(git *)", "Read", "Bash", "Write"})
+	if len(patterns) != 2 {
+		t.Fatalf("expected 2 bash patterns, got %d: %v", len(patterns), patterns)
+	}
+	if patterns[0] != "git *" {
+		t.Errorf("patterns[0] = %q", patterns[0])
+	}
+	if patterns[1] != "*" {
+		t.Errorf("patterns[1] = %q", patterns[1])
+	}
+}
+
+func TestParseAllowedBashPatterns_Empty(t *testing.T) {
+	patterns := permission.ParseAllowedBashPatterns(nil)
+	if len(patterns) != 0 {
+		t.Errorf("expected 0, got %d", len(patterns))
+	}
+	patterns = permission.ParseAllowedBashPatterns([]string{"Read", "Write"})
+	if len(patterns) != 0 {
+		t.Errorf("expected 0, got %d", len(patterns))
+	}
+}
+
+func TestMatchBashPattern_Exact(t *testing.T) {
+	if !permission.MatchBashPattern("git status", "git status") {
+		t.Error("exact match should pass")
+	}
+	if permission.MatchBashPattern("git status", "git push") {
+		t.Error("different exact command should not match")
+	}
+}
+
+func TestMatchBashPattern_PrefixWildcard(t *testing.T) {
+	if !permission.MatchBashPattern("git status", "git *") {
+		t.Error("git * should match git status")
+	}
+	if !permission.MatchBashPattern("git push origin main", "git *") {
+		t.Error("git * should match git push origin main")
+	}
+	if permission.MatchBashPattern("npm test", "git *") {
+		t.Error("git * should not match npm test")
+	}
+}
+
+func TestMatchBashPattern_WildcardAll(t *testing.T) {
+	if !permission.MatchBashPattern("any command", "*") {
+		t.Error("* should match any command")
+	}
+	if !permission.MatchBashPattern("any command", "") {
+		t.Error("empty should match any command")
+	}
+}
+
+func TestMatchBashPattern_SuffixWildcard(t *testing.T) {
+	// *xxx 后缀匹配：命令以 pattern 去掉前导 * 的字符串结尾
+	if !permission.MatchBashPattern("~/.claude/skills/gstack/bin/gstack-update-check", "*gstack-update-check") {
+		t.Error("*gstack-update-check should match path ending with gstack-update-check")
+	}
+	if !permission.MatchBashPattern("/usr/local/bin/mycheck", "*mycheck") {
+		t.Error("*mycheck should match path ending with mycheck")
+	}
+	if !permission.MatchBashPattern("mycheck", "*mycheck") {
+		t.Error("*mycheck should match exact 'mycheck'")
+	}
+	if permission.MatchBashPattern("/path/to/other", "*mycheck") {
+		t.Error("*mycheck should not match path ending with other")
+	}
+	// 后缀匹配不跨越路径分隔符的情况（仍然匹配，因为是纯字符串后缀）
+	if !permission.MatchBashPattern("/foo/bar", "*bar") {
+		t.Error("*bar should match /foo/bar")
+	}
+}
+
+func TestMatchBashPattern_ContainsWildcard(t *testing.T) {
+	if !permission.MatchBashPattern("~/.claude/skills/gstack/bin/gstack-update-check", "*gstack*") {
+		t.Error("*gstack* should match path containing gstack")
+	}
+	if !permission.MatchBashPattern("/usr/local/bin/myapp", "*myapp*") {
+		t.Error("*myapp* should match path containing myapp")
+	}
+	if permission.MatchBashPattern("/usr/local/bin/other", "*myapp*") {
+		t.Error("*myapp* should not match path without myapp")
+	}
+	// 包含匹配也可用于中间片段
+	if !permission.MatchBashPattern("npm run test -- --coverage", "*run test*") {
+		t.Error("*run test* should match npm run test command")
+	}
+}
+
+func TestMatchBashPattern_PrefixFallbackContains(t *testing.T) {
+	// 核心场景: "gstack-update-check *" 应能匹配完整路径
+	if !permission.MatchBashPattern("~/.claude/skills/gstack/bin/gstack-update-check", "gstack-update-check *") {
+		t.Error("prefix pattern gstack-update-check * should fallback-contains-match the full path")
+	}
+	// 前缀匹配仍然优先
+	if !permission.MatchBashPattern("git status", "git *") {
+		t.Error("git * should prefix-match git status")
+	}
+	// 前缀失败但包含成功
+	if !permission.MatchBashPattern("sudo git status", "git *") {
+		t.Error("git * should fallback-contains-match sudo git status")
+	}
+	// 精确不匹配且不包含
+	if permission.MatchBashPattern("npm test", "git *") {
+		t.Error("git * should not match npm test")
+	}
+}
+
+func TestMatchBashPattern_EdgeCases(t *testing.T) {
+	// 前导空格
+	if !permission.MatchBashPattern("  git status", "git *") {
+		t.Error("leading spaces should still match")
+	}
+	// 空命令
+	if !permission.MatchBashPattern("", "*") {
+		t.Error("empty command with * should match")
+	}
+}
+
+func TestIsShellAllowed(t *testing.T) {
+	// isShellAllowed 已归一化到 permission.MatchBashPattern + Guard.shellSafetyCheck，
+	// 此处直接测试 pattern 匹配逻辑（与 Guard 中 shellSafetyCheck 使用的同一函数）。
+	patterns := []string{"git *", "go test"}
+
+	tests := []struct {
+		cmd     string
+		allowed bool
+	}{
+		{"git status", true},
+		{"git push origin main", true},
+		{"go test", true},
+		{"go test ./...", false}, // 精确匹配 go test，不匹配 go test ./...
+		{"npm install", false},
+	}
+	for _, tt := range tests {
+		got := false
+		for _, p := range patterns {
+			if permission.MatchBashPattern(tt.cmd, p) {
+				got = true
+				break
+			}
+		}
+		if got != tt.allowed {
+			t.Errorf("MatchBashPattern(%q) = %v, want %v", tt.cmd, got, tt.allowed)
+		}
+	}
+
+	// * 兜底放行
+	if !permission.MatchBashPattern("rm -rf /", "*") {
+		t.Error("* should allow everything")
+	}
+	if !permission.MatchBashPattern("any command", "*") {
+		t.Error("* should allow everything")
+	}
+}
+
+// ===========================================================================
+// 条件 skill (paths) 测试
+// ===========================================================================
+
+func TestIsConditional_True(t *testing.T) {
+	dir := tmpDir(t)
+	skillDir := filepath.Join(dir, ".claude", "skills", "react-expert")
+	writeFile(t, filepath.Join(skillDir, "SKILL.md"), `---
+description: React expert
+paths:
+  - "**/*.tsx"
+  - "**/*.ts"
+---
+body
+`)
+	l := newTestLoader(dir, dir)
+	if !l.isConditional(filepath.Join(skillDir, "SKILL.md")) {
+		t.Error("expected conditional skill with paths")
+	}
+}
+
+func TestIsConditional_False(t *testing.T) {
+	dir := tmpDir(t)
+	skillDir := filepath.Join(dir, ".claude", "skills", "normal-skill")
+	writeFile(t, filepath.Join(skillDir, "SKILL.md"), `---
+description: Normal skill
+---
+body
+`)
+	l := newTestLoader(dir, dir)
+	if l.isConditional(filepath.Join(skillDir, "SKILL.md")) {
+		t.Error("skill without paths should not be conditional")
+	}
+}
+
+func TestIsConditional_EmptyPaths(t *testing.T) {
+	dir := tmpDir(t)
+	skillDir := filepath.Join(dir, ".claude", "skills", "empty-paths")
+	writeFile(t, filepath.Join(skillDir, "SKILL.md"), `---
+description: Has empty paths
+paths: []
+---
+body
+`)
+	l := newTestLoader(dir, dir)
+	// empty list = 无有效 paths
+	if l.isConditional(filepath.Join(skillDir, "SKILL.md")) {
+		t.Error("skill with empty paths should not be conditional")
+	}
+}
+
+func TestStoreConditional(t *testing.T) {
+	dir := tmpDir(t)
+	skillDir := filepath.Join(dir, ".claude", "skills", "cond-skill")
+	writeFile(t, filepath.Join(skillDir, "SKILL.md"), `---
+description: Cond
+paths:
+  - "*.go"
+---
+body
+`)
+	l := newTestLoader(dir, dir)
+	l.storeConditional(filepath.Join(skillDir, "SKILL.md"), "cond-skill")
+
+	if _, exists := l.conditionalSkills["cond-skill"]; !exists {
+		t.Fatal("expected conditional skill to be stored")
+	}
+	if l.conditionalSkills["cond-skill"].DirPath != filepath.Join(skillDir, "SKILL.md") {
+		t.Error("expected filePath in DirPath field")
+	}
+}
+
+func TestStoreConditional_AlreadyActivated(t *testing.T) {
+	dir := tmpDir(t)
+	skillDir := filepath.Join(dir, ".claude", "skills", "cond-skill")
+	writeFile(t, filepath.Join(skillDir, "SKILL.md"), `---
+description: Cond
+paths:
+  - "*.go"
+---
+body
+`)
+	l := newTestLoader(dir, dir)
+	l.activatedConditionalNames["cond-skill"] = true
+	l.storeConditional(filepath.Join(skillDir, "SKILL.md"), "cond-skill")
+
+	if _, exists := l.conditionalSkills["cond-skill"]; exists {
+		t.Error("already-activated skill should not be stored")
+	}
+}
+
+func TestActivateForPaths_Matching(t *testing.T) {
+	dir := tmpDir(t)
+	skillDir := filepath.Join(dir, ".claude", "skills", "react-expert")
+	writeFile(t, filepath.Join(skillDir, "SKILL.md"), `---
+description: React
+paths:
+  - "**/*.tsx"
+---
+body
+`)
+	l := newTestLoader(dir, dir)
+	l.storeConditional(filepath.Join(skillDir, "SKILL.md"), "react-expert")
+
+	activated := l.ActivateForPaths([]string{"src/App.tsx"})
+	if len(activated) != 1 || activated[0] != "react-expert" {
+		t.Fatalf("expected react-expert activated, got %v", activated)
+	}
+	if !l.activatedConditionalNames["react-expert"] {
+		t.Error("expected activatedConditionalNames to include react-expert")
+	}
+	if _, exists := l.conditionalSkills["react-expert"]; exists {
+		t.Error("activated skill should be removed from conditionalSkills")
+	}
+}
+
+func TestActivateForPaths_NotMatching(t *testing.T) {
+	dir := tmpDir(t)
+	skillDir := filepath.Join(dir, ".claude", "skills", "react-expert")
+	writeFile(t, filepath.Join(skillDir, "SKILL.md"), `---
+description: React
+paths:
+  - "**/*.tsx"
+---
+body
+`)
+	l := newTestLoader(dir, dir)
+	l.storeConditional(filepath.Join(skillDir, "SKILL.md"), "react-expert")
+
+	activated := l.ActivateForPaths([]string{"README.md"})
+	if len(activated) != 0 {
+		t.Errorf("expected no activation, got %v", activated)
+	}
+	if l.activatedConditionalNames["react-expert"] {
+		t.Error("unmatched skill should not be activated")
+	}
+}
+
+func TestActivateForPaths_EmptyInputs(t *testing.T) {
+	l := newTestLoader("/tmp", "/tmp")
+	// No conditional skills → empty
+	if act := l.ActivateForPaths([]string{"foo.go"}); len(act) != 0 {
+		t.Error("expected no activation with empty conditional map")
+	}
+	// Empty file paths → skip
+	l.conditionalSkills["test"] = &LoadedSkill{DirPath: "/nonexistent"}
+	if act := l.ActivateForPaths(nil); len(act) != 0 {
+		t.Error("expected no activation with nil filePaths")
+	}
+}
+
+func TestMatchAnyPath_DirectMatch(t *testing.T) {
+	if !matchAnyPath([]string{"src/App.tsx"}, []string{"**/*.tsx"}) {
+		t.Error("glob should match")
+	}
+}
+
+func TestMatchAnyPath_BaseMatch(t *testing.T) {
+	if !matchAnyPath([]string{"/abs/path/App.tsx"}, []string{"*.tsx"}) {
+		t.Error("base name match should work")
+	}
+}
+
+func TestMatchAnyPath_SuffixMatch(t *testing.T) {
+	// pattern "src/**" matches any suffix starting with "src/"
+	if !matchAnyPath([]string{"deeply/nested/src/foo"}, []string{"src/**"}) {
+		t.Error("suffix prefix match should work for src/foo")
+	}
+}
+
+func TestMatchAnyPath_NoMatch(t *testing.T) {
+	if matchAnyPath([]string{"README.md"}, []string{"*.tsx", "*.ts"}) {
+		t.Error("should not match unrelated patterns")
+	}
+}
+
+func TestMatchAnyPath_MultiplePatterns(t *testing.T) {
+	patterns := []string{"**/*.tsx", "**/*.ts", "**/*.jsx", "**/*.js"}
+	if !matchAnyPath([]string{"src/App.tsx"}, patterns) {
+		t.Error("first pattern should match")
+	}
+	if !matchAnyPath([]string{"lib/utils.js"}, patterns) {
+		t.Error("last pattern should match")
+	}
+}
+
+// ===========================================================================
+// Frontmatter Paths 解析测试
+// ===========================================================================
+
+func TestFrontmatter_PathsField(t *testing.T) {
+	dir := tmpDir(t)
+	skillFile := filepath.Join(dir, "SKILL.md")
+	writeFile(t, skillFile, `---
+description: Conditional
+paths:
+  - "**/*.go"
+  - "src/**"
+---
+body
+`)
+	fm, _, _, _, err := parseSKILLmd(skillFile, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(fm.Paths) != 2 {
+		t.Fatalf("expected 2 paths, got %d", len(fm.Paths))
+	}
+	if fm.Paths[0] != "**/*.go" || fm.Paths[1] != "src/**" {
+		t.Errorf("paths not parsed correctly: %v", fm.Paths)
+	}
+}
+
+// ===========================================================================
+// List 排除条件 skill 测试
+// ===========================================================================
+
+func TestList_ExcludesConditionalSkills(t *testing.T) {
+	home := tmpDir(t)
+	cwd := tmpDir(t)
+	l := newTestLoader(home, cwd)
+
+	// 无条件 skill
+	writeFile(t, filepath.Join(home, ".claude", "skills", "normal", "SKILL.md"), `---
+description: Normal skill
+---
+body
+`)
+	// 条件 skill（有 paths）
+	writeFile(t, filepath.Join(home, ".claude", "skills", "react", "SKILL.md"), `---
+description: React
+paths:
+  - "*.tsx"
+---
+body
+`)
+
+	infos, err := l.List()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	normalFound := false
+	reactFound := false
+	for _, info := range infos {
+		if info.Name == "normal" {
+			normalFound = true
+		}
+		if info.Name == "react" {
+			reactFound = true
+		}
+	}
+	if !normalFound {
+		t.Error("normal skill should appear in List")
+	}
+	if reactFound {
+		t.Error("conditional skill should NOT appear in List before activation")
+	}
+
+	// 验证 conditional skill 被存储
+	if _, exists := l.conditionalSkills["react"]; !exists {
+		t.Error("conditional skill should be stored internally")
+	}
+}
+
+func TestList_IncludesActivatedConditionalSkills(t *testing.T) {
+	home := tmpDir(t)
+	cwd := tmpDir(t)
+	l := newTestLoader(home, cwd)
+
+	writeFile(t, filepath.Join(home, ".claude", "skills", "react", "SKILL.md"), `---
+description: React
+paths:
+  - "*.tsx"
+---
+body
+`)
+
+	// 第一次 List：条件 skill 被存储但不出现
+	infos, _ := l.List()
+	for _, info := range infos {
+		if info.Name == "react" {
+			t.Fatal("conditional skill should not appear initially")
+		}
+	}
+
+	// 手动标记已激活
+	l.activatedConditionalNames["react"] = true
+	delete(l.conditionalSkills, "react")
+
+	// Reload 后应出现
+	infos, _ = l.Reload()
+	found := false
+	for _, info := range infos {
+		if info.Name == "react" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("activated conditional skill should appear after Reload")
+	}
+}
+
+// ===========================================================================
+// Guard 集成测试（runCommand 权限路径）
+// ===========================================================================
+
+type testGuard struct {
+	decision      permission.Decision
+	reason        string
+	skillPatterns []string
+}
+
+func (g *testGuard) Check(_ context.Context, toolName string, input json.RawMessage) permission.DecisionResult {
+	// skill 白名单优先：匹配则直接放行（模拟 GuardImpl.shellSafetyCheck）
+	if toolName == "bash" && len(g.skillPatterns) > 0 {
+		var params struct {
+			Command string `json:"command"`
+		}
+		if json.Unmarshal(input, &params) == nil {
+			for _, p := range g.skillPatterns {
+				if permission.MatchBashPattern(params.Command, p) {
+					return permission.DecisionResult{Decision: permission.DecisionAllow, Reason: permission.ReasonBuiltinAllow, Message: "skill whitelist"}
+				}
+			}
+		}
+	}
+	return permission.DecisionResult{
+		Decision: g.decision,
+		Message:  g.reason,
+	}
+}
+
+func (g *testGuard) SetSkillBashWhitelist(patterns []string) {
+	g.skillPatterns = patterns
+}
+
+func (g *testGuard) ClearSkillBashWhitelist() {
+	g.skillPatterns = nil
+}
+
+func (g *testGuard) AddRule(_ permission.Rule, _ permission.RuleScope) error  { return nil }
+func (g *testGuard) RemoveRule(_ permission.Rule, _ permission.RuleScope) error { return nil }
+func (g *testGuard) ListRules() []permission.RuleEntry                           { return nil }
+func (g *testGuard) PersistRule(_ permission.Rule) error                         { return nil }
+func (g *testGuard) SessionAllow(_ string, _ json.RawMessage)                    {}
+func (g *testGuard) SessionDeny(_ string, _ json.RawMessage)                     {}
+func (g *testGuard) ClearSession()                                               {}
+func (g *testGuard) SessionMemoryLen() int                                       { return 0 }
+
+func newTestLoaderWithGuard(homeDir, cwd string, guard permission.Guard) *Loader {
+	return NewLoader(cwd, homeDir, "test-session-123", "medium", guard)
+}
+
+func TestRunCommand_GuardDeny(t *testing.T) {
+	g := &testGuard{decision: permission.DecisionDeny, reason: "not allowed"}
+	l := newTestLoaderWithGuard("/tmp", "/tmp", g)
+	output := l.runCommand("echo hello", "/tmp")
+	if !strings.Contains(output, "skill command denied") {
+		t.Errorf("expected deny message, got: %q", output)
+	}
+	if !strings.Contains(output, "not allowed") {
+		t.Errorf("expected reason in deny message, got: %q", output)
+	}
+}
+
+func TestRunCommand_GuardAsk_Denied(t *testing.T) {
+	g := &testGuard{decision: permission.DecisionAsk, reason: ""}
+	l := newTestLoaderWithGuard("/tmp", "/tmp", g)
+	output := l.runCommand("echo hello", "/tmp")
+	if !strings.Contains(output, "skill command denied") {
+		t.Errorf("expected deny for ask decision, got: %q", output)
+	}
+}
+
+func TestRunCommand_GuardAllow_Executes(t *testing.T) {
+	g := &testGuard{decision: permission.DecisionAllow}
+	l := newTestLoaderWithGuard("/tmp", "/tmp", g)
+	output := l.runCommand("echo success", "/tmp")
+	if !strings.Contains(output, "success") {
+		t.Errorf("expected command output, got: %q", output)
+	}
+}
+
+func TestRunCommand_NoGuard_Executes(t *testing.T) {
+	l := newTestLoader("/tmp", "/tmp")
+	output := l.runCommand("echo no-guard", "/tmp")
+	if !strings.Contains(output, "no-guard") {
+		t.Errorf("expected command output without guard, got: %q", output)
+	}
+}
+
+func TestRunCommand_WhitelistBypassGuard(t *testing.T) {
+	// 白名单命令即使 Guard Deny 也应放行（通过 SetSkillBashWhitelist 注册）
+	g := &testGuard{decision: permission.DecisionDeny, reason: "blocked"}
+	l := newTestLoaderWithGuard("/tmp", "/tmp", g)
+	l.setGuardSkillWhitelist([]string{"echo *"})
+	output := l.runCommand("echo whitelisted", "/tmp")
+	l.clearGuardSkillWhitelist()
+	if !strings.Contains(output, "whitelisted") {
+		t.Errorf("whitelisted command should bypass guard, got: %q", output)
+	}
+}
+
+func TestRunCommand_GuardNil_Executes(t *testing.T) {
+	// nil guard 应直接执行
+	l := NewLoader("/tmp", "/tmp", "s", "medium", nil)
+	output := l.runCommand("echo nil-guard", "/tmp")
+	if !strings.Contains(output, "nil-guard") {
+		t.Errorf("expected output with nil guard, got: %q", output)
+	}
+}
+
+// ===========================================================================
+// scanCommandsDir 条件 command 测试
+// ===========================================================================
+
+func TestScanCommandsDir_Conditional(t *testing.T) {
+	home := tmpDir(t)
+	cmdDir := filepath.Join(home, ".claude", "commands")
+	writeFile(t, filepath.Join(cmdDir, "react-expert.md"), `---
+description: React
+paths:
+  - "*.tsx"
+---
+body
+`)
+	l := newTestLoader(home, home)
+	infos := l.scanCommandsDir(cmdDir, 0, make(map[string]bool))
+	if len(infos) != 0 {
+		t.Errorf("conditional command should not appear: got %d infos", len(infos))
+	}
+	if _, exists := l.conditionalSkills["react-expert"]; !exists {
+		t.Error("conditional command should be stored")
+	}
+}
+
+func TestScanCommandsDir_ActivatedConditional(t *testing.T) {
+	home := tmpDir(t)
+	cmdDir := filepath.Join(home, ".claude", "commands")
+	writeFile(t, filepath.Join(cmdDir, "react-expert.md"), `---
+description: React
+paths:
+  - "*.tsx"
+---
+body
+`)
+	l := newTestLoader(home, home)
+	l.activatedConditionalNames["react-expert"] = true
+
+	infos := l.scanCommandsDir(cmdDir, 0, make(map[string]bool))
+	found := false
+	for _, info := range infos {
+		if info.Name == "react-expert" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("activated conditional command should appear")
+	}
+}
+
+// ===========================================================================
+// isConditional 边界
+// ===========================================================================
+
+func TestIsConditional_FileNotFound(t *testing.T) {
+	l := newTestLoader("/tmp", "/tmp")
+	if l.isConditional("/path/does/not/exist/SKILL.md") {
+		t.Error("non-existent file should not be conditional")
+	}
+}
+
+func TestIsConditional_MalformedFrontmatter(t *testing.T) {
+	dir := tmpDir(t)
+	skillFile := filepath.Join(dir, "SKILL.md")
+	writeFile(t, skillFile, `---
+description: [unclosed
+---
+body
+`)
+	l := newTestLoader(dir, dir)
+	if l.isConditional(skillFile) {
+		t.Error("malformed frontmatter should not be conditional")
 	}
 }

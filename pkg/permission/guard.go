@@ -17,10 +17,17 @@ import (
 // GuardOption 是 NewGuard 的函数式选项。
 type GuardOption func(*GuardImpl)
 
-// WithWorkingDirs 设置允许的工作目录列表。
+// WithWorkingDirs 设置允许的工作目录列表（覆盖默认值）。
 func WithWorkingDirs(dirs ...string) GuardOption {
 	return func(g *GuardImpl) {
 		g.workingDirs = dirs
+	}
+}
+
+// WithExtraWorkingDirs 追加额外允许的工作目录（保留默认值 cwd + /tmp + os.TempDir）。
+func WithExtraWorkingDirs(dirs ...string) GuardOption {
+	return func(g *GuardImpl) {
+		g.workingDirs = append(g.workingDirs, dirs...)
 	}
 }
 
@@ -68,6 +75,22 @@ type GuardImpl struct {
 	toolRiskClass     map[string]ToolRiskClass
 	builtinAllow      map[string]bool   // 内置白名单工具，Check() 第 0 步直接放行
 	projectConfigPath string            // settings.json 路径（落盘用）
+
+	// skillBashPatterns 当前正在加载的 skill 的 Bash 白名单（来自 allowed-tools）。
+	// 在 shellSafetyCheck 中，白名单命令优先放行，不触发高危拦截。
+	// 由 skill.Loader 通过 SetSkillBashWhitelist / ClearSkillBashWhitelist 管理。
+	skillBashPatterns []string
+}
+
+// SetSkillBashWhitelist 设置当前 skill 的 Bash 白名单模式。
+// 白名单命令会绕过 shellSafetyCheck 的高危拦截。
+func (g *GuardImpl) SetSkillBashWhitelist(patterns []string) {
+	g.skillBashPatterns = patterns
+}
+
+// ClearSkillBashWhitelist 清空 skill 白名单。
+func (g *GuardImpl) ClearSkillBashWhitelist() {
+	g.skillBashPatterns = nil
 }
 
 // NewGuard 创建一个新的 GuardImpl。
@@ -91,11 +114,12 @@ func NewGuard(opts ...GuardOption) *GuardImpl {
 	g.toolRiskClass["web_fetch"] = RiskClassRead
 	g.toolRiskClass["write_file"] = RiskClassWrite
 	g.toolRiskClass["edit_file"] = RiskClassWrite
-	g.toolRiskClass["shell"] = RiskClassExecute
+	g.toolRiskClass["bash"] = RiskClassExecute
 
 	// 内置白名单：无需权限检查，直接放行
 	g.builtinAllow = map[string]bool{
 		"ask_user_question": true,
+		"skill":             true, // 用户显式安装/调用的 skill，不受权限拦截
 	}
 
 	// 默认工作目录：项目根目录 + /tmp + 系统临时目录
@@ -118,11 +142,13 @@ func NewGuard(opts ...GuardOption) *GuardImpl {
 
 // Check 对工具调用执行权限检查，返回决策结果。
 //
-// 7 步检查流程（按顺序短路）：
+// 8 步检查流程（按顺序短路）：
 //
+//  0. 内置白名单 → ALLOW
 //  1. deny 规则（工具级 + 内容级）→ DENY
 //  2. ask 规则（工具级 + 内容级）→ ASK
-//  3. 工具特有安全检查 → DENY（硬拦截，不允许任何规则覆盖）
+//  2.5 Skill Bash 白名单（shell 工具且命令匹配）→ ALLOW（绕过 Step 3 高危拦截）
+//  3. 工具特有安全检查 → DENY（硬拦截，不允许规则覆盖）
 //  4. allow 规则（工具级 + 内容级）→ ALLOW
 //  5. Session 记忆 → ALLOW/DENY
 //  6. Bypass 模式 → ALLOW
@@ -147,6 +173,28 @@ func (g *GuardImpl) Check(ctx context.Context, toolName string, input json.RawMe
 	// Step 2: ask 规则检查
 	if result, found := g.ruleEngine.CheckAsk(toolName, input); found {
 		return result
+	}
+
+	// Step 2.5: Skill Bash 白名单 — 在安全检查之前放行
+	// skill 的 allowed-tools 声明了该 skill 需要的命令，
+	// 白名单命令绕过 Step 3 的高危硬拦截，但不绕过 deny 规则（Step 1）。
+	// 白名单由 Loader 在加载 skill 时注册，持续到下一个 skill 加载。
+	if toolName == "bash" && len(g.skillBashPatterns) > 0 {
+		var params struct {
+			Command string `json:"command"`
+		}
+		if json.Unmarshal(input, &params) == nil {
+			for _, pattern := range g.skillBashPatterns {
+				if MatchBashPattern(params.Command, pattern) {
+					g.denialTracker.RecordAllow()
+					return DecisionResult{
+						Decision: DecisionAllow,
+						Reason:   ReasonBuiltinAllow,
+						Message:  "skill bash whitelist",
+					}
+				}
+			}
+		}
 	}
 
 	// Step 3: 工具特有安全检查（硬拦截，在 allow 规则之前执行）
@@ -217,12 +265,24 @@ func (g *GuardImpl) toolSafetyCheck(toolName string, input json.RawMessage) Deci
 
 // shellSafetyCheck 对 shell 工具的命令执行安全检查。
 // 仅返回 deny（高危命令硬拦截），不返回 ask。
+// Skill 白名单中的命令优先放行。
 func (g *GuardImpl) shellSafetyCheck(input json.RawMessage) DecisionResult {
 	var params struct {
 		Command string `json:"command"`
 	}
 	if err := json.Unmarshal(input, &params); err != nil {
 		return DecisionResult{}
+	}
+
+	// Skill Bash 白名单优先：白名单命令直接放行，不触发高危拦截
+	for _, pattern := range g.skillBashPatterns {
+		if MatchBashPattern(params.Command, pattern) {
+			return DecisionResult{
+				Decision: DecisionAllow,
+				Reason:   ReasonBuiltinAllow,
+				Message:  "skill bash whitelist",
+			}
+		}
 	}
 
 	cmdCheck := CommandSafetyCheck(params.Command)
@@ -384,7 +444,7 @@ func (g *GuardImpl) SessionMemoryLen() int {
 // 文件工具 → 归一化为绝对路径，确保相对路径和绝对路径的 session 记忆互通。
 func ExtractPattern(toolName string, input json.RawMessage) string {
 	switch toolName {
-	case "shell":
+	case "bash":
 		var params struct {
 			Command string `json:"command"`
 		}

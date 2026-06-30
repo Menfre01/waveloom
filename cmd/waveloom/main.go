@@ -88,17 +88,18 @@ func main() {
 	// 5. 初始化 LSP Manager（全局，供 LSP 工具使用）
 	lspProvider := initLSPManager(globalPath, projectPath, verboseLog)
 
+	// 5.3 加载 Guard（权限系统，合并全局和项目权限规则）
+	// 必须在 skill loader 之前创建，skill 的 allowed-tools 白名单需注册到 Guard。
+	guard := createGuard(globalPath, projectPath)
+
 	// 5.5 获取 CWD、homeDir、构造 skill loader
 	cwd, _ := os.Getwd()
 	homeDir, _ := os.UserHomeDir()
-	skillLoader := skill.NewLoader(cwd, homeDir, "", "medium")
+	skillLoader := skill.NewLoader(cwd, homeDir, "", "medium", guard)
 
 	// 6. 初始化 Tool Registry
 	registry := tool.NewRegistry()
 	registerBuiltinTools(registry, lspProvider, skillLoader)
-
-	// 7. 加载 Guard（权限系统，合并全局和项目权限规则）
-	guard := createGuard(globalPath, projectPath)
 
 	// 9. 创建 @ 引用展开器（用于 AGENTS.md 和用户输入中的 @ 引用展开）
 	expander := reference.New(guard)
@@ -204,6 +205,13 @@ func main() {
 			sessionPath := filepath.Join(sessionDir, ctxpkg.NewSessionID()+".json")
 			ctxMgr.SetSessionPath(sessionPath)
 		}
+	}
+
+	// REGRESSION: skill loader 在 session 确定前创建，SessionID 为空，导致 skill
+	// 变量 ${CLAUDE_SESSION_ID} / ${WAVELOOM_SESSION_ID} 替换为空字符串。
+	// 无法单测：skill loader 创建和 session 确定均在 main 流程中，受 flag 解析耦合。
+	if sid := ctxMgr.SessionID(); sid != "" {
+		skillLoader.SessionID = sid
 	}
 
 	// 15. 分支：无 prompt → 交互式 TUI，有 prompt → 单次执行
@@ -371,6 +379,15 @@ func createGuard(globalPath, projectPath string) permission.Guard {
 		fmt.Fprintf(os.Stderr, "📋 已加载 %d 条权限规则\n", len(rules))
 		opts = append(opts, permission.WithRules(rules))
 	}
+
+	// 将用户级 skill 目录加入工作目录白名单，允许 write_file/edit_file 直接操作
+	if homeDir, err := os.UserHomeDir(); err == nil {
+		opts = append(opts, permission.WithExtraWorkingDirs(
+			filepath.Join(homeDir, ".waveloom"),
+			filepath.Join(homeDir, ".claude"),
+		))
+	}
+
 	return permission.NewGuard(opts...)
 }
 
