@@ -1,5 +1,25 @@
 # Changelog
 
+## [v0.1.0-alpha.6] — 2026-06-30
+
+### 新增功能
+- **Skill 系统**：Skill 文件解析（YAML frontmatter）、变量替换（`$ARGUMENTS` / `$0` / `$first`）、`!` 动态命令注入、附属文件支持
+- **Skill 白名单与条件激活**：`allowed-tools` Bash 命令白名单、`paths` 条件激活（gitignore-style glob）、Guard 权限集成
+- **AskUserQuestion 选择题**：LLM 向用户发起单选/多选/Other 自定义输入/拒绝交互，TUI overlay 渲染
+- **edit_file 空白归一化**：匹配唯一时自动修复空白差异，减少 LLM 重试轮次
+- **edit_file 空白符降级**：no_match 诊断增强，宽松空白匹配回退
+
+### 修复
+- `--resume` 恢复时 tool_calls 反序列化丢失 Name/Arguments
+- Session 恢复时空响应防护，增强反序列化完整性校验
+- web_fetch HTML 实体解码、缺失 Content-Type 容错、超时返回部分内容
+- 工具错误态展开/折叠渲染修复，ToolResult 为空时回退展示 ToolError
+- System prompt 与工具描述间的推理空隙消除
+- macOS/Linux 符号链接偏差导致路径误判
+
+### 重构
+- TUI 输入框水平滚动重构为 syncInputVisibleStart
+
 ## [v0.1.0-alpha.5] — 2026-06-29
 
 ### 新增功能
