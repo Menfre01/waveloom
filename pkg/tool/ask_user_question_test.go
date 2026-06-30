@@ -200,7 +200,9 @@ func TestAskUserQuestionSchemaMinItems(t *testing.T) {
 	schema := tool.Schema()
 
 	var s map[string]interface{}
-	json.Unmarshal(schema, &s)
+	if err := json.Unmarshal(schema, &s); err != nil {
+		t.Fatalf("Schema unmarshal error: %v", err)
+	}
 
 	props := s["properties"].(map[string]interface{})
 	questions := props["questions"].(map[string]interface{})
@@ -227,7 +229,9 @@ func TestAskUserQuestionSchemaOptionsBounds(t *testing.T) {
 	schema := tool.Schema()
 
 	var s map[string]interface{}
-	json.Unmarshal(schema, &s)
+	if err := json.Unmarshal(schema, &s); err != nil {
+		t.Fatalf("Schema unmarshal error: %v", err)
+	}
 
 	props := s["properties"].(map[string]interface{})
 	questions := props["questions"].(map[string]interface{})
@@ -250,7 +254,9 @@ func TestAskUserQuestionSchemaMultiSelectDefault(t *testing.T) {
 	schema := tool.Schema()
 
 	var s map[string]interface{}
-	json.Unmarshal(schema, &s)
+	if err := json.Unmarshal(schema, &s); err != nil {
+		t.Fatalf("Schema unmarshal error: %v", err)
+	}
 
 	props := s["properties"].(map[string]interface{})
 	questions := props["questions"].(map[string]interface{})

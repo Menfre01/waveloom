@@ -97,7 +97,9 @@ func TestExecuteAskUserQuestion_MultiSelect(t *testing.T) {
 	var output struct {
 		Answers map[string]string `json:"answers"`
 	}
-	json.Unmarshal([]byte(result.Content), &output)
+	if err := json.Unmarshal([]byte(result.Content), &output); err != nil {
+		t.Fatalf("failed to unmarshal result: %v\nContent: %s", err, result.Content)
+	}
 
 	if output.Answers["Pick toppings?"] != "A, C" {
 		t.Errorf("expected 'A, C', got %q", output.Answers["Pick toppings?"])
@@ -216,10 +218,8 @@ func TestExecuteAskUserQuestion_InvalidJSON(t *testing.T) {
 }
 
 func TestAskUserQuestionEvent_ImplementsTurnEvent(t *testing.T) {
-	var ev TurnEvent = AskUserQuestionEvent{}
-	if ev == nil {
-		t.Error("AskUserQuestionEvent should implement TurnEvent")
-	}
+	// AskUserQuestionEvent is a concrete struct — verifying it satisfies TurnEvent at compile time.
+	var _ TurnEvent = AskUserQuestionEvent{}
 }
 
 func TestQuestionResponseTypes(t *testing.T) {
