@@ -298,6 +298,7 @@ type model struct {
 	guard         permission.Guard
 	expander      *reference.Expander
 	slashRegistry *slashcommand.Registry
+	skillLoader   *skill.Loader
 	cwd           string
 	verboseLog io.Writer // --verbose 日志输出（nil = 不记录）
 	loop       *agentloop.Loop
@@ -1274,8 +1275,6 @@ func (m *model) permListChoice() permission.UserChoice {
 // ---------------------------------------------------------------------------
 
 const otherOptionKey = "___other___"
-
-// overlayInnerWidth 返回覆盖层盒子内部内容可用宽度（与 renderQuestionOverlay / renderPermOverlay 一致）。
 func (m *model) overlayInnerWidth() int {
 	contentWidth := max(m.width-4, 20)
 	boxWidth := contentWidth
@@ -1351,7 +1350,11 @@ func (m *model) buildQuestionForm() {
 			WithShowHelp(false)
 
 		m.questionForm = f
-		m.questionFormInitCmd = f.Init()
+		// 表单在 WindowSizeMsg 之后动态创建，需手动注入尺寸让其计算视口高度
+		m.questionFormInitCmd = tea.Batch(
+			f.Init(),
+			func() tea.Msg { return tea.WindowSizeMsg{Width: m.width, Height: m.height} },
+		)
 	} else {
 		var selected string
 		field := huh.NewSelect[string]().
@@ -1367,7 +1370,10 @@ func (m *model) buildQuestionForm() {
 			WithShowHelp(false)
 
 		m.questionForm = f
-		m.questionFormInitCmd = f.Init()
+		m.questionFormInitCmd = tea.Batch(
+			f.Init(),
+			func() tea.Msg { return tea.WindowSizeMsg{Width: m.width, Height: m.height} },
+		)
 	}
 }
 
@@ -2260,12 +2266,43 @@ func (m *model) handleToolResult(ev agentloop.ToolCallResult) {
 			}
 			p.renderDirty = true
 
+			// 条件 skill 激活：文件操作工具完成后检查路径匹配
+			if m.skillLoader != nil {
+				filePaths := extractToolFilePaths(ev.ToolCallName, p.ToolArgs)
+				if len(filePaths) > 0 {
+					if activated := m.skillLoader.ActivateForPaths(filePaths); len(activated) > 0 {
+						m.paras = append(m.paras, Paragraph{
+							Type:      paraSystem,
+							State:     stateDone,
+							Text:      fmt.Sprintf("Skills activated: %s", strings.Join(activated, ", ")),
+							NotifKind: notifInfo,
+						})
+					}
+				}
+			}
+
 			return
 		}
 	}
 }
 
-// truncateToolResult 将超长工具结果截断到 maxToolResultBytes，末尾追加截断提示。
+// extractToolFilePaths 从已格式化的 ToolArgs 中提取涉及的文件路径。
+// ToolArgs 来自 formatToolArgs，对于文件操作工具直接返回目标路径。
+func extractToolFilePaths(toolName string, toolArgs string) []string {
+	switch toolName {
+	case "read_file", "write_file", "edit_file":
+		if toolArgs != "" && !strings.HasPrefix(toolArgs, "{") {
+			return []string{toolArgs}
+		}
+	case "search_file":
+		// search_file: toolArgs 格式为 "pattern in dir" 或 "dir"
+		if idx := strings.LastIndex(toolArgs, " in "); idx > 0 {
+			return []string{toolArgs[idx+4:]}
+		}
+		return []string{toolArgs}
+	}
+	return nil
+}
 // shortTokens 将 token 数格式化为短格式（≥1000 时用 k 后缀，保留一位小数）。
 func shortTokens(n int) string {
 	if n < 1000 {
@@ -4299,8 +4336,9 @@ func runTUI(llmClient llm.Client, registry tool.Registry, guard permission.Guard
 
 	// 构造 skill loader（用于注册 skill 命令）
 	homeDir, _ := os.UserHomeDir()
-	skillLoader := skill.NewLoader(m.cwd, homeDir, ctxMgr.SessionID(), "medium")
+	skillLoader := skill.NewLoader(m.cwd, homeDir, ctxMgr.SessionID(), "medium", guard)
 	m.slashRegistry = newSlashRegistry(sessionCreator, store, lister, modelName, skillLoader, registry)
+	m.skillLoader = skillLoader
 
 	m.bypassPerm = bypassPerm
 	// 用外部创建的 ContextManager 替换 newTUIModel 内部创建的
@@ -4308,6 +4346,7 @@ func runTUI(llmClient llm.Client, registry tool.Registry, guard permission.Guard
 	// 恢复会话级 HUD 累积值
 	m.hudCacheHit = ctxMgr.Stats().TotalCacheHitTokens
 	m.hudCacheMiss = ctxMgr.Stats().TotalCacheMissTokens
+	m.hudTurns = ctxMgr.Stats().TotalTurns
 	// ctx bar 初始为 0，首个 TurnStats 会用 API 精确值更新
 	m.lastPromptTokens = 0
 
