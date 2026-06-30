@@ -22,16 +22,9 @@ case "$(uname -m)" in
     *)             echo "Unsupported architecture: $(uname -m)" >&2; exit 1 ;;
 esac
 
-# Fetch latest release tag
-LATEST_TAG=$(curl -fsSL "https://api.github.com/repos/${REPO}/releases/latest" | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
-if [ -z "$LATEST_TAG" ]; then
-    echo "Failed to determine latest release. Trying default..." >&2
-    LATEST_TAG="v0.1.0-alpha.6"
-fi
-
 DOWNLOAD_URL="https://github.com/${REPO}/releases/latest/download/${BINARY}_${OS}_${ARCH}.tar.gz"
 
-echo "→ Downloading Waveloom ${LATEST_TAG} (${OS}/${ARCH})..."
+echo "→ Downloading Waveloom (${OS}/${ARCH})..."
 echo "  ${DOWNLOAD_URL}"
 
 # Download and extract
@@ -42,8 +35,9 @@ mv "${TMP_DIR}/${BINARY}" "${INSTALL_DIR}/${BINARY}"
 chmod +x "${INSTALL_DIR}/${BINARY}"
 rm -rf "${TMP_DIR}"
 
+VERSION=$("${INSTALL_DIR}/${BINARY}" --version 2>/dev/null || echo "unknown")
 echo ""
-echo "✓ Waveloom ${LATEST_TAG} installed to ${INSTALL_DIR}/${BINARY}"
+echo "✓ Waveloom ${VERSION} installed to ${INSTALL_DIR}/${BINARY}"
 
 # Check PATH
 if ! echo "${PATH}" | grep -q "${INSTALL_DIR}"; then
