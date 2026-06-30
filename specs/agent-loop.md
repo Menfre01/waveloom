@@ -198,8 +198,8 @@ type Compactor interface {
    - 流中非 cancel 错误 → 回退非流式 SendMessage
    - 流中 ctx.Canceled / DeadlineExceeded → ReasonAborted
 3. 过滤无效 tool_calls（空 ID/Name，未知工具）
-4. 防御空响应（注入占位 "(empty response)"，ConsecutiveEmpty++）
-5. 追加 assistant 消息，TurnCount++
+4. 防御空响应（注入占位 "(empty response)"，ConsecutiveEmpty++；不含 reasoning_content）
+5. 追加 assistant 消息（reasoning_content 仅 tool_calls 场景保留），TurnCount++
 6. 无 tool calls → 有内容 → ReasonCompleted / 空 → 继续或 abort(>3次)
 7. ACT + OBSERVE: 执行工具（并发/串行），追加 tool 消息
 8. 压缩 + 推送 TurnStats（合并 CompactionInfo）
