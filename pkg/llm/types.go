@@ -36,17 +36,21 @@ type ToolCall struct {
 	Arguments string // JSON 编码的调用参数
 }
 
+// openaiToolCall 是 ToolCall 序列化/反序列化的中间结构，
+// 映射 OpenAI 兼容格式 {id, type:"function", function:{name, arguments}}。
+type openaiToolCall struct {
+	ID       string `json:"id"`
+	Type     string `json:"type"`
+	Function struct {
+		Name      string `json:"name"`
+		Arguments string `json:"arguments"`
+	} `json:"function"`
+}
+
 // MarshalJSON 输出 OpenAI 兼容格式 {id, type:"function", function:{name, arguments}}。
 // Index（内部字段，用于流式分片累积）不出现在输出中。
 func (tc ToolCall) MarshalJSON() ([]byte, error) {
-	return json.Marshal(struct {
-		ID       string `json:"id"`
-		Type     string `json:"type"`
-		Function struct {
-			Name      string `json:"name"`
-			Arguments string `json:"arguments"`
-		} `json:"function"`
-	}{
+	return json.Marshal(openaiToolCall{
 		ID:   tc.ID,
 		Type: "function",
 		Function: struct {
@@ -57,6 +61,20 @@ func (tc ToolCall) MarshalJSON() ([]byte, error) {
 			Arguments: tc.Arguments,
 		},
 	})
+}
+
+// UnmarshalJSON 从 OpenAI 兼容格式 {id, type:"function", function:{name, arguments}} 反序列化。
+// Index 不在输入格式中，保持零值。
+func (tc *ToolCall) UnmarshalJSON(data []byte) error {
+	var o openaiToolCall
+	if err := json.Unmarshal(data, &o); err != nil {
+		return err
+	}
+	tc.Index = 0
+	tc.ID = o.ID
+	tc.Name = o.Function.Name
+	tc.Arguments = o.Function.Arguments
+	return nil
 }
 
 // ToolSpec 定义一个可供 LLM 调用的工具。

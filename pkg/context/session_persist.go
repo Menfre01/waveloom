@@ -30,9 +30,10 @@ type sessionFile struct {
 
 // sessionCompaction 是压缩状态的序列化形式。
 type sessionCompaction struct {
-	Decisions []compaction.CompactionDecision `json:"decisions"`
-	Watermark compaction.WatermarkState       `json:"watermark"`
-	Summaries []string                        `json:"summaries,omitempty"`
+	Decisions  []compaction.CompactionDecision `json:"decisions"`
+	Watermark  compaction.WatermarkState       `json:"watermark"`
+	Summaries  []string                        `json:"summaries,omitempty"`
+	TotalTurns int                             `json:"total_turns"`
 }
 
 // sessionStats 是 Stats 的序列化形式。
@@ -85,9 +86,10 @@ func SaveSessionToFile(path string, messages []llm.Message, stats Stats, compDat
 	if compData != nil {
 		decisions := compaction.DecisionSetToList(compData.Decisions)
 		sf.Compaction = &sessionCompaction{
-			Decisions: decisions,
-			Watermark: compData.Watermark,
-			Summaries: compData.Summaries,
+			Decisions:  decisions,
+			Watermark:  compData.Watermark,
+			Summaries:  compData.Summaries,
+			TotalTurns: compData.TotalTurns,
 		}
 	}
 
@@ -133,9 +135,10 @@ func LoadSessionFromFile(path string) ([]llm.Message, Stats, *compaction.Compact
 	if sf.Compaction != nil {
 		decisions := compaction.NewDecisionSetFromList(sf.Compaction.Decisions)
 		compData = &compaction.CompactionData{
-			Decisions: decisions,
-			Watermark: sf.Compaction.Watermark,
-			Summaries: sf.Compaction.Summaries,
+			Decisions:  decisions,
+			Watermark:  sf.Compaction.Watermark,
+			Summaries:  sf.Compaction.Summaries,
+			TotalTurns: sf.Compaction.TotalTurns,
 		}
 	}
 
