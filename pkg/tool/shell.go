@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"runtime"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/Menfre01/waveloom/pkg/pathutil"
@@ -113,51 +114,92 @@ func (t *Shell) Execute(ctx context.Context, p ShellParams) (*ToolResult, error)
 		p.WorkingDir = extractedDir
 	}
 
-	// ── Step 3: 构造并执行命令 ──
+	// ── Step 3: 构造命令 ──
 	shellBin, shellArgs := shellInterpreter()
 	args := append(shellArgs, normalizedCmd)
-	cmd := exec.CommandContext(cmdCtx, shellBin, args...)
+	cmd := exec.Command(shellBin, args...)
 	if p.WorkingDir != "" {
 		cmd.Dir = p.WorkingDir
 	}
 
+	// 设置进程组，取消时能杀死 bash 及其所有子进程。
+	if runtime.GOOS != "windows" {
+		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	}
+
+	// 提前捕获 stdout/stderr，确保进程被杀后仍可读取部分输出。
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	// ── Step 4: 启动命令并监听 context 取消 ──
 	start := time.Now()
-	output, err := cmd.CombinedOutput()
+	if err := cmd.Start(); err != nil {
+		return formatShellError("Command start failed", -1, 0, timeout, err.Error(), true), nil
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		done <- cmd.Wait()
+	}()
+
+	var execErr error
+
+	select {
+	case <-cmdCtx.Done():
+		// Context 取消（用户 Esc 或超时）→ 杀进程组
+		killProcessGroup(cmd)
+		<-done
+		execErr = cmdCtx.Err()
+	case execErr = <-done:
+		// 正常完成
+	}
+
 	duration := time.Since(start)
 
-	// ── Step 4: 格式化输出 ──
+	// 合并输出
+	output := append(stdout.Bytes(), stderr.Bytes()...)
+
+	// ── Step 5: 格式化输出 ──
 	exitCode := -1
-	if err == nil {
+	if execErr == nil {
 		exitCode = 0
-	} else if exitErr, ok := err.(*exec.ExitError); ok {
+	} else if exitErr, ok := execErr.(*exec.ExitError); ok {
 		exitCode = exitErr.ExitCode()
 	}
 
 	var content string
 	var toolErr *ToolError
 
-	if err != nil {
-		if cmdCtx.Err() == context.DeadlineExceeded {
-			partialOutput := truncateOutput(string(output), MaxShellLines)
-			content = formatShellResult("Command timed out", exitCode, duration, timeout, partialOutput, false)
-			toolErr = &ToolError{
-				Class:   ErrorClassRecoverable,
-				Kind:    ErrKindTimeout,
-				Message: fmt.Sprintf("command timed out after %s", formatDuration(timeout)),
-			}
-		} else {
-			stderrOutput := truncateOutput(string(output), MaxShellLines)
-			content = formatShellResult("Command failed", exitCode, duration, timeout, stderrOutput, true)
-			kind := classifyShellError(exitCode, stderrOutput)
-			toolErr = &ToolError{
-				Class:   ErrorClassRecoverable,
-				Kind:    kind,
-				Message: fmt.Sprintf("command exited with code %d", exitCode),
-			}
-		}
-	} else {
+	switch {
+	case execErr == nil:
 		stdoutOutput := truncateOutput(string(output), MaxShellLines)
 		content = formatShellResult("Command succeeded", exitCode, duration, timeout, stdoutOutput, false)
+	case cmdCtx.Err() == context.DeadlineExceeded:
+		partialOutput := truncateOutput(string(output), MaxShellLines)
+		content = formatShellResult("Command timed out", exitCode, duration, timeout, partialOutput, false)
+		toolErr = &ToolError{
+			Class:   ErrorClassRecoverable,
+			Kind:    ErrKindTimeout,
+			Message: fmt.Sprintf("command timed out after %s", formatDuration(timeout)),
+		}
+	case cmdCtx.Err() == context.Canceled:
+		partialOutput := truncateOutput(string(output), MaxShellLines)
+		content = formatShellResult("Command interrupted", exitCode, duration, timeout, partialOutput, false)
+		toolErr = &ToolError{
+			Class:   ErrorClassRecoverable,
+			Kind:    ErrKindTimeout,
+			Message: "command interrupted by user",
+		}
+	default:
+		stderrOutput := truncateOutput(string(output), MaxShellLines)
+		content = formatShellResult("Command failed", exitCode, duration, timeout, stderrOutput, true)
+		kind := classifyShellError(exitCode, stderrOutput)
+		toolErr = &ToolError{
+			Class:   ErrorClassRecoverable,
+			Kind:    kind,
+			Message: fmt.Sprintf("command exited with code %d", exitCode),
+		}
 	}
 
 	return &ToolResult{
@@ -168,6 +210,42 @@ func (t *Shell) Execute(ctx context.Context, p ShellParams) (*ToolResult, error)
 		},
 		Error: toolErr,
 	}, nil
+}
+
+// killProcessGroup 向 cmd 及其所有子进程发送 SIGKILL。
+// Unix: 使用负 PID 向整个进程组发送信号。
+// Windows: 回退到 os.Process.Kill（无进程组支持）。
+func killProcessGroup(cmd *exec.Cmd) {
+	if cmd.Process == nil {
+		return
+	}
+	if runtime.GOOS == "windows" {
+		_ = cmd.Process.Kill()
+		return
+	}
+	// 负 PID → 杀整个进程组
+	pgid := cmd.Process.Pid
+	if cmd.SysProcAttr != nil && cmd.SysProcAttr.Setpgid {
+		_ = syscall.Kill(-pgid, syscall.SIGKILL)
+	} else {
+		_ = cmd.Process.Kill()
+	}
+}
+
+// formatShellError 构造命令执行前的错误结果（如启动失败）。
+func formatShellError(status string, exitCode int, duration time.Duration, timeout time.Duration, output string, isError bool) *ToolResult {
+	return &ToolResult{
+		Content: formatShellResult(status, exitCode, duration, timeout, output, isError),
+		Meta: ToolMeta{
+			Duration: duration,
+			ExitCode: exitCode,
+		},
+		Error: &ToolError{
+			Class:   ErrorClassRecoverable,
+			Kind:    ErrKindCommandFailed,
+			Message: status,
+		},
+	}
 }
 
 // ── formatShellResult ──

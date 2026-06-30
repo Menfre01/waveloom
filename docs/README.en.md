@@ -19,12 +19,44 @@
 
 ---
 
-**Waveloom** is a terminal Code Agent **purpose-built for DeepSeek prefix caching** (pure Go). With a fixed System Prompt anchor, turn-accumulated message history, and immutable compaction, it pushes context cache hit rates to **95–99%**, slashing input token costs to **1/50 ~ 1/120** of the cache-miss price.
+**Waveloom** is a terminal Code Agent (pure Go) — read code, search symbols, edit files, run commands, all within a TUI, driven by natural language.
 
-You describe what you want in natural language. The agent reads code, analyzes logic, edits files, and executes commands — right in your terminal. Every write and command execution requires your consent first. Primary recommended model: `deepseek-v4-pro`. Also compatible with `deepseek-v4-flash` and OpenAI-compatible endpoints.
+If you've used Claude Code or Codex CLI, here's the key difference: Waveloom is **deeply optimized for DeepSeek prefix caching — two orders of magnitude cheaper on input tokens** (1/50 ~ 1/120), and your existing Claude Code Skills **work out of the box with zero migration**.
 
 > [!IMPORTANT]
-> **Safe & Transparent**: The agent always asks for confirmation before writing files or executing commands — nothing happens silently. **API Key Required**: Get one from [DeepSeek](https://platform.deepseek.com/api_keys), then run `waveloom setup`.
+> - The agent asks for confirmation before every file write and command execution — nothing happens silently.
+> - Waveloom does **not** relay your code: API keys connect directly to DeepSeek / OpenAI, your code never passes through a third-party server.
+> - Currently in **Alpha** — features may be unstable. Feedback is welcome via [Issues](https://github.com/Menfre01/waveloom/issues).
+
+---
+
+## Quick Start
+
+Requires a [DeepSeek API Key](https://platform.deepseek.com/api_keys).
+
+**Homebrew (recommended)**
+
+```sh
+brew trust menfre01/tap && brew install Menfre01/tap/waveloom
+```
+
+**curl one-liner**
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/Menfre01/waveloom/main/install.sh | sh
+```
+
+> Installs to `~/.local/bin` — no sudo needed. If that directory isn't in PATH: `export PATH="$HOME/.local/bin:$PATH"` and add to `~/.bashrc` / `~/.zshrc`.
+
+**Launch**
+
+```sh
+waveloom setup                # Configure API Key (once only)
+waveloom                      # Launch TUI
+waveloom "explain this code"  # One-shot query
+```
+
+For per-architecture downloads, building from source, and shell completions — see [`install.en.md`](./install.en.md).
 
 ---
 
@@ -32,267 +64,40 @@ You describe what you want in natural language. The agent reads code, analyzes l
   <img src="../assets/demo.gif" alt="Waveloom Demo" width="900"/>
 </p>
 
-## Why Waveloom
-
-| Dimension | Waveloom's Approach | Why It Matters |
-|-----------|-------------------|----------------|
-| **Terminal-Native TUI** | Built on [Bubble Tea](https://github.com/charmbracelet/bubbletea) v2 + [Glamour](https://github.com/charmbracelet/glamour) Markdown rendering + [Lipgloss](https://github.com/charmbracelet/lipgloss) styling | Streaming rendering of thought/text/tool output with collapse/expand — not a "black box chat", fully transparent and reviewable |
-| **DeepSeek Prefix Cache Optimization** | System prompt fixed as `messages[0]`, message history accumulated across turns without reset, compacted bytes never change | Maximum common prefix stays cache-hot; cache-hit token price is **1/50 ~ 1/120** of cache-miss |
-| **Four-Tier Watermark Context Compaction** | 60% → Snip (tool output truncation), 80% → Prune (reasoning removal + placeholders), 95% → Summarize (LLM incremental summary), 98% → Hard cutoff | Automatic management of million-token context window — long conversations keep what matters, drop noise, and never suffer Context Rot |
-| **Native LSP Integration** | Built-in LSP client; agent can proactively call `lsp_diagnostic` / `lsp_definition` / `lsp_references` / `lsp_hover` | Agent understands code like you do — jump to definitions, find references, inspect type signatures — not coding blind |
-| **Permission Safety Model** | Three-tier decisions (allow / deny / ask), rule engine with pattern matching like `shell(git *)`, CI `--bypass-permissions` | You always have the final say; file writes and command execution never happen silently |
-| **Single Binary Deployment** | Pure Go, zero runtime dependencies, ~15MB pre-built binary | One `curl` command to install; macOS / Linux AMD64 & ARM64 all supported |
-
----
-
-## Install
-
-Requires: [DeepSeek API Key](https://platform.deepseek.com/api_keys).
-
-**macOS**
-
-Apple Silicon (M1/M2/M3):
-
-```sh
-mkdir -p ~/.local/bin && curl -fsSL https://github.com/Menfre01/waveloom/releases/latest/download/waveloom_darwin_arm64.tar.gz | tar -xz -C ~/.local/bin waveloom
-```
-
-Intel Mac:
-
-```sh
-mkdir -p ~/.local/bin && curl -fsSL https://github.com/Menfre01/waveloom/releases/latest/download/waveloom_darwin_amd64.tar.gz | tar -xz -C ~/.local/bin waveloom
-```
-
-**Linux**
-
-x86_64:
-
-```sh
-mkdir -p ~/.local/bin && curl -fsSL https://github.com/Menfre01/waveloom/releases/latest/download/waveloom_linux_amd64.tar.gz | tar -xz -C ~/.local/bin waveloom
-```
-
-ARM64:
-
-```sh
-mkdir -p ~/.local/bin && curl -fsSL https://github.com/Menfre01/waveloom/releases/latest/download/waveloom_linux_arm64.tar.gz | tar -xz -C ~/.local/bin waveloom
-```
-
-**Homebrew (macOS / Linux)**
-
-```sh
-brew install Menfre01/tap/waveloom
-```
-
-> If prompted "untrusted tap", run `brew trust menfre01/tap` and retry.
-
-**After install**
-
-```sh
-waveloom setup                # Configure API key (once only)
-waveloom                      # Launch interactive TUI
-waveloom "explain this code"  # Or run a one-shot query
-```
-
-**Shell completions**
-
-```sh
-# bash
-source <(waveloom completion bash)
-# zsh
-source <(waveloom completion zsh)
-# fish
-waveloom completion fish > ~/.config/fish/completions/waveloom.fish
-```
-
-> Supports macOS / Linux AMD64 & ARM64. Installs to `~/.local/bin` — no sudo needed. If that directory isn't in PATH, run `export PATH="$HOME/.local/bin:$PATH"` and add to `~/.bashrc` or `~/.zshrc`. To upgrade, re-run the install command. From source: `git pull && make install`. Details in [`install.md`](./install.en.md).
-
-### Agent One-Shot Install
-
-Paste the following prompt into any Coding Agent, and it will install waveloom automatically:
-
-````markdown
-Install waveloom on this machine:
-
-1. Detect OS and architecture (`uname -sm`).
-2. Download the latest binary from https://github.com/Menfre01/waveloom/releases/latest based on architecture:
-   - macOS arm64: `waveloom_darwin_arm64.tar.gz`
-   - macOS amd64: `waveloom_darwin_amd64.tar.gz`
-   - Linux amd64: `waveloom_linux_amd64.tar.gz`
-   - Linux arm64: `waveloom_linux_arm64.tar.gz`
-3. Extract and install to ~/.local/bin:
-   `mkdir -p ~/.local/bin && curl -fsSL <URL> | tar -xz -C ~/.local/bin waveloom`
-4. Verify: `waveloom --version`
-5. Remind the user to run `waveloom setup` to configure their DeepSeek API Key.
-````
-
----
-
-## What the Agent Can Do
-
-Waveloom has the following built-in tools that the agent invokes autonomously:
-
-| Tool | Capability |
-|------|------------|
-| `read_file` | Read file contents |
-| `write_file` | Create or overwrite files |
-| `edit_file` | Exact string-based find-and-replace in files |
-| `grep` | Search codebase for matching lines |
-| `search_file` | Find files by name pattern |
-| `ls` | List directory contents |
-| `shell` | Execute arbitrary shell commands |
-| `web_fetch` | Fetch online docs, API references |
-| `ask_user_question` | Ask the user multiple-choice questions (single/multi-select, custom input) |
-| `skill` | Invoke user-installed Skills (`/skill-name`) |
-| `lsp_diagnostic` | Get compile errors and lint hints |
-| `lsp_definition` | Jump to symbol definition |
-| `lsp_references` | Find all references to a symbol |
-| `lsp_hover` | Get symbol type signature and documentation |
-
-> **LSP Prerequisites**: LSP tools require the corresponding language server available in PATH. For Go projects, install [gopls](https://pkg.go.dev/golang.org/x/tools/gopls) (`go install golang.org/x/tools/gopls@latest`). The agent automatically starts the LSP server on first LSP tool invocation.
-
-### Skill System
-
-Waveloom is compatible with the Claude Code Skill format — existing skills under `~/.claude/skills/` are auto-loaded with zero migration. Create a Skill by placing a `SKILL.md` with YAML frontmatter for parameters and permissions, then invoke via `/skill-name`:
-
-```
-~/.claude/skills/deploy/
-└── SKILL.md          # frontmatter + body, supports $ARGUMENTS variable substitution
-```
-
-Skills support `!` dynamic command injection, `allowed-tools` Bash whitelist, and `paths` conditional activation.
-
-Typical use cases: writing unit tests, refactoring a module, debugging an issue, explaining design intent behind a piece of code, adding new features.
-
----
-
-## Usage
-
-```sh
-waveloom                      # Interactive TUI mode
-waveloom setup                # First-time setup wizard
-waveloom "explain the design of pkg/llm/client.go"  # One-shot
-waveloom ls                   # List recent sessions
-waveloom --continue           # Resume the most recent session
-waveloom --resume <id>        # Resume a specific session
-```
-
-In interactive mode: Enter to send, Esc to interrupt, `Tab` / `Shift+Tab` to focus interactive paragraphs, Enter to expand/collapse, `Ctrl+G` to toggle theme. Type `@` for a fuzzy file picker. See [`usage.md`](./usage.en.md) for details.
-
----
-
-## Permission & Safety
-
-Before the agent performs a write operation or shell command, it goes through a permission check. Each tool invocation results in one of three decisions:
-
-- **Allow**: Pass through directly (read-only operations are allowed by default)
-- **Deny**: Hard block (e.g., `rm -rf /`)
-- **Ask**: Show a confirmation dialog for you to decide
-
 <p align="center">
-  <img src="../assets/permission.png" alt="Permission confirmation dialog" width="560"/>
+  <sub>
+    <b>Refactor</b> · extract modules, deduplicate, restructure &nbsp;&nbsp;|&nbsp;&nbsp;
+    <b>Debug</b> · trace call chains, analyze logs, find root causes &nbsp;&nbsp;|&nbsp;&nbsp;
+    <b>Write Tests</b> · unit tests, mocks, edge cases &nbsp;&nbsp;|&nbsp;&nbsp;
+    <b>Explain Code</b> · draw architecture diagrams, trace data flow, explain design intent
+  </sub>
 </p>
 
-Configure permission rules in `settings.json` (file location: `~/.waveloom/settings.json` or project root `.waveloom/settings.json`):
+## Why Waveloom
 
-```json
-{
-  "permissions": {
-    "allow": ["read_file", "search_file", "grep", "ls"],
-    "deny":  ["shell(rm -rf /*)"],
-    "ask":   ["write_file", "edit_file"]
-  }
-}
-```
+<p align="center">
+  <a href="./prefix-cache.en.md"><img src="https://img.shields.io/badge/Cache%20Hit%20Rate-95–99%25-00ADD8?style=for-the-badge&labelColor=161b22" alt="cache hit"/></a>
+  &nbsp;
+  <a href="./prefix-cache.en.md"><img src="https://img.shields.io/badge/Input%20Cost-Down%20to%201%2F50–1%2F120-4D6BFE?style=for-the-badge&labelColor=161b22" alt="cost"/></a>
+</p>
 
-Rule format: `ToolName` or `ToolName(pattern)`, e.g., `shell(git *)` matches all commands starting with `git `.
+<br/>
 
-For CI / automation scenarios, use `--bypass-permissions` to skip all checks.
+**🎯 Purpose-built for DeepSeek prefix caching.** System prompt fixed as `messages[0]`, message history accumulated across turns, compacted bytes never change. The maximum common prefix stays cache-hot — input cost is **1/50 ~ 1/120** of general-purpose implementations for the same workload.
 
----
+**🧠 Four-tier watermark compaction.** 60% Snip → 80% Prune → 95% Summarize → 98% Hard cutoff. Automatic management of million-token context windows — long conversations keep what matters and never suffer Context Rot.
 
-## Configuration
+**🔍 Native LSP integration.** Built-in LSP client — agent proactively calls `lsp_diagnostic` / `lsp_definition` / `lsp_references` / `lsp_hover`, understanding code like you do.
 
-### settings.json
+**🛡️ Permission safety model.** Three-tier decisions (allow / deny / ask), rule engine with `bash(ls *)` pattern matching. Every file write and command execution requires your confirmation.
 
-On first run, Waveloom generates a default config at `.waveloom/settings.json`. The minimal config only requires `api_key`:
+**💻 Terminal-native TUI.** Built on [Bubble Tea](https://github.com/charmbracelet/bubbletea) v2 + [Glamour](https://github.com/charmbracelet/glamour) + [Lipgloss](https://github.com/charmbracelet/lipgloss). Streaming render of thought/text/tool output with collapse/expand — transparent and reviewable.
 
-```json
-{
-  "llm": {
-    "api_key": "sk-your-deepseek-key"
-  }
-}
-```
+**🔌 Claude Code Skill compatible.** Auto-loads existing skills from `~/.claude/skills/` — zero migration. Not a Claude Code replacement — your existing Skills just work in Waveloom.
 
-Full `llm` configuration options (all have defaults, override as needed):
+**🔄 Persistent session resume.** Every session saves its full state automatically. Close the terminal, come back days later with `waveloom --continue` — the agent remembers all prior context and picks up right where you left off.
 
-| Field | Description | Default |
-|-------|-------------|---------|
-| `api_key` | DeepSeek API Key, falls back to `LLM_API_KEY` env var when empty | — |
-| `provider` | `deepseek` or `openai` | `deepseek` |
-| `model` | Model name | `deepseek-v4-pro` |
-| `base_url` | API endpoint | `https://api.deepseek.com` |
-| `timeout` | Request timeout | `600s` |
-| `extra_params` | Extra parameters (thinking, reasoning_effort, etc.) | Thinking mode on by default |
-| `retry` | Retry policy `{"max_retries":3, "initial_backoff":"1s", "max_backoff":"30s", "multiplier":2.0}` | Default retry policy |
-| `headers` | Custom HTTP headers `{"X-Custom": "value"}` | — |
-
-Priority: **CLI flags > `.waveloom/settings.json` (project) > `~/.waveloom/settings.json` (global)**
-
-### Environment Tool Configuration
-
-The agent auto-detects available toolchains at startup. For tools not in PATH or to pin a specific version, configure via `environment.tools`. See [`environment.en.md`](./environment.en.md) for details.
-
-### Compaction Configuration
-
-Adjust the four-tier watermark parameters via the `compaction` block (all have defaults, override as needed):
-
-| Field | Description | Default |
-|-------|-------------|---------|
-| `tier1_threshold` | Tier 1 (Snip) trigger threshold | `0.6` (60%) |
-| `tier2_threshold` | Tier 2 (Prune) trigger threshold | `0.8` (80%) |
-| `tier3_threshold` | Tier 3 (Summarize) trigger threshold | `0.95` (95%) |
-| `protection_zone_tokens` | Protection zone token count, supports `"8K"` / `8000` | `8000` |
-| `context_limit_tokens` | Model context limit, supports `"1M"` / `1000000` | `1000000` |
-
-### Tool Timeout Configuration
-
-Use the `tool_timeout` field to cap the maximum execution time for a single tool, preventing tools from blocking the loop indefinitely if they fail to respond to cancellation (priority: CLI > project > global, default 10 minutes):
-
-| Field | Description | Default |
-|-------|-------------|---------|
-| `tool_timeout` | Single tool execution timeout (Go Duration format, e.g. `"10m"` / `"600s"` / `"0s"`, 0 to disable) | `"10m"` |
-
-### CLI Flags
-
-| Flag | Description | Default |
-|------|-------------|---------|
-| `--model` | Model name | `deepseek-v4-pro` |
-| `--system-prompt` | Custom system prompt | Built-in prompt |
-| `--max-turns N` | Maximum turns, 0 = unlimited | `0` (unlimited) |
-| `--context-limit 1M` | Context window size, supports `1M` / `200k` / raw number | `1M` |
-| `--theme auto/dark/light` | Theme, auto detects terminal background | `auto` |
-| `--verbose` | Log detailed output to `.waveloom/waveloom.log` | Off |
-| `--bypass-permissions` | Skip all permission checks | Off |
-| `--tool-timeout D` | Single tool execution timeout (Go Duration format, e.g. `10m` / `600s` / `0s`, 0 to disable) | `10m` |
-| `--resume ID` | Resume a specific session | — |
-| `--continue` | Resume the most recent session | — |
-| `--settings PATH` | Specify config file path | `.waveloom/settings.json` |
-| `--version` | Show version | — |
-
----
-
-## Tips
-
-| Tip | How |
-|-----|-----|
-| Toggle theme | `Ctrl+G` cycles through dark / light / auto (auto follows terminal background) |
-| Select text | `Shift + mouse drag` to select any text in the terminal, even across TUI panels |
-| Quick file refs | Type `@path/to/file` to inline file contents, or `@` for a fuzzy file picker; `Tab` to enter subdirectories |
-| Project conventions | `AGENTS.md` is auto-loaded at startup (global → project root → CWD, layered) and injected as the first user message |
-| AGENTS.md sub-files | Use `@path/to/file` inside `AGENTS.md` to pull in other files; content is expanded and merged (multiple refs, auto dedup) |
-| Resume sessions | `waveloom --continue` resumes the last session, `waveloom --resume <id>` resumes a specific one, `waveloom ls` lists available IDs |
-| Inspect logs | Start with `waveloom --verbose`; logs at `.waveloom/waveloom.log`, run `tail -f` in another terminal |
+**📦 Single binary, zero dependencies.** Pure Go, ~17MB pre-built binary. One `curl` command to install. macOS / Linux AMD64 & ARM64 supported.
 
 ---
 
@@ -321,9 +126,132 @@ See [`prefix-cache.en.md`](./prefix-cache.en.md) for details.
 
 ---
 
+## Other Install Methods
+
+Per-architecture downloads, building from source (`go install`), and shell completions — see [`install.en.md`](./install.en.md).
+
+---
+
+## What the Agent Can Do
+
+Waveloom has 14 built-in tools that the agent invokes autonomously:
+
+| 🔍 Understand Code | ✏️ Modify Code | ⚡ Execute Actions |
+|:---:|:---:|:---:|
+| `read_file` read files | `write_file` create/overwrite files | `shell` execute shell commands |
+| `grep` search matching lines | `edit_file` precise find-and-replace | `web_fetch` fetch online docs |
+| `search_file` find by filename | `skill` invoke user Skills | `ask_user_question` ask user via choices |
+| `ls` list directory | `lsp_diagnostic` compile errors/warnings | |
+| `lsp_definition` jump to definition | | |
+| `lsp_references` find references | | |
+| `lsp_hover` type signature/docs | | |
+
+> **LSP Prerequisites**: LSP tools require the corresponding language server available in PATH. For Go projects, install [gopls](https://pkg.go.dev/golang.org/x/tools/gopls) (`go install golang.org/x/tools/gopls@latest`). The agent automatically starts the LSP server on first LSP tool invocation.
+
+### Skill System
+
+Waveloom is compatible with the Claude Code Skill format — existing skills under `~/.claude/skills/` are auto-loaded with zero migration. Create a Skill by placing a `SKILL.md` with YAML frontmatter for parameters and permissions, then invoke via `/skill-name`:
+
+```
+~/.claude/skills/deploy/
+└── SKILL.md          # frontmatter + body, supports $ARGUMENTS variable substitution
+```
+
+Skills support `!` dynamic command injection, `allowed-tools` Bash whitelist, and `paths` conditional activation.
+
+Typical use cases: writing unit tests, refactoring a module, debugging an issue, explaining design intent, adding new features.
+
+---
+
+## Usage
+
+```sh
+waveloom                      # Interactive TUI mode
+waveloom setup                # First-time setup wizard
+waveloom "explain the design of pkg/llm/client.go"  # One-shot
+waveloom ls                   # List recent sessions
+waveloom --continue           # Resume the most recent session
+waveloom --resume <id>        # Resume a specific session
+```
+
+In interactive mode:
+
+| Shortcut / Action | Effect |
+|-------------------|--------|
+| Enter (idle) | Send input |
+| Esc | Interrupt agent; double-press when idle to clear input |
+| `Tab` / `Shift+Tab` | Navigate between paragraphs |
+| Enter (focused) | Expand / collapse thought or tool output panels |
+| `Ctrl+G` | Cycle dark / light / auto theme |
+| `Ctrl+E` / `End` | Jump to bottom |
+| `↑↓` (idle) | Browse input history |
+| `@path/to/file` | Inline file content reference |
+| `@` | Fuzzy file picker; `Tab` to enter subdirectories |
+| `/` | Command palette (/new /model /theme /help) with fuzzy matching |
+| `exit` | Quit program |
+
+See [`usage.en.md`](./usage.en.md) for details.
+
+---
+
+## Permission & Safety
+
+Before the agent performs a write operation or shell command, it goes through a permission check. Each tool invocation results in one of three decisions:
+
+- **Allow**: Pass through directly (read-only operations are allowed by default)
+- **Deny**: Hard block (e.g., `rm -rf /`)
+- **Ask**: Show a confirmation dialog for you to decide
+
+<p align="center">
+  <img src="../assets/permission.png" alt="Permission confirmation dialog" width="560"/>
+</p>
+
+Configure permission rules in `settings.json` (file location: `~/.waveloom/settings.json` or project root `.waveloom/settings.json`):
+
+```json
+{
+  "permissions": {
+    "allow": ["read_file", "search_file", "grep", "ls"],
+    "deny":  ["bash(rm -rf /*)"],
+    "ask":   ["write_file", "edit_file"]
+  }
+}
+```
+
+Rule format: `ToolName` or `ToolName(pattern)`, e.g., `bash(ls *)` matches all commands starting with `ls `.
+
+For CI / automation scenarios, use `--bypass-permissions` to skip all checks.
+
+---
+
+## Configuration
+
+On first run, Waveloom generates a default config at `.waveloom/settings.json`. The minimal config only requires `api_key`:
+
+```json
+{
+  "llm": {
+    "api_key": "sk-your-deepseek-key"
+  }
+}
+```
+
+Full configuration options (model, provider, timeout, retry, compaction watermarks, tool timeout, etc.) and CLI flags — see [`settings.en.md`](./settings.en.md).
+
+---
+
 ## Troubleshooting
 
-Common install, config, and usage issues — see [`faq.en.md`](./faq.en.md).
+**Q: Where do I get an API Key?**
+Go to [platform.deepseek.com/api_keys](https://platform.deepseek.com/api_keys), create one, then run `waveloom setup`.
+
+**Q: How do I switch models?**
+Type `/model` in interactive mode, or start with `waveloom --model deepseek-v4-flash`.
+
+**Q: Can I resume a session after closing the terminal?**
+Yes. `waveloom --continue` resumes the latest session, `waveloom --resume <id>` resumes a specific one, `waveloom ls` lists all saved sessions.
+
+More questions — see [`faq.en.md`](./faq.en.md).
 
 ---
 
