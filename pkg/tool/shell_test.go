@@ -51,6 +51,57 @@ func TestShellContextCancellation(t *testing.T) {
 	}
 }
 
+// TestShellInterruptKillsProcessGroup 验证 Esc 中断能杀死 bash 及其子进程。
+// 启动一个创建子进程的命令（sleep 在子 shell 中），中途取消 context，
+// 验证子进程不会成为孤儿继续运行。
+func TestShellInterruptKillsProcessGroup(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("process group killing is Unix-specific")
+	}
+
+	// 启动一个子进程：sh -c 'sleep 100'（sleep 是 bash 的子进程）
+	ctx, cancel := context.WithCancel(context.Background())
+
+	tool := &Shell{}
+	done := make(chan struct{})
+	var result *ToolResult
+	var execErr error
+
+	go func() {
+		defer close(done)
+		result, execErr = tool.Execute(ctx, ShellParams{
+			Command:   "sleep 100",
+			TimeoutMs: 60000, // 工具超时很长，确保是 context 取消触发的
+		})
+	}()
+
+	// 给命令一点时间启动并创建子进程
+	time.Sleep(200 * time.Millisecond)
+
+	// 模拟用户按 Esc
+	cancel()
+
+	// 等待 Execute 返回
+	<-done
+
+	if execErr != nil {
+		t.Fatalf("Execute() error = %v, expected nil (error handled via ToolResult)", execErr)
+	}
+	if result == nil {
+		t.Fatal("result is nil")
+	}
+	if result.Error == nil {
+		t.Fatal("expected error result for interrupted command")
+	}
+	// context 取消被归类为 timeout（通过 cmdCtx 传播）
+	if result.Error.Message != "command interrupted by user" {
+		t.Errorf("expected 'command interrupted by user', got %q", result.Error.Message)
+	}
+	if !contains(result.Content, "Command interrupted") {
+		t.Errorf("expected 'Command interrupted' in content, got %q", result.Content)
+	}
+}
+
 func TestShellContextTimeout(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
 	defer cancel()
