@@ -1,5 +1,25 @@
 # Changelog
 
+## [v0.1.0-alpha.6] — 2026-06-30
+
+### Added
+- **Skill system**: Skill file parsing (YAML frontmatter), variable substitution (`$ARGUMENTS` / `$0` / `$first`), `!` dynamic command injection, auxiliary file support
+- **Skill whitelist & conditional activation**: `allowed-tools` Bash command whitelist, `paths` conditional activation (gitignore-style glob), Guard permission integration
+- **AskUserQuestion**: LLM-initiated single/multi-select, Other custom input, and decline interaction, TUI overlay rendering
+- **edit_file whitespace normalization**: auto-fix whitespace differences on unique match, reducing LLM retry rounds
+- **edit_file whitespace fallback**: no_match diagnostic enhancement, relaxed whitespace matching fallback
+
+### Fixed
+- `--resume` restore losing tool_calls Name/Arguments during deserialization
+- Session restore empty-response guard, enhanced deserialization integrity checks
+- web_fetch HTML entity decoding, missing Content-Type tolerance, timeout partial content return
+- Tool error state expand/collapse rendering fix, ToolError fallback when ToolResult is empty
+- Reasoning gap between system prompt and tool descriptions eliminated
+- macOS/Linux symlink deviation causing path misjudgment in IsWithinDir
+
+### Changed
+- TUI input horizontal scrolling refactored to syncInputVisibleStart
+
 ## [v0.1.0-alpha.5] — 2026-06-29
 
 ### Added
