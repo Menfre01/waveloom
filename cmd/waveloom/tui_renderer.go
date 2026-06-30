@@ -1,7 +1,9 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/Menfre01/waveloom/pkg/llm"
@@ -58,12 +60,13 @@ type Paragraph struct {
 	Text  string // 文本内容（assistant / thought / user 消息正文）
 
 	// Tool 专用字段
-	ToolName   string
-	ToolArgs   string // 格式化后的参数摘要
-	ToolResult string // 完整输出（展开时显示）
-	ToolError  string // 错误信息
-	ToolDurMs  int64  // 执行耗时（毫秒）
-	ToolDenied bool   // 权限被拒
+	ToolName      string
+	ToolArgs      string // 格式化后的参数摘要
+	ToolResult    string // 完整输出（展开时显示）
+	ToolError     string // 错误信息
+	ToolErrorKind string // 错误分类（如 timeout、command_failed 等）
+	ToolDurMs     int64  // 执行耗时（毫秒）
+	ToolDenied    bool   // 权限被拒
 	DiffHunks  []tool.DiffHunk // edit_file 结构化 diff（nil = 不适用或纯文本回退）
 
 	// Thought 专用字段
@@ -126,7 +129,7 @@ func formatToolArgs(toolName string, argsJSON string, cwd string) string {
 		return stripCWDPrefix(extractField(argsJSON, "file_path"), cwd)
 	case "edit_file":
 		return stripCWDPrefix(extractField(argsJSON, "file_path"), cwd)
-	case "shell":
+	case "bash":
 		return extractField(argsJSON, "command")
 	case "grep":
 		pattern := extractField(argsJSON, "pattern")
@@ -158,6 +161,15 @@ func formatToolArgs(toolName string, argsJSON string, cwd string) string {
 			return u
 		}
 		return truncateStr(argsJSON, 50)
+	case "skill":
+		name := extractField(argsJSON, "name")
+		args := extractField(argsJSON, "arguments")
+		if args != "" {
+			return name + " " + args
+		}
+		return name
+	case "ask_user_question":
+		return formatQuestionArgs(argsJSON)
 	default:
 		return truncateStr(argsJSON, 50)
 	}
@@ -200,6 +212,115 @@ func truncateStr(s string, maxLen int) string {
 	return string(runes[:maxLen])
 }
 
+// formatQuestionArgs 从 ask_user_question 的 JSON 参数中提取问题 header 摘要。
+// 解析失败或 header 过多时回退到截断原 JSON。
+func formatQuestionArgs(argsJSON string) string {
+	var params struct {
+		Questions []struct {
+			Header string `json:"header"`
+		} `json:"questions"`
+	}
+	if err := json.Unmarshal([]byte(argsJSON), &params); err != nil || len(params.Questions) == 0 {
+		return truncateStr(argsJSON, 50)
+	}
+	headers := make([]string, len(params.Questions))
+	for i, q := range params.Questions {
+		headers[i] = q.Header
+	}
+	return strings.Join(headers, ", ")
+}
+
+// parseQuestionResult 解析 ask_user_question 的 ToolResult JSON，
+// 返回 question→answers 的映射和问题列表（用于渲染顺序）。
+func parseQuestionResult(resultJSON string) (map[string]string, []string) {
+	var data struct {
+		Questions []struct {
+			Question string `json:"question"`
+			Header   string `json:"header"`
+		} `json:"questions"`
+		Answers map[string]string `json:"answers"`
+	}
+	if err := json.Unmarshal([]byte(resultJSON), &data); err != nil {
+		return nil, nil
+	}
+	m := make(map[string]string, len(data.Questions))
+	order := make([]string, 0, len(data.Questions))
+	for _, q := range data.Questions {
+		answer := data.Answers[q.Question]
+		m[q.Header] = answer
+		order = append(order, q.Header)
+	}
+	return m, order
+}
+
+// formatQuestionPreview 将问答结果渲染为可读预览行（折叠态）。
+func formatQuestionPreview(resultJSON string, indent string) string {
+	answers, order := parseQuestionResult(resultJSON)
+	if len(order) == 0 {
+		return ""
+	}
+	// 与其他工具预览的 "│ " 前缀保持一致，使用灰色
+	mutedStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#666666"))
+	var sb strings.Builder
+	for _, header := range order {
+		answer := answers[header]
+		if answer == "" {
+			answer = "(declined)"
+		}
+		sb.WriteString(indent)
+		sb.WriteString(mutedStyle.Render("│ "))
+		sb.WriteString(header)
+		sb.WriteString(" → ")
+		sb.WriteString(answer)
+		sb.WriteString("\n")
+	}
+	return sb.String()
+}
+
+// formatQuestionExpanded 将问答结果渲染为展开态（含完整问题文本）。
+func formatQuestionExpanded(resultJSON string, indent string, textWidth int) string {
+	var data struct {
+		Questions []struct {
+			Question string `json:"question"`
+			Header   string `json:"header"`
+			Options  []struct {
+				Label       string `json:"label"`
+				Description string `json:"description"`
+			} `json:"options"`
+		} `json:"questions"`
+		Answers map[string]string `json:"answers"`
+	}
+	if err := json.Unmarshal([]byte(resultJSON), &data); err != nil || len(data.Questions) == 0 {
+		// 回退到普通文本渲染
+		return ""
+	}
+	selStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#00d700"))
+	mutedStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#666666"))
+	headerStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#5A56E0")).Bold(true)
+	var sb strings.Builder
+	for _, q := range data.Questions {
+		answer := data.Answers[q.Question]
+		sb.WriteString(indent)
+		sb.WriteString(headerStyle.Render("▲ " + q.Header))
+		sb.WriteString("\n")
+		sb.WriteString(indent)
+		sb.WriteString("  " + q.Question)
+		sb.WriteString("\n")
+		if answer != "" {
+			sb.WriteString(indent)
+			sb.WriteString(selStyle.Render("  ▸ "))
+			sb.WriteString(answer)
+			sb.WriteString("\n")
+		} else {
+			sb.WriteString(indent)
+			sb.WriteString(mutedStyle.Render("  ▸ (declined)"))
+			sb.WriteString("\n")
+		}
+		sb.WriteString("\n")
+	}
+	return sb.String()
+}
+
 // ---------------------------------------------------------------------------
 // 工具摘要后缀格式化
 // ---------------------------------------------------------------------------
@@ -212,7 +333,20 @@ func toolSuffix(p *Paragraph) string {
 	}
 
 	if p.ToolError != "" {
-		return fmt.Sprintf("(%s)", p.ToolError)
+		// 工具专用简短错误后缀：摘要保持简洁，完整错误在预览区展示
+		switch p.ToolName {
+		case "bash":
+			code := parseExitCode(p.ToolResult)
+			if code >= 0 {
+				return fmt.Sprintf("(exit=%d)", code)
+			}
+		case "web_fetch":
+			return webFetchErrorSuffix(p.ToolErrorKind, p.ToolError)
+		case "edit_file":
+			return editFileErrorSuffix(p.ToolErrorKind, p.ToolError)
+		}
+		// 通用回退：用错误分类作为后缀，避免路径等长信息与预览区重叠
+		return fmt.Sprintf("(%s)", p.ToolErrorKind)
 	}
 	if p.ToolDenied {
 		return "(permission denied)"
@@ -236,7 +370,7 @@ func toolSuffix(p *Paragraph) string {
 			added, removed = countDiffLines(p.ToolResult)
 		}
 		return fmt.Sprintf("(+%d -%d lines, %s)", added, removed, dur)
-	case "shell":
+	case "bash":
 		code := parseExitCode(p.ToolResult)
 		dur := formatDuration(p.ToolDurMs)
 		if code >= 0 {
@@ -280,14 +414,77 @@ func toolSuffix(p *Paragraph) string {
 		size := formatBytes(len(p.ToolResult))
 		dur := formatDuration(p.ToolDurMs)
 		return fmt.Sprintf("(%s, %s)", size, dur)
-	case "web_fetch":
+	case "web_fetch", "skill":
 		size := formatBytes(len(p.ToolResult))
 		dur := formatDuration(p.ToolDurMs)
 		return fmt.Sprintf("(%s, %s)", size, dur)
+	case "ask_user_question":
+		n := parseQuestionCount(p.ToolResult)
+		if n <= 0 {
+			n = parseQuestionCount(p.ToolArgs)
+		}
+		return fmt.Sprintf("(%d 问)", n)
 	default:
 		dur := formatDuration(p.ToolDurMs)
 		return fmt.Sprintf("(%s)", dur)
 	}
+}
+
+// webFetchErrorSuffix 返回 web_fetch 错误的简短后缀。
+// 从 ToolError.Message 中提取 HTTP 状态码或使用错误分类。
+func webFetchErrorSuffix(kind, msg string) string {
+	switch kind {
+	case "timeout":
+		return "(timeout)"
+	case "invalid_args":
+		return "(invalid URL)"
+	case "binary_file":
+		return "(unsupported type)"
+	case "command_failed":
+		// HTTP 错误：提取状态码，如 "HTTP 404 Not Found" → "(HTTP 404)"
+		if strings.HasPrefix(msg, "HTTP ") {
+			parts := strings.SplitN(msg, " ", 3)
+			if len(parts) >= 2 {
+				return fmt.Sprintf("(HTTP %s)", parts[1])
+			}
+		}
+		return "(request failed)"
+	default:
+		return fmt.Sprintf("(%s)", kind)
+	}
+}
+
+// editFileErrorSuffix 为 edit_file 错误生成简短后缀，避免与预览区完整错误内容重叠。
+func editFileErrorSuffix(kind, msg string) string {
+	switch kind {
+	case "multiple_matches":
+		// "found N matches for ..." → "(N matches)"
+		if n := parseMatchCount(msg); n > 0 {
+			return fmt.Sprintf("(%d matches)", n)
+		}
+		return "(multiple_matches)"
+	default:
+		return fmt.Sprintf("(%s)", kind)
+	}
+}
+
+// parseMatchCount 从 "found N matches" 中提取数字 N。
+func parseMatchCount(msg string) int {
+	// msg: "found 3 matches for old_string in /path; ..."
+	if !strings.HasPrefix(msg, "found ") {
+		return 0
+	}
+	rest := strings.TrimPrefix(msg, "found ")
+	// 找到第一个空格或 "matches" 之前的部分
+	idx := strings.Index(rest, " ")
+	if idx < 0 {
+		return 0
+	}
+	n, err := strconv.Atoi(rest[:idx])
+	if err != nil {
+		return 0
+	}
+	return n
 }
 
 // formatBytes 将字节数格式化为人类可读的字符串。
@@ -495,6 +692,17 @@ func extractParenInt(s, key string) int {
 		return atoi(s[start+1 : idx])
 	}
 	return 0
+}
+
+// parseQuestionCount 从 ask_user_question 的 JSON 中解析问题数量。
+func parseQuestionCount(jsonStr string) int {
+	var params struct {
+		Questions []struct{} `json:"questions"`
+	}
+	if err := json.Unmarshal([]byte(jsonStr), &params); err != nil {
+		return 0
+	}
+	return len(params.Questions)
 }
 
 // parseLocationCount 从 lsp_definition/lsp_references 输出首行提取位置数。
@@ -1127,16 +1335,40 @@ func displayWidth(s string) int {
 
 // stripToolStatusHeader 去除 tool 结果首行的状态标题（如 "✅ Command succeeded (exit=0) 123ms"），
 // 并清理尾部空行。摘要行已有 toolName + toolSuffix，颜色已传达成功/失败，无需重复。
+// 同时剥离 shell 的 "Command succeeded/failed/timed out" 头部和 "stdout:" / "stderr/stdout:" 标签行，
+// 让预览直接展示实际输出内容。
 func stripToolStatusHeader(result string) string {
 	lines := strings.Split(result, "\n")
 	start := 0
-	// 跳过首行中 "✅" 或 "❌" 开头的状态标题
+
+	// 通用：跳过 emoji 状态标题（✅ / ❌ 开头）
 	if len(lines) > 0 {
 		first := strings.TrimSpace(lines[0])
 		if strings.HasPrefix(first, "\u2705") || strings.HasPrefix(first, "\u274c") {
 			start = 1
 		}
 	}
+
+	// Shell：跳过 "Command succeeded / failed / timed out" 状态头
+	if start == 0 && len(lines) > 0 {
+		first := strings.TrimSpace(lines[0])
+		if strings.HasPrefix(first, "Command succeeded") ||
+			strings.HasPrefix(first, "Command failed") ||
+			strings.HasPrefix(first, "Command timed out") {
+			start = 1
+
+			// 跳过 stdout/stderr 标签行和 timeout 提示行
+			if len(lines) > 1 {
+				second := strings.TrimSpace(lines[1])
+				if strings.HasPrefix(second, "stdout:") ||
+					strings.HasPrefix(second, "stderr/stdout:") ||
+					strings.HasPrefix(second, "Timeout:") {
+					start = 2
+				}
+			}
+		}
+	}
+
 	// 去除尾部空行
 	end := len(lines)
 	for end > start && strings.TrimSpace(lines[end-1]) == "" {
@@ -1195,7 +1427,7 @@ func renderToolPara(sb *strings.Builder, p *Paragraph, ctx ViewportCtx) {
 
 	// 完成/错误态的折叠预览
 	if p.State == stateDone || p.State == stateError {
-		if p.State == stateCollapsed || p.State == stateDone {
+		if p.State == stateCollapsed || p.State == stateDone || p.State == stateError {
 			if p.DiffHunks != nil {
 				renderDiffPreview(sb, p.DiffHunks, textWidth, indentStr)
 			} else {
@@ -1219,8 +1451,25 @@ func renderToolPara(sb *strings.Builder, p *Paragraph, ctx ViewportCtx) {
 const maxPreviewWrapped = 5
 
 // renderToolPreview 渲染工具输出的默认预览行（折叠态）。indent 由上层传入以对齐摘要行前缀。
+//
+// 错误态（ToolResult 为空但 ToolError 非空）：统一以红色 "│ " 前缀渲染错误信息，
+// 与 shell 错误输出布局对齐，保证所有工具的失败信息在 TUI 中一致可见。
 func renderToolPreview(sb *strings.Builder, p *Paragraph, textWidth int, indent string) {
+	// ask_user_question 定制渲染：显示可读的问答摘要
+	if p.ToolName == "ask_user_question" && p.ToolResult != "" {
+		preview := formatQuestionPreview(p.ToolResult, indent)
+		if preview != "" {
+			sb.WriteString(preview)
+			return
+		}
+	}
+
 	result := stripToolStatusHeader(p.ToolResult)
+	isErrorOnly := false
+	if result == "" && p.ToolError != "" {
+		result = p.ToolError
+		isErrorOnly = true
+	}
 	if result == "" {
 		return
 	}
@@ -1249,6 +1498,24 @@ func renderToolPreview(sb *strings.Builder, p *Paragraph, textWidth int, indent 
 	wrapped := 0
 	truncated := false
 
+	// ── 错误统一预览：所有工具的错误信息（ToolResult 为空、ToolError 非空）
+	//    均以红色样式渲染，与 shell stderr 输出对齐。
+	if isErrorOnly {
+		lines := strings.Split(result, "\n")
+		for _, line := range lines {
+			if writeWrappedPreview(line, styleToolPrefixErr, &wrapped) {
+				truncated = true
+				break
+			}
+		}
+		if truncated {
+			sb.WriteString(indent)
+			sb.WriteString(styleToolPreviewHint.Render("··· (truncated)"))
+			sb.WriteString("\n")
+		}
+		return
+	}
+
 	switch p.ToolName {
 	case "write_file", "edit_file":
 		lines := strings.Split(result, "\n")
@@ -1265,17 +1532,20 @@ func renderToolPreview(sb *strings.Builder, p *Paragraph, textWidth int, indent 
 			}
 		}
 
-	case "shell":
+	case "bash", "skill":
+		lineStyle := styleToolPreview
+		if p.ToolError != "" {
+			lineStyle = styleToolPrefixErr
+		}
 		lines := strings.Split(result, "\n")
 		for _, line := range lines {
 			line = strings.TrimLeft(line, " ")
-			if writeWrappedPreview(line, styleToolPreview, &wrapped) {
+			if writeWrappedPreview(line, lineStyle, &wrapped) {
 				truncated = true
 				break
 			}
 		}
 
-	// 仅 read_file, grep, search_file, ls — 不显示预览
 	case "lsp_diagnostic":
 		lines := strings.Split(result, "\n")
 		start := 1
@@ -1330,7 +1600,7 @@ func renderToolPreview(sb *strings.Builder, p *Paragraph, textWidth int, indent 
 			}
 		}
 	default:
-		// 无预览
+		// 无预览（read_file, grep, search_file, ls 等成功态不展示预览）
 	}
 
 	if truncated {
@@ -1338,7 +1608,7 @@ func renderToolPreview(sb *strings.Builder, p *Paragraph, textWidth int, indent 
 		// 仅可段落聚焦的工具展示 Enter 提示（shell / web_fetch），
 		// write_file / edit_file 等不可聚焦的工具仅显示截断标记。
 		switch p.ToolName {
-		case "shell", "web_fetch":
+		case "bash", "web_fetch", "skill":
 			sb.WriteString(styleToolPreviewHint.Render("··· Enter 展开全部"))
 		default:
 			sb.WriteString(styleToolPreviewHint.Render("··· (truncated)"))
@@ -1352,12 +1622,17 @@ func renderToolPreview(sb *strings.Builder, p *Paragraph, textWidth int, indent 
 const maxExpandedWrapped = 2000
 
 // renderToolFullOutput 渲染工具的完整输出（展开态）。indent 由上层传入以对齐摘要行前缀。
+// 当 ToolResult 为空但 ToolError 非空时（如 stateError → stateExpanded 展开），
+// 回退到渲染错误信息。
 func renderToolFullOutput(sb *strings.Builder, p *Paragraph, textWidth int, indent string) {
 	if textWidth < 1 {
 		textWidth = 1
 	}
 
 	result := stripToolStatusHeader(p.ToolResult)
+	if result == "" && p.ToolError != "" {
+		result = p.ToolError
+	}
 	if result == "" {
 		return
 	}
@@ -1366,6 +1641,10 @@ func renderToolFullOutput(sb *strings.Builder, p *Paragraph, textWidth int, inde
 	truncated := false
 
 	switch p.ToolName {
+	case "ask_user_question":
+		// 展开态：显示每个问题的完整信息
+		sb.WriteString(formatQuestionExpanded(p.ToolResult, indent, textWidth))
+		return
 	case "read_file":
 		codeTextWidth := textWidth - 9
 		if codeTextWidth < 1 {
@@ -1422,7 +1701,7 @@ func renderToolFullOutput(sb *strings.Builder, p *Paragraph, textWidth int, inde
 			}
 		}
 
-	case "shell":
+	case "bash":
 		rawLines := strings.Split(result, "\n")
 		for _, line := range rawLines {
 			line = strings.TrimLeft(line, " ")
@@ -1484,7 +1763,7 @@ func renderToolFullOutput(sb *strings.Builder, p *Paragraph, textWidth int, inde
 
 	// 折叠提示 — 仅可段落聚焦的工具（shell / web_fetch）展示 Enter 提示
 	switch p.ToolName {
-	case "shell", "web_fetch":
+	case "bash", "web_fetch":
 		sb.WriteString(indent)
 		sb.WriteString(styleToolPreviewHint.Render("▼ Enter 折叠"))
 		sb.WriteString("\n")

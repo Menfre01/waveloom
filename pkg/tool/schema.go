@@ -11,7 +11,7 @@ var readFileSchema = json.RawMessage(`{
   "properties": {
     "file_path": {
       "type": "string",
-      "description": "Absolute file path"
+      "description": "File path (absolute, or relative to working_dir / workspace root). Must be a file, not a directory — use ls first to explore directories."
     },
     "offset": {
       "type": "integer",
@@ -34,7 +34,7 @@ var writeFileSchema = json.RawMessage(`{
   "properties": {
     "file_path": {
       "type": "string",
-      "description": "Absolute file path"
+      "description": "File path (absolute, or relative to working_dir / workspace root)"
     },
     "content": {
       "type": "string",
@@ -53,7 +53,7 @@ var editFileSchema = json.RawMessage(`{
   "properties": {
     "file_path": {
       "type": "string",
-      "description": "Absolute file path"
+      "description": "File path (absolute, or relative to working_dir / workspace root)"
     },
     "old_string": {
       "type": "string",
@@ -81,7 +81,7 @@ var shellSchema = json.RawMessage(`{
   "properties": {
     "command": {
       "type": "string",
-      "description": "Shell command to execute. Unix/macOS uses sh -c, Windows uses cmd /c. Windows does not support ; for multi-command, use &&."
+      "description": "Shell command to execute. Unix/macOS uses bash -c (sh fallback), Windows uses cmd /c. Windows does not support ; for multi-command, use &&."
     },
     "working_dir": {
       "type": "string",

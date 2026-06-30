@@ -27,7 +27,9 @@ type ReadFileParams struct {
 type ReadFile struct{}
 
 func (t *ReadFile) Name() string         { return "read_file" }
-func (t *ReadFile) Description() string  { return "Read a file with line numbers. Supports offset and limit parameters to read partial content." }
+func (t *ReadFile) Description() string {
+	return "Read a file with line numbers. Supports offset and limit parameters to read partial content. IMPORTANT: file_path must be a file, not a directory. Use ls to explore directories first."
+}
 func (t *ReadFile) Schema() json.RawMessage { return readFileSchema }
 func (t *ReadFile) ConcurrentSafe() bool { return true }
 
@@ -56,6 +58,25 @@ func (t *ReadFile) Execute(ctx context.Context, p ReadFileParams) (*ToolResult, 
 	}
 
 	if info.IsDir() {
+		entries, readErr := os.ReadDir(path)
+		if readErr == nil {
+			var listing strings.Builder
+			fmt.Fprintf(&listing, "Path is a directory, not a file: %s\n\n", path)
+			listing.WriteString("Use ls for full listing. Top entries:\n")
+			limit := 50
+			for i, entry := range entries {
+				if i >= limit {
+					fmt.Fprintf(&listing, "  ... and %d more entries\n", len(entries)-limit)
+					break
+				}
+				name := entry.Name()
+				if entry.IsDir() {
+					name += "/"
+				}
+				fmt.Fprintf(&listing, "  %s\n", name)
+			}
+			return toolError(ErrorClassRecoverable, ErrKindNotDir, listing.String(), nil), nil
+		}
 		return toolError(ErrorClassRecoverable, ErrKindNotDir,
 			fmt.Sprintf("path is a directory, not a file: %s", path), nil), nil
 	}
@@ -177,7 +198,7 @@ func readFileWithContext(ctx context.Context, path string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	var buf bytes.Buffer
 	chunk := make([]byte, 64*1024) // 64KB chunks
@@ -219,7 +240,7 @@ func readStreaming(ctx context.Context, path string, offset, limit int) (content
 	if err != nil {
 		return "", 0, 0, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	scanner := bufio.NewScanner(f)
 	var selected []string

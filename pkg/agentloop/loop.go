@@ -340,8 +340,10 @@ func (l *Loop) Run(ctx context.Context, messages []llm.Message) <-chan TurnEvent
 				}
 				toolCalls = valid
 			}
-			// 4. 防御：LLM 返回空响应（无 content 无 tool_calls）会导致后续 API 400，
-			//    此时注入最小占位内容，并累加连续空响应计数器。
+			// 4. 防御：LLM 返回空响应（无 content 无 tool_calls）。
+			//    注入最小占位内容避免后续 API 400，累加连续空响应计数器。
+			//    注意：空响应时不应保留 reasoning_content —— DeepSeek 要求 tool_calls
+			//    场景下回传，但空响应时回传会污染下一轮上下文，导致模型持续空输出。
 			emptyResponse := contentBuf == "" && len(toolCalls) == 0
 			if emptyResponse {
 				contentBuf = "(empty response)"
@@ -351,14 +353,14 @@ func (l *Loop) Run(ctx context.Context, messages []llm.Message) <-chan TurnEvent
 			}
 
 			// 5. 追加 assistant 消息。
-			//    reasoning_content 保留条件：有 tool_calls（跨轮延续 DeepSeek 协议要求），
-			//    或空响应（注入占位后继续下一轮，reasoning 需带入后续调用）。
+			//    reasoning_content 仅在 tool_calls 场景保留（跨轮延续 DeepSeek 协议要求）。
+			//    空响应时注入的占位消息不含 reasoning_content，使模型从干净上下文重新推理。
 			assistantMsg := llm.Message{
 				Role:      llm.RoleAssistant,
 				Content:   contentBuf,
 				ToolCalls: toolCalls,
 			}
-			if len(toolCalls) > 0 || emptyResponse {
+			if len(toolCalls) > 0 {
 				assistantMsg.ReasoningContent = reasoningBuf
 			}
 			state.Messages = append(state.Messages, assistantMsg)

@@ -99,7 +99,7 @@ func LoadUserServers(settingsPath string) map[string]ServerConfig {
 
 	servers := make(map[string]ServerConfig)
 	for ext, entry := range wrapper.LSP.Servers {
-		servers[ext] = ServerConfig{Command: entry.Command, Args: entry.Args}
+		servers[ext] = ServerConfig(entry)
 	}
 	return servers
 }

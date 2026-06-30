@@ -30,7 +30,7 @@ func TestLoadRulesFromSettings_ValidConfig(t *testing.T) {
 	// 验证 Bash → shell 映射
 	foundBashMapped := false
 	for _, e := range allowRules {
-		if e.Rule.ToolName == "shell" && e.Rule.Pattern == "git *" {
+		if e.Rule.ToolName == "bash" && e.Rule.Pattern == "git *" {
 			foundBashMapped = true
 		}
 	}
@@ -105,12 +105,12 @@ func TestLoadRulesFromConfigFile(t *testing.T) {
 	// 验证 Bash → shell 映射
 	foundGoRule := false
 	for _, e := range entries {
-		if e.Rule.ToolName == "shell" && e.Rule.Pattern == "go *" {
+		if e.Rule.ToolName == "bash" && e.Rule.Pattern == "go *" {
 			foundGoRule = true
 		}
 	}
 	if !foundGoRule {
-		t.Error("Bash(go *) should be mapped to shell(go *)")
+		t.Error("Bash(go *) should be mapped to bash(go *)")
 	}
 }
 

@@ -35,6 +35,13 @@ type Tool interface {
 	Execute(ctx context.Context, raw json.RawMessage) (*ToolResult, error)
 }
 
+// UserInteractionTool 是可选接口，由需要阻塞式用户交互的工具实现。
+// Loop 在执行前检查此接口；若返回 true，则工具不经过权限检查和普通执行路径，
+// 改为通过 UserResponder 进行阻塞式交互。
+type UserInteractionTool interface {
+	RequiresUserInteraction() bool
+}
+
 // ---------------------------------------------------------------------------
 // ErasedTool + Wrap — 类型擦除
 // ---------------------------------------------------------------------------
@@ -42,17 +49,19 @@ type Tool interface {
 // ErasedTool 包装 TypedTool[P]，实现 Tool 接口。
 // 在 Execute 中统一完成 json.Unmarshal，工具实现者永远不需要手写。
 type ErasedTool struct {
-	name           string
-	desc           string
-	schema         json.RawMessage
-	concurrentSafe bool
-	execute        func(ctx context.Context, raw json.RawMessage) (*ToolResult, error)
+	name                    string
+	desc                    string
+	schema                  json.RawMessage
+	concurrentSafe          bool
+	requiresUserInteraction bool
+	execute                 func(ctx context.Context, raw json.RawMessage) (*ToolResult, error)
 }
 
 func (e *ErasedTool) Name() string            { return e.name }
 func (e *ErasedTool) Description() string     { return e.desc }
 func (e *ErasedTool) Schema() json.RawMessage { return e.schema }
 func (e *ErasedTool) ConcurrentSafe() bool    { return e.concurrentSafe }
+func (e *ErasedTool) RequiresUserInteraction() bool { return e.requiresUserInteraction }
 func (e *ErasedTool) Execute(ctx context.Context, raw json.RawMessage) (*ToolResult, error) {
 	return e.execute(ctx, raw)
 }
@@ -60,11 +69,16 @@ func (e *ErasedTool) Execute(ctx context.Context, raw json.RawMessage) (*ToolRes
 // Wrap 将 TypedTool[P] 包装为 Tool。
 // 这是唯一的 json.Unmarshal 调用的位置 — 所有工具实现者不再需要手写反序列化。
 func Wrap[P any](t TypedTool[P]) *ErasedTool {
+	var requiresUI bool
+	if uit, ok := any(t).(UserInteractionTool); ok {
+		requiresUI = uit.RequiresUserInteraction()
+	}
 	return &ErasedTool{
-		name:           t.Name(),
-		desc:           t.Description(),
-		schema:         t.Schema(),
-		concurrentSafe: t.ConcurrentSafe(),
+		name:                    t.Name(),
+		desc:                    t.Description(),
+		schema:                  t.Schema(),
+		concurrentSafe:          t.ConcurrentSafe(),
+		requiresUserInteraction: requiresUI,
 		execute: func(ctx context.Context, raw json.RawMessage) (*ToolResult, error) {
 			var p P
 			if err := json.Unmarshal(raw, &p); err != nil {
