@@ -73,7 +73,66 @@ func (t *EditFile) Execute(ctx context.Context, p EditFileParams) (*ToolResult, 
 	count := strings.Count(original, p.OldString)
 
 	if count == 0 {
-		// 降级1：空白符归一化匹配（压缩连续空白为单空格后比较）
+		// 降级1：空白归一化匹配唯一 → 自动修复，减少 LLM 重试轮次
+		if matchStart := findNormalizedMatchPosition(original, p.OldString); matchStart >= 0 {
+			origLines := strings.Split(original, "\n")
+			oldLines := strings.Split(p.OldString, "\n")
+			realOld := strings.Join(origLines[matchStart:matchStart+len(oldLines)], "\n")
+
+			// 检查实际原文是否也多次出现
+			realCount := strings.Count(original, realOld)
+			if realCount > 1 && !p.ReplaceAll {
+				return toolError(ErrorClassRecoverable, ErrKindMultipleMatch,
+					fmt.Sprintf("found %d matches for auto-corrected old_string in %s; provide more context or set replace_all=true",
+						realCount, path), nil), nil
+			}
+
+			matchPositions := findAllMatches(original, realOld)
+			if !p.ReplaceAll && len(matchPositions) > 1 {
+				matchPositions = matchPositions[:1]
+			}
+			hunks := buildDiffHunks(original, matchPositions, realOld, p.NewString, 3)
+
+			// 执行替换
+			var result string
+			if p.ReplaceAll {
+				result = strings.ReplaceAll(original, realOld, p.NewString)
+			} else {
+				result = strings.Replace(original, realOld, p.NewString, 1)
+			}
+
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+			if err := os.WriteFile(path, []byte(result), 0o644); err != nil {
+				return toolError(ErrorClassFatal, ErrKindPermissionDenied,
+					fmt.Sprintf("cannot write file: %s", path), err), nil
+			}
+
+			added, removed := diffStats(hunks)
+			effCount := len(matchPositions)
+			var summary strings.Builder
+			fmt.Fprintf(&summary, "Edited file: %s\n", path)
+			fmt.Fprintf(&summary, "   ⚠️  Auto-corrected whitespace: old_string whitespace did not match the file.\n")
+			fmt.Fprintf(&summary, "   Matched lines %d-%d by content (ignoring whitespace).\n",
+				matchStart+1, matchStart+len(oldLines))
+			if p.ReplaceAll {
+				fmt.Fprintf(&summary, "   Replaced %d occurrence(s)\n", effCount)
+			} else {
+				summary.WriteString("   Replaced 1 occurrence\n")
+			}
+			fmt.Fprintf(&summary, "   +%d -%d lines", added, removed)
+
+			return &ToolResult{
+				Content: summary.String(),
+				Meta: ToolMeta{
+					FilePath:  path,
+					DiffHunks: hunks,
+				},
+			}, nil
+		}
+
+		// 降级2：空白归一化匹配不唯一 → 返回 hint 让 LLM 精确重试
 		if hint := tryNormalizedMatch(original, p.OldString); hint != "" {
 			return toolError(ErrorClassRecoverable, ErrKindNoMatch,
 				fmt.Sprintf("no exact match for old_string in %s\n\n%s\n\n%s",
@@ -319,19 +378,17 @@ func diffStats(hunks []DiffHunk) (added, removed int) {
 	return
 }
 
-// tryNormalizedMatch 在精确匹配失败后，尝试空白符归一化匹配。
-// 将原文每行和 old_string 每行的连续空白压缩为单空格，然后进行逐行匹配。
-// 若找到唯一匹配，返回实际匹配文本的提示（含行号和内容）。
-// 若找不到匹配或多匹配，返回空字符串（继续走 renderSearchHint）。
-func tryNormalizedMatch(original, oldStr string) string {
+// findNormalizedMatchPosition 在空白归一化后查找 oldStr 的唯一匹配位置。
+// 将原文每行和 oldStr 每行的连续空白压缩为单空格后逐行比较。
+// 返回 0-based 起始行号；若未找到或匹配不唯一返回 -1。
+func findNormalizedMatchPosition(original, oldStr string) int {
 	origLines := strings.Split(original, "\n")
 	oldLines := strings.Split(oldStr, "\n")
 
 	if len(oldLines) == 0 {
-		return ""
+		return -1
 	}
 
-	// 归一化每行
 	origNormalized := make([]string, len(origLines))
 	for i, line := range origLines {
 		origNormalized[i] = normalizeLine(line)
@@ -341,16 +398,31 @@ func tryNormalizedMatch(original, oldStr string) string {
 		oldNormalized[i] = normalizeLine(line)
 	}
 
-	// 在归一化原文中查找归一化 old_string 序列
 	matchStart := findLineSequence(origNormalized, oldNormalized)
+	if matchStart < 0 {
+		return -1
+	}
+
+	// 确认唯一性：从 matchStart+1 开始不应再找到匹配
+	if findLineSequence(origNormalized[matchStart+1:], oldNormalized) >= 0 {
+		return -1
+	}
+
+	return matchStart
+}
+
+// tryNormalizedMatch 在精确匹配失败后，尝试空白符归一化匹配。
+// 将原文每行和 old_string 每行的连续空白压缩为单空格，然后进行逐行匹配。
+// 若找到唯一匹配，返回实际匹配文本的提示（含行号和内容）。
+// 若找不到匹配或多匹配，返回空字符串（继续走 renderSearchHint）。
+func tryNormalizedMatch(original, oldStr string) string {
+	matchStart := findNormalizedMatchPosition(original, oldStr)
 	if matchStart < 0 {
 		return ""
 	}
 
-	// 确认唯一性
-	if findLineSequence(origNormalized[matchStart+1:], oldNormalized) >= 0 {
-		return "" // 多处匹配，无法确定
-	}
+	origLines := strings.Split(original, "\n")
+	oldLines := strings.Split(oldStr, "\n")
 
 	// 构造提示
 	ctxStart := matchStart - 2

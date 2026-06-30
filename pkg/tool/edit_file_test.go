@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -661,7 +662,9 @@ func TestLooksLikeLineNumberPrefix(t *testing.T) {
 
 // ── edit_file with whitespace fallback ──
 
-func TestEditFileNoMatch_WhitespaceHint(t *testing.T) {
+// TestEditFileAutoFixWhitespace 验证空白归一化匹配唯一时自动修复成功，
+// 不再返回错误让 LLM 重试。
+func TestEditFileAutoFixWhitespace(t *testing.T) {
 	dir := t.TempDir()
 	filePath := filepath.Join(dir, "code.go")
 	content := "func hello() {\n\tfmt.Println(\"hello\")\n}\n"
@@ -678,17 +681,74 @@ func TestEditFileNoMatch_WhitespaceHint(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Execute() error = %v", err)
 	}
+	// 自动修复成功 — 不应返回 Error
+	if result.Error != nil {
+		t.Fatalf("Execute() result.Error = %v, want nil (auto-fix should succeed)", result.Error)
+	}
+
+	// 验证文件内容已被正确替换
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	if !contains(string(data), `fmt.Println("hi")`) {
+		t.Errorf("file should contain the replacement, got: %s", string(data))
+	}
+	if !contains(string(data), "\tfmt.Println") {
+		t.Errorf("file should preserve tab indentation, got: %s", string(data))
+	}
+
+	// 验证 Content 中标注了自动修复
+	if !contains(result.Content, "Auto-corrected whitespace") {
+		t.Errorf("Content should mention auto-corrected whitespace: %s", result.Content)
+	}
+	if !contains(result.Content, "Matched lines") {
+		t.Errorf("Content should mention matched lines: %s", result.Content)
+	}
+
+	// 验证 DiffHunks
+	if len(result.Meta.DiffHunks) != 1 {
+		t.Fatalf("DiffHunks count = %d, want 1", len(result.Meta.DiffHunks))
+	}
+	a, r := result.Meta.DiffHunks[0].Stats()
+	if a != 3 || r != 3 { // 替换了三行（func 声明 + fmt.Println 行 + 闭括号）
+		t.Errorf("stats = (+%d -%d), want (+3 -3)", a, r)
+	}
+}
+
+// TestEditFileNoMatch_WhitespaceHint 验证归一化匹配不唯一时仍返回 hint 错误，
+// 不会触发自动修复（因为无法确定替换哪个）。
+func TestEditFileNoMatch_WhitespaceHint(t *testing.T) {
+	dir := t.TempDir()
+	filePath := filepath.Join(dir, "code.go")
+	// 两个相同的函数 — 归一化后 old_string 命中两处，不能自动修复
+	content := "func hello() {\n\tfmt.Println(\"hello\")\n}\nfunc hello() {\n\tfmt.Println(\"hello\")\n}\n"
+	if err := os.WriteFile(filePath, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	tool := &EditFile{}
+	result, err := tool.Execute(context.Background(), EditFileParams{
+		FilePath:  filePath,
+		OldString: "func hello() {\n    fmt.Println(\"hello\")\n}", // 空格缩进
+		NewString: "func hello() {\n\tfmt.Println(\"hi\")\n}",
+	})
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	// 不唯一 → 不触发自动修复 → 应返回 Error（走 renderSearchHint 路径）
 	if result.Error == nil {
-		t.Fatal("Error should not be nil for whitespace mismatch")
+		t.Fatal("Error should not be nil for ambiguous whitespace mismatch")
 	}
 	if result.Error.Kind != ErrKindNoMatch {
 		t.Errorf("Error.Kind = %q, want %q", result.Error.Kind, ErrKindNoMatch)
 	}
-	// 应包含空白符不匹配提示
-	if !contains(result.Error.Message, "Whitespace mismatch") {
-		t.Errorf("Error message should mention whitespace mismatch: %s", result.Error.Message)
+	// 归一化匹配不唯一时走 renderSearchHint，应包含 closest matches 提示
+	if !contains(result.Error.Message, "closest matches") {
+		t.Errorf("Error message should include closest matches hint: %s", result.Error.Message)
 	}
-	if !contains(result.Error.Message, "Copy the exact text") {
-		t.Errorf("Error message should guide to copy exact text: %s", result.Error.Message)
+	// 两处重复函数都在 hint 中
+	if strings.Count(result.Error.Message, "fmt.Println") < 2 {
+		t.Errorf("Error message should show both ambiguous matches: %s", result.Error.Message)
 	}
 }
