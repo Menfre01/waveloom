@@ -174,3 +174,93 @@ func TestShouldSkipDirNormal(t *testing.T) {
 		t.Error("ShouldSkipDir(pkg) = true, want false")
 	}
 }
+
+func TestFindSimilarFile(t *testing.T) {
+	dir := t.TempDir()
+	_ = os.WriteFile(filepath.Join(dir, "hello.go"), []byte("package main\n"), 0o644)
+	_ = os.WriteFile(filepath.Join(dir, "world.go"), []byte("package main\n"), 0o644)
+	_ = os.WriteFile(filepath.Join(dir, "unrelated.txt"), []byte("text\n"), 0o644)
+	_ = os.Mkdir(filepath.Join(dir, "subdir"), 0o755)
+
+	// Exact match on "hello.go" — should be found
+	got := FindSimilarFile(filepath.Join(dir, "helo.go"))
+	if got != "hello.go" {
+		t.Errorf("FindSimilarFile(helo.go) = %q, want %q", got, "hello.go")
+	}
+
+	// Non-existent dir — should return ""
+	got = FindSimilarFile("/nonexistent/path/file.txt")
+	if got != "" {
+		t.Errorf("FindSimilarFile in nonexistent dir = %q, want empty", got)
+	}
+}
+
+func TestEditDistance(t *testing.T) {
+	tests := []struct {
+		a, b string
+		want int
+	}{
+		{"", "", 0},
+		{"abc", "", 3},
+		{"", "abc", 3},
+		{"abc", "abc", 0},
+		{"abc", "abd", 1},
+		{"abc", "ab", 1},
+		{"ab", "abc", 1},
+		{"kitten", "sitting", 3},
+		{"hello", "hallo", 1},
+		{"go", "golang", 4},
+	}
+	for _, tt := range tests {
+		got := editDistance(tt.a, tt.b)
+		if got != tt.want {
+			t.Errorf("editDistance(%q, %q) = %d, want %d", tt.a, tt.b, got, tt.want)
+		}
+	}
+}
+
+func TestMin3(t *testing.T) {
+	tests := []struct{ a, b, c, want int }{
+		{1, 2, 3, 1},
+		{3, 2, 1, 1},
+		{2, 1, 3, 1},
+		{5, 5, 1, 1},
+		{0, 0, 0, 0},
+		{-1, 0, 1, -1},
+	}
+	for _, tt := range tests {
+		got := min3(tt.a, tt.b, tt.c)
+		if got != tt.want {
+			t.Errorf("min3(%d, %d, %d) = %d, want %d", tt.a, tt.b, tt.c, got, tt.want)
+		}
+	}
+}
+
+func TestSuggestPathUnderCwd(t *testing.T) {
+	// 不存在的文件 — 应返回空
+	got := SuggestPathUnderCwd("/tmp/no_such_file_xyz_12345.abc")
+	if got != "" {
+		t.Errorf("SuggestPathUnderCwd(nonexistent) = %q, want empty", got)
+	}
+}
+
+func TestEstimateTokens(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  int
+	}{
+		{"empty", "", 0},
+		{"ascii", "hello world", 3}, // 11 * 0.3 ≈ 3
+		{"chinese", "你好世界", 2},       // 4 * 0.6 ≈ 2
+		{"mixed", "hello 你好", 3},     // 6*0.3 + 2*0.6 = 3.0
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := EstimateTokens(tt.input)
+			if got != tt.want {
+				t.Errorf("EstimateTokens(%q) = %d, want %d", tt.input, got, tt.want)
+			}
+		})
+	}
+}

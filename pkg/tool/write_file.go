@@ -25,7 +25,9 @@ type WriteFile struct{}
 
 func (t *WriteFile) Name() string            { return "write_file" }
 func (t *WriteFile) Description() string {
-	return "Create a new file or overwrite an existing file. Creates parent directories automatically. Use only for new files or complete overwrites; for partial edits use edit_file."
+	return "Create a new file or overwrite an existing file. Creates parent directories automatically. " +
+		"Use only for new files or complete overwrites; for partial edits use edit_file. " +
+		"IMPORTANT: file_path must be a file, not a directory — use ls to explore directories first."
 }
 func (t *WriteFile) Schema() json.RawMessage { return writeFileSchema }
 func (t *WriteFile) ConcurrentSafe() bool    { return false }
@@ -52,8 +54,7 @@ func (t *WriteFile) Execute(ctx context.Context, p WriteFileParams) (*ToolResult
 	info, err := os.Stat(path)
 	if err == nil {
 		if info.IsDir() {
-			return toolError(ErrorClassRecoverable, ErrKindInvalidArgs,
-				fmt.Sprintf("path is a directory, cannot write: %s", path), nil), nil
+			return t.dirError(path), nil
 		}
 		// 文件存在 — update
 		oldBytes, readErr := os.ReadFile(path)
@@ -209,6 +210,30 @@ func summarizeChange(old, new string) string {
 		}
 	}
 	return buf.String()
+}
+
+func (t *WriteFile) dirError(path string) *ToolResult {
+	entries, readErr := os.ReadDir(path)
+	if readErr == nil {
+		var listing strings.Builder
+		fmt.Fprintf(&listing, "Path is a directory, cannot write: %s\n\n", path)
+		listing.WriteString("Use ls for full listing. Top entries:\n")
+		limit := 50
+		for i, entry := range entries {
+			if i >= limit {
+				fmt.Fprintf(&listing, "  ... and %d more entries\n", len(entries)-limit)
+				break
+			}
+			name := entry.Name()
+			if entry.IsDir() {
+				name += "/"
+			}
+			fmt.Fprintf(&listing, "  %s\n", name)
+		}
+		return toolError(ErrorClassRecoverable, ErrKindNotDir, listing.String(), nil)
+	}
+	return toolError(ErrorClassRecoverable, ErrKindNotDir,
+		fmt.Sprintf("path is a directory, cannot write: %s", path), nil)
 }
 
 func maxInt(a, b int) int {

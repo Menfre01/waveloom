@@ -457,12 +457,13 @@ func TestShellDescriptionGuidesToolUsage(t *testing.T) {
 			t.Errorf("Description should mention %s as preferred over shell", toolName)
 		}
 	}
-	// Description 应引导 LLM 使用 working_dir 而非 cd 前缀
+	// Description 应引导 LLM 使用 working_dir 切换到不同目录
 	if !strings.Contains(desc, "working_dir") {
-		t.Error("Description should mention working_dir to discourage cd prefix")
+		t.Error("Description should mention working_dir for directory switching")
 	}
-	if !strings.Contains(desc, "cd ") {
-		t.Error("Description should explicitly warn against cd prefix")
+	// cd 前缀已由权限系统和工具执行层归一化，Description 无需再警告
+	if strings.Contains(desc, "do NOT prefix") || strings.Contains(desc, "cd breaks permission") {
+		t.Error("Description should NOT warn against cd prefix — normalization handles it")
 	}
 }
 
@@ -592,5 +593,22 @@ func TestNormalizeShellCommand(t *testing.T) {
 				t.Errorf("dir = %q, want %q", gotDir, tt.wantDir)
 			}
 		})
+	}
+}
+
+func TestFormatShellError(t *testing.T) {
+	// formatShellError 在命令启动失败时构造错误结果（如二进制不存在）
+	result := formatShellError("Command start failed", -1, 0, 120000*time.Millisecond, "exec: \"nonexistent\": executable file not found", true)
+	if result.Error == nil {
+		t.Fatal("formatShellError should return an error")
+	}
+	if result.Error.Kind != "command_failed" {
+		t.Errorf("Error.Kind = %q, want %q", result.Error.Kind, "command_failed")
+	}
+	if !strings.Contains(result.Content, "Command start failed") {
+		t.Errorf("Content should contain status: %s", result.Content)
+	}
+	if !strings.Contains(result.Content, "executable file not found") {
+		t.Errorf("Content should contain original error: %s", result.Content)
 	}
 }

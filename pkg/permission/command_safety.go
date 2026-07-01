@@ -34,19 +34,33 @@ func (d *DangerousCommandPattern) Matches(command string) bool {
 	return true
 }
 
-// checkPipe 检查命令中管道后是否跟了危险命令。
+// checkPipe 检查命令中所有管道段后是否跟了危险命令。
 func (d *DangerousCommandPattern) checkPipe(command string) bool {
-	idx := strings.LastIndex(command, "|")
-	if idx < 0 {
-		return false
-	}
-	after := command[idx+1:]
-	for _, pw := range d.Pipewords {
-		if strings.Contains(after, pw) {
-			return true
+	segments := splitPipeSegments(command)
+	// 对每个非首段（管道下游），检查是否包含危险命令
+	for i := 1; i < len(segments); i++ {
+		for _, pw := range d.Pipewords {
+			if strings.Contains(strings.TrimSpace(segments[i]), pw) {
+				return true
+			}
 		}
 	}
 	return false
+}
+
+// splitPipeSegments 按管道符 | 分割命令，返回各段。
+// 不处理引号内转义——对于 LLM 生成的命令已足够。
+func splitPipeSegments(command string) []string {
+	var segments []string
+	start := 0
+	for i := 0; i < len(command); i++ {
+		if command[i] == '|' {
+			segments = append(segments, command[start:i])
+			start = i + 1
+		}
+	}
+	segments = append(segments, command[start:])
+	return segments
 }
 
 // ---------------------------------------------------------------------------
@@ -56,83 +70,133 @@ func (d *DangerousCommandPattern) checkPipe(command string) bool {
 // DangerousPatterns 从 shell.go 迁移，完全保持原数据。
 // Wave 2 中为软限制（仅警告），Wave 3 升级为硬拦截。
 var DangerousPatterns = []DangerousCommandPattern{
-	// 文件销毁
+	// ── 文件/文件系统销毁 ──
 	{Keywords: []string{"rm", "-rf", "/"}, Label: "rm -rf / (recursive root deletion)"},
 	{Keywords: []string{"rm", "-rf", "*"}, Label: "rm -rf * (recursive wildcard)"},
 	{Keywords: []string{"sudo", "rm"}, Label: "sudo rm (privileged deletion)"},
 	{Keywords: []string{">", "/dev/sd"}, Label: "overwrite block device"},
 	{Keywords: []string{"dd", "if="}, Label: "dd disk copy"},
 	{Keywords: []string{"mkfs"}, Label: "mkfs (format filesystem)"},
+	{Keywords: []string{"shred"}, Label: "shred (secure file deletion)"},
 
-	// 权限修改
+	// ── 权限 / 所有权修改 ──
 	{Keywords: []string{"chmod", "777"}, Label: "chmod 777 (world-writable)"},
 	{Keywords: []string{"chmod", "u+s"}, Label: "chmod u+s (setuid)"},
+	{Keywords: []string{"chmod", "-R"}, Label: "chmod -R (recursive permission change)"},
+	{Keywords: []string{"chown"}, Label: "chown (ownership change)"},
 
-	// 网络下载 + 管道执行
-	{Keywords: []string{"curl"}, Pipewords: []string{"sh", "bash"}, Label: "curl piped to shell"},
-	{Keywords: []string{"wget"}, Pipewords: []string{"sh", "bash"}, Label: "wget piped to shell"},
+	// ── 系统操作 ──
+	{Keywords: []string{"shutdown"}, Label: "shutdown (system shutdown)"},
+	{Keywords: []string{"reboot"}, Label: "reboot (system reboot)"},
+	{Keywords: []string{"halt"}, Label: "halt (system halt)"},
+	{Keywords: []string{"poweroff"}, Label: "poweroff (system power off)"},
+	{Keywords: []string{"mount"}, Label: "mount (filesystem mount)"},
+	{Keywords: []string{"umount"}, Label: "umount (filesystem unmount)"},
 
-	// Fork bomb
+	// ── 进程终止 ──
+	{Keywords: []string{"kill", "-9"}, Label: "kill -9 (forced process termination)"},
+	{Keywords: []string{"killall"}, Label: "killall (terminate by name)"},
+	{Keywords: []string{"pkill"}, Label: "pkill (terminate by pattern)"},
+
+	// ── 网络下载 + 管道执行 ──
+	{Keywords: []string{"curl"}, Pipewords: []string{"sh", "bash", "python", "perl", "ruby"}, Label: "curl piped to interpreter"},
+	{Keywords: []string{"wget"}, Pipewords: []string{"sh", "bash", "python", "perl", "ruby"}, Label: "wget piped to interpreter"},
+	{Keywords: []string{"cat"}, Pipewords: []string{"sh", "bash"}, Label: "cat piped to shell"},
+
+	// ── Fork bomb ──
 	{Keywords: []string{":(){", ":|:&"}, Label: "fork bomb pattern"},
 
-	// 外部脚本执行
+	// ── 外部脚本 / 内联执行 ──
 	{Keywords: []string{"python", "-c", "import os"}, Label: "python -c with os import"},
 	{Keywords: []string{"python", "-c", "import subprocess"}, Label: "python -c with subprocess import"},
 	{Keywords: []string{"perl", "-e"}, Label: "perl -e inline execution"},
+	{Keywords: []string{"ruby", "-e"}, Label: "ruby -e inline execution"},
 
-	// find -exec 危险组合
+	// ── Shell 内建危险 ──
+	{Keywords: []string{"eval"}, Label: "eval (arbitrary code execution)"},
+	{Keywords: []string{"source", "/dev/"}, Label: "source from /dev"},
+	{Keywords: []string{"exec"}, Label: "exec (replace shell process)"},
+
+	// ── 网络工具 ──
+	{Keywords: []string{"nc", "-e"}, Label: "nc -e (netcat execute)"},
+	{Keywords: []string{"nc", "-l"}, Pipewords: []string{"sh", "bash"}, Label: "nc listener piped to shell"},
+	{Keywords: []string{"iptables"}, Label: "iptables (firewall modification)"},
+	{Keywords: []string{"pfctl"}, Label: "pfctl (macOS firewall modification)"},
+
+	// ── find -exec / xargs 危险组合 ──
 	{Keywords: []string{"find", "-exec", "chmod"}, Label: "find -exec chmod"},
 	{Keywords: []string{"find", "-exec", "rm"}, Label: "find -exec rm"},
+	{Keywords: []string{"find", "-delete"}, Label: "find -delete"},
 	{Keywords: []string{"xargs", "rm"}, Label: "xargs rm"},
+	{Keywords: []string{"xargs", "sh"}, Label: "xargs sh"},
+	{Keywords: []string{"xargs", "bash"}, Label: "xargs bash"},
+
+	// ── 系统配置修改 ──
+	{Keywords: []string{"sysctl", "-w"}, Label: "sysctl -w (kernel parameter write)"},
+	{Keywords: []string{"crontab"}, Label: "crontab (schedule tasks)"},
+	{Keywords: []string{"tee", "/etc/"}, Label: "tee to /etc (system config overwrite)"},
+	{Keywords: []string{"tee", "/dev/"}, Label: "tee to /dev (device write)"},
+
+	// ── SSH / 远程执行 ──
+	{Keywords: []string{"ssh", "root@"}, Label: "ssh to root (remote privileged access)"},
+
+	// ── Git 破坏性操作 ──
+	{Keywords: []string{"git", "push", "--force"}, Label: "git push --force (force push)"},
+	{Keywords: []string{"git", "reset", "--hard"}, Label: "git reset --hard (discard all changes)"},
+	{Keywords: []string{"git", "clean", "-fdx"}, Label: "git clean -fdx (remove untracked files)"},
 }
 
 // ---------------------------------------------------------------------------
-// knownSafeCommands — 已知安全命令
+// trulySafeCommands — 纯只读命令，零副作用，直接 ALLOW 无需用户确认
 // ---------------------------------------------------------------------------
 
-// knownSafeCommands 首命令级别的白名单。
-// 匹配逻辑为取命令行的第一个 token 进行检查。
-// 即使首命令安全，后续参数仍可能构成危险，交由 DangerousPatterns 兜底。
-var knownSafeCommands = map[string]bool{
-	// 版本控制
-	"git": true,
-	// 文件查看
-	"ls":       true,
-	"cat":      true,
-	"head":     true,
-	"tail":     true,
-	"less":     true,
-	"more":     true,
-	// 基础信息
-	"echo":     true,
+// trulySafeCommands 是经过严格审查的纯只读命令。
+// 条件：不修改文件系统、不派生进程、不执行代码、不产生网络副作用。
+// 即使参数变化（如 ls -la / ls -R），命令本身始终安全。
+//
+// 被排除的候选及原因：
+//   - echo: 可生成任意内容，通过 shell 重定向（>）写入任意文件，绕过文件安全检查
+//   - env / printenv: 暴露环境变量中的 API 密钥等敏感信息
+//   - less / more: 交互式 TTY 工具，非 TTY 环境下行为异常且无实用价值
+var trulySafeCommands = map[string]bool{
+	// 文件查看（纯读取）
+	"ls":   true,
+	"cat":  true,
+	"head": true,
+	"tail": true,
+	// 基础信息查询
 	"pwd":      true,
 	"which":    true,
 	"where":    true,
-	"env":      true,
-	"printenv": true,
 	"whoami":   true,
 	"hostname": true,
 	"date":     true,
 	"uname":    true,
-	// 磁盘信息
+	// 磁盘用量查询
 	"df": true,
 	"du": true,
-	// 文本处理（只读）
+	// 文本处理（只读管道过滤）
 	"wc":   true,
 	"sort": true,
 	"uniq": true,
+	// 差异比较（不修改文件）
 	"diff": true,
+	// 条件判断（无副作用，仅返回退出码）
 	"test": true,
-	// 编程语言（通常用于测试/构建）
-	"go":     true,
-	"cargo":  true,
-	"python": true,
-	"node":   true,
-	// 包管理（读操作为主）
-	"npm":   true,
-	"yarn":  true,
-	"pnpm":  true,
-	"pip":   true,
+}
+
+// ---------------------------------------------------------------------------
+// buildToolCommands — 构建/版本控制工具，需要子命令级白名单
+// ---------------------------------------------------------------------------
+
+// buildToolCommands 是构建工具和版本控制工具。
+// RiskLow：不会被 Step 3 高危拦截，但仍走 Step 7 默认策略（ASK）。
+// 未来 Plan: 子命令级白名单（如 git status → ALLOW, git push --force → ASK）。
+var buildToolCommands = map[string]bool{
+	"git":   true,
+	"go":    true,
+	"cargo": true,
+	"make":  true,
 }
 
 // ---------------------------------------------------------------------------
@@ -152,10 +216,13 @@ type CommandCheckResult struct {
 
 // CommandSafetyCheck 检查命令的安全性，返回风险等级。
 // 入参 command 会先做 cd 前缀归一化，确保提取的 first token 是实际命令而非 cd。
+//
+// 对于 && / ; / || / 换行 连接的命令链，每个子命令独立评估，
+// 取最高风险等级作为整体结果——防止 "ls && rm -rf /" 仅凭首命令 "ls" 误判为安全。
 func CommandSafetyCheck(command string) CommandCheckResult {
 	command = strings.TrimSpace(command)
 	if command == "" {
-		return CommandCheckResult{Level: RiskLow, Message: "empty command"}
+		return CommandCheckResult{Level: RiskNone, Message: "empty command"}
 	}
 
 	// 0. 归一化：剥离 "cd <path> &&" 前缀，使 first token 反映实际命令
@@ -164,7 +231,8 @@ func CommandSafetyCheck(command string) CommandCheckResult {
 		command = normalized
 	}
 
-	// 1. 危险模式匹配（最高优先级）
+	// 1. 危险模式匹配（最高优先级，先于已知安全命令检查）
+	//    即使首命令在安全列表中，危险模式仍可能命中（如 git + find -exec rm 的组合等）
 	for _, dp := range DangerousPatterns {
 		if dp.Matches(command) {
 			return CommandCheckResult{
@@ -175,14 +243,100 @@ func CommandSafetyCheck(command string) CommandCheckResult {
 		}
 	}
 
-	// 2. 已知安全命令快速通道
-	firstToken := extractFirstToken(command)
-	if knownSafeCommands[firstToken] {
-		return CommandCheckResult{Level: RiskLow, Message: "known safe command: " + firstToken}
+	// 2. 命令链分割：对 && / ; / || / 换行 / 管道 连接的每个子命令独立评估
+	segments := splitCommandChain(command)
+	if len(segments) > 1 {
+		highestLevel := RiskNone
+		var highestMsg string
+		for _, seg := range segments {
+			seg = strings.TrimSpace(seg)
+			if seg == "" {
+				continue
+			}
+			segResult := singleCommandRisk(seg)
+			if riskOrder(segResult.Level) > riskOrder(highestLevel) {
+				highestLevel = segResult.Level
+				highestMsg = segResult.Message
+			}
+		}
+		if highestLevel == RiskNone {
+			return CommandCheckResult{Level: RiskNone, Message: "all chained commands are safe"}
+		}
+		return CommandCheckResult{Level: highestLevel, Message: highestMsg}
 	}
 
-	// 3. 默认中等风险
+	// 3. 单命令评估
+	return singleCommandRisk(command)
+}
+
+// singleCommandRisk 评估单条命令（不含 && / ; / ||）的风险。
+func singleCommandRisk(command string) CommandCheckResult {
+	firstToken := extractFirstToken(command)
+	if trulySafeCommands[firstToken] {
+		return CommandCheckResult{Level: RiskNone, Message: "safe read-only command: " + firstToken}
+	}
+
+	if buildToolCommands[firstToken] {
+		return CommandCheckResult{Level: RiskLow, Message: "build tool: " + firstToken}
+	}
+
 	return CommandCheckResult{Level: RiskMedium, Message: "unclassified command"}
+}
+
+// riskOrder 返回风险等级的顺序值（数值越大风险越高）。
+func riskOrder(level CommandRiskLevel) int {
+	switch level {
+	case RiskNone:
+		return 0
+	case RiskLow:
+		return 1
+	case RiskMedium:
+		return 2
+	case RiskHigh:
+		return 3
+	}
+	return 0
+}
+
+// splitCommandChain 将命令按 && / ; / || / 换行 / | 分割为子命令。
+// 注意：管道 | 分割后，每段仍会被后续的危险模式检查覆盖。
+func splitCommandChain(command string) []string {
+	var segments []string
+	start := 0
+	for i := 0; i < len(command); i++ {
+		ch := command[i]
+		if ch == '\n' {
+			segments = append(segments, command[start:i])
+			start = i + 1
+			continue
+		}
+		if i+1 < len(command) {
+			if (ch == '&' && command[i+1] == '&') || (ch == '|' && command[i+1] == '|') {
+				segments = append(segments, command[start:i])
+				start = i + 2
+				i++ // skip second char
+				continue
+			}
+		}
+		if ch == ';' || ch == '|' {
+			segments = append(segments, command[start:i])
+			start = i + 1
+		}
+	}
+	segments = append(segments, command[start:])
+
+	// 过滤空白段
+	var result []string
+	for _, s := range segments {
+		s = strings.TrimSpace(s)
+		if s != "" {
+			result = append(result, s)
+		}
+	}
+	if len(result) <= 1 {
+		return nil // 无链，单命令
+	}
+	return result
 }
 
 // extractFirstToken 取命令行第一个 token（空格分隔）。
