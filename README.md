@@ -1,7 +1,7 @@
 <p align="center">
-  <a href="./docs/README.en.md">English</a>
+  <strong>English</strong>
   &nbsp;·&nbsp;
-  <strong>简体中文</strong>
+  <a href="./docs/README.zh-CN.md">简体中文</a>
 </p>
 
 <p align="center">
@@ -19,24 +19,24 @@
 
 ---
 
-**专为 DeepSeek 前缀缓存深度优化的终端 Code Agent。** 操作习惯贴近 Claude Code，已有 Skill 零迁移。DeepSeek 缓存命中与未命中的价格差高达 120 倍，Waveloom 从架构层面确保 System Prompt 和消息前缀稳定不变，让最长公共前缀持续命中缓存。
+**A terminal Code Agent purpose-built for DeepSeek prefix caching.** Feels like Claude Code — your existing Skills work out of the box. DeepSeek charges up to 120× more for cache misses than hits. Waveloom keeps the System Prompt and message prefix stable at the architecture level, so the longest common prefix stays cache-hot.
 
-**Homebrew（推荐）**
+**Homebrew (recommended)**
 
 ```sh
 brew trust menfre01/tap
 brew install Menfre01/tap/waveloom
 ```
 
-**curl 一键安装**
+**curl one-liner**
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/Menfre01/waveloom/main/install.sh | sh
 ```
 
-> 支持 macOS / Linux，AMD64 & ARM64。安装到 `~/.local/bin`，无需 sudo。
+> Supports macOS / Linux, AMD64 & ARM64. Installs to `~/.local/bin`, no sudo needed.
 
-安装后配置 Key 即可开始：
+Then configure your key and start:
 
 ```sh
 waveloom setup
@@ -44,7 +44,7 @@ waveloom
 ```
 
 > [!IMPORTANT]
-> API Key 直连 DeepSeek / OpenAI，代码不经过第三方。写文件和执行命令前需要你确认。
+> API key connects directly to DeepSeek / OpenAI — your code never passes through a third-party server. Every file write and command execution requires your confirmation.
 
 <p align="center">
   <img src="./assets/demo.gif" alt="Waveloom Demo" width="900"/>
@@ -52,63 +52,63 @@ waveloom
 
 ---
 
-## 和 Claude Code 有什么区别？
+## How does it compare to Claude Code?
 
 | | Waveloom | Claude Code |
 |---|---|---|
-| 缓存设计 | 围绕 DeepSeek 前缀匹配：System Prompt 固定、消息追加、原地压缩 | 围绕 Anthropic `cache_control`：System Prompt 含动态段、压缩替换消息 |
-| 上下文压缩 | 原地修改，前缀字节稳定 | 摘要替换消息 |
-| 运行时 | 单二进制 ~17MB | Node.js |
+| Cache design | Built for DeepSeek prefix matching: fixed System Prompt, append-only, in-place compaction | Built for Anthropic `cache_control`: dynamic System Prompt sections, compaction replaces messages |
+| Context compaction | In-place, prefix-stable | Replaces messages with summary |
+| Runtime | Single binary ~17MB | Node.js |
 
-**选 Waveloom 如果**：用 DeepSeek、在意 API 费用、已有 Claude Code Skill、需要零依赖单二进制  
-**选 Claude Code 如果**：用 Anthropic API、需要 MCP、重度依赖 Claude 生态
-
----
-
-## 功能亮点
-
-- **前缀缓存深度优化** — System Prompt 固定，消息只在末尾追加，四级水位线压缩后字节永不变化，最大公共前缀持续命中
-- **LSP 原生集成** — Agent 主动调用 `lsp_diagnostic` / `lsp_definition` / `lsp_references` / `lsp_hover`，像你一样理解代码
-- **权限安全模型** — 三级决策（allow / deny / ask），规则引擎支持模式匹配，写操作和命令执行需要你确认
-- **会话持久恢复** — 关闭终端几天后 `waveloom --continue` 回来，Agent 记得所有上下文接着工作
-- **14 个内置工具** — `read_file` / `edit_file` / `grep` / `shell` / `web_fetch` / `ask_user_question` / `skill` / LSP 系列，Agent 自主调用
-- **i18n 多语言** — 完整中英双语界面，`--locale` CLI 参数 / `/locale` 命令 / `settings.json` 持久化，LANG 环境变量自动检测
-- **TUI 交互** — `@` 引用文件 / `@` 文件选择器 / `/` 命令面板 / `/locale` 切换语言 / `Tab` 段落导航 / `Ctrl+G` 主题切换
+**Choose Waveloom if**: you use DeepSeek, care about API costs, have Claude Code Skills, need a zero-dependency binary  
+**Choose Claude Code if**: you use Anthropic, need MCP, are deep in the Claude ecosystem
 
 ---
 
-## 常见问题
+## Highlights
 
-**Q: 怎么切换模型？**  
-输入 `/model` 选择，或 `waveloom --model deepseek-v4-flash`。
-
-**Q: API Key 安全吗？**  
-Key 存储在本地 `~/.waveloom/`，直连 DeepSeek / OpenAI，不经过任何第三方服务器。
-
-**Q: 怎么切换语言？**  
-输入 `/locale` 切换中英文界面，或 `waveloom --locale en-US`。设置自动保存到 `settings.json`。
-
-**Q: 支持哪些语言？**  
-LSP 原生支持 Go（内置 gopls 集成）。任何有 LSP Server 的语言均可使用，纯文本项目也能用 `read_file` / `edit_file` / `grep` 等基础工具。
+- **Prefix cache optimized** — Fixed System Prompt, append-only message history, four-tier watermark compaction. Maximum common prefix stays cache-hot across turns.
+- **Native LSP integration** — Agent proactively calls `lsp_diagnostic` / `lsp_definition` / `lsp_references` / `lsp_hover` to understand your codebase.
+- **Permission safety** — Three-tier decisions (allow / deny / ask) with pattern-matching rule engine. Every write operation requires your confirmation.
+- **Session persistence** — Close the terminal, come back days later with `waveloom --continue`. The agent remembers all prior context.
+- **14 built-in tools** — `read_file` / `edit_file` / `grep` / `shell` / `web_fetch` / `ask_user_question` / `skill` / LSP tools — invoked autonomously by the agent.
+- **i18n multilingual** — Full zh-CN / en-US bilingual UI. `--locale` CLI flag, `/locale` command, `settings.json` persistence, auto-detect from LANG env var.
+- **TUI interactions** — `@` file references / `@` fuzzy file picker / `/` command palette / `/locale` switch language / `Tab` paragraph navigation / `Ctrl+G` theme toggle
 
 ---
 
-## 文档
+## FAQ
 
-| 文档 | 内容 |
-|------|------|
-| [`usage`](./docs/usage.md) | 交互模式、快捷键、Skill 系统 |
-| [`install`](./docs/install.md) | Homebrew / curl / 源码构建 / Shell 补全 |
-| [`settings`](./docs/settings.md) | API Key、模型、超时、压缩水位线 |
-| [`prefix-cache`](./docs/prefix-cache.md) | DeepSeek 缓存原理、四级水位线 |
-| [`environment`](./docs/environment.md) | LSP Server、工具链探测 |
-| [`faq`](./docs/faq.md) | 常见问题 |
+**Q: How do I switch models?**  
+Type `/model` in interactive mode, or `waveloom --model deepseek-v4-flash`.
+
+**Q: Is my API key safe?**  
+Stored locally at `~/.waveloom/`. Keys connect directly to DeepSeek / OpenAI — no third-party relay.
+
+**Q: How do I switch languages?**  
+Type `/locale` to toggle between Chinese and English, or `waveloom --locale zh-CN`. The setting persists automatically in `settings.json`.
+
+**Q: What languages are supported?**  
+LSP-native Go support (built-in gopls integration). Any language with an LSP server works. Plain-text projects can use `read_file` / `edit_file` / `grep` without LSP.
 
 ---
 
-## 开发
+## Docs
 
-Go 1.25+，`make build` / `make test`。项目结构及贡献指南详见 [`CONTRIBUTING.md`](./CONTRIBUTING.md)。
+| Document | Content |
+|----------|---------|
+| [`usage`](./docs/usage.en.md) | Interactive mode, shortcuts, Skill system |
+| [`install`](./docs/install.en.md) | Homebrew / curl / source / shell completions |
+| [`settings`](./docs/settings.en.md) | API key, model, timeout, compaction |
+| [`prefix-cache`](./docs/prefix-cache.en.md) | DeepSeek caching, four-tier compaction |
+| [`environment`](./docs/environment.en.md) | LSP server, toolchain probing |
+| [`faq`](./docs/faq.en.md) | Frequently asked questions |
+
+---
+
+## Development
+
+Go 1.25+, `make build` / `make test`. See [`CONTRIBUTING.md`](./CONTRIBUTING.md) for project structure and contribution guide.
 
 ---
 
