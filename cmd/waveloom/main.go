@@ -250,7 +250,7 @@ func registerBuiltinTools(r tool.Registry, lspProvider *tool.LSPProvider, skillL
 
 	// Skill 工具
 	if skillLoader != nil {
-		r.Register(tool.Wrap(tool.NewSkillTool(skillLoader)))
+		r.Register(tool.Wrap(tool.NewSkillTool(&skillExecutorAdapter{loader: skillLoader})))
 	}
 
 	// AskUserQuestion — LLM 向用户发起选择题式交互决策（TUI 模式）
@@ -497,5 +497,22 @@ func resolveLocaleWithSettings(cliLocale, projectPath, globalPath string) Locale
 
 	// 3. 环境变量检测
 	return DetectLocale()
+}
+
+// skillExecutorAdapter 将 skill.Loader 适配为 tool.SkillExecutor 接口，
+// 消除 tool 包对 skill 包的编译期依赖。
+type skillExecutorAdapter struct {
+	loader *skill.Loader
+}
+
+func (a *skillExecutorAdapter) Load(name, args string) (*tool.SkillLoadResult, error) {
+	loaded, err := a.loader.Load(name, args)
+	if err != nil {
+		return nil, err
+	}
+	return &tool.SkillLoadResult{
+		Body:    loaded.Body,
+		DirPath: loaded.DirPath,
+	}, nil
 }
 

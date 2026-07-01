@@ -16,6 +16,8 @@ type Compactor interface {
 	// AdvanceTurn 推进会话级累计 turn 计数并返回新值。
 	// 由 ContextManager 在每轮 PrepareRun 中调用，确保与 TUI HUD Loop 计数一致。
 	AdvanceTurn() int
+	// LastResult 返回最近一次压缩结果。无历史时返回零值。
+	LastResult() CompactionResult
 }
 
 // Tick 是单轮压缩结果，作为 TurnEvent 推送 TUI 实时更新 HUD。
