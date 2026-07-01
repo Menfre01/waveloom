@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/Menfre01/waveloom/pkg/llm"
+	"github.com/Menfre01/waveloom/pkg/pathutil"
 	"github.com/Menfre01/waveloom/pkg/tool"
 
 	"charm.land/bubbles/v2/spinner"
@@ -130,7 +131,12 @@ func formatToolArgs(toolName string, argsJSON string, cwd string) string {
 	case "edit_file":
 		return stripCWDPrefix(extractField(argsJSON, "file_path"), cwd)
 	case "bash":
-		return extractField(argsJSON, "command")
+		cmd := extractField(argsJSON, "command")
+		// 归一化：剥离 "cd <path> &&" 前缀，避免 turn log 中显示冗长的 cd 前缀
+		if normalized, _ := pathutil.NormalizeShellCommand(cmd); normalized != "" {
+			return normalized
+		}
+		return cmd
 	case "grep":
 		pattern := extractField(argsJSON, "pattern")
 		dir := extractField(argsJSON, "working_dir")
@@ -254,7 +260,7 @@ func parseQuestionResult(resultJSON string) (map[string]string, []string) {
 }
 
 // formatQuestionPreview 将问答结果渲染为可读预览行（折叠态）。
-func formatQuestionPreview(resultJSON string, indent string) string {
+func formatQuestionPreview(resultJSON string, indent string, lc *Messages) string {
 	answers, order := parseQuestionResult(resultJSON)
 	if len(order) == 0 {
 		return ""
@@ -265,7 +271,7 @@ func formatQuestionPreview(resultJSON string, indent string) string {
 	for _, header := range order {
 		answer := answers[header]
 		if answer == "" {
-			answer = "(declined)"
+			answer = lc.ToolQuestionDeclined
 		}
 		sb.WriteString(indent)
 		sb.WriteString(mutedStyle.Render("│ "))
@@ -278,7 +284,7 @@ func formatQuestionPreview(resultJSON string, indent string) string {
 }
 
 // formatQuestionExpanded 将问答结果渲染为展开态（含完整问题文本）。
-func formatQuestionExpanded(resultJSON string, indent string, textWidth int) string {
+func formatQuestionExpanded(resultJSON string, indent string, textWidth int, lc *Messages) string {
 	var data struct {
 		Questions []struct {
 			Question string `json:"question"`
@@ -313,7 +319,7 @@ func formatQuestionExpanded(resultJSON string, indent string, textWidth int) str
 			sb.WriteString("\n")
 		} else {
 			sb.WriteString(indent)
-			sb.WriteString(mutedStyle.Render("  ▸ (declined)"))
+			sb.WriteString(mutedStyle.Render("  ▸ " + lc.ToolQuestionDeclined))
 			sb.WriteString("\n")
 		}
 		sb.WriteString("\n")
@@ -326,7 +332,7 @@ func formatQuestionExpanded(resultJSON string, indent string, textWidth int) str
 // ---------------------------------------------------------------------------
 
 // toolSuffix 根据工具类型和结果生成成功/失败的后缀字符串。
-func toolSuffix(p *Paragraph) string {
+func toolSuffix(p *Paragraph, lc *Messages) string {
 	// 工具仍在执行中，尚无结果
 	if p.State == stateStreaming {
 		return ""
@@ -392,24 +398,24 @@ func toolSuffix(p *Paragraph) string {
 			return "✓"
 		}
 		dur := formatDuration(p.ToolDurMs)
-		return fmt.Sprintf("(%d 条: %dE %dW %dI %dH, %s)", n, e, w, i, h, dur)
+		return fmt.Sprintf(lc.ToolNDiagnostics, n, e, w, i, h, dur)
 	case "lsp_definition":
 		n := parseLocationCount(p.ToolResult, "定义")
 		if n == 0 {
-			return "(未找到)"
+			return lc.ToolNotFound
 		}
 		dur := formatDuration(p.ToolDurMs)
-		return fmt.Sprintf("(%d 个定义, %s)", n, dur)
+		return fmt.Sprintf(lc.ToolNDefinitions, n, dur)
 	case "lsp_references":
 		n := parseLocationCount(p.ToolResult, "引用")
 		if n == 0 {
-			return "(未找到)"
+			return lc.ToolNotFound
 		}
 		dur := formatDuration(p.ToolDurMs)
-		return fmt.Sprintf("(%d 个引用, %s)", n, dur)
+		return fmt.Sprintf(lc.ToolNReferences, n, dur)
 	case "lsp_hover":
-		if strings.TrimSpace(p.ToolResult) == "" || strings.TrimSpace(p.ToolResult) == "无悬浮信息" {
-			return "(无信息)"
+		if strings.TrimSpace(p.ToolResult) == "" || strings.TrimSpace(p.ToolResult) == lc.ToolNoHoverOutput {
+			return lc.ToolNoInfo
 		}
 		size := formatBytes(len(p.ToolResult))
 		dur := formatDuration(p.ToolDurMs)
@@ -423,7 +429,7 @@ func toolSuffix(p *Paragraph) string {
 		if n <= 0 {
 			n = parseQuestionCount(p.ToolArgs)
 		}
-		return fmt.Sprintf("(%d 问)", n)
+		return fmt.Sprintf(lc.ToolNQuestions, n)
 	default:
 		dur := formatDuration(p.ToolDurMs)
 		return fmt.Sprintf("(%s)", dur)
@@ -740,7 +746,7 @@ func parseWebFetchBody(output string) string {
 
 // renderLSPDiagnosticFull 渲染 lsp_diagnostic 的展开态输出。
 // 首行摘要着色，后续条目按严重级别着色（error=红, warning=金, info=灰, hint=弱）。
-func renderLSPDiagnosticFull(sb *strings.Builder, result string, textWidth int, indent string) {
+func renderLSPDiagnosticFull(sb *strings.Builder, result string, textWidth int, indent string, lc *Messages) {
 	wrapped := 0
 	lines := strings.Split(result, "\n")
 	for i, line := range lines {
@@ -759,7 +765,7 @@ func renderLSPDiagnosticFull(sb *strings.Builder, result string, textWidth int, 
 		for _, wl := range wrapLine(styled, textWidth) {
 			if wrapped >= maxExpandedWrapped {
 				sb.WriteString(indent)
-				sb.WriteString(styleToolPreviewHint.Render(fmt.Sprintf("... (truncated to %d lines)", maxExpandedWrapped)))
+				sb.WriteString(styleToolPreviewHint.Render(fmt.Sprintf(lc.ToolTruncatedLines, maxExpandedWrapped)))
 				sb.WriteString("\n")
 				return
 			}
@@ -773,7 +779,7 @@ func renderLSPDiagnosticFull(sb *strings.Builder, result string, textWidth int, 
 
 // renderLSPLocationFull 渲染 lsp_definition / lsp_references 的展开态输出。
 // 首行总结着色，后续条目中等亮度。
-func renderLSPLocationFull(sb *strings.Builder, result string, textWidth int, indent string) {
+func renderLSPLocationFull(sb *strings.Builder, result string, textWidth int, indent string, lc *Messages) {
 	wrapped := 0
 	lines := strings.Split(result, "\n")
 	for i, line := range lines {
@@ -784,7 +790,7 @@ func renderLSPLocationFull(sb *strings.Builder, result string, textWidth int, in
 		for _, wl := range wrapLine(styled, textWidth) {
 			if wrapped >= maxExpandedWrapped {
 				sb.WriteString(indent)
-				sb.WriteString(styleToolPreviewHint.Render(fmt.Sprintf("... (truncated to %d lines)", maxExpandedWrapped)))
+				sb.WriteString(styleToolPreviewHint.Render(fmt.Sprintf(lc.ToolTruncatedLines, maxExpandedWrapped)))
 				sb.WriteString("\n")
 				return
 			}
@@ -797,14 +803,14 @@ func renderLSPLocationFull(sb *strings.Builder, result string, textWidth int, in
 }
 
 // renderLSPHoverFull 渲染 lsp_hover 的展开态输出（Markdown 类型签名 + 文档）。
-func renderLSPHoverFull(sb *strings.Builder, result string, textWidth int, indent string) {
+func renderLSPHoverFull(sb *strings.Builder, result string, textWidth int, indent string, lc *Messages) {
 	wrapped := 0
 	lines := strings.Split(result, "\n")
 	for _, line := range lines {
 		for _, wl := range wrapLine(line, textWidth) {
 			if wrapped >= maxExpandedWrapped {
 				sb.WriteString(indent)
-				sb.WriteString(styleToolPreviewHint.Render(fmt.Sprintf("... (truncated to %d lines)", maxExpandedWrapped)))
+				sb.WriteString(styleToolPreviewHint.Render(fmt.Sprintf(lc.ToolTruncatedLines, maxExpandedWrapped)))
 				sb.WriteString("\n")
 				return
 			}
@@ -817,7 +823,7 @@ func renderLSPHoverFull(sb *strings.Builder, result string, textWidth int, inden
 }
 
 // renderWebFetchFull 渲染 web_fetch 的展开态输出。头部元数据着色，正文默认样式。
-func renderWebFetchFull(sb *strings.Builder, result string, textWidth int, indent string) {
+func renderWebFetchFull(sb *strings.Builder, result string, textWidth int, indent string, lc *Messages) {
 	wrapped := 0
 
 	// 分离头部与正文
@@ -858,7 +864,7 @@ func renderWebFetchFull(sb *strings.Builder, result string, textWidth int, inden
 
 truncate:
 	sb.WriteString(indent)
-	sb.WriteString(styleToolPreviewHint.Render(fmt.Sprintf("... (truncated to %d lines)", maxExpandedWrapped)))
+	sb.WriteString(styleToolPreviewHint.Render(fmt.Sprintf(lc.ToolTruncatedLines, maxExpandedWrapped)))
 	sb.WriteString("\n")
 }
 
@@ -876,6 +882,7 @@ type ViewportCtx struct {
 	Glamour  *glamour.TermRenderer // nil 时回退到纯文本
 	Width    int                   // viewport 内容宽度（终端宽度 - 4）
 	Focused  bool                  // 当前段落是否处于焦点态
+	LC       *Messages             // 当前语言文案
 }
 
 // buildViewportContent 从段落列表重建 viewport 的全部文本行，同时返回每段的起始行号。
@@ -1101,7 +1108,7 @@ func renderThoughtPara(sb *strings.Builder, p *Paragraph, ctx ViewportCtx) {
 			} else if i == 0 && len(visible) == 0 {
 				// 尚无思考内容，首行显示提示
 				sb.WriteString(prefixStr)
-				sb.WriteString(styleThoughtStreaming.Render("思考中..."))
+				sb.WriteString(styleThoughtStreaming.Render(ctx.LC.ThoughtThinking))
 			} else {
 				// 补齐空行，保持前缀缩进对齐
 				if i == 0 {
@@ -1135,7 +1142,7 @@ func renderThoughtPara(sb *strings.Builder, p *Paragraph, ctx ViewportCtx) {
 		if len(visible) == 0 {
 			sb.WriteString(prefixStr)
 			sb.WriteString(styleThoughtCollapsed.Render(
-				fmt.Sprintf("▶ 思考完成 (%d tokens) · Enter 展开", p.ThoughtTokens)))
+				fmt.Sprintf(ctx.LC.ThoughtComplete, p.ThoughtTokens)))
 			sb.WriteString("\n")
 			return
 		}
@@ -1158,7 +1165,7 @@ func renderThoughtPara(sb *strings.Builder, p *Paragraph, ctx ViewportCtx) {
 		if totalWrapped > 2 {
 			sb.WriteString(indentStr)
 			sb.WriteString(styleThoughtExpandHint.Render(
-				fmt.Sprintf("··· Enter 展开 (%d tokens)", p.ThoughtTokens)))
+				fmt.Sprintf(ctx.LC.ThoughtExpandHint, p.ThoughtTokens)))
 			sb.WriteString("\n")
 		}
 
@@ -1180,7 +1187,7 @@ func renderThoughtPara(sb *strings.Builder, p *Paragraph, ctx ViewportCtx) {
 		}
 		// 折叠提示
 		sb.WriteString(indentStr)
-		sb.WriteString(styleThoughtExpandHint.Render("▼ Enter 折叠"))
+		sb.WriteString(styleThoughtExpandHint.Render(ctx.LC.ThoughtCollapseHint))
 		sb.WriteString("\n")
 
 	default:
@@ -1407,7 +1414,7 @@ func renderToolPara(sb *strings.Builder, p *Paragraph, ctx ViewportCtx) {
 
 	// 构造摘要行并做宽度自适应截断
 	toolNameRendered := toolNameStyle.Render(p.ToolName)
-	suffixRendered := toolSuffix(p)
+	suffixRendered := toolSuffix(p, ctx.LC)
 	fixedWidth := lipgloss.Width(toolNameRendered) + lipgloss.Width("  ") + lipgloss.Width("  ") + lipgloss.Width(suffixRendered)
 	maxArgsWidth := textWidth - fixedWidth
 	if maxArgsWidth < 4 {
@@ -1429,9 +1436,9 @@ func renderToolPara(sb *strings.Builder, p *Paragraph, ctx ViewportCtx) {
 	if p.State == stateDone || p.State == stateError {
 		if p.State == stateCollapsed || p.State == stateDone || p.State == stateError {
 			if p.DiffHunks != nil {
-				renderDiffPreview(sb, p.DiffHunks, textWidth, indentStr)
+				renderDiffPreview(sb, p.DiffHunks, textWidth, indentStr, ctx.LC)
 			} else {
-				renderToolPreview(sb, p, textWidth, indentStr)
+				renderToolPreview(sb, p, textWidth, indentStr, ctx.LC)
 			}
 		}
 	}
@@ -1439,9 +1446,9 @@ func renderToolPara(sb *strings.Builder, p *Paragraph, ctx ViewportCtx) {
 	// 展开态 —— 显示完整输出
 	if p.State == stateExpanded {
 		if p.DiffHunks != nil {
-			renderDiffView(sb, p.DiffHunks, textWidth, indentStr)
+			renderDiffView(sb, p.DiffHunks, textWidth, indentStr, ctx.LC)
 		} else {
-			renderToolFullOutput(sb, p, textWidth, indentStr)
+			renderToolFullOutput(sb, p, textWidth, indentStr, ctx.LC)
 		}
 	}
 }
@@ -1454,10 +1461,10 @@ const maxPreviewWrapped = 5
 //
 // 错误态（ToolResult 为空但 ToolError 非空）：统一以红色 "│ " 前缀渲染错误信息，
 // 与 shell 错误输出布局对齐，保证所有工具的失败信息在 TUI 中一致可见。
-func renderToolPreview(sb *strings.Builder, p *Paragraph, textWidth int, indent string) {
+func renderToolPreview(sb *strings.Builder, p *Paragraph, textWidth int, indent string, lc *Messages) {
 	// ask_user_question 定制渲染：显示可读的问答摘要
 	if p.ToolName == "ask_user_question" && p.ToolResult != "" {
-		preview := formatQuestionPreview(p.ToolResult, indent)
+		preview := formatQuestionPreview(p.ToolResult, indent, lc)
 		if preview != "" {
 			sb.WriteString(preview)
 			return
@@ -1510,7 +1517,7 @@ func renderToolPreview(sb *strings.Builder, p *Paragraph, textWidth int, indent 
 		}
 		if truncated {
 			sb.WriteString(indent)
-			sb.WriteString(styleToolPreviewHint.Render("··· (truncated)"))
+			sb.WriteString(styleToolPreviewHint.Render(lc.ToolTruncated))
 			sb.WriteString("\n")
 		}
 		return
@@ -1609,9 +1616,9 @@ func renderToolPreview(sb *strings.Builder, p *Paragraph, textWidth int, indent 
 		// write_file / edit_file 等不可聚焦的工具仅显示截断标记。
 		switch p.ToolName {
 		case "bash", "web_fetch", "skill":
-			sb.WriteString(styleToolPreviewHint.Render("··· Enter 展开全部"))
+			sb.WriteString(styleToolPreviewHint.Render(lc.ToolExpandAllHint))
 		default:
-			sb.WriteString(styleToolPreviewHint.Render("··· (truncated)"))
+			sb.WriteString(styleToolPreviewHint.Render(lc.ToolTruncated))
 		}
 		sb.WriteString("\n")
 	}
@@ -1624,7 +1631,7 @@ const maxExpandedWrapped = 2000
 // renderToolFullOutput 渲染工具的完整输出（展开态）。indent 由上层传入以对齐摘要行前缀。
 // 当 ToolResult 为空但 ToolError 非空时（如 stateError → stateExpanded 展开），
 // 回退到渲染错误信息。
-func renderToolFullOutput(sb *strings.Builder, p *Paragraph, textWidth int, indent string) {
+func renderToolFullOutput(sb *strings.Builder, p *Paragraph, textWidth int, indent string, lc *Messages) {
 	if textWidth < 1 {
 		textWidth = 1
 	}
@@ -1643,7 +1650,7 @@ func renderToolFullOutput(sb *strings.Builder, p *Paragraph, textWidth int, inde
 	switch p.ToolName {
 	case "ask_user_question":
 		// 展开态：显示每个问题的完整信息
-		sb.WriteString(formatQuestionExpanded(p.ToolResult, indent, textWidth))
+		sb.WriteString(formatQuestionExpanded(p.ToolResult, indent, textWidth, lc))
 		return
 	case "read_file":
 		codeTextWidth := textWidth - 9
@@ -1724,16 +1731,16 @@ func renderToolFullOutput(sb *strings.Builder, p *Paragraph, textWidth int, inde
 	case "grep", "search_file", "ls":
 
 	case "lsp_diagnostic":
-		renderLSPDiagnosticFull(sb, result, textWidth, indent)
+		renderLSPDiagnosticFull(sb, result, textWidth, indent, lc)
 		return
 	case "lsp_definition", "lsp_references":
-		renderLSPLocationFull(sb, result, textWidth, indent)
+		renderLSPLocationFull(sb, result, textWidth, indent, lc)
 		return
 	case "lsp_hover":
-		renderLSPHoverFull(sb, result, textWidth, indent)
+		renderLSPHoverFull(sb, result, textWidth, indent, lc)
 		return
 	case "web_fetch":
-		renderWebFetchFull(sb, result, textWidth, indent)
+		renderWebFetchFull(sb, result, textWidth, indent, lc)
 		return
 
 	default:
@@ -1757,7 +1764,7 @@ func renderToolFullOutput(sb *strings.Builder, p *Paragraph, textWidth int, inde
 
 	if truncated {
 		sb.WriteString(indent)
-		sb.WriteString(styleToolPreviewHint.Render(fmt.Sprintf("... (truncated to %d lines)", maxExpandedWrapped)))
+		sb.WriteString(styleToolPreviewHint.Render(fmt.Sprintf(lc.ToolTruncatedLines, maxExpandedWrapped)))
 		sb.WriteString("\n")
 	}
 
@@ -1765,14 +1772,14 @@ func renderToolFullOutput(sb *strings.Builder, p *Paragraph, textWidth int, inde
 	switch p.ToolName {
 	case "bash", "web_fetch":
 		sb.WriteString(indent)
-		sb.WriteString(styleToolPreviewHint.Render("▼ Enter 折叠"))
+		sb.WriteString(styleToolPreviewHint.Render(lc.ToolCollapseHint))
 		sb.WriteString("\n")
 	}
 }
 
 // renderDiffPreview 渲染 diff 的折叠预览。受 maxPreviewWrapped 约束，
 // 防止单条超长行撑满预览。edit_file 不参与段落聚焦，截断时仅显示标记。
-func renderDiffPreview(sb *strings.Builder, hunks []tool.DiffHunk, textWidth int, indent string) {
+func renderDiffPreview(sb *strings.Builder, hunks []tool.DiffHunk, textWidth int, indent string, lc *Messages) {
 	if len(hunks) == 0 {
 		return
 	}
@@ -1809,7 +1816,7 @@ func renderDiffPreview(sb *strings.Builder, hunks []tool.DiffHunk, textWidth int
 	}
 	if truncated {
 		sb.WriteString(indent)
-		sb.WriteString(styleToolPreviewHint.Render("··· (truncated)"))
+		sb.WriteString(styleToolPreviewHint.Render(lc.ToolTruncated))
 		sb.WriteString("\n")
 	}
 }
@@ -1820,7 +1827,7 @@ func renderDiffPreview(sb *strings.Builder, hunks []tool.DiffHunk, textWidth int
 //   - 附加虚行号列（灰色），不影响 diff 语义
 //
 // 受 maxExpandedWrapped 约束，防止超长行导致海量输出。
-func renderDiffView(sb *strings.Builder, hunks []tool.DiffHunk, textWidth int, indent string) {
+func renderDiffView(sb *strings.Builder, hunks []tool.DiffHunk, textWidth int, indent string, lc *Messages) {
 	if len(hunks) == 0 {
 		return
 	}
@@ -1920,7 +1927,7 @@ func renderDiffView(sb *strings.Builder, hunks []tool.DiffHunk, textWidth int, i
 
 	if truncated {
 		sb.WriteString(indent)
-		sb.WriteString(styleToolPreviewHint.Render(fmt.Sprintf("... (truncated to %d lines)", maxExpandedWrapped)))
+		sb.WriteString(styleToolPreviewHint.Render(fmt.Sprintf(lc.ToolTruncatedLines, maxExpandedWrapped)))
 		sb.WriteString("\n")
 	}
 }

@@ -21,6 +21,7 @@ const (
 	overlayQuestion                      // AskUserQuestion 选择题（阻断式）
 	overlayThemePicker                   // /theme 触发：主题选择列表
 	overlayModelPicker                   // /model 无参触发：模型选择列表
+	overlayLocalePicker                  // /locale 触发：语言选择列表
 	overlayCommandPicker                 // / 命令补全（预留）
 )
 
@@ -53,7 +54,7 @@ func (m *model) renderPermOverlay(boxWidth int) string {
 	overlayContentStyle := lipgloss.NewStyle().Width(innerWidth)
 	overlayFgStyle := lipgloss.NewStyle().Foreground(colorFooterFg).Width(innerWidth)
 
-	title := styleOverlayTitle.Width(innerWidth).Render("▲ Permission Required")
+	title := styleOverlayTitle.Width(innerWidth).Render(m.msg().PermRequired)
 
 	// 合并 Tool + Args 为一行： "shell: git push origin main"
 	toolArgsLine := m.permReq.toolName
@@ -75,7 +76,7 @@ func (m *model) renderPermOverlay(boxWidth int) string {
 	// reason 仅在非默认原因时展示（安全检查、规则匹配等）
 	if m.permReq.reason != "" {
 		contentLines = append(contentLines, "")
-		wrapWidth := innerWidth - 8 // "Reason: " 前缀宽度
+		wrapWidth := innerWidth - len(m.msg().PermReason) // "Reason: " 前缀宽度
 		if wrapWidth < 20 {
 			wrapWidth = 20
 		}
@@ -86,7 +87,7 @@ func (m *model) renderPermOverlay(boxWidth int) string {
 		}
 		for i, wl := range wrappedReason {
 			if i == 0 {
-				contentLines = append(contentLines, overlayFgStyle.Render("Reason: "+wl))
+				contentLines = append(contentLines, overlayFgStyle.Render(m.msg().PermReason+wl))
 			} else {
 				contentLines = append(contentLines, overlayFgStyle.Render("        "+wl))
 			}
@@ -100,7 +101,7 @@ func (m *model) renderPermOverlay(boxWidth int) string {
 
 	m.help.SetWidth(innerWidth) // 对齐内容区宽度
 	hintWrapper := lipgloss.NewStyle().Foreground(colorMuted).Width(innerWidth)
-	hint := hintWrapper.Render(m.help.ShortHelpView(permKeys))
+	hint := hintWrapper.Render(m.help.ShortHelpView(permKeyBindings(m.msg())))
 	contentLines = append(contentLines, hint)
 
 	// 动态宽度：不超出可用空间
@@ -138,13 +139,13 @@ func (m *model) renderQuestionOverlay(boxWidth int) string {
 	var hintKeys []key.Binding
 	if m.questionFormIsOther {
 		body = m.otherInput.View()
-		hintKeys = questionOtherKeys
+		hintKeys = questionOtherKeyBindings(m.msg())
 	} else if m.questionForm != nil {
 		body = m.questionForm.View()
 		if q.MultiSelect {
-			hintKeys = questionMultiKeys
+			hintKeys = questionMultiKeyBindings(m.msg())
 		} else {
-			hintKeys = questionSingleKeys
+			hintKeys = questionSingleKeyBindings(m.msg())
 		}
 	} else {
 		return ""
@@ -170,10 +171,67 @@ func (m *model) renderQuestionOverlay(boxWidth int) string {
 // 主题选择器覆盖层渲染
 // ---------------------------------------------------------------------------
 
-var themePickerKeys = []key.Binding{
-	key.NewBinding(key.WithKeys("↑/↓"), key.WithHelp("↑/↓", "导航")),
-	key.NewBinding(key.WithKeys("enter"), key.WithHelp("Enter", "确认")),
-	key.NewBinding(key.WithKeys("esc"), key.WithHelp("Esc", "取消")),
+// permKeyBindings 返回权限覆盖层的快捷键帮助。
+func permKeyBindings(lc *Messages) []key.Binding {
+	return []key.Binding{
+		key.NewBinding(key.WithKeys("↑/↓"), key.WithHelp("↑/↓", lc.KeyNav)),
+		key.NewBinding(key.WithKeys("enter"), key.WithHelp("Enter", lc.KeyConfirm)),
+		key.NewBinding(key.WithKeys("esc"), key.WithHelp("Esc", lc.KeyDeny)),
+	}
+}
+
+// questionSingleKeyBindings 单选问题快捷键提示。
+func questionSingleKeyBindings(lc *Messages) []key.Binding {
+	return []key.Binding{
+		key.NewBinding(key.WithKeys("↑/↓"), key.WithHelp("↑/↓", lc.KeyNav)),
+		key.NewBinding(key.WithKeys("enter"), key.WithHelp("Enter", lc.KeyConfirm)),
+		key.NewBinding(key.WithKeys("esc"), key.WithHelp("Esc", lc.KeyDeny)),
+	}
+}
+
+// questionMultiKeyBindings 多选问题快捷键提示。
+func questionMultiKeyBindings(lc *Messages) []key.Binding {
+	return []key.Binding{
+		key.NewBinding(key.WithKeys("↑/↓"), key.WithHelp("↑/↓", lc.KeyNav)),
+		key.NewBinding(key.WithKeys("space"), key.WithHelp("Space", lc.KeyToggle)),
+		key.NewBinding(key.WithKeys("enter"), key.WithHelp("Enter", lc.KeyConfirm)),
+		key.NewBinding(key.WithKeys("esc"), key.WithHelp("Esc", lc.KeyDeny)),
+	}
+}
+
+// questionOtherKeyBindings Other 文本输入快捷键提示。
+func questionOtherKeyBindings(lc *Messages) []key.Binding {
+	return []key.Binding{
+		key.NewBinding(key.WithKeys("enter"), key.WithHelp("Enter", lc.KeyConfirm)),
+		key.NewBinding(key.WithKeys("esc"), key.WithHelp("Esc", lc.KeyCancel)),
+	}
+}
+
+// themePickerKeyBindings 主题选择器快捷键。
+func themePickerKeyBindings(lc *Messages) []key.Binding {
+	return []key.Binding{
+		key.NewBinding(key.WithKeys("↑/↓"), key.WithHelp("↑/↓", lc.KeyNav)),
+		key.NewBinding(key.WithKeys("enter"), key.WithHelp("Enter", lc.KeyConfirm)),
+		key.NewBinding(key.WithKeys("esc"), key.WithHelp("Esc", lc.KeyCancel)),
+	}
+}
+
+// localePickerKeyBindings 语言选择器快捷键。
+func localePickerKeyBindings(lc *Messages) []key.Binding {
+	return []key.Binding{
+		key.NewBinding(key.WithKeys("↑/↓"), key.WithHelp("↑/↓", lc.KeyNav)),
+		key.NewBinding(key.WithKeys("enter"), key.WithHelp("Enter", lc.KeyConfirm)),
+		key.NewBinding(key.WithKeys("esc"), key.WithHelp("Esc", lc.KeyCancel)),
+	}
+}
+
+// modelPickerKeyBindings 模型选择器快捷键。
+func modelPickerKeyBindings(lc *Messages) []key.Binding {
+	return []key.Binding{
+		key.NewBinding(key.WithKeys("↑/↓"), key.WithHelp("↑/↓", lc.KeyNav)),
+		key.NewBinding(key.WithKeys("enter"), key.WithHelp("Enter", lc.KeyConfirm)),
+		key.NewBinding(key.WithKeys("esc"), key.WithHelp("Esc", lc.KeyCancel)),
+	}
 }
 
 func (m *model) renderThemePickerOverlay(boxWidth int) string {
@@ -181,7 +239,7 @@ func (m *model) renderThemePickerOverlay(boxWidth int) string {
 	m.themeList.SetSize(innerWidth, 3)
 	overlayFgStyle := lipgloss.NewStyle().Foreground(colorFooterFg).Width(innerWidth)
 
-	title := styleOverlayTitle.Width(innerWidth).Render("▲ 选择主题")
+	title := styleOverlayTitle.Width(innerWidth).Render(m.msg().PickerSelectTheme)
 	contentLines := []string{title, ""}
 
 	// 高亮当前选择
@@ -190,7 +248,7 @@ func (m *model) renderThemePickerOverlay(boxWidth int) string {
 
 	m.help.SetWidth(innerWidth)
 	hintWrapper := lipgloss.NewStyle().Foreground(colorMuted).Width(innerWidth)
-	hint := hintWrapper.Render(m.help.ShortHelpView(themePickerKeys))
+	hint := hintWrapper.Render(m.help.ShortHelpView(themePickerKeyBindings(m.msg())))
 	contentLines = append(contentLines, hint)
 
 	boxStyle := lipgloss.NewStyle().
@@ -206,11 +264,8 @@ func (m *model) renderThemePickerOverlay(boxWidth int) string {
 // 模型选择器覆盖层渲染
 // ---------------------------------------------------------------------------
 
-var modelPickerKeys = []key.Binding{
-	key.NewBinding(key.WithKeys("↑/↓"), key.WithHelp("↑/↓", "导航")),
-	key.NewBinding(key.WithKeys("enter"), key.WithHelp("Enter", "确认")),
-	key.NewBinding(key.WithKeys("esc"), key.WithHelp("Esc", "取消")),
-}
+// modelPickerKeyBindings 在 tui_overlay.go 中定义。
+// 主题和模型选择器的所有 key bindings 已合并为接受 *Messages 的函数。
 
 func (m *model) renderModelPickerOverlay(boxWidth int) string {
 	innerWidth := boxWidth - 2 - 4
@@ -224,7 +279,7 @@ func (m *model) renderModelPickerOverlay(boxWidth int) string {
 	m.modelPickerList.SetSize(innerWidth, height)
 	overlayFgStyle := lipgloss.NewStyle().Foreground(colorFooterFg).Width(innerWidth)
 
-	title := styleOverlayTitle.Width(innerWidth).Render("▲ 选择模型")
+	title := styleOverlayTitle.Width(innerWidth).Render(m.msg().PickerSelectModel)
 	contentLines := []string{title, ""}
 
 	contentLines = append(contentLines, overlayFgStyle.Render(m.modelPickerList.View()))
@@ -232,7 +287,36 @@ func (m *model) renderModelPickerOverlay(boxWidth int) string {
 
 	m.help.SetWidth(innerWidth)
 	hintWrapper := lipgloss.NewStyle().Foreground(colorMuted).Width(innerWidth)
-	hint := hintWrapper.Render(m.help.ShortHelpView(modelPickerKeys))
+	hint := hintWrapper.Render(m.help.ShortHelpView(modelPickerKeyBindings(m.msg())))
+	contentLines = append(contentLines, hint)
+
+	boxStyle := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(colorHeaderAccent).
+		Padding(1, 2).
+		Width(boxWidth)
+
+	return boxStyle.Render(strings.Join(contentLines, "\n"))
+}
+
+// ---------------------------------------------------------------------------
+// 语言选择器覆盖层渲染
+// ---------------------------------------------------------------------------
+
+func (m *model) renderLocalePickerOverlay(boxWidth int) string {
+	innerWidth := boxWidth - 2 - 4
+	m.localeList.SetSize(innerWidth, 2)
+	overlayFgStyle := lipgloss.NewStyle().Foreground(colorFooterFg).Width(innerWidth)
+
+	title := styleOverlayTitle.Width(innerWidth).Render(m.msg().PickerSelectLocale)
+	contentLines := []string{title, ""}
+
+	contentLines = append(contentLines, overlayFgStyle.Render(m.localeList.View()))
+	contentLines = append(contentLines, "")
+
+	m.help.SetWidth(innerWidth)
+	hintWrapper := lipgloss.NewStyle().Foreground(colorMuted).Width(innerWidth)
+	hint := hintWrapper.Render(m.help.ShortHelpView(localePickerKeyBindings(m.msg())))
 	contentLines = append(contentLines, hint)
 
 	boxStyle := lipgloss.NewStyle().
