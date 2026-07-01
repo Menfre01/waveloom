@@ -354,8 +354,8 @@ func setupVerboseLog(verbose bool) (io.WriteCloser, error) {
 
 	// 轮换: waveloom.log → waveloom.log.1
 	if _, err := os.Stat(logPath); err == nil {
-		_ = os.Remove(oldPath)                     // 丢弃更旧
-		_ = os.Rename(logPath, oldPath)           // 当前 → .1
+		_ = os.Remove(oldPath)          // 丢弃更旧
+		_ = os.Rename(logPath, oldPath) // 当前 → .1
 	}
 
 	f, err := os.Create(logPath)
@@ -382,7 +382,6 @@ func createGuard(globalPath, projectPath string) permission.Guard {
 		permission.WithProjectConfigPath(projectPath),
 	}
 	if len(rules) > 0 {
-		fmt.Fprintf(os.Stderr, "📋 已加载 %d 条权限规则\n", len(rules))
 		opts = append(opts, permission.WithRules(rules))
 	}
 
@@ -515,4 +514,3 @@ func (a *skillExecutorAdapter) Load(name, args string) (*tool.SkillLoadResult, e
 		DirPath: loaded.DirPath,
 	}, nil
 }
-
