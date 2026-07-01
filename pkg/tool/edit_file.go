@@ -33,7 +33,7 @@ func (t *EditFile) Description() string {
 		"  - Small changes (≤50 lines) → use edit_file",
 		"  - New files or full overwrites → use write_file",
 		"  - file_path must be an existing file, not a directory — use ls to explore directories first",
-		"  - Always confirm old_string content with read_file before editing (including indentation and whitespace)",
+		"  - You MUST call read_file to confirm old_string content before every edit_file call (indentation and whitespace). Never edit from memory — this is a hard constraint.",
 		"  - If old_string is not unique, expand the context to make it unique",
 	}, "\n")
 }
