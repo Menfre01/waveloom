@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/Menfre01/waveloom/pkg/pathutil"
@@ -29,8 +31,8 @@ type ReadFile struct{}
 func (t *ReadFile) Name() string         { return "read_file" }
 func (t *ReadFile) Description() string {
 	return "Read a file with line numbers. Supports offset and limit parameters to read partial content. " +
-		"IMPORTANT: file_path must be a file, not a directory. Paths without a file extension (e.g., 'pkg/tool') are likely directories — use ls or search_file to discover files first, then pass the actual filename. " +
-		"On error: if path was a directory, pick a file from the listing in the error; if file not found, check the Did you mean suggestion."
+		"file_path must be a file, not a directory. " +
+		"On directory error, pick a file from the listing — use the Did you mean suggestion if present."
 }
 func (t *ReadFile) Schema() json.RawMessage { return readFileSchema }
 func (t *ReadFile) ConcurrentSafe() bool { return true }
@@ -62,13 +64,27 @@ func (t *ReadFile) Execute(ctx context.Context, p ReadFileParams) (*ToolResult, 
 	if info.IsDir() {
 		entries, readErr := os.ReadDir(path)
 		if readErr == nil {
+			// 智能排序：源码文件优先，目录放最后
+			sortDirEntries(entries)
+
 			var listing strings.Builder
 			fmt.Fprintf(&listing, "Path is a directory, not a file: %s\n\n", path)
-			listing.WriteString("Use ls for full listing. Top entries:\n")
-			limit := 50
+
+			// 尝试推测用户想要的文件
+			if suggestion := suggestFileInDir(path, entries); suggestion != "" {
+				fmt.Fprintf(&listing, "Did you mean %s?\n\n", suggestion)
+			}
+
+			const maxDisplay = 50
+			total := len(entries)
+			if total > maxDisplay {
+				fmt.Fprintf(&listing, "Showing first %d of %d entries (use ls for more):\n", maxDisplay, total)
+			} else {
+				listing.WriteString("Contents:\n")
+			}
 			for i, entry := range entries {
-				if i >= limit {
-					fmt.Fprintf(&listing, "  ... and %d more entries\n", len(entries)-limit)
+				if i >= maxDisplay {
+					fmt.Fprintf(&listing, "  ... and %d more entries\n", total-maxDisplay)
 					break
 				}
 				name := entry.Name()
@@ -156,12 +172,43 @@ func (t *ReadFile) fileNotFoundError(path string) *ToolResult {
 	cwd, _ := os.Getwd()
 	msg := fmt.Sprintf("File does not exist: %s\nCWD: %s", path, cwd)
 
+	// 场景 1：文件名恰好在 CWD 下存在（LLM 忘了加子目录前缀）
 	if suggestion := SuggestPathUnderCwd(path); suggestion != "" {
 		msg += fmt.Sprintf("\nDid you mean %s?", suggestion)
-	} else if similar := FindSimilarFile(path); similar != "" {
-		msg += fmt.Sprintf("\nDid you mean %s?", similar)
+		return toolError(ErrorClassRecoverable, ErrKindFileNotFound, msg, nil)
 	}
 
+	// 场景 2：父目录存在 → 在目录内找相似文件名
+	parentDir := filepath.Dir(path)
+	if info, statErr := os.Stat(parentDir); statErr == nil && info.IsDir() {
+		if similar := FindSimilarFile(path); similar != "" {
+			msg += fmt.Sprintf("\nDid you mean %s?", similar)
+			return toolError(ErrorClassRecoverable, ErrKindFileNotFound, msg, nil)
+		}
+		// 父目录存在但没找到相似文件 → 列出目录内容帮助 LLM 定位
+		entries, readErr := os.ReadDir(parentDir)
+		if readErr == nil && len(entries) > 0 {
+			sortDirEntries(entries)
+			msg += fmt.Sprintf("\n\nFiles in %s:", parentDir)
+			const maxShow = 20
+			for i, e := range entries {
+				if i >= maxShow {
+					msg += fmt.Sprintf("\n  ... and %d more files", len(entries)-maxShow)
+					break
+				}
+				name := e.Name()
+				if e.IsDir() {
+					name += "/"
+				}
+				msg += fmt.Sprintf("\n  %s", name)
+			}
+		}
+		return toolError(ErrorClassRecoverable, ErrKindFileNotFound, msg, nil)
+	}
+
+	// 场景 3：父目录也不存在 → 路径整体错误，不做文件猜测
+	msg += fmt.Sprintf("\nParent directory not found: %s", parentDir)
+	msg += "\nCheck the path with ls or search_file."
 	return toolError(ErrorClassRecoverable, ErrKindFileNotFound, msg, nil)
 }
 
@@ -346,4 +393,72 @@ func selectRange(lines []string, offset, limit int) (selected []string, truncate
 		}
 	}
 	return
+}
+
+// ---------------------------------------------------------------------------
+// sortDirEntries — 排序目录条目：文件在前（字母序），目录在后（字母序）
+// ---------------------------------------------------------------------------
+
+func sortDirEntries(entries []os.DirEntry) {
+	sort.Slice(entries, func(i, j int) bool {
+		iDir, jDir := entries[i].IsDir(), entries[j].IsDir()
+		if iDir != jDir {
+			return !iDir // 文件在前，目录在后
+		}
+		return entries[i].Name() < entries[j].Name()
+	})
+}
+
+// ---------------------------------------------------------------------------
+// suggestFileInDir — 推测目录下用户最可能想读的文件（语言无关）
+// ---------------------------------------------------------------------------
+
+// suggestFileInDir 在目录中寻找最可能的候选文件。
+// 优先级：
+//   1. 文件名（不含扩展名）与目录名相同（如 pkg/skill → skill.go / skill.py / skill.rs）
+//   2. 常见入口文件名（index.* / main.* / mod.* / lib.*）
+//   3. 字母序第一个非隐藏文件
+// 均不满足返回 ""。
+func suggestFileInDir(dirPath string, entries []os.DirEntry) string {
+	dirName := filepath.Base(dirPath)
+
+	// 收集非目录文件
+	var files []os.DirEntry
+	for _, e := range entries {
+		if !e.IsDir() {
+			files = append(files, e)
+		}
+	}
+	if len(files) == 0 {
+		return ""
+	}
+
+	// 1. 文件名（去扩展名）与目录名相同（大小写不敏感）
+	for _, e := range files {
+		name := e.Name()
+		ext := filepath.Ext(name)
+		base := strings.TrimSuffix(name, ext)
+		if strings.EqualFold(base, dirName) {
+			return filepath.Join(dirPath, name)
+		}
+	}
+
+	// 2. 常见入口文件名
+	entryNames := []string{"index.", "main.", "mod.", "lib."}
+	for _, prefix := range entryNames {
+		for _, e := range files {
+			if strings.HasPrefix(strings.ToLower(e.Name()), prefix) {
+				return filepath.Join(dirPath, e.Name())
+			}
+		}
+	}
+
+	// 3. 字母序第一个非隐藏文件
+	for _, e := range files {
+		if !strings.HasPrefix(e.Name(), ".") {
+			return filepath.Join(dirPath, e.Name())
+		}
+	}
+
+	return ""
 }

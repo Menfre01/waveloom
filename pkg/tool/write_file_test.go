@@ -117,8 +117,38 @@ func TestWriteFileIsDirectory(t *testing.T) {
 		t.Errorf("Error.Kind = %q, want %q", result.Error.Kind, ErrKindNotDir)
 	}
 	// 验证错误消息包含目录列表
-	if !strings.Contains(result.Error.Message, "Top entries:") {
-		t.Error("directory error should list top entries")
+	if !strings.Contains(result.Error.Message, "Contents:") {
+		t.Error("directory error should list contents")
+	}
+}
+
+func TestWriteFileIsDirectoryWithFiles(t *testing.T) {
+	dir := t.TempDir()
+	// 在目录中放置文件，覆盖 suggestFileInDir 的 Did you mean 分支
+	if err := os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte("# Project\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	tool := &WriteFile{}
+	result, err := tool.Execute(context.Background(), WriteFileParams{
+		FilePath: dir,
+		Content:  "should fail",
+	})
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if result.Error == nil {
+		t.Fatal("Error should not be nil when writing to a directory")
+	}
+	if result.Error.Kind != ErrKindNotDir {
+		t.Errorf("Error.Kind = %q, want %q", result.Error.Kind, ErrKindNotDir)
+	}
+	// 非空目录应列出内容
+	if !strings.Contains(result.Error.Message, "Contents:") {
+		t.Error("directory error should list contents")
 	}
 }
 
