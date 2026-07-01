@@ -78,10 +78,10 @@ var defaultSystemPrompt = `You are Waveloom, a coding agent. You help users writ
 
 ## How you work
 
-- Read before you write — explore with search_file and grep, confirm with read_file before editing.
+- Read before you write — explore with search_file and grep. Before ANY edit_file call, you MUST call read_file (with line numbers) in the same tool-call batch to confirm the exact content of old_string (indentation, whitespace, punctuation). Never edit from memory — this is a hard constraint.
 - Verify before you claim — run tests/lint/build via shell when applicable, run lsp_diagnostic, check diffs after every change.
 - Check before you guess — confirm tool availability in ## Environment before calling any binary.
-- Edit surgically — prefer edit_file over write_file, never touch unrelated code.
+- Edit surgically — prefer edit_file over write_file, never touch unrelated code. After every edit_file call, run lsp_diagnostic to verify no new errors before proceeding to the next change.
 - Invoke parallel-safe tools (read_file, search_file, grep, ls, web_fetch, lsp_*) in the same response when independent — the system serializes write_file, edit_file, and shell automatically.
 - Use ls or search_file to explore directories before reading files — never pass a directory path to read_file. Paths without a file extension (e.g., pkg/tool) are likely directories: use ls or search_file first, then pass the actual filename to read_file.
 - For throwaway verification scripts: prefer python, write to /tmp, and clean up after.
@@ -90,6 +90,7 @@ var defaultSystemPrompt = `You are Waveloom, a coding agent. You help users writ
 ## Coding standards
 
 - Follow existing codebase conventions and linter configurations.
+- The user message immediately following this prompt contains the project's AGENTS.md instructions — these are project-specific rules. You MUST follow them. However, the rules in this system prompt are HARD CONSTRAINTS — they are not suggestions, defaults, or fallbacks. When AGENTS.md and system prompt address the same topic, system prompt takes precedence unconditionally. AGENTS.md supplements topics not covered by system prompt.
 - Write clear, self-documenting names. Avoid abbreviations.
 - Keep changes minimal — no unnecessary refactors or rewrites.
 
@@ -160,33 +161,8 @@ type keyMap struct {
 	Paste         key.Binding
 }
 
-// permKeys 权限覆盖层的快捷键（用于 help 组件渲染）。
-var permKeys = []key.Binding{
-	key.NewBinding(key.WithKeys("↑/↓"), key.WithHelp("↑/↓", "导航")),
-	key.NewBinding(key.WithKeys("enter"), key.WithHelp("Enter", "确认")),
-	key.NewBinding(key.WithKeys("esc"), key.WithHelp("Esc", "拒绝")),
-}
-
-// questionSingleKeys 单选问题快捷键提示。
-var questionSingleKeys = []key.Binding{
-	key.NewBinding(key.WithKeys("↑/↓"), key.WithHelp("↑/↓", "导航")),
-	key.NewBinding(key.WithKeys("enter"), key.WithHelp("Enter", "确认")),
-	key.NewBinding(key.WithKeys("esc"), key.WithHelp("Esc", "拒绝")),
-}
-
-// questionMultiKeys 多选问题快捷键提示。
-var questionMultiKeys = []key.Binding{
-	key.NewBinding(key.WithKeys("↑/↓"), key.WithHelp("↑/↓", "导航")),
-	key.NewBinding(key.WithKeys("space"), key.WithHelp("Space", "勾选")),
-	key.NewBinding(key.WithKeys("enter"), key.WithHelp("Enter", "确认")),
-	key.NewBinding(key.WithKeys("esc"), key.WithHelp("Esc", "拒绝")),
-}
-
-// questionOtherKeys Other 文本输入快捷键提示。
-var questionOtherKeys = []key.Binding{
-	key.NewBinding(key.WithKeys("enter"), key.WithHelp("Enter", "确认")),
-	key.NewBinding(key.WithKeys("esc"), key.WithHelp("Esc", "返回")),
-}
+// permKeyBindings / questionSingleKeyBindings 等已移至 tui_overlay.go，
+// 作为接受 *Messages 的函数实现，支持国际化。
 
 var defaultKeys = keyMap{
 	Enter:         key.NewBinding(key.WithKeys("enter"), key.WithHelp("Enter", "发送消息")),
@@ -202,6 +178,25 @@ var defaultKeys = keyMap{
 	JumpBottom:    key.NewBinding(key.WithKeys("ctrl+e", "end"), key.WithHelp("Ctrl+E/End", "跳到底部")),
 	Picker:        key.NewBinding(key.WithKeys("@"), key.WithHelp("@", "选择文件/目录")),
 	Paste:         key.NewBinding(key.WithKeys("ctrl+v"), key.WithHelp("Ctrl+V", "粘贴")),
+}
+
+// makeKeyMap 根据 locale 生成带翻译帮助文本的 keyMap。
+func makeKeyMap(lc *Messages) keyMap {
+	return keyMap{
+		Enter:       key.NewBinding(key.WithKeys("enter"), key.WithHelp("Enter", lc.KeySend)),
+		Interrupt:   key.NewBinding(key.WithKeys("esc"), key.WithHelp("Esc", lc.KeyInterrupt)),
+		Quit:        key.NewBinding(key.WithKeys("ctrl+c"), key.WithHelp("Ctrl+C", lc.KeyQuit)),
+		FocusNext:   key.NewBinding(key.WithKeys("tab"), key.WithHelp("Tab", lc.KeyFocusNext)),
+		FocusPrev:   key.NewBinding(key.WithKeys("shift+tab"), key.WithHelp("Shift+Tab", lc.KeyFocusPrev)),
+		Up:          key.NewBinding(key.WithKeys("up"), key.WithHelp("↑", lc.KeyScrollUp)),
+		Down:        key.NewBinding(key.WithKeys("down"), key.WithHelp("↓", lc.KeyScrollDown)),
+		PageUp:      key.NewBinding(key.WithKeys("pgup"), key.WithHelp("PgUp", lc.KeyPageUp)),
+		PageDown:    key.NewBinding(key.WithKeys("pgdown"), key.WithHelp("PgDn", lc.KeyPageDown)),
+		ToggleTheme: key.NewBinding(key.WithKeys("ctrl+g"), key.WithHelp("Ctrl+G", lc.KeyToggleTheme)),
+		JumpBottom:  key.NewBinding(key.WithKeys("ctrl+e", "end"), key.WithHelp("Ctrl+E/End", lc.KeyJumpBottom)),
+		Picker:      key.NewBinding(key.WithKeys("@"), key.WithHelp("@", lc.KeyPicker)),
+		Paste:       key.NewBinding(key.WithKeys("ctrl+v"), key.WithHelp("Ctrl+V", lc.KeyPaste)),
+	}
 }
 
 // permissionReqMsg 权限确认请求。
@@ -306,6 +301,9 @@ type model struct {
 	cwd           string
 	verboseLog io.Writer // --verbose 日志输出（nil = 不记录）
 	loop       *agentloop.Loop
+
+	// 国际化
+	lc *Messages // 当前语言的文案实例（nil 时回退到 enUS）
 
 	// 段落模型（消息内容的数据源）
 	paras []Paragraph
@@ -515,18 +513,19 @@ func colorHex(c color.Color) string {
 
 // ---------------------------------------------------------------------------
 
-// newTUIModel 创建 TUI model，依赖由外部注入（LLM client / tool registry / guard / expander / verboseLog）。
-func newTUIModel(llmClient llm.Client, registry tool.Registry, guard permission.Guard, expander *reference.Expander, modelName string, theme string, verboseLog io.Writer, contextLimit int, maxTurns int, toolTimeout time.Duration, toolTimeoutSource string) *model {
+// newTUIModel 创建 TUI model，依赖由外部注入（LLM client / tool registry / guard / expander / verboseLog / locale）。
+func newTUIModel(llmClient llm.Client, registry tool.Registry, guard permission.Guard, expander *reference.Expander, modelName string, theme string, verboseLog io.Writer, contextLimit int, maxTurns int, toolTimeout time.Duration, toolTimeoutSource string, loc Locale) *model {
 	if modelName == "" {
 		modelName = "deepseek-v4"
 	}
 
 	cwd, _ := os.Getwd()
 	cm := ctxpkg.New(buildSystemPrompt(cwd))
+	lc := messagesFor(loc)
 
 	ti := textinput.New()
 	ti.Prompt = "› "
-	ti.Placeholder = "输入消息, Enter 发送 · / 命令 · @ 选择文件 · Esc 中断"
+	ti.Placeholder = lc.InputPlaceholder
 	ti.CharLimit = 2048
 	ti.SetVirtualCursor(false) // real cursor 避免 virtual cursor 反色 ANSI 泄漏
 	styles := ti.Styles()
@@ -536,7 +535,7 @@ func newTUIModel(llmClient llm.Client, registry tool.Registry, guard permission.
 	// Other 自定义输入框（与主输入框同款 real cursor 模式）
 	otherTi := textinput.New()
 	otherTi.Prompt = "> "
-	otherTi.Placeholder = "输入自定义答案..."
+	otherTi.Placeholder = lc.InputOtherPlaceholder
 	otherTi.CharLimit = 200
 	otherTi.SetVirtualCursor(false)
 	otherStyles := otherTi.Styles()
@@ -604,7 +603,7 @@ func newTUIModel(llmClient llm.Client, registry tool.Registry, guard permission.
 		toolTimeout:     toolTimeout,
 		toolTimeoutSource: toolTimeoutSource,
 		glamourRenderer: glamourR,
-		keys:            defaultKeys,
+		keys:            makeKeyMap(lc),
 		help:            help.New(),
 		spinner:         sp,
 		spAsst:          spAsst,
@@ -619,7 +618,16 @@ func newTUIModel(llmClient llm.Client, registry tool.Registry, guard permission.
 		palette:         darkPalette, // 默认，initTheme 覆盖
 		focusIndex:      -1,
 		pinnedToBottom:  true,
+		lc:              lc,
 	}
+}
+
+// msg 返回当前语言的 Messages 实例，nil 时回退 enUS。
+func (m *model) msg() *Messages {
+	if m.lc != nil {
+		return m.lc
+	}
+	return &enUS
 }
 
 // wireLoop 在 model 创建后、program 注入后调用，创建 agent loop 并注入 tuiUserResponder。
@@ -698,7 +706,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.info != nil {
 			m.updateCache.Set(msg.info)
 			if msg.info.UpdateAvailable {
-				m.noticeBanner = fmt.Sprintf("↑ %s available — Enter 更新  Esc 忽略", msg.info.LatestVersion)
+				m.noticeBanner = fmt.Sprintf(m.msg().UpdateAvailable, msg.info.LatestVersion)
 				m.latestVersion = msg.info.LatestVersion
 			}
 		}
@@ -836,16 +844,16 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.paras = append(m.paras, Paragraph{
 				Type:      paraSystem,
 				State:     stateDone,
-				Text:      "压缩完成。",
+				Text:      m.msg().SysCompactionDone,
 				NotifKind: notifInfo,
 			})
 			m.trimParas()
 		}
 		if msg.Compaction.HardLimitReached {
-			msgText := "上下文已满（98%）。/reset 重建。"
+			msgText := m.msg().SysContextHardLimit
 			msgKind := notifWarn
 			if msg.Compaction.HardLimitReason == "tier3_failures" {
-				msgText = "摘要连续失败。/reset 重建。"
+				msgText = m.msg().SysSummaryFailed
 				msgKind = notifError
 			}
 			m.paras = append(m.paras, Paragraph{
@@ -1167,10 +1175,10 @@ func (m *model) handleKeyPress(msg tea.KeyPressMsg) (bool, tea.Cmd) {
 			// 硬临界值阻断：上下文已达上限时直接拒绝新 prompt
 			if m.cm.Compactor().LastResult().HardLimitReached {
 				reason := m.cm.Compactor().LastResult().HardLimitReason
-				msg := "上下文已满（98%）。/reset 重建。"
+				msg := m.msg().SysContextHardLimit
 				msgKind := notifWarn
 				if reason == "tier3_failures" {
-					msg = "摘要连续失败。/reset 重建。"
+					msg = m.msg().SysSummaryFailed
 					msgKind = notifError
 				}
 				m.paras = append(m.paras, Paragraph{
@@ -1312,9 +1320,9 @@ func (m *model) handlePermKey(key string) (bool, tea.Cmd) {
 // buildPermList 构建权限确认选项列表。
 func (m *model) buildPermList() list.Model {
 	items := []list.Item{
-		permItem{title: "Allow (本次放行)", choice: permAllow},
-		permItem{title: "Always Allow (记住，不再询问)", choice: permAllowAll},
-		permItem{title: "Deny (本次拒绝)", choice: permDeny},
+		permItem{title: m.msg().PermAllow, choice: permAllow},
+		permItem{title: m.msg().PermAllowAll, choice: permAllowAll},
+		permItem{title: m.msg().PermDeny, choice: permDeny},
 	}
 
 	delegate := list.NewDefaultDelegate()
@@ -1441,7 +1449,7 @@ func (m *model) buildQuestionForm() {
 		}
 		opts[i] = huh.NewOption(key, opt.Label)
 	}
-	opts[len(q.Options)] = huh.NewOption("Other...", otherOptionKey)
+	opts[len(q.Options)] = huh.NewOption(m.msg().QuestionOtherOption, otherOptionKey)
 
 	theme := themeWaveloom()
 	formWidth := m.overlayInnerWidth()
@@ -2391,7 +2399,7 @@ func (m *model) handleToolResult(ev agentloop.ToolCallResult) {
 						m.paras = append(m.paras, Paragraph{
 							Type:      paraSystem,
 							State:     stateDone,
-							Text:      fmt.Sprintf("Skills activated: %s", strings.Join(activated, ", ")),
+							Text:      fmt.Sprintf(m.msg().SysSkillActivated, strings.Join(activated, ", ")),
 							NotifKind: notifInfo,
 						})
 					}
@@ -2448,7 +2456,7 @@ func (m *model) handleLoopDone(ev agentloop.LoopDone, generation int) {
 	if !isStale {
 		m.running = false
 		m.focusIndex = -1
-		m.input.Placeholder = "输入消息, Enter 发送 · / 命令 · @ 选择文件 · Esc 中断"
+		m.input.Placeholder = m.msg().InputPlaceholder
 		m.cancelRun = nil
 
 		// 计算延迟（必须在 CompleteRun 之前，因为 CompleteRun 需要 durationMs）
@@ -2514,21 +2522,21 @@ func (m *model) handleLoopDone(ev agentloop.LoopDone, generation int) {
 			m.paras = append(m.paras, Paragraph{
 				Type:      paraSystem,
 				State:     stateDone,
-				Text:      fmt.Sprintf("完成（%d轮, %s, ↑%s, ↓%s）", ev.Turn, elapsedStr, shortTokens(loopIn), shortTokens(loopOut)),
+				Text:      fmt.Sprintf(m.msg().LoopCompleted, ev.Turn, elapsedStr, shortTokens(loopIn), shortTokens(loopOut)),
 				NotifKind: notifInfo,
 			})
 		case agentloop.ReasonMaxTurns:
 			m.paras = append(m.paras, Paragraph{
 				Type:      paraSystem,
 				State:     stateDone,
-				Text:      fmt.Sprintf("已达最大轮次（%d轮, %s, ↑%s, ↓%s）。继续对话。", ev.Turn, elapsedStr, shortTokens(loopIn), shortTokens(loopOut)),
+				Text:      fmt.Sprintf(m.msg().LoopMaxTurns, ev.Turn, elapsedStr, shortTokens(loopIn), shortTokens(loopOut)),
 				NotifKind: notifInfo,
 			})
 		case agentloop.ReasonAborted:
-			abortText := fmt.Sprintf("已中断（%s）", elapsedStr)
+			abortText := fmt.Sprintf(m.msg().LoopAborted, elapsedStr)
 			abortKind := notifInfo
 			if m.toolTimeout > 0 && isTimeoutError(ev.Err) {
-				abortText = fmt.Sprintf("工具执行超时（%s %s）%s", m.toolTimeoutSource, formatDuration(m.toolTimeout.Milliseconds()), elapsedStr)
+				abortText = fmt.Sprintf(m.msg().LoopToolTimeout, m.toolTimeoutSource, formatDuration(m.toolTimeout.Milliseconds()), elapsedStr)
 				abortKind = notifError
 			}
 			m.paras = append(m.paras, Paragraph{
@@ -2541,13 +2549,13 @@ func (m *model) handleLoopDone(ev agentloop.LoopDone, generation int) {
 			m.paras = append(m.paras, Paragraph{
 				Type:      paraSystem,
 				State:     stateDone,
-				Text:      fmt.Sprintf("模型错误（%s, %v）", elapsedStr, ev.Err),
+				Text:      fmt.Sprintf(m.msg().LoopModelError, elapsedStr, ev.Err),
 				NotifKind: notifError,
 			})
 		case agentloop.ReasonToolFatal:
-			text := fmt.Sprintf("工具错误（%s, %v）", elapsedStr, ev.Err)
+			text := fmt.Sprintf(m.msg().LoopToolFatal, elapsedStr, ev.Err)
 			if m.toolTimeout > 0 && isTimeoutError(ev.Err) {
-				text = fmt.Sprintf("工具执行超时（%s %s）%s", m.toolTimeoutSource, formatDuration(m.toolTimeout.Milliseconds()), elapsedStr)
+				text = fmt.Sprintf(m.msg().LoopToolTimeout, m.toolTimeoutSource, formatDuration(m.toolTimeout.Milliseconds()), elapsedStr)
 			}
 			m.paras = append(m.paras, Paragraph{
 				Type:      paraSystem,
@@ -2837,7 +2845,7 @@ func countWrappedLinesNonEmpty(text string, width int) int {
 // enterFocusMode 进入段落焦点模式：输入框失焦、placeholder 提示退出方式。
 func (m *model) enterFocusMode() {
 	m.input.Blur()
-	m.input.Placeholder = "段落已聚焦 · Enter 展开/折叠 · Esc 回到输入"
+	m.input.Placeholder = m.msg().InputFocusModePlaceholder
 }
 
 // exitFocusMode 退出段落焦点模式：输入框恢复焦点、placeholder 恢复默认。
@@ -2847,10 +2855,10 @@ func (m *model) exitFocusMode() tea.Cmd {
 	// 借此区分测试中未初始化的 input，避免 virtualCursor.Blink 空指针。
 	if m.input.Prompt != "" {
 		cmd := m.input.Focus()
-		m.input.Placeholder = "输入消息, Enter 发送 · / 命令 · @ 选择文件 · Esc 中断"
+		m.input.Placeholder = m.msg().InputPlaceholder
 		return cmd
 	}
-	m.input.Placeholder = "输入消息, Enter 发送 · / 命令 · @ 选择文件 · Esc 中断"
+	m.input.Placeholder = m.msg().InputPlaceholder
 	return nil
 }
 
@@ -2952,6 +2960,7 @@ func (m *model) viewportCtx() ViewportCtx {
 		Tool:    m.spTool,
 		Glamour: m.glamourRenderer,
 		Width:   contentWidth,
+		LC:      m.msg(),
 	}
 }
 
@@ -3000,7 +3009,7 @@ func (m *model) doTurn(userInput string) tea.Cmd {
 
 	m.running = true
 	m.focusIndex = -1
-	m.input.Placeholder = "Agent 执行中... Esc 中断"
+	m.input.Placeholder = m.msg().InputAgentRunning
 	m.runGeneration++
 	m.turnStartTime = time.Now()
 	m.scrollToBottom() // 用户输入新消息 → 滚动到底部
@@ -3492,7 +3501,7 @@ var asciiArt = []string{
 // 焦点模式下嵌入段落聚焦提示，正常模式为纯横线。
 func (m *model) renderInputSeparator(contentWidth int) string {
 	if m.focusIndex >= 0 {
-		hint := " ◆ 段落已聚焦  Enter 展开/折叠  Esc 退出焦点模式 ◆ "
+		hint := m.msg().FocusSeparatorHint
 		hintStyle := lipgloss.NewStyle().Foreground(colorAccentGold)
 		lineStyle := lipgloss.NewStyle().Foreground(colorMuted)
 		// hint 居中，两侧用 ─ 补齐
@@ -3543,7 +3552,7 @@ func (m *model) renderHeader() string {
 	// 信息行：session ID（左） + 版本号（右对齐），形成统一顶栏
 	sidLine := ""
 	if sid := m.cm.SessionID(); sid != "" {
-		sidPart := styleHeaderAccent.Render("session: ") +
+		sidPart := styleHeaderAccent.Render(m.msg().HeaderSession) +
 			styleHeader.Render(sid)
 		verStr := styleHeaderAccent.Render(Version)
 		leftWidth := lipgloss.Width(sidPart)
@@ -3975,7 +3984,7 @@ func (m *model) handleSlashCommand(input string) tea.Cmd {
 		m.paras = append(m.paras, Paragraph{
 			Type:      paraSystem,
 			State:     stateDone,
-			Text:      fmt.Sprintf("未知命令: %s。输入 /help 查看可用命令。", input),
+			Text:      fmt.Sprintf(m.msg().SysUnknownCommand, input),
 			NotifKind: notifWarn,
 		})
 		m.trimParas()
@@ -3989,7 +3998,7 @@ func (m *model) handleSlashCommand(input string) tea.Cmd {
 		m.paras = append(m.paras, Paragraph{
 			Type:      paraSystem,
 			State:     stateDone,
-			Text:      fmt.Sprintf("命令执行失败: %v", err),
+			Text:      fmt.Sprintf(m.msg().SysCommandFailed, err),
 			NotifKind: notifError,
 		})
 		m.trimParas()
@@ -4025,11 +4034,13 @@ func (m *model) handleSlashCommand(input string) tea.Cmd {
 			m.hudMessages = 0
 			m.hudCacheHit = 0
 			m.hudCacheMiss = 0
+			m.hudLatMs = 0
+			m.lastPromptTokens = 0
 			m.focusIndex = -1
 			m.paras = append(m.paras, Paragraph{
 				Type:      paraSystem,
 				State:     stateDone,
-				Text:      "新 session 已创建。",
+				Text:      m.msg().SysNewSessionCreated,
 				NotifKind: notifInfo,
 			})
 
@@ -4068,7 +4079,7 @@ func (m *model) handleSlashCommand(input string) tea.Cmd {
 						State:        stateError,
 						ToolName:     "skill",
 						ToolArgs:     args,
-						ToolError:    "Skill load failed: " + skillName + " — " + skillError,
+						ToolError:    fmt.Sprintf(m.msg().SysSkillLoadFailed, skillName, skillError),
 						ToolErrorKind: "no_results",
 					})
 					m.trimParas()
@@ -4098,7 +4109,7 @@ func (m *model) handleSlashCommand(input string) tea.Cmd {
 			messagesSnapshot := m.cm.PrepareRun(skillBody)
 			m.running = true
 			m.focusIndex = -1
-			m.input.Placeholder = "Agent 执行中... Esc 中断"
+			m.input.Placeholder = m.msg().InputAgentRunning
 			m.runGeneration++
 			m.turnStartTime = time.Now()
 			m.scrollToBottom()
@@ -4297,9 +4308,9 @@ func newSlashRegistry(creator slashcommand.SessionCreator, store slashcommand.Se
 // 覆盖层 — 主题选择器
 // ---------------------------------------------------------------------------
 
-// themeItems 返回主题选择器的固定选项。
+// themeItems 返回主题选择器的固定选项。label 为占位值，运行时由 buildThemeList 根据 locale 替换。
 var themeItems = []themeItem{
-	{label: "Auto（自动检测终端背景色）", mode: "auto"},
+	{label: "Auto", mode: "auto"},
 	{label: "Dark", mode: "dark"},
 	{label: "Light", mode: "light"},
 }
@@ -4309,7 +4320,11 @@ func (m *model) buildThemeList() {
 	items := make([]list.Item, len(themeItems))
 	selectedIdx := 0
 	for i, ti := range themeItems {
-		items[i] = ti
+		label := ti.label
+		if ti.mode == "auto" {
+			label = m.msg().PickerThemeAuto
+		}
+		items[i] = themeItem{label: label, mode: ti.mode}
 		if ti.mode == m.themeMode {
 			selectedIdx = i
 		}
@@ -4475,8 +4490,8 @@ func (m *model) closeModelPicker() {
 // ---------------------------------------------------------------------------
 
 // runTUI 启动交互式 TUI 模式。依赖由 main() 统一初始化后传入，无需重复创建。
-func runTUI(llmClient llm.Client, registry tool.Registry, guard permission.Guard, expander *reference.Expander, modelName string, theme string, verboseLog io.Writer, contextLimit int, maxTurns int, toolTimeout time.Duration, toolTimeoutSource string, bypassPerm bool, ctxMgr *ctxpkg.ContextManager, isResume bool, sessionDir string, globalPath string, projectPath string, agentsMdText string) {
-	m := newTUIModel(llmClient, registry, guard, expander, modelName, theme, verboseLog, contextLimit, maxTurns, toolTimeout, toolTimeoutSource)
+func runTUI(llmClient llm.Client, registry tool.Registry, guard permission.Guard, expander *reference.Expander, modelName string, theme string, verboseLog io.Writer, contextLimit int, maxTurns int, toolTimeout time.Duration, toolTimeoutSource string, bypassPerm bool, ctxMgr *ctxpkg.ContextManager, isResume bool, sessionDir string, globalPath string, projectPath string, agentsMdText string, loc Locale) {
+	m := newTUIModel(llmClient, registry, guard, expander, modelName, theme, verboseLog, contextLimit, maxTurns, toolTimeout, toolTimeoutSource, loc)
 	m.agentsMdText = agentsMdText
 	m.sessionDir = sessionDir
 
@@ -4635,14 +4650,14 @@ func (m *model) handleUpdateDone(msg updateDoneMsg) {
 		m.paras = append(m.paras, Paragraph{
 			Type:      paraSystem,
 			State:     stateDone,
-			Text:      "更新失败。你可以重新打开 waveloom 后重试，或手动运行 install.sh。",
+			Text:      m.msg().SysUpdateFailed,
 			NotifKind: notifError,
 		})
 	} else {
 		m.paras = append(m.paras, Paragraph{
 			Type:      paraSystem,
 			State:     stateDone,
-			Text:      fmt.Sprintf("✓ %s 已安装，重启后生效。", m.latestVersion),
+			Text:      fmt.Sprintf(m.msg().SysUpdateInstalled, m.latestVersion),
 			NotifKind: notifInfo,
 		})
 		m.trimParas()
