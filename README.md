@@ -72,7 +72,8 @@ waveloom
 - **权限安全模型** — 三级决策（allow / deny / ask），规则引擎支持模式匹配，写操作和命令执行需要你确认
 - **会话持久恢复** — 关闭终端几天后 `waveloom --continue` 回来，Agent 记得所有上下文接着工作
 - **14 个内置工具** — `read_file` / `edit_file` / `grep` / `shell` / `web_fetch` / `ask_user_question` / `skill` / LSP 系列，Agent 自主调用
-- **TUI 交互** — `@` 引用文件 / `@` 文件选择器 / `/` 命令面板 / `Tab` 段落导航 / `Ctrl+G` 主题切换
+- **i18n 多语言** — 完整中英双语界面，`--locale` CLI 参数 / `/locale` 命令 / `settings.json` 持久化，LANG 环境变量自动检测
+- **TUI 交互** — `@` 引用文件 / `@` 文件选择器 / `/` 命令面板 / `/locale` 切换语言 / `Tab` 段落导航 / `Ctrl+G` 主题切换
 
 ---
 
@@ -83,6 +84,9 @@ waveloom
 
 **Q: API Key 安全吗？**  
 Key 存储在本地 `~/.waveloom/`，直连 DeepSeek / OpenAI，不经过任何第三方服务器。
+
+**Q: 怎么切换语言？**  
+输入 `/locale` 切换中英文界面，或 `waveloom --locale en-US`。设置自动保存到 `settings.json`。
 
 **Q: 支持哪些语言？**  
 LSP 原生支持 Go（内置 gopls 集成）。任何有 LSP Server 的语言均可使用，纯文本项目也能用 `read_file` / `edit_file` / `grep` 等基础工具。
