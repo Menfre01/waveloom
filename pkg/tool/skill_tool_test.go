@@ -12,6 +12,23 @@ import (
 	"github.com/Menfre01/waveloom/pkg/skill"
 )
 
+// skillExecutorAdapter 将 skill.Loader 适配为 SkillExecutor 接口。
+// 仅在测试和 cmd 组装层使用，使 tool 包无需 import skill。
+type skillExecutorAdapter struct {
+	loader *skill.Loader
+}
+
+func (a *skillExecutorAdapter) Load(name, args string) (*SkillLoadResult, error) {
+	loaded, err := a.loader.Load(name, args)
+	if err != nil {
+		return nil, err
+	}
+	return &SkillLoadResult{
+		Body:    loaded.Body,
+		DirPath: loaded.DirPath,
+	}, nil
+}
+
 func setupSkillTool(t *testing.T) *SkillTool {
 	t.Helper()
 	home := t.TempDir()
@@ -27,7 +44,7 @@ Deploy $ARGUMENTS now.`), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	loader := skill.NewLoader(home, home, "test-sid", "medium", nil)
-	return NewSkillTool(loader)
+	return NewSkillTool(&skillExecutorAdapter{loader: loader})
 }
 
 func TestSkillTool_Execute(t *testing.T) {
@@ -95,7 +112,7 @@ allowed-tools:
 	}
 	// Guard 非 nil，lintInjections 会拦截 date
 	loader := skill.NewLoader(home, home, "test-sid", "medium", guardStub{})
-	st := NewSkillTool(loader)
+	st := NewSkillTool(&skillExecutorAdapter{loader: loader})
 
 	result, err := st.Execute(context.Background(), SkillParams{Name: "restricted"})
 	if err != nil {

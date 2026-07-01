@@ -2,21 +2,27 @@ package slashcommand
 
 import (
 	"context"
-
-	"github.com/Menfre01/waveloom/pkg/skill"
 )
+
+// SkillDescriptor 是 skill 的轻量标识信息，由上层在注册时从 skill.SkillInfo 转换后传入。
+// 定义此类型消除 slashcommand → skill 的编译期依赖。
+type SkillDescriptor struct {
+	Name        string // skill 名
+	Description string // 简短描述
+	Args        string // 参数占位符
+}
 
 // SkillCommand 将 user-invocable skill 包装为 SlashCommand。
 // 不直接调用 skill.Loader —— 而是通过 SkillExecutor 接口委托给 TUI 侧实现，
 // TUI 侧通过 tool.Registry.Execute("skill", ...) 完成加载和渲染，
 // 确保用户触发和 LLM 触发走相同的代码路径。
 type SkillCommand struct {
-	info     skill.SkillInfo
+	info     SkillDescriptor
 	executor SkillExecutor
 }
 
 // NewSkillCommand 构造 SkillCommand。
-func NewSkillCommand(info skill.SkillInfo, executor SkillExecutor) *SkillCommand {
+func NewSkillCommand(info SkillDescriptor, executor SkillExecutor) *SkillCommand {
 	return &SkillCommand{info: info, executor: executor}
 }
 
