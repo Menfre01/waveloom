@@ -3,6 +3,7 @@ package tool
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/Menfre01/waveloom/pkg/pathutil"
@@ -182,16 +183,23 @@ func TestFindSimilarFile(t *testing.T) {
 	_ = os.WriteFile(filepath.Join(dir, "unrelated.txt"), []byte("text\n"), 0o644)
 	_ = os.Mkdir(filepath.Join(dir, "subdir"), 0o755)
 
-	// Exact match on "hello.go" — should be found
+	// 距离 1（helo → hello）→ 应匹配
 	got := FindSimilarFile(filepath.Join(dir, "helo.go"))
-	if got != "hello.go" {
-		t.Errorf("FindSimilarFile(helo.go) = %q, want %q", got, "hello.go")
+	if !strings.Contains(got, "hello.go") {
+		t.Errorf("FindSimilarFile(helo.go) = %q, want path containing 'hello.go'", got)
 	}
 
-	// Non-existent dir — should return ""
-	got = FindSimilarFile("/nonexistent/path/file.txt")
-	if got != "" {
-		t.Errorf("FindSimilarFile in nonexistent dir = %q, want empty", got)
+	// 距离 5（help_test → skill_test）→ 阈值 3，应排除
+	_ = os.WriteFile(filepath.Join(dir, "skill_test.go"), []byte("package skill_test\n"), 0o644)
+	got2 := FindSimilarFile(filepath.Join(dir, "help_test.go"))
+	if got2 != "" {
+		t.Errorf("FindSimilarFile(help_test.go) = %q, want empty (distance too large)", got2)
+	}
+
+	// 不存在的目录 → 返回 ""
+	got3 := FindSimilarFile("/nonexistent/path/file.txt")
+	if got3 != "" {
+		t.Errorf("FindSimilarFile in nonexistent dir = %q, want empty", got3)
 	}
 }
 

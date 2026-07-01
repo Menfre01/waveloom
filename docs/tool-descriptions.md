@@ -28,7 +28,7 @@
 ## read_file
 
 ```
-Read a file with line numbers. Supports offset and limit parameters to read partial content.
+Read a file with line numbers. Supports offset and limit parameters to read partial content. file_path must be a file, not a directory. On directory error, pick a file from the listing — use the Did you mean suggestion if present.
 ```
 
 ```json
@@ -65,16 +65,19 @@ Create a new file or overwrite an existing file. Creates parent directories auto
 ## edit_file
 
 ```
-Find-and-replace based on exact string match. old_string must be unique. For partial edits of existing files. Prefer over write_file:   - Small changes (≤50 lines) → use edit_file   - New files or full overwrites → use write_file   - Always confirm old_string content with read_file before editing (including indentation and whitespace)   - If old_string is not unique, expand the context to make it unique
+Find-and-replace on an existing file by exact string match.
+old_string must be unique in the file — if ambiguous, include 1-2 surrounding lines as context.
+Set replace_all=true to replace every occurrence.
+Whitespace and blank-line differences are auto-corrected when the match is unambiguous.
 ```
 
 ```json
 {
   "type": "object",
   "properties": {
-    "file_path":   { "type": "string",  "description": "Absolute file path" },
-    "old_string":  { "type": "string",  "description": "Text to replace (must exactly match original content, including indentation)" },
-    "new_string":  { "type": "string",  "description": "Replacement text" },
+    "file_path":   { "type": "string",  "description": "File path (absolute, or relative to working_dir / workspace root)" },
+    "old_string":  { "type": "string",  "description": "Text to replace — must match original exactly (indentation, whitespace, punctuation). Must be unique in the file; if ambiguous, include more surrounding context lines." },
+    "new_string":  { "type": "string",  "description": "Replacement text. Use empty string to delete the matched text." },
     "replace_all": { "type": "boolean", "description": "Replace all occurrences (default: false, first match only)", "default": false },
     "working_dir":  { "type": "string",  "description": "Working directory (optional)" }
   },

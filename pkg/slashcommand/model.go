@@ -15,18 +15,19 @@ type ModelCommand struct {
 	store        SettingsStore
 	lister       ModelLister
 	currentModel string
+	messages     *SlashMessages
 }
 
 // NewModelCommand 构造 /model 命令。
-func NewModelCommand(store SettingsStore, lister ModelLister, currentModel string) *ModelCommand {
-	return &ModelCommand{store: store, lister: lister, currentModel: currentModel}
+func NewModelCommand(store SettingsStore, lister ModelLister, currentModel string, messages *SlashMessages) *ModelCommand {
+	return &ModelCommand{store: store, lister: lister, currentModel: currentModel, messages: messages}
 }
 
 // Name 返回命令名。
 func (c *ModelCommand) Name() string { return "model" }
 
 // Description 返回命令说明。
-func (c *ModelCommand) Description() string { return "显示或切换模型" }
+func (c *ModelCommand) Description() string { return c.messages.ModelDescription }
 
 // ArgsPlaceholder 返回参数占位符。
 func (c *ModelCommand) ArgsPlaceholder() string { return "model" }
@@ -46,7 +47,7 @@ func (c *ModelCommand) executeNoArgs(ctx context.Context) (*Result, error) {
 	models, err := c.lister.ListModels(ctx)
 	if err != nil {
 		return &Result{
-			Text: fmt.Sprintf("无法获取模型列表: %v", err),
+			Text: fmt.Sprintf(c.messages.ModelListFailed, err),
 		}, nil
 	}
 
@@ -67,33 +68,33 @@ func (c *ModelCommand) executeWithArgs(ctx context.Context, name string) (*Resul
 	models, err := c.lister.ListModels(ctx)
 	if err != nil {
 		return &Result{
-			Text: "无法获取模型列表，请检查网络连接后重试。",
+			Text: c.messages.ModelListFailedNoNet,
 		}, nil
 	}
 
 	// 校验 name 是否在可用列表中
 	if !modelInList(models, name) {
 		return &Result{
-			Text: fmt.Sprintf("未知模型: %s。输入 /model 查看可用列表。", name),
+			Text: fmt.Sprintf(c.messages.ModelUnknown, name),
 		}, nil
 	}
 
 	settings, err := c.store.LoadLLM()
 	if err != nil {
 		return &Result{
-			Text: fmt.Sprintf("读取配置失败: %v", err),
+			Text: fmt.Sprintf(c.messages.ModelConfigReadFailed, err),
 		}, nil
 	}
 
 	settings.Model = name
 	if err := c.store.SaveLLM(settings); err != nil {
 		return &Result{
-			Text: fmt.Sprintf("保存配置失败: %v", err),
+			Text: fmt.Sprintf(c.messages.ModelConfigSaveFailed, err),
 		}, nil
 	}
 
 	return &Result{
-		Text: fmt.Sprintf("模型已切换为 %s。", name),
+		Text: fmt.Sprintf(c.messages.ModelSwitched, name),
 		SideEffects: []SideEffect{
 			{Kind: SideEffectModelSwitched, Detail: name},
 		},
