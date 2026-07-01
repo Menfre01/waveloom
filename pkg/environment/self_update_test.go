@@ -254,7 +254,7 @@ func TestDownloadWithProgress_Success(t *testing.T) {
 		}
 		w.Header().Set("Content-Length", "10240")
 		w.WriteHeader(http.StatusOK)
-		w.Write(expected)
+		_, _ = w.Write(expected)
 	}))
 	defer server.Close()
 
@@ -319,7 +319,7 @@ func TestDownloadWithProgress_ContextCancel(t *testing.T) {
 		// 慢响应，让 context 先取消
 		time.Sleep(500 * time.Millisecond)
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("data"))
+		_, _ = w.Write([]byte("data"))
 	}))
 	defer server.Close()
 
@@ -350,7 +350,7 @@ func TestRegression_SelfUpdateBackupCleaned(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Length", fmt.Sprintf("%d", len(tgz)))
 		w.WriteHeader(http.StatusOK)
-		w.Write(tgz)
+		_, _ = w.Write(tgz)
 	}))
 	defer server.Close()
 
@@ -404,7 +404,7 @@ func TestRegression_SelfUpdateRollbackOnCopyFailure(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Length", fmt.Sprintf("%d", len(tgz)))
 		w.WriteHeader(http.StatusOK)
-		w.Write(tgz)
+		_, _ = w.Write(tgz)
 	}))
 	defer server.Close()
 
@@ -431,10 +431,10 @@ func TestRegression_SelfUpdateRollbackOnCopyFailure(t *testing.T) {
 
 	err := SelfUpdate(context.Background(), currentPath, server.URL, nil)
 	if err == nil {
-		os.Chmod(tmpDir, 0o755)
+		_ = os.Chmod(tmpDir, 0o755)
 		t.Fatal("expected SelfUpdate to fail when parent dir is readonly")
 	}
-	os.Chmod(tmpDir, 0o755)
+	_ = os.Chmod(tmpDir, 0o755)
 
 	// 验证旧二进制仍然完好
 	got, err := os.ReadFile(currentPath)
