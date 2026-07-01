@@ -1,6 +1,7 @@
 package agentloop
 
 import (
+	"github.com/Menfre01/waveloom/pkg/compaction"
 	"github.com/Menfre01/waveloom/pkg/llm"
 	"github.com/Menfre01/waveloom/pkg/permission"
 	"github.com/Menfre01/waveloom/pkg/tool"
@@ -92,6 +93,20 @@ type CompactionInfo struct {
 // HasCompaction 返回是否有实际压缩发生（Tier 1+ 且节省 > 0）。
 func (c CompactionInfo) HasCompaction() bool {
 	return c.Tier > 0 && c.TokensSaved > 0
+}
+
+// compactionInfoFromTick 从 compaction.Tick 构造 CompactionInfo。
+// 集中管理 Tick → CompactionInfo 的字段映射，避免多处手工拷贝。
+func compactionInfoFromTick(tick compaction.Tick) CompactionInfo {
+	return CompactionInfo{
+		TokensSaved:              tick.TokensSaved,
+		Tier:                     tick.Tier,
+		SummaryDone:              tick.Tier3SummaryDone,
+		HardLimitReached:         tick.HardLimitReached,
+		HardLimitReason:          tick.HardLimitReason,
+		UsageRatio:               tick.UsageRatio,
+		Tier3ConsecutiveFailures: tick.Tier3ConsecutiveFailures,
+	}
 }
 
 // TurnStats 在每轮 LLM 调用 + 工具执行 + 压缩完成后推送，

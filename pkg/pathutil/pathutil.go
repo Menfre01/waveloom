@@ -6,6 +6,7 @@ package pathutil
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"regexp"
 )
@@ -43,6 +44,27 @@ func ResolvePath(path string) (string, error) {
 		return "", fmt.Errorf("failed to resolve path: %w", err)
 	}
 	return filepath.Clean(abs), nil
+}
+
+// FindProjectRoot 从 cwd 向上查找包含 .git 的目录，返回绝对路径。
+// 未找到时返回空字符串。
+func FindProjectRoot(cwd string) string {
+	dir, err := filepath.Abs(cwd)
+	if err != nil {
+		return ""
+	}
+	for {
+		gitPath := filepath.Join(dir, ".git")
+		info, err := os.Stat(gitPath)
+		if err == nil && (info.IsDir() || info.Mode().IsRegular()) {
+			return dir
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return ""
+		}
+		dir = parent
+	}
 }
 
 // ResolvePathWithDir 将路径基于指定工作目录解析为标准化绝对路径。

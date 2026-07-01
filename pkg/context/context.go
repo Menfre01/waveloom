@@ -39,10 +39,20 @@ type ContextManager struct {
 	sessionPath string // session 落盘路径（空表示不落盘）
 
 	// 四级水位线上下文压缩（委托给 Compactor）
-	compactor *compaction.TieredCompactor
+	compactor compaction.Compactor
 
 	// AGENTS.md 注入标记（防止重复注入）
 	instructionsInjected bool
+}
+
+// compactorState 是 compactor 内部使用的扩展接口，
+// 提供 Snapshot/Restore/Reset 等持久化方法。
+// TieredCompactor 同时满足 Compactor 和此接口。
+type compactorState interface {
+	compaction.Compactor
+	Snapshot() compaction.CompactionData
+	Restore(compaction.CompactionData)
+	Reset()
 }
 
 // New 创建一个新的 ContextManager。
@@ -74,7 +84,7 @@ func NewWithCompaction(systemPrompt string, config compaction.CompactionConfig, 
 }
 
 // Compactor 返回内部 Compactor 引用（供 TUI 读取状态、设置 hook、持久化）。
-func (cm *ContextManager) Compactor() *compaction.TieredCompactor {
+func (cm *ContextManager) Compactor() compaction.Compactor {
 	return cm.compactor
 }
 
@@ -209,9 +219,19 @@ func (cm *ContextManager) saveToPath(path string) {
 	_ = SaveSessionToFile(path, messages, stats, &compaction)
 }
 
+// stateful 返回内部 Compactor 的持久化扩展接口。
+// 若 compactor 不支持持久化则 panic（编程错误：非 TieredCompactor 实现）。
+func (cm *ContextManager) stateful() compactorState {
+	cs, ok := cm.compactor.(compactorState)
+	if !ok {
+		panic("context: compactor does not implement stateful persistence — use compaction.NewCompactor")
+	}
+	return cs
+}
+
 // compactionData 返回压缩系统的完整状态快照（调用方需持有锁）。
 func (cm *ContextManager) compactionData() compaction.CompactionData {
-	return cm.compactor.Snapshot()
+	return cm.stateful().Snapshot()
 }
 
 // LoadFromFile 从 session 文件恢复 ContextManager 的内部状态。
@@ -251,7 +271,7 @@ func (cm *ContextManager) LoadFromFile(path string) bool {
 
 	// 恢复压缩状态
 	if compactionData != nil {
-		cm.compactor.Restore(*compactionData)
+		cm.stateful().Restore(*compactionData)
 	}
 
 	// 推断 instructionsInjected：如果 messages[1] 是 user 消息且非空，认为已注入
@@ -292,7 +312,7 @@ func (cm *ContextManager) Reset() {
 
 	cm.stats = Stats{}
 	cm.instructionsInjected = false
-	cm.compactor.Reset()
+	cm.stateful().Reset()
 
 	if len(cm.messages) > 0 && cm.messages[0].Role == llm.RoleSystem {
 		cm.messages = cm.messages[:1]

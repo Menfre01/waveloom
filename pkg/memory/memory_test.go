@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/Menfre01/waveloom/pkg/pathutil"
 )
 
 func TestFindProjectRoot_WithGit(t *testing.T) {
@@ -14,7 +16,7 @@ func TestFindProjectRoot_WithGit(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	root := findProjectRoot(dir)
+	root := pathutil.FindProjectRoot(dir)
 	if root != dir {
 		t.Fatalf("expected %q, got %q", dir, root)
 	}
@@ -27,7 +29,7 @@ func TestFindProjectRoot_WithGitFile(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	root := findProjectRoot(dir)
+	root := pathutil.FindProjectRoot(dir)
 	if root != dir {
 		t.Fatalf("expected %q, got %q", dir, root)
 	}
@@ -35,7 +37,7 @@ func TestFindProjectRoot_WithGitFile(t *testing.T) {
 
 func TestFindProjectRoot_NoGit(t *testing.T) {
 	dir := t.TempDir()
-	root := findProjectRoot(dir)
+	root := pathutil.FindProjectRoot(dir)
 	if root != "" {
 		t.Fatalf("expected empty, got %q", root)
 	}
@@ -52,7 +54,7 @@ func TestFindProjectRoot_Subdirectory(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	root := findProjectRoot(sub)
+	root := pathutil.FindProjectRoot(sub)
 	if root != dir {
 		t.Fatalf("expected %q, got %q", dir, root)
 	}
