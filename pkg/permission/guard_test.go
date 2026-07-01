@@ -869,3 +869,405 @@ func TestGuard_Check_BuiltinAllowAskUserQuestion(t *testing.T) {
 		t.Errorf("ask_user_question: Reason = %s, want %s", result.Reason, ReasonBuiltinAllow)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// REGRESSION: 真正安全命令（RiskNone）直接 ALLOW，不走 ASK
+// ---------------------------------------------------------------------------
+
+// TestGuard_Check_TrulySafeCommandsDirectAllow 验证纯只读命令不需要用户确认。
+func TestGuard_Check_TrulySafeCommandsDirectAllow(t *testing.T) {
+	g := NewGuard()
+
+	tests := []struct {
+		name    string
+		command string
+	}{
+		{"ls", "ls -la"},
+		{"cat", "cat README.md"},
+		{"pwd", "pwd"},
+		{"whoami", "whoami"},
+		{"date", "date"},
+		{"wc", "wc -l file.go"},
+		{"diff", "diff a.go b.go"},
+		{"test", "test -f README.md"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			args, err := json.Marshal(map[string]string{"command": tt.command})
+			if err != nil {
+				t.Fatal(err)
+			}
+			result := g.Check(context.Background(), "bash", args)
+			if result.Decision != DecisionAllow {
+				t.Errorf("%q: Decision = %s, want %s (reason: %s)", tt.command, result.Decision, DecisionAllow, result.Reason)
+			}
+		})
+	}
+}
+
+// TestGuard_Check_RemovedFromTrulySafeNowAsk 验证从 RiskNone 移除的命令恢复 ASK。
+func TestGuard_Check_RemovedFromTrulySafeNowAsk(t *testing.T) {
+	g := NewGuard()
+
+	tests := []struct {
+		name    string
+		command string
+	}{
+		{"echo", "echo hello"},
+		{"echo redirect", "echo 'key=val' >> .env"},
+		{"env", "env"},
+		{"printenv", "printenv"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			args, err := json.Marshal(map[string]string{"command": tt.command})
+			if err != nil {
+				t.Fatal(err)
+			}
+			result := g.Check(context.Background(), "bash", args)
+			if result.Decision != DecisionAsk {
+				t.Errorf("%q: Decision = %s, want %s (reason: %s, msg: %s)", tt.command, result.Decision, DecisionAsk, result.Reason, result.Message)
+			}
+		})
+	}
+}
+
+// TestGuard_Check_BuildToolsStillAsk 验证构建工具仍然需要用户确认（未来子命令白名单可细分）。
+func TestGuard_Check_BuildToolsStillAsk(t *testing.T) {
+	g := NewGuard()
+
+	tests := []struct {
+		name    string
+		command string
+	}{
+		{"git status", "git status"},
+		{"go test", "go test ./..."},
+		{"go build", "go build ./..."},
+		{"cargo test", "cargo test"},
+		{"make build", "make build"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			args, err := json.Marshal(map[string]string{"command": tt.command})
+			if err != nil {
+				t.Fatal(err)
+			}
+			result := g.Check(context.Background(), "bash", args)
+			if result.Decision != DecisionAsk {
+				t.Errorf("%q: Decision = %s, want %s (reason: %s)", tt.command, result.Decision, DecisionAsk, result.Reason)
+			}
+		})
+	}
+}
+
+// TestGuard_Check_FormerlySafeNowAsk 验证之前被列入安全列表但有风险的命令现在走 ASK。
+func TestGuard_Check_FormerlySafeNowAsk(t *testing.T) {
+	g := NewGuard()
+
+	tests := []struct {
+		name    string
+		command string
+	}{
+		{"python -c print", "python -c 'print(1+1)'"},
+		{"node -e", "node -e 'console.log(1+1)'"},
+		{"npm install", "npm install"},
+		{"pip install", "pip install requests"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			args, err := json.Marshal(map[string]string{"command": tt.command})
+			if err != nil {
+				t.Fatal(err)
+			}
+			result := g.Check(context.Background(), "bash", args)
+			if result.Decision != DecisionAsk {
+				t.Errorf("%q: Decision = %s, want %s (reason: %s, msg: %s)", tt.command, result.Decision, DecisionAsk, result.Reason, result.Message)
+			}
+		})
+	}
+}
+
+// ---------------------------------------------------------------------------
+// REGRESSION: DenialTracker 接入 Check() — 连续拒绝达上限后强制 DENY
+// ---------------------------------------------------------------------------
+
+// TestRegression_DenialTrackerBlocksAfterLimit 验证连续拒绝 ≥3 次后，
+// 后续任何 Check() 在 Step 1.5 直接返回 DENY，防止暴力试探。
+func TestRegression_DenialTrackerBlocksAfterLimit(t *testing.T) {
+	dir := testGuardDir(t)
+	g := NewGuard(WithWorkingDirs(dir))
+
+	// 触发 3 次连续拒绝（通过 deny 规则）
+	for i := 0; i < 3; i++ {
+		_ = g.AddRule(Rule{Behavior: RuleDeny, ToolName: "bash"}, ScopeSession)
+	}
+	// 第 1 次：deny rule 命中
+	result := g.Check(context.Background(), "bash", json.RawMessage(`{"command": "ls"}`))
+	if result.Decision != DecisionDeny {
+		t.Fatalf("step 1: expected deny rule to hit, got %s", result.Decision)
+	}
+	// 移除 deny 规则，后续应靠 tracker 拦截
+	_ = g.RemoveRule(Rule{Behavior: RuleDeny, ToolName: "bash"}, ScopeSession)
+	// 确认规则已移除
+	g.ruleEngine.LoadRules(nil)
+
+	// 再触发 2 次 deny（合计 3 次连续）
+	for i := 0; i < 2; i++ {
+		_ = g.AddRule(Rule{Behavior: RuleDeny, ToolName: "bash"}, ScopeSession)
+		result = g.Check(context.Background(), "bash", json.RawMessage(`{"command": "ls"}`))
+		_ = g.RemoveRule(Rule{Behavior: RuleDeny, ToolName: "bash"}, ScopeSession)
+		g.ruleEngine.LoadRules(nil)
+	}
+
+	// 验证已达上限
+	if !g.denialTracker.AtLimit() {
+		t.Fatal("denial tracker should be at limit after 3 consecutive denials")
+	}
+
+	// 此时 deny 规则已全部移除，但 tracker at limit → Step 1.5 应强制 DENY
+	result = g.Check(context.Background(), "bash", json.RawMessage(`{"command": "ls"}`))
+	if result.Decision != DecisionDeny {
+		t.Errorf("after 3 denials: Decision = %s, want %s (tracker should force DENY)", result.Decision, DecisionDeny)
+	}
+	if result.Reason != ReasonSafety {
+		t.Errorf("after 3 denials: Reason = %s, want %s", result.Reason, ReasonSafety)
+	}
+
+	// Allow 操作应重置连续计数（但 total 仍较高）
+	g.denialTracker.RecordAllow()
+	g.ruleEngine.LoadRules(nil)
+
+	result = g.Check(context.Background(), "bash", json.RawMessage(`{"command": "ls"}`))
+	// 连续计数已重置，应走默认策略（RiskLow → ASK）
+	if result.Decision == DecisionDeny && result.Reason == ReasonSafety {
+		t.Errorf("after RecordAllow: Decision = %s, want non-denial (consecutive reset)", result.Decision)
+	}
+}
+
+// TestRegression_BuiltinAllowBypassesTracker 验证内置白名单工具不受 DenialTracker 限制。
+func TestRegression_BuiltinAllowBypassesTracker(t *testing.T) {
+	dir := testGuardDir(t)
+	g := NewGuard(WithWorkingDirs(dir))
+
+	// 触发 3 次连续拒绝
+	for i := 0; i < 3; i++ {
+		_ = g.AddRule(Rule{Behavior: RuleDeny, ToolName: "read_file"}, ScopeSession)
+		g.Check(context.Background(), "read_file", json.RawMessage(`{"file_path": "/etc/hosts"}`))
+		_ = g.RemoveRule(Rule{Behavior: RuleDeny, ToolName: "read_file"}, ScopeSession)
+		g.ruleEngine.LoadRules(nil)
+	}
+
+	if !g.denialTracker.AtLimit() {
+		t.Fatal("denial tracker should be at limit")
+	}
+
+	// ask_user_question 是 Step 0 内置白名单，不受 tracker 限制
+	args := json.RawMessage(`{"questions":[{"question":"Q?","header":"H","options":[{"label":"A","description":"d"}]}]}`)
+	result := g.Check(context.Background(), "ask_user_question", args)
+	if result.Decision != DecisionAllow {
+		t.Errorf("builtin allow should bypass tracker: Decision = %s, want %s", result.Decision, DecisionAllow)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// REGRESSION: WithExtraWorkingDirs — 0% 覆盖补充
+// ---------------------------------------------------------------------------
+
+func TestWithExtraWorkingDirs(t *testing.T) {
+	g := NewGuard(WithExtraWorkingDirs("/custom/dir"))
+	found := false
+	for _, d := range g.workingDirs {
+		if d == "/custom/dir" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("WithExtraWorkingDirs should include /custom/dir, got %v", g.workingDirs)
+	}
+	// 默认的 cwd /tmp 也应保留
+	if len(g.workingDirs) < 3 {
+		t.Errorf("WithExtraWorkingDirs should retain default dirs, got %d", len(g.workingDirs))
+	}
+}
+
+// ---------------------------------------------------------------------------
+// REGRESSION: SetSkillBashWhitelist / ClearSkillBashWhitelist — 0% 覆盖补充
+// ---------------------------------------------------------------------------
+
+func TestSetSkillBashWhitelist(t *testing.T) {
+	dir := testGuardDir(t)
+	g := NewGuard(WithWorkingDirs(dir))
+
+	// 设置白名单
+	g.SetSkillBashWhitelist([]string{"git *"})
+	if len(g.skillBashPatterns) != 1 || g.skillBashPatterns[0] != "git *" {
+		t.Errorf("SetSkillBashWhitelist: got %v, want [git *]", g.skillBashPatterns)
+	}
+
+	// 白名单命令应绕过安全检查直接 ALLOW（通过 shellSafetyCheck 的 skill 分支）
+	result := g.Check(context.Background(), "bash", json.RawMessage(`{"command": "git status"}`))
+	if result.Decision != DecisionAllow {
+		t.Errorf("skill whitelist 'git *': Decision = %s, want %s", result.Decision, DecisionAllow)
+	}
+	if result.Reason != ReasonBuiltinAllow {
+		t.Errorf("skill whitelist: Reason = %s, want %s", result.Reason, ReasonBuiltinAllow)
+	}
+}
+
+func TestClearSkillBashWhitelist(t *testing.T) {
+	dir := testGuardDir(t)
+	g := NewGuard(WithWorkingDirs(dir))
+
+	g.SetSkillBashWhitelist([]string{"git *"})
+	g.ClearSkillBashWhitelist()
+
+	if len(g.skillBashPatterns) != 0 {
+		t.Errorf("ClearSkillBashWhitelist: patterns should be empty after clear, got %v", g.skillBashPatterns)
+	}
+
+	// 清除后 git status 应回到默认 ASK
+	result := g.Check(context.Background(), "bash", json.RawMessage(`{"command": "git status"}`))
+	if result.Decision != DecisionAsk {
+		t.Errorf("after clear: Decision = %s, want %s", result.Decision, DecisionAsk)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// REGRESSION: shellSafetyCheck — JSON 解析失败 / 空命令
+// ---------------------------------------------------------------------------
+
+func TestShellSafetyCheck_InvalidJSON(t *testing.T) {
+	dir := testGuardDir(t)
+	g := NewGuard(WithWorkingDirs(dir))
+
+	// JSON 解析失败 → passthrough
+	result := g.shellSafetyCheck(json.RawMessage(`invalid`))
+	if result.Decision != "" {
+		t.Errorf("invalid JSON: Decision = %s, want empty (passthrough)", result.Decision)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// REGRESSION: fileSafetyCheck — 空路径
+// ---------------------------------------------------------------------------
+
+func TestFileSafetyCheck_EmptyPath(t *testing.T) {
+	dir := testGuardDir(t)
+	g := NewGuard(WithWorkingDirs(dir))
+
+	// 空 file_path → passthrough
+	result := g.fileSafetyCheck(json.RawMessage(`{}`), true)
+	if result.Decision != "" {
+		t.Errorf("empty path: Decision = %s, want empty (passthrough)", result.Decision)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// REGRESSION: PersistRule — config path 设置 / 未设置
+// ---------------------------------------------------------------------------
+
+func TestPersistRule_WithConfigPath(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "settings.json")
+	g := NewGuard(WithProjectConfigPath(path))
+
+	rule := Rule{Behavior: RuleAllow, ToolName: "read_file", Pattern: "*.go"}
+	err := g.PersistRule(rule)
+	if err != nil {
+		t.Fatalf("PersistRule with config path: %v", err)
+	}
+
+	// 验证文件被创建
+	if _, statErr := os.Stat(path); statErr != nil {
+		t.Error("config file not created after PersistRule")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// REGRESSION: ExtractPattern — web_fetch 空 URL
+// ---------------------------------------------------------------------------
+
+func TestExtractPattern_WebFetchNoURL(t *testing.T) {
+	pattern := ExtractPattern("web_fetch", json.RawMessage(`{}`))
+	if pattern != "" {
+		t.Errorf("expected empty for web_fetch with no url, got %q", pattern)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// REGRESSION: Guard Check — Step 2.5 skill whitelist 不匹配回退
+// ---------------------------------------------------------------------------
+
+func TestGuard_Check_SkillWhitelistNoMatch(t *testing.T) {
+	dir := testGuardDir(t)
+	g := NewGuard(WithWorkingDirs(dir))
+
+	// 设置白名单仅 git *
+	g.SetSkillBashWhitelist([]string{"git *"})
+
+	// "make build" 不匹配白名单 → 应走正常流程
+	result := g.Check(context.Background(), "bash", json.RawMessage(`{"command": "make build"}`))
+	if result.Decision == DecisionAllow && result.Reason == ReasonBuiltinAllow {
+		t.Error("make build should NOT match git * whitelist")
+	}
+
+	g.ClearSkillBashWhitelist()
+}
+
+// ---------------------------------------------------------------------------
+// REGRESSION: Guard Check — Step 0 内置白名单 skill 工具
+// ---------------------------------------------------------------------------
+
+func TestGuard_Check_BuiltinAllowSkill(t *testing.T) {
+	g := NewGuard()
+
+	result := g.Check(context.Background(), "skill", json.RawMessage(`{"name": "test-skill"}`))
+	if result.Decision != DecisionAllow {
+		t.Errorf("skill tool: Decision = %s, want %s", result.Decision, DecisionAllow)
+	}
+	if result.Reason != ReasonBuiltinAllow {
+		t.Errorf("skill tool: Reason = %s, want %s", result.Reason, ReasonBuiltinAllow)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// REGRESSION: ExtractPattern — ask_user_question 分支
+// ---------------------------------------------------------------------------
+
+func TestExtractPattern_AskUserQuestion(t *testing.T) {
+	pattern := ExtractPattern("ask_user_question", json.RawMessage(`{"questions":[]}`))
+	if pattern != "" {
+		t.Errorf("ask_user_question should return empty pattern, got %q", pattern)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// REGRESSION: ExtractPattern — bash unmarshal 失败
+// ---------------------------------------------------------------------------
+
+func TestExtractPattern_BashInvalidJSON(t *testing.T) {
+	pattern := ExtractPattern("bash", json.RawMessage(`invalid`))
+	if pattern != "" {
+		t.Errorf("invalid JSON for bash should return empty, got %q", pattern)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// REGRESSION: shellSafetyCheck — unmarshal 失败
+// ---------------------------------------------------------------------------
+
+func TestShellSafetyCheck_EmptyInput(t *testing.T) {
+	dir := testGuardDir(t)
+	g := NewGuard(WithWorkingDirs(dir))
+
+	// 空 JSON → unmarshal 成功但 command 为空 → CommandSafetyCheck 返回 RiskNone
+	result := g.shellSafetyCheck(json.RawMessage(`{}`))
+	if result.Decision == "" {
+		t.Error("empty command should still be checked (RiskNone → ALLOW)")
+	}
+}

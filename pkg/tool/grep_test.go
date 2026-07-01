@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -170,5 +171,59 @@ func TestGrepSkipsBinary(t *testing.T) {
 	}
 	if contains(result.Content, "binary.bin") {
 		t.Error("Content should not contain binary.bin (binary file should be skipped)")
+	}
+}
+
+func TestGrepPcreHint(t *testing.T) {
+	tests := []struct {
+		name    string
+		pattern string
+		want    string
+	}{
+		{"lookahead", `foo(?=bar)`, "lookahead/lookbehind"},
+		{"negative lookahead", `foo(?!bar)`, "lookahead/lookbehind"},
+		{"lookbehind", `(?<=foo)bar`, "lookahead/lookbehind"},
+		{"negative lookbehind", `(?<!foo)bar`, "lookahead/lookbehind"},
+		{"backreference", `(foo)\1`, "backreferences"},
+		{"keep out", `foo\Kbar`, "\\K is a PCRE-only"},
+		{"recursive pattern", `(?R)`, "recursive/subroutine"},
+		{"subroutine pattern", `(?&name)`, "recursive/subroutine"},
+		{"named group", `(?P<name>foo)`, "recursive/subroutine"},
+		{"atomic group", `(?>foo)`, "atomic groups"},
+		{"possessive plus", `foo++`, "possessive quantifiers"},
+		{"possessive star", `foo*+`, "possessive quantifiers"},
+		{"possessive question", `foo?+`, "possessive quantifiers"},
+		{"valid RE2", `foo.*bar`, ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			hint := pcreHint(tt.pattern)
+			if tt.want == "" {
+				if hint != "" {
+					t.Errorf("pcreHint(%q) = %q, want empty", tt.pattern, hint)
+				}
+			} else {
+				if !strings.Contains(hint, tt.want) {
+					t.Errorf("pcreHint(%q) = %q, want containing %q", tt.pattern, hint, tt.want)
+				}
+			}
+		})
+	}
+}
+
+func TestGrepInvalidRegexReturnsHint(t *testing.T) {
+	tool := &Grep{}
+	result, err := tool.Execute(context.Background(), GrepParams{
+		Pattern: `(?<=foo)bar`,
+	})
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if result.Error == nil {
+		t.Fatal("Error should not be nil for PCRE lookbehind")
+	}
+	if !strings.Contains(result.Error.Message, "Hint:") {
+		t.Errorf("PCRE error should include hint: %s", result.Error.Message)
 	}
 }

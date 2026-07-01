@@ -30,7 +30,10 @@ type SearchFileParams struct {
 type SearchFile struct{}
 
 func (t *SearchFile) Name() string            { return "search_file" }
-func (t *SearchFile) Description() string     { return "Search for file names using glob patterns. Supports ** recursive matching (e.g. **/*.go, src/**/*_test.go). Returns up to 100 files." }
+func (t *SearchFile) Description() string {
+	return "Search for file names using glob patterns. Supports ** recursive matching (e.g. **/*.go, src/**/*_test.go). Returns up to 100 files. " +
+		"If no results, verify the directory exists with ls, or broaden the pattern (e.g. use * to list all files)."
+}
 func (t *SearchFile) Schema() json.RawMessage { return searchFileSchema }
 func (t *SearchFile) ConcurrentSafe() bool    { return true }
 

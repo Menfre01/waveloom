@@ -32,6 +32,7 @@ func (t *EditFile) Description() string {
 		"For partial edits of existing files. Prefer over write_file:",
 		"  - Small changes (≤50 lines) → use edit_file",
 		"  - New files or full overwrites → use write_file",
+		"  - file_path must be an existing file, not a directory — use ls to explore directories first",
 		"  - Always confirm old_string content with read_file before editing (including indentation and whitespace)",
 		"  - If old_string is not unique, expand the context to make it unique",
 	}, "\n")
@@ -51,6 +52,11 @@ func (t *EditFile) Execute(ctx context.Context, p EditFileParams) (*ToolResult, 
 	if err != nil {
 		return toolError(ErrorClassRecoverable, ErrKindInvalidArgs,
 			fmt.Sprintf("invalid path: %v", err), err), nil
+	}
+
+	// ── Step 2.5: 目录检查 ──
+	if info, statErr := os.Stat(path); statErr == nil && info.IsDir() {
+		return dirToListing(path), nil
 	}
 
 	// ── Step 3: 读取原文 ──
@@ -750,4 +756,31 @@ func isDeclarationLine(line string) bool {
 		}
 	}
 	return false
+}
+
+// dirToListing returns a recoverable error with the directory contents listed,
+// so the LLM can immediately pick the correct file path without a separate ls call.
+// Mirrors the same pattern in read_file and write_file.
+func dirToListing(path string) *ToolResult {
+	entries, readErr := os.ReadDir(path)
+	if readErr == nil {
+		var listing strings.Builder
+		fmt.Fprintf(&listing, "Path is a directory, not a file: %s\n\n", path)
+		listing.WriteString("Use ls for full listing. Top entries:\n")
+		limit := 50
+		for i, entry := range entries {
+			if i >= limit {
+				fmt.Fprintf(&listing, "  ... and %d more entries\n", len(entries)-limit)
+				break
+			}
+			name := entry.Name()
+			if entry.IsDir() {
+				name += "/"
+			}
+			fmt.Fprintf(&listing, "  %s\n", name)
+		}
+		return toolError(ErrorClassRecoverable, ErrKindNotDir, listing.String(), nil)
+	}
+	return toolError(ErrorClassRecoverable, ErrKindNotDir,
+		fmt.Sprintf("path is a directory, not a file: %s", path), nil)
 }

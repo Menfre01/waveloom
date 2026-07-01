@@ -752,3 +752,26 @@ func TestEditFileNoMatch_WhitespaceHint(t *testing.T) {
 		t.Errorf("Error message should show both ambiguous matches: %s", result.Error.Message)
 	}
 }
+
+func TestEditFileIsDirectory(t *testing.T) {
+	dir := t.TempDir()
+
+	tool := &EditFile{}
+	result, err := tool.Execute(context.Background(), EditFileParams{
+		FilePath:  dir,
+		OldString: "hello",
+		NewString: "goodbye",
+	})
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if result.Error == nil {
+		t.Fatal("Error should not be nil when editing a directory")
+	}
+	if result.Error.Kind != ErrKindNotDir {
+		t.Errorf("Error.Kind = %q, want %q", result.Error.Kind, ErrKindNotDir)
+	}
+	if !strings.Contains(result.Error.Message, "Top entries:") {
+		t.Error("directory error should list top entries")
+	}
+}

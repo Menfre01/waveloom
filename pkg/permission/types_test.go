@@ -97,6 +97,9 @@ func TestRiskLevelConstants(t *testing.T) {
 		t.Errorf("PathDangerous = %q, want %q", PathDangerous, "dangerous")
 	}
 
+	if string(RiskNone) != "none" {
+		t.Errorf("RiskNone = %q, want %q", RiskNone, "none")
+	}
 	if string(RiskLow) != "low" {
 		t.Errorf("RiskLow = %q, want %q", RiskLow, "low")
 	}

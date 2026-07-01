@@ -50,8 +50,7 @@ func (t *Shell) Description() string {
 		"Chain dependent commands with &&, not newlines.",
 		"",
 		"Commands already run in the workspace directory.",
-		"To operate in a different directory, use the working_dir parameter — do NOT prefix commands with cd.",
-		"cd breaks permission pattern matching. Only use cd when chaining several directory changes in one command.",
+		"To operate in a different directory, use the working_dir parameter.",
 		"",
 		"For throwaway verification scripts: prefer python, write to /tmp, and clean up after.",
 		`Example: {"command":"python /tmp/check.py && rm /tmp/check.py"}`,
@@ -59,7 +58,6 @@ func (t *Shell) Description() string {
 		"Examples:",
 		`  {"command":"make build"}                                     — runs in workspace`,
 		`  {"command":"ls", "working_dir":"/tmp"}                       — runs in /tmp, clean`,
-		`  {"command":"cd subdir && go test ./..."}                     — only when chaining multiple directories`,
 	}, "\n")
 }
 

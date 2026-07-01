@@ -14,7 +14,7 @@ var lspDefinitionSchema = json.RawMessage(`{
   "properties": {
     "file_path": {
       "type": "string",
-      "description": "File path (absolute, or relative to working_dir / workspace root)"
+      "description": "File path (absolute, or relative to working_dir / workspace root). Must be an existing file, not a directory."
     },
     "line": {
       "type": "integer",
@@ -55,7 +55,9 @@ func (t *LSPDefinition) Schema() json.RawMessage { return lspDefinitionSchema }
 func (t *LSPDefinition) ConcurrentSafe() bool    { return true }
 
 func (t *LSPDefinition) Description() string {
-	return "Jump to the symbol definition at the cursor position. Returns file path, line, and column. Use for understanding third-party libraries, type definitions, and function signatures."
+	return "Jump to the symbol definition at the cursor position. Returns file path, line, and column. " +
+		"Use for understanding third-party libraries, type definitions, and function signatures. " +
+		"NOTE: line and character are 0-based (first line = 0, first column = 0)."
 }
 
 func (t *LSPDefinition) Execute(ctx context.Context, p LSPDefinitionParams) (*ToolResult, error) {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -112,8 +113,12 @@ func TestWriteFileIsDirectory(t *testing.T) {
 	if result.Error == nil {
 		t.Fatal("Error should not be nil when writing to a directory")
 	}
-	if result.Error.Kind != ErrKindInvalidArgs {
-		t.Errorf("Error.Kind = %q, want %q", result.Error.Kind, ErrKindInvalidArgs)
+	if result.Error.Kind != ErrKindNotDir {
+		t.Errorf("Error.Kind = %q, want %q", result.Error.Kind, ErrKindNotDir)
+	}
+	// 验证错误消息包含目录列表
+	if !strings.Contains(result.Error.Message, "Top entries:") {
+		t.Error("directory error should list top entries")
 	}
 }
 
@@ -211,5 +216,29 @@ func TestWriteFileNoChangeWarning(t *testing.T) {
 	}
 	if !contains(result.Content, "Updated file") {
 		t.Error("Output should indicate update (even though content unchanged)")
+	}
+}
+
+func TestChangeSign(t *testing.T) {
+	if got := changeSign(5); got != "+" {
+		t.Errorf("changeSign(5) = %q, want %q", got, "+")
+	}
+	if got := changeSign(0); got != "+" {
+		t.Errorf("changeSign(0) = %q, want %q", got, "+")
+	}
+	if got := changeSign(-3); got != "" {
+		t.Errorf("changeSign(-3) = %q, want %q", got, "")
+	}
+}
+
+func TestAbsInt(t *testing.T) {
+	if got := absInt(5); got != 5 {
+		t.Errorf("absInt(5) = %d, want 5", got)
+	}
+	if got := absInt(-3); got != 3 {
+		t.Errorf("absInt(-3) = %d, want 3", got)
+	}
+	if got := absInt(0); got != 0 {
+		t.Errorf("absInt(0) = %d, want 0", got)
 	}
 }
