@@ -74,9 +74,13 @@ func TestReadFileWithOffsetAndLimit(t *testing.T) {
 }
 
 func TestReadFileNotFound(t *testing.T) {
+	dir := t.TempDir()
+
 	tool := &ReadFile{}
+
+	// 场景 B：父目录不存在 → 路径整体错误，不做文件猜测
 	result, err := tool.Execute(context.Background(), ReadFileParams{
-		FilePath: "/nonexistent/path/file.txt",
+		FilePath: filepath.Join(dir, "nonexistent_dir", "file.txt"),
 	})
 	if err != nil {
 		t.Fatalf("Execute() error = %v", err)
@@ -84,15 +88,64 @@ func TestReadFileNotFound(t *testing.T) {
 	if result.Error == nil {
 		t.Fatal("Error should not be nil for missing file")
 	}
-	if result.Error.Class != ErrorClassRecoverable {
-		t.Errorf("Error.Class = %v, want ErrorClassRecoverable", result.Error.Class)
+	if result.Error.Kind != ErrKindFileNotFound {
+		t.Errorf("Error.Kind = %q, want %q", result.Error.Kind, ErrKindFileNotFound)
+	}
+	if !contains(result.Error.Message, "Parent directory not found") {
+		t.Errorf("Error should mention parent directory not found, got: %s", result.Error.Message)
+	}
+}
+
+func TestReadFileNotFound_ParentExistsSimilarFile(t *testing.T) {
+	dir := t.TempDir()
+	// 父目录存在，文件不存在但有相似文件
+	_ = os.WriteFile(filepath.Join(dir, "hello.go"), []byte("package main"), 0o644)
+	_ = os.WriteFile(filepath.Join(dir, "world.go"), []byte("package main"), 0o644)
+
+	tool := &ReadFile{}
+	result, err := tool.Execute(context.Background(), ReadFileParams{
+		FilePath: filepath.Join(dir, "helo.go"),
+	})
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if result.Error == nil {
+		t.Fatal("Error should not be nil for missing file")
 	}
 	if result.Error.Kind != ErrKindFileNotFound {
 		t.Errorf("Error.Kind = %q, want %q", result.Error.Kind, ErrKindFileNotFound)
 	}
-	// 智能 ENOENT：应包含 CWD
-	if !contains(result.Error.Message, "CWD:") {
-		t.Error("Error message should contain CWD")
+	// 应建议相似文件（距离 1）
+	if !contains(result.Error.Message, "Did you mean") {
+		t.Errorf("Error should contain 'Did you mean', got: %s", result.Error.Message)
+	}
+	if !contains(result.Error.Message, "hello.go") {
+		t.Errorf("Error should suggest hello.go, got: %s", result.Error.Message)
+	}
+}
+
+func TestReadFileNotFound_ParentExistsNoSimilar(t *testing.T) {
+	dir := t.TempDir()
+	// 父目录存在，文件不存在，也没有相似文件（距离太大）
+	_ = os.WriteFile(filepath.Join(dir, "skill_test.go"), []byte("package skill_test"), 0o644)
+
+	tool := &ReadFile{}
+	result, err := tool.Execute(context.Background(), ReadFileParams{
+		FilePath: filepath.Join(dir, "help_test.go"),
+	})
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if result.Error == nil {
+		t.Fatal("Error should not be nil for missing file")
+	}
+	// 不应建议 skill_test.go（距离太大）
+	if contains(result.Error.Message, "Did you mean") {
+		t.Errorf("Should not suggest unrelated file, got: %s", result.Error.Message)
+	}
+	// 应列出目录内容
+	if !contains(result.Error.Message, "Files in") {
+		t.Errorf("Should list files in parent directory, got: %s", result.Error.Message)
 	}
 }
 
@@ -124,6 +177,131 @@ func TestReadFileIsDir(t *testing.T) {
 	}
 	if !strings.Contains(result.Error.Message, "subdir/") {
 		t.Errorf("Error message should contain 'subdir/', got: %s", result.Error.Message)
+	}
+}
+
+func TestReadFileIsDir_SuggestsMatchingFile(t *testing.T) {
+	dir := t.TempDir()
+	// 创建与目录同名的 .py 文件（语言无关：pkg/skill → skill.py）
+	dirName := filepath.Base(dir)
+	expectedFile := dirName + ".py"
+	if err := os.WriteFile(filepath.Join(dir, expectedFile), []byte("def main(): pass"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// 干扰文件
+	os.WriteFile(filepath.Join(dir, "helper.py"), []byte("def helper(): pass"), 0o644)
+	os.WriteFile(filepath.Join(dir, "README.md"), []byte("# doc"), 0o644)
+
+	tool := &ReadFile{}
+	result, err := tool.Execute(context.Background(), ReadFileParams{FilePath: dir})
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if result.Error == nil {
+		t.Fatal("Error should not be nil for directory")
+	}
+	if !strings.Contains(result.Error.Message, "Did you mean") {
+		t.Errorf("Error should contain 'Did you mean' suggestion, got: %s", result.Error.Message)
+	}
+	if !strings.Contains(result.Error.Message, expectedFile) {
+		t.Errorf("Suggestion should include %s, got: %s", expectedFile, result.Error.Message)
+	}
+}
+
+func TestReadFileIsDir_SuggestsEntryFile(t *testing.T) {
+	dir := t.TempDir()
+	// 没有目录同名文件，但有 index.ts —— 应优先建议入口文件
+	os.WriteFile(filepath.Join(dir, "index.ts"), []byte("export {}"), 0o644)
+	os.WriteFile(filepath.Join(dir, "utils.ts"), []byte("export {}"), 0o644)
+
+	tool := &ReadFile{}
+	result, err := tool.Execute(context.Background(), ReadFileParams{FilePath: dir})
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if result.Error == nil {
+		t.Fatal("Error should not be nil for directory")
+	}
+	if !strings.Contains(result.Error.Message, "Did you mean") {
+		t.Error("Should suggest an entry file")
+	}
+	if !strings.Contains(result.Error.Message, "index.ts") {
+		t.Errorf("Should suggest index.ts as entry file, got: %s", result.Error.Message)
+	}
+}
+
+func TestReadFileIsDir_SmartSort(t *testing.T) {
+	dir := t.TempDir()
+	// 创建多种类型的文件和目录
+	os.MkdirAll(filepath.Join(dir, "subdir"), 0o755)
+	os.WriteFile(filepath.Join(dir, "README.md"), []byte("# doc"), 0o644)
+	os.WriteFile(filepath.Join(dir, "main.rs"), []byte("fn main() {}"), 0o644)
+	os.WriteFile(filepath.Join(dir, "lib.py"), []byte("def foo(): pass"), 0o644)
+	os.MkdirAll(filepath.Join(dir, "alpha_dir"), 0o755)
+
+	tool := &ReadFile{}
+	result, err := tool.Execute(context.Background(), ReadFileParams{FilePath: dir})
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if result.Error == nil {
+		t.Fatal("Error should not be nil for directory")
+	}
+
+	msg := result.Error.Message
+	// 定位到 Contents: 之后，排除 Did you mean 行的干扰
+	contentsPos := strings.Index(msg, "Contents:")
+	if contentsPos < 0 {
+		t.Fatalf("expected 'Contents:' marker in message, got: %s", msg)
+	}
+	listing := msg[contentsPos:]
+
+	// 所有文件应在所有目录之前
+	readmeIdx := strings.Index(listing, "README.md")
+	mainIdx := strings.Index(listing, "main.rs")
+	libIdx := strings.Index(listing, "lib.py")
+	alphaIdx := strings.Index(listing, "alpha_dir/")
+	subdirIdx := strings.Index(listing, "subdir/")
+
+	// 文件按字母序排列（大小写敏感，ASCII 序）：README.md < lib.py < main.rs
+	if libIdx < 0 || mainIdx < 0 || readmeIdx < 0 {
+		t.Fatalf("expected all files in listing, got: %s", msg)
+	}
+	if readmeIdx > libIdx {
+		t.Error("README.md should appear before lib.py (ASCII alphabetical, R < l)")
+	}
+	if libIdx > mainIdx {
+		t.Error("lib.py should appear before main.rs (alphabetical)")
+	}
+
+	// 目录应在文件之后，且目录间也是字母序
+	if alphaIdx < 0 || subdirIdx < 0 {
+		t.Fatalf("expected all dirs in listing, got: %s", msg)
+	}
+	if readmeIdx > alphaIdx {
+		t.Error("last file should appear before first directory")
+	}
+	if alphaIdx > subdirIdx {
+		t.Error("alpha_dir/ should appear before subdir/ (alphabetical)")
+	}
+}
+
+func TestReadFileIsDir_NoSuggestion(t *testing.T) {
+	dir := t.TempDir()
+	// 只有子目录和隐藏文件 — 不应产生文件建议
+	os.MkdirAll(filepath.Join(dir, "subdir"), 0o755)
+	os.WriteFile(filepath.Join(dir, ".hidden"), []byte("secret"), 0o644)
+
+	tool := &ReadFile{}
+	result, err := tool.Execute(context.Background(), ReadFileParams{FilePath: dir})
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if result.Error == nil {
+		t.Fatal("Error should not be nil for directory")
+	}
+	if strings.Contains(result.Error.Message, "Did you mean") {
+		t.Error("Should not contain 'Did you mean' when no suggestible files exist")
 	}
 }
 
