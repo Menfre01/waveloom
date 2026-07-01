@@ -72,7 +72,8 @@ waveloom
 - **Permission safety** — Three-tier decisions (allow / deny / ask) with pattern-matching rule engine. Every write operation requires your confirmation.
 - **Session persistence** — Close the terminal, come back days later with `waveloom --continue`. The agent remembers all prior context.
 - **14 built-in tools** — `read_file` / `edit_file` / `grep` / `shell` / `web_fetch` / `ask_user_question` / `skill` / LSP tools — invoked autonomously by the agent.
-- **TUI interactions** — `@` file references / `@` fuzzy file picker / `/` command palette / `Tab` paragraph navigation / `Ctrl+G` theme toggle
+- **i18n multilingual** — Full zh-CN / en-US bilingual UI. `--locale` CLI flag, `/locale` command, `settings.json` persistence, auto-detect from LANG env var.
+- **TUI interactions** — `@` file references / `@` fuzzy file picker / `/` command palette / `/locale` switch language / `Tab` paragraph navigation / `Ctrl+G` theme toggle
 
 ---
 
@@ -83,6 +84,9 @@ Type `/model` in interactive mode, or `waveloom --model deepseek-v4-flash`.
 
 **Q: Is my API key safe?**  
 Stored locally at `~/.waveloom/`. Keys connect directly to DeepSeek / OpenAI — no third-party relay.
+
+**Q: How do I switch languages?**  
+Type `/locale` to toggle between Chinese and English, or `waveloom --locale zh-CN`. The setting persists automatically in `settings.json`.
 
 **Q: What languages are supported?**  
 LSP-native Go support (built-in gopls integration). Any language with an LSP server works. Plain-text projects can use `read_file` / `edit_file` / `grep` without LSP.
