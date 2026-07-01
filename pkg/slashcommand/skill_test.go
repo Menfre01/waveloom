@@ -57,6 +57,20 @@ func TestSkillCommand_ArgsPlaceholder(t *testing.T) {
 	}
 }
 
+func TestSkillCommand_Description(t *testing.T) {
+	cmd := setupSkillCmd(t)
+	if cmd.Description() != "Deploy" {
+		t.Errorf("description = %q, want %q", cmd.Description(), "Deploy")
+	}
+}
+
+func TestSkillCommand_Aliases(t *testing.T) {
+	cmd := setupSkillCmd(t)
+	if aliases := cmd.Aliases(); aliases != nil {
+		t.Errorf("Aliases = %v, want nil", aliases)
+	}
+}
+
 func TestSkillCommand_Execute(t *testing.T) {
 	cmd := setupSkillCmd(t)
 	result, err := cmd.Execute(context.Background(), "production")

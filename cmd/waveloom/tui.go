@@ -105,10 +105,11 @@ var defaultSystemPrompt = `You are Waveloom, a coding agent. You help users writ
 - On error, identify the kind, then decide: retry once or stop.
 - Fatal (do not retry): permission_denied, security_violation, disk_full.
 - Recoverable (retry once with corrected input): command_failed, command_not_found, command_permission_denied, timeout, file_not_found, invalid_args, no_match, no_results, not_dir, binary_file, multiple_matches.
-- For not_dir: the error message includes a directory listing — pick a file from it and retry immediately.
+- For not_dir: the error message includes a directory listing and may suggest a specific file (Did you mean). Pick a file from the listing or use the suggestion, then retry immediately.
 - For file_not_found: the error message includes CWD and may suggest a similar path (Did you mean). Use the suggested path, or use search_file to locate the correct file.
 - For binary_file: the file is not a readable text file — verify you have the correct filename; use ls to check the directory contents.
 - For no_match: the error includes a hint with the closest matching lines and line numbers — use read_file to verify the exact content at those lines, then copy text verbatim (including indentation).
+- For multiple_matches: the error shows each match location with surrounding context and line numbers. Pick one occurrence and include 1-2 unique surrounding lines in your old_string to disambiguate.
 - For no_results: the skill was not found or not applicable — try a different skill name or check available skills.
 - Stop and ask for guidance when errors keep repeating — the loop enforces a hard limit.`
 
@@ -304,6 +305,9 @@ type model struct {
 
 	// 国际化
 	lc *Messages // 当前语言的文案实例（nil 时回退到 enUS）
+
+	// slash command 共享消息引用（locale 切换时原地更新以保持命令描述一致）
+	slashMessages *slashcommand.SlashMessages
 
 	// 段落模型（消息内容的数据源）
 	paras []Paragraph
@@ -4316,13 +4320,33 @@ func (e *tuiSkillExecutor) ExecuteSkill(ctx context.Context, name, args string) 
 }
 
 // newSlashRegistry 创建 slash command 注册表，注入 TUI 侧依赖实现。
-func newSlashRegistry(creator slashcommand.SessionCreator, store slashcommand.SettingsStore, lister slashcommand.ModelLister, currentModel string, skillLoader *skill.Loader, registry tool.Registry) *slashcommand.Registry {
+// slashMessagesFrom 将 TUI Messages 转换为 slashcommand.SlashMessages。
+func slashMessagesFrom(lc *Messages) *slashcommand.SlashMessages {
+	return &slashcommand.SlashMessages{
+		NewDescription:        lc.SlashNewDescription,
+		NewCreated:            lc.SlashNewCreated,
+		NewFailed:             lc.SlashNewFailed,
+		ModelDescription:      lc.SlashModelDescription,
+		ModelListFailed:       lc.SlashModelListFailed,
+		ModelListFailedNoNet:  lc.SlashModelListFailedNoNet,
+		ModelUnknown:          lc.SlashModelUnknown,
+		ModelConfigReadFailed: lc.SlashModelConfigReadFailed,
+		ModelConfigSaveFailed: lc.SlashModelConfigSaveFailed,
+		ModelSwitched:         lc.SlashModelSwitched,
+		ThemeDescription:      lc.SlashThemeDescription,
+		LocaleDescription:     lc.SlashLocaleDescription,
+		HelpDescription:       lc.SlashHelpDescription,
+		HelpText:              lc.SlashHelpText,
+	}
+}
+
+func newSlashRegistry(creator slashcommand.SessionCreator, store slashcommand.SettingsStore, lister slashcommand.ModelLister, currentModel string, skillLoader *skill.Loader, registry tool.Registry, sm *slashcommand.SlashMessages) *slashcommand.Registry {
 	r := slashcommand.NewRegistry()
-	r.Register(slashcommand.NewNewCommand(creator))
-	r.Register(slashcommand.NewModelCommand(store, lister, currentModel))
-	r.Register(slashcommand.NewThemeCommand())
-	r.Register(slashcommand.NewLocaleCommand())
-	r.Register(slashcommand.NewHelpCommand(r))
+	r.Register(slashcommand.NewNewCommand(creator, sm))
+	r.Register(slashcommand.NewModelCommand(store, lister, currentModel, sm))
+	r.Register(slashcommand.NewThemeCommand(sm))
+	r.Register(slashcommand.NewLocaleCommand(sm))
+	r.Register(slashcommand.NewHelpCommand(r, sm))
 
 	// 注册 user-invocable skills
 	// skill body 的加载统一走 skill 工具（通过 SkillExecutor 接口）
@@ -4523,6 +4547,12 @@ func (m *model) applyLocale(loc Locale) {
 	// 即时更新 input placeholder
 	m.input.Placeholder = m.msg().InputPlaceholder
 	m.otherInput.Placeholder = m.msg().InputOtherPlaceholder
+	// 刷新 slash command 文案（共享 SlashMessages 指针原地更新）
+	if m.slashMessages != nil {
+		*m.slashMessages = *slashMessagesFrom(m.lc)
+	}
+	// 刷新 command picker 缓存（下次打开 / 时用新文案重建列表）
+	m.commandPickerItems = nil
 	if m.settingsStore != nil {
 		_ = m.settingsStore.SaveLocale(string(loc))
 	}
@@ -4635,7 +4665,8 @@ func runTUI(llmClient llm.Client, registry tool.Registry, guard permission.Guard
 	// 构造 skill loader（用于注册 skill 命令）
 	homeDir, _ := os.UserHomeDir()
 	skillLoader := skill.NewLoader(m.cwd, homeDir, ctxMgr.SessionID(), "medium", guard)
-	m.slashRegistry = newSlashRegistry(sessionCreator, store, lister, modelName, skillLoader, registry)
+	m.slashMessages = slashMessagesFrom(m.lc)
+	m.slashRegistry = newSlashRegistry(sessionCreator, store, lister, modelName, skillLoader, registry, m.slashMessages)
 	m.skillLoader = skillLoader
 
 	m.bypassPerm = bypassPerm
