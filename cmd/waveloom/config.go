@@ -22,6 +22,7 @@ type CLIConfig struct {
 	Model        string
 	ContextLimit int    // 解析后的上下文窗口 token 数
 	Theme           string // 主题模式: auto / dark / light
+	Locale          string // 界面语言: zh-CN / en-US / auto（自动检测）
 	ResumeSessionID string // 恢复指定 session ID（空 = 新建 session）
 	ContinueSession bool   // 恢复最近一个 session
 	ListSessions    bool   // 列出最近 sessions
@@ -48,6 +49,7 @@ func parseCLI() CLIConfig {
 	flag.StringVar(&cfg.SystemPrompt, "system-prompt", "", "系统提示词")
 	flag.StringVar(&contextLimitRaw, "context-limit", "1M", "上下文窗口 token 上限")
 	flag.StringVar(&cfg.Theme, "theme", "auto", "主题模式 (auto/dark/light)，auto 自动检测终端背景色")
+	flag.StringVar(&cfg.Locale, "locale", "auto", "界面语言 (zh-CN/en-US/auto)，auto 从 LANG 环境变量自动检测")
 	flag.StringVar(&cfg.SettingsPath, "settings", "", "显式指定项目配置文件路径（默认: .waveloom/settings.json）")
 	flag.StringVar(&cfg.ResumeSessionID, "resume", "", "恢复指定 session ID 的对话（空 = 新建 session）")
 	flag.BoolVar(&cfg.ContinueSession, "continue", false, "恢复最近一个 session 的对话")
@@ -120,6 +122,15 @@ func parseCLI() CLIConfig {
 		cfg.Theme = "auto"
 	}
 
+	// 校验 locale 值
+	switch cfg.Locale {
+	case "auto", "zh-CN", "en-US":
+		// ok
+	default:
+		fmt.Fprintf(os.Stderr, "警告: 未知语言 '%s'，回退为 auto\n", cfg.Locale)
+		cfg.Locale = "auto"
+	}
+
 	return cfg
 }
 // parseTokenLimit 解析上下文窗口大小字符串（支持 1M / 200k / 1048576 等格式）。
@@ -170,6 +181,8 @@ func printHelp() {
   --model NAME            LLM 模型名称
   --theme MODE            主题模式: auto（默认）/ dark / light
                           auto 自动检测终端背景色
+  --locale LANG           界面语言: auto（默认）/ zh-CN / en-US
+                          auto 从 LANG 环境变量自动检测
   --verbose               记录 LLM 调用和工具执行日志到 .waveloom/waveloom.log
   --max-turns N           最大 turn 数（0=无限制）
   --system-prompt TEXT    系统提示词

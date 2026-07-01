@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log"
@@ -37,17 +38,9 @@ func main() {
 		return
 	}
 
-	// 1.5 设置模式 — 首次配置向导
-	if cfg.Setup {
-		runSetup()
-		return
-	}
-
+	// 1.5 设置模式 — 首次配置向导（无需 LLM client）
+	// 注意：setup 需要 settings paths，放在 resolveSettingsPaths 之后
 	// 1.6 shell 补全 — 无需任何初始化
-	if cfg.CompletionShell != "" {
-		runCompletion(cfg.CompletionShell)
-		return
-	}
 
 	// 2. 设置 verbose 日志（放在 LLM 之前，确保无 API Key 也能记录启动错误）
 	verboseLog, logErr := setupVerboseLog(cfg.Verbose)
@@ -60,6 +53,18 @@ func main() {
 
 	// 3. 解析配置文件路径（全局 + 项目）
 	globalPath, projectPath := resolveSettingsPaths(cfg.SettingsPath)
+
+	// 3.2 设置模式 — 首次配置向导（无需 LLM client）
+	if cfg.Setup {
+		runSetup(resolveLocaleWithSettings(cfg.Locale, projectPath, globalPath))
+		return
+	}
+
+	// 3.3 shell 补全 — 无需任何初始化
+	if cfg.CompletionShell != "" {
+		runCompletion(cfg.CompletionShell)
+		return
+	}
 
 	// 3.5 ls — 列出最近 sessions（无需 LLM client）
 	if cfg.ListSessions {
@@ -216,7 +221,8 @@ func main() {
 
 	// 15. 分支：无 prompt → 交互式 TUI，有 prompt → 单次执行
 	if cfg.OneShot == "" {
-		runTUI(llmClient, registry, guard, expander, cfg.Model, cfg.Theme, verboseLog, cfg.ContextLimit, cfg.MaxTurns, cfg.ToolTimeout, cfg.ToolTimeoutSource, cfg.BypassPerm, ctxMgr, isResume, sessionDir, globalPath, projectPath, agentsMdText)
+		loc := resolveLocaleWithSettings(cfg.Locale, projectPath, globalPath)
+		runTUI(llmClient, registry, guard, expander, cfg.Model, cfg.Theme, verboseLog, cfg.ContextLimit, cfg.MaxTurns, cfg.ToolTimeout, cfg.ToolTimeoutSource, cfg.BypassPerm, ctxMgr, isResume, sessionDir, globalPath, projectPath, agentsMdText, loc)
 		return
 	}
 
@@ -453,5 +459,43 @@ func listSessions(projectPath, globalPath string) {
 	}
 	fmt.Println()
 	fmt.Println("恢复: waveloom --resume <id>  或  waveloom --continue")
+}
+
+// resolveLocaleWithSettings 解析 locale，优先级：
+//
+//	CLI --locale (非 auto) > settings.json locale > LANG 环境变量
+func resolveLocaleWithSettings(cliLocale, projectPath, globalPath string) Locale {
+	// 1. CLI 显式指定
+	if cliLocale == "zh-CN" {
+		return LocaleZhCN
+	}
+	if cliLocale == "en-US" {
+		return LocaleEnUS
+	}
+
+	// 2. settings.json 中的 locale 字段（项目 > 全局）
+	for _, p := range []string{projectPath, globalPath} {
+		if p == "" {
+			continue
+		}
+		data, err := os.ReadFile(p)
+		if err != nil {
+			continue
+		}
+		var cfg struct {
+			Locale string `json:"locale"`
+		}
+		if json.Unmarshal(data, &cfg) == nil && cfg.Locale != "" {
+			switch cfg.Locale {
+			case "zh-CN":
+				return LocaleZhCN
+			case "en-US":
+				return LocaleEnUS
+			}
+		}
+	}
+
+	// 3. 环境变量检测
+	return DetectLocale()
 }
 
