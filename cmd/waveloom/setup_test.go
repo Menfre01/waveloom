@@ -174,7 +174,9 @@ func TestWriteFullSetup_PreservesExisting(t *testing.T) {
 		"locale":       "en-US",
 	}
 	data, _ := json.MarshalIndent(existing, "", "    ")
-	os.WriteFile(path, data, 0o644)
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatalf("os.WriteFile: %v", err)
+	}
 
 	// 覆盖 locale
 	err := writeFullSetup(path, nil, "zh-CN", "auto")
@@ -184,7 +186,9 @@ func TestWriteFullSetup_PreservesExisting(t *testing.T) {
 
 	var cfg map[string]any
 	raw, _ := os.ReadFile(path)
-	json.Unmarshal(raw, &cfg)
+	if err := json.Unmarshal(raw, &cfg); err != nil {
+		t.Fatalf("json.Unmarshal: %v", err)
+	}
 
 	if cfg["custom_field"] != "keep" {
 		t.Error("custom_field should be preserved")

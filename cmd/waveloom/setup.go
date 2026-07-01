@@ -60,7 +60,7 @@ func newSetupModel(loc Locale) *setupModel {
 func (m *setupModel) Init() tea.Cmd {
 	homeDir, _ := os.UserHomeDir()
 	configPath := filepath.Join(homeDir, ".waveloom", "settings.json")
-	os.MkdirAll(filepath.Dir(configPath), 0o755)
+	_ = os.MkdirAll(filepath.Dir(configPath), 0o755)
 	if settings, err := llm.LoadSettingsIfExists(configPath); err == nil && settings != nil && settings.APIKey != "" {
 		m.showBanner = true
 	}
@@ -397,7 +397,7 @@ func (m *setupModel) saveAndFinish() {
 		return
 	}
 	configPath := filepath.Join(homeDir, ".waveloom", "settings.json")
-	os.MkdirAll(filepath.Dir(configPath), 0o755)
+	_ = os.MkdirAll(filepath.Dir(configPath), 0o755)
 
 	baseURL := "https://api.deepseek.com"
 	if m.state.prov == "openai" {
