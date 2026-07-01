@@ -55,7 +55,7 @@ func SelfUpdate(ctx context.Context, currentPath, downloadURL string, progress S
 	if err != nil {
 		return fmt.Errorf("创建临时目录: %w", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	tarballPath := filepath.Join(tmpDir, "waveloom.tar.gz")
 	if err := downloadWithProgress(ctx, downloadURL, tarballPath, func(downloaded, total int64, pct int) {
@@ -84,11 +84,11 @@ func SelfUpdate(ctx context.Context, currentPath, downloadURL string, progress S
 
 	if err := copyFile(newBinary, currentPath); err != nil {
 		// 回滚
-		os.Rename(backupPath, currentPath)
+		_ = os.Rename(backupPath, currentPath)
 		return fmt.Errorf("安装失败: %w", err)
 	}
 
-	os.Remove(backupPath)
+	_ = os.Remove(backupPath)
 
 	if err := os.Chmod(currentPath, 0o755); err != nil {
 		return fmt.Errorf("设置权限失败: %w", err)
@@ -114,7 +114,7 @@ func downloadWithProgress(ctx context.Context, url, dst string, onProgress func(
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("unexpected status %d", resp.StatusCode)
@@ -124,7 +124,7 @@ func downloadWithProgress(ctx context.Context, url, dst string, onProgress func(
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	total := resp.ContentLength
 	pr := &progressReader{
@@ -166,13 +166,13 @@ func extractWaveloom(tarballPath, tmpDir string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	gzReader, err := gzip.NewReader(f)
 	if err != nil {
 		return "", err
 	}
-	defer gzReader.Close()
+	defer func() { _ = gzReader.Close() }()
 
 	tarReader := tar.NewReader(gzReader)
 	for {
@@ -191,10 +191,10 @@ func extractWaveloom(tarballPath, tmpDir string) (string, error) {
 				return "", err
 			}
 			if _, err := io.Copy(out, tarReader); err != nil {
-				out.Close()
+				_ = out.Close()
 				return "", err
 			}
-			out.Close()
+			_ = out.Close()
 			if err := os.Chmod(outPath, 0o755); err != nil {
 				return "", err
 			}
@@ -211,13 +211,13 @@ func copyFile(src, dst string) error {
 	if err != nil {
 		return err
 	}
-	defer srcF.Close()
+	defer func() { _ = srcF.Close() }()
 
 	dstF, err := os.Create(dst)
 	if err != nil {
 		return err
 	}
-	defer dstF.Close()
+	defer func() { _ = dstF.Close() }()
 
 	_, err = io.Copy(dstF, srcF)
 	return err
