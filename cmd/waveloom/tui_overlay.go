@@ -21,6 +21,7 @@ const (
 	overlayQuestion                      // AskUserQuestion 选择题（阻断式）
 	overlayThemePicker                   // /theme 触发：主题选择列表
 	overlayModelPicker                   // /model 无参触发：模型选择列表
+	overlayLocalePicker                  // /locale 触发：语言选择列表
 	overlayCommandPicker                 // / 命令补全（预留）
 )
 
@@ -215,6 +216,15 @@ func themePickerKeyBindings(lc *Messages) []key.Binding {
 	}
 }
 
+// localePickerKeyBindings 语言选择器快捷键。
+func localePickerKeyBindings(lc *Messages) []key.Binding {
+	return []key.Binding{
+		key.NewBinding(key.WithKeys("↑/↓"), key.WithHelp("↑/↓", lc.KeyNav)),
+		key.NewBinding(key.WithKeys("enter"), key.WithHelp("Enter", lc.KeyConfirm)),
+		key.NewBinding(key.WithKeys("esc"), key.WithHelp("Esc", lc.KeyCancel)),
+	}
+}
+
 // modelPickerKeyBindings 模型选择器快捷键。
 func modelPickerKeyBindings(lc *Messages) []key.Binding {
 	return []key.Binding{
@@ -278,6 +288,35 @@ func (m *model) renderModelPickerOverlay(boxWidth int) string {
 	m.help.SetWidth(innerWidth)
 	hintWrapper := lipgloss.NewStyle().Foreground(colorMuted).Width(innerWidth)
 	hint := hintWrapper.Render(m.help.ShortHelpView(modelPickerKeyBindings(m.msg())))
+	contentLines = append(contentLines, hint)
+
+	boxStyle := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(colorHeaderAccent).
+		Padding(1, 2).
+		Width(boxWidth)
+
+	return boxStyle.Render(strings.Join(contentLines, "\n"))
+}
+
+// ---------------------------------------------------------------------------
+// 语言选择器覆盖层渲染
+// ---------------------------------------------------------------------------
+
+func (m *model) renderLocalePickerOverlay(boxWidth int) string {
+	innerWidth := boxWidth - 2 - 4
+	m.localeList.SetSize(innerWidth, 2)
+	overlayFgStyle := lipgloss.NewStyle().Foreground(colorFooterFg).Width(innerWidth)
+
+	title := styleOverlayTitle.Width(innerWidth).Render(m.msg().PickerSelectLocale)
+	contentLines := []string{title, ""}
+
+	contentLines = append(contentLines, overlayFgStyle.Render(m.localeList.View()))
+	contentLines = append(contentLines, "")
+
+	m.help.SetWidth(innerWidth)
+	hintWrapper := lipgloss.NewStyle().Foreground(colorMuted).Width(innerWidth)
+	hint := hintWrapper.Render(m.help.ShortHelpView(localePickerKeyBindings(m.msg())))
 	contentLines = append(contentLines, hint)
 
 	boxStyle := lipgloss.NewStyle().
