@@ -250,7 +250,7 @@ func registerBuiltinTools(r tool.Registry, lspProvider *tool.LSPProvider, skillL
 
 	// Skill 工具
 	if skillLoader != nil {
-		r.Register(tool.Wrap(tool.NewSkillTool(skillLoader)))
+		r.Register(tool.Wrap(tool.NewSkillTool(&skillExecutorAdapter{loader: skillLoader})))
 	}
 
 	// AskUserQuestion — LLM 向用户发起选择题式交互决策（TUI 模式）
@@ -354,8 +354,8 @@ func setupVerboseLog(verbose bool) (io.WriteCloser, error) {
 
 	// 轮换: waveloom.log → waveloom.log.1
 	if _, err := os.Stat(logPath); err == nil {
-		_ = os.Remove(oldPath)                     // 丢弃更旧
-		_ = os.Rename(logPath, oldPath)           // 当前 → .1
+		_ = os.Remove(oldPath)          // 丢弃更旧
+		_ = os.Rename(logPath, oldPath) // 当前 → .1
 	}
 
 	f, err := os.Create(logPath)
@@ -382,7 +382,6 @@ func createGuard(globalPath, projectPath string) permission.Guard {
 		permission.WithProjectConfigPath(projectPath),
 	}
 	if len(rules) > 0 {
-		fmt.Fprintf(os.Stderr, "📋 已加载 %d 条权限规则\n", len(rules))
 		opts = append(opts, permission.WithRules(rules))
 	}
 
@@ -499,3 +498,19 @@ func resolveLocaleWithSettings(cliLocale, projectPath, globalPath string) Locale
 	return DetectLocale()
 }
 
+// skillExecutorAdapter 将 skill.Loader 适配为 tool.SkillExecutor 接口，
+// 消除 tool 包对 skill 包的编译期依赖。
+type skillExecutorAdapter struct {
+	loader *skill.Loader
+}
+
+func (a *skillExecutorAdapter) Load(name, args string) (*tool.SkillLoadResult, error) {
+	loaded, err := a.loader.Load(name, args)
+	if err != nil {
+		return nil, err
+	}
+	return &tool.SkillLoadResult{
+		Body:    loaded.Body,
+		DirPath: loaded.DirPath,
+	}, nil
+}

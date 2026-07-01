@@ -27,14 +27,10 @@ type EditFile struct{}
 func (t *EditFile) Name() string            { return "edit_file" }
 func (t *EditFile) Description() string {
 	return strings.Join([]string{
-		"Find-and-replace based on exact string match. old_string must be unique.",
-		"",
-		"For partial edits of existing files. Prefer over write_file:",
-		"  - Small changes (≤50 lines) → use edit_file",
-		"  - New files or full overwrites → use write_file",
-		"  - file_path must be an existing file, not a directory — use ls to explore directories first",
-		"  - You MUST call read_file to confirm old_string content before every edit_file call (indentation and whitespace). Never edit from memory — this is a hard constraint.",
-		"  - If old_string is not unique, expand the context to make it unique",
+		"Find-and-replace on an existing file by exact string match.",
+		"old_string must be unique in the file — if ambiguous, include 1-2 surrounding lines as context.",
+		"Set replace_all=true to replace every occurrence.",
+		"Whitespace and blank-line differences are auto-corrected when the match is unambiguous.",
 	}, "\n")
 }
 func (t *EditFile) Schema() json.RawMessage { return editFileSchema }
@@ -81,64 +77,15 @@ func (t *EditFile) Execute(ctx context.Context, p EditFileParams) (*ToolResult, 
 	if count == 0 {
 		// 降级1：空白归一化匹配唯一 → 自动修复，减少 LLM 重试轮次
 		if matchStart := findNormalizedMatchPosition(original, p.OldString); matchStart >= 0 {
-			origLines := strings.Split(original, "\n")
-			oldLines := strings.Split(p.OldString, "\n")
-			realOld := strings.Join(origLines[matchStart:matchStart+len(oldLines)], "\n")
-
-			// 检查实际原文是否也多次出现
-			realCount := strings.Count(original, realOld)
-			if realCount > 1 && !p.ReplaceAll {
-				return toolError(ErrorClassRecoverable, ErrKindMultipleMatch,
-					fmt.Sprintf("found %d matches for auto-corrected old_string in %s; provide more context or set replace_all=true",
-						realCount, path), nil), nil
-			}
-
-			matchPositions := findAllMatches(original, realOld)
-			if !p.ReplaceAll && len(matchPositions) > 1 {
-				matchPositions = matchPositions[:1]
-			}
-			hunks := buildDiffHunks(original, matchPositions, realOld, p.NewString, 3)
-
-			// 执行替换
-			var result string
-			if p.ReplaceAll {
-				result = strings.ReplaceAll(original, realOld, p.NewString)
-			} else {
-				result = strings.Replace(original, realOld, p.NewString, 1)
-			}
-
-			if err := ctx.Err(); err != nil {
-				return nil, err
-			}
-			if err := os.WriteFile(path, []byte(result), 0o644); err != nil {
-				return toolError(ErrorClassFatal, ErrKindPermissionDenied,
-					fmt.Sprintf("cannot write file: %s", path), err), nil
-			}
-
-			added, removed := diffStats(hunks)
-			effCount := len(matchPositions)
-			var summary strings.Builder
-			fmt.Fprintf(&summary, "Edited file: %s\n", path)
-			fmt.Fprintf(&summary, "   ⚠️  Auto-corrected whitespace: old_string whitespace did not match the file.\n")
-			fmt.Fprintf(&summary, "   Matched lines %d-%d by content (ignoring whitespace).\n",
-				matchStart+1, matchStart+len(oldLines))
-			if p.ReplaceAll {
-				fmt.Fprintf(&summary, "   Replaced %d occurrence(s)\n", effCount)
-			} else {
-				summary.WriteString("   Replaced 1 occurrence\n")
-			}
-			fmt.Fprintf(&summary, "   +%d -%d lines", added, removed)
-
-			return &ToolResult{
-				Content: summary.String(),
-				Meta: ToolMeta{
-					FilePath:  path,
-					DiffHunks: hunks,
-				},
-			}, nil
+			return t.applyAutoFix(ctx, original, p, path, matchStart, "whitespace")
 		}
 
-		// 降级2：空白归一化匹配不唯一 → 返回 hint 让 LLM 精确重试
+		// 降级2：跳过空行 + 空白归一化匹配唯一 → 自动修复
+		if matchStart := findMatchSkippingBlankLines(original, p.OldString); matchStart >= 0 {
+			return t.applyAutoFix(ctx, original, p, path, matchStart, "blank lines / whitespace")
+		}
+
+		// 降级3：空白归一化匹配不唯一 → 返回 hint 让 LLM 精确重试
 		if hint := tryNormalizedMatch(original, p.OldString); hint != "" {
 			return toolError(ErrorClassRecoverable, ErrKindNoMatch,
 				fmt.Sprintf("no exact match for old_string in %s\n\n%s\n\n%s",
@@ -150,9 +97,8 @@ func (t *EditFile) Execute(ctx context.Context, p EditFileParams) (*ToolResult, 
 	}
 
 	if count > 1 && !p.ReplaceAll {
-		return toolError(ErrorClassRecoverable, ErrKindMultipleMatch,
-			fmt.Sprintf("found %d matches for old_string in %s; provide more context or set replace_all=true",
-				count, path), nil), nil
+		result := buildMultipleMatchError(original, p.OldString, path, false)
+		return result, nil
 	}
 
 	// ── Step 5: 生成 diff hunks（替换前，使用原文位置）──
@@ -495,25 +441,6 @@ func normalizeLine(s string) string {
 	return strings.TrimSpace(buf.String())
 }
 
-// normalizeWhitespace 将连续空白符（空格、制表符、换行符）压缩为单空格，
-// 并去除首尾空白。用于容错匹配。
-func normalizeWhitespace(s string) string {
-	var buf strings.Builder
-	inSpace := false
-	for _, r := range s {
-		if r == ' ' || r == '\t' || r == '\n' || r == '\r' {
-			if !inSpace {
-				buf.WriteByte(' ')
-				inSpace = true
-			}
-		} else {
-			buf.WriteRune(r)
-			inSpace = false
-		}
-	}
-	return strings.TrimSpace(buf.String())
-}
-
 // renderSearchHint 当 old_string 未匹配时，在原文中寻找与 target 特征行编辑距离最小的若干行，
 // 连同其上下各 1 行上下文一起返回，帮助 LLM 一眼看出 old_string 与原文的精确差异。
 func renderSearchHint(target, content string) string {
@@ -596,6 +523,11 @@ func renderSearchHint(target, content string) string {
 		if c.index+1 < len(fileLines) && !seen[c.index+1] {
 			fmt.Fprintf(&buf, "   Line %d: %s\n", c.index+2, fileLines[c.index+1])
 			seen[c.index+1] = true
+		}
+
+		// 对最佳匹配（第一个打印的），若距离很小，附加字符级 diff
+		if printed == 0 && c.distance > 0 && c.distance <= 3 {
+			buf.WriteString(formatCharDiffHint(query, fileLines[c.index]))
 		}
 		printed++
 	}
@@ -702,6 +634,81 @@ func levenshteinDistance(a, b []rune) int {
 	return prev[n]
 }
 
+// formatCharDiffHint 为两个相似字符串生成字符级差异提示。
+// 找出首个不同字符的位置，用 ^ 标记，方便 LLM 一眼定位差异。
+// 若两串差异在末尾（长度不同），标记截断/多余位置。
+func formatCharDiffHint(query, fileLine string) string {
+	qr := []rune(query)
+	fr := []rune(fileLine)
+
+	// 找最长公共前缀
+	prefixLen := 0
+	for prefixLen < len(qr) && prefixLen < len(fr) && qr[prefixLen] == fr[prefixLen] {
+		prefixLen++
+	}
+
+	// 找最长公共后缀（从前缀之后开始）
+	suffixLen := 0
+	for suffixLen < len(qr)-prefixLen && suffixLen < len(fr)-prefixLen &&
+		qr[len(qr)-1-suffixLen] == fr[len(fr)-1-suffixLen] {
+		suffixLen++
+	}
+
+	// 完全相同时不生成 diff（调用方保证 distance > 0，此处防御）
+	if prefixLen == len(qr) && prefixLen == len(fr) {
+		return ""
+	}
+
+	var buf strings.Builder
+	buf.WriteString("\n   Character diff:\n")
+
+	// 截断显示：前缀过长时省略
+	const maxPrefix = 30
+	displayPrefix := prefixLen
+	prefixOmitted := ""
+	if displayPrefix > maxPrefix {
+		displayPrefix = maxPrefix
+		prefixOmitted = "..."
+	}
+
+	// 文件中的行
+	buf.WriteString("   File:  ")
+	buf.WriteString(prefixOmitted)
+	buf.WriteString(string(fr[displayPrefix:]))
+	buf.WriteString("\n")
+
+	// LLM 提供的行
+	buf.WriteString("   Yours: ")
+	buf.WriteString(prefixOmitted)
+	buf.WriteString(string(qr[displayPrefix:]))
+	buf.WriteString("\n")
+
+	// 差异标记 ^
+	markerPos := len(prefixOmitted) + (prefixLen - displayPrefix)
+	buf.WriteString("          ")
+	for i := 0; i < markerPos; i++ {
+		buf.WriteByte(' ')
+	}
+
+	// 标记差异区域长度
+	diffLen := len(fr) - prefixLen - suffixLen
+	if alt := len(qr) - prefixLen - suffixLen; alt > diffLen {
+		diffLen = alt
+	}
+	if diffLen <= 0 {
+		diffLen = 1
+	}
+	if diffLen > 20 {
+		diffLen = 20
+	}
+	for i := 0; i < diffLen; i++ {
+		buf.WriteByte('^')
+	}
+	buf.WriteString(" ← differs here")
+
+	return buf.String()
+}
+
 // extractHeading 从原文匹配行向前扫描，提取最接近的函数/方法/类型签名作为 hunk 头部上下文。
 // 返回匹配行的前一行中看起来像声明的文本（去除前导空白后截断至 60 字符）。
 func extractHeading(lines []string, matchLine int) string {
@@ -758,19 +765,202 @@ func isDeclarationLine(line string) bool {
 	return false
 }
 
+// ---------------------------------------------------------------------------
+// applyAutoFix — 抽象公共的自动修复 + 替换 + 写回逻辑
+// ---------------------------------------------------------------------------
+
+// applyAutoFix 在降级匹配成功后执行实际的替换和写回。
+// matchStart 是原文中的 0-based 起始行号；fixKind 用于日志描述（"whitespace" / "blank lines / whitespace"）。
+func (t *EditFile) applyAutoFix(ctx context.Context, original string, p EditFileParams, path string, matchStart int, fixKind string) (*ToolResult, error) {
+	origLines := strings.Split(original, "\n")
+	oldLines := strings.Split(p.OldString, "\n")
+	realOld := strings.Join(origLines[matchStart:matchStart+len(oldLines)], "\n")
+
+	// 检查实际原文是否也多次出现
+	realCount := strings.Count(original, realOld)
+	if realCount > 1 && !p.ReplaceAll {
+		// 用 realOld（文件中实际匹配的文本）而非 p.OldString（可能有空白差异）
+		result := buildMultipleMatchError(original, realOld, path, true)
+		return result, nil
+	}
+
+	matchPositions := findAllMatches(original, realOld)
+	if !p.ReplaceAll && len(matchPositions) > 1 {
+		matchPositions = matchPositions[:1]
+	}
+	hunks := buildDiffHunks(original, matchPositions, realOld, p.NewString, 3)
+
+	// 执行替换
+	var result string
+	if p.ReplaceAll {
+		result = strings.ReplaceAll(original, realOld, p.NewString)
+	} else {
+		result = strings.Replace(original, realOld, p.NewString, 1)
+	}
+
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if err := os.WriteFile(path, []byte(result), 0o644); err != nil {
+		return toolError(ErrorClassFatal, ErrKindPermissionDenied,
+			fmt.Sprintf("cannot write file: %s", path), err), nil
+	}
+
+	added, removed := diffStats(hunks)
+	effCount := len(matchPositions)
+	var summary strings.Builder
+	fmt.Fprintf(&summary, "Edited file: %s\n", path)
+	fmt.Fprintf(&summary, "   ⚠️  Auto-corrected %s: old_string did not exactly match the file.\n", fixKind)
+	fmt.Fprintf(&summary, "   Matched lines %d-%d by content.\n",
+		matchStart+1, matchStart+len(oldLines))
+	if p.ReplaceAll {
+		fmt.Fprintf(&summary, "   Replaced %d occurrence(s)\n", effCount)
+	} else {
+		summary.WriteString("   Replaced 1 occurrence\n")
+	}
+	fmt.Fprintf(&summary, "   +%d -%d lines", added, removed)
+
+	return &ToolResult{
+		Content: summary.String(),
+		Meta: ToolMeta{
+			FilePath:  path,
+			DiffHunks: hunks,
+		},
+	}, nil
+}
+
+// ---------------------------------------------------------------------------
+// findMatchSkippingBlankLines — 跳过空行的后备匹配
+// ---------------------------------------------------------------------------
+
+// findMatchSkippingBlankLines 在忽略空行差异的前提下进行空白归一化序列匹配。
+// 将原文和 oldStr 中的空行（含纯空白行）全部移除后，对剩余非空行做 normalizeLine 序列匹配。
+// 返回原文中的 0-based 起始行号；未找到或匹配不唯一返回 -1。
+func findMatchSkippingBlankLines(original, oldStr string) int {
+	origLines := strings.Split(original, "\n")
+	oldLines := strings.Split(oldStr, "\n")
+
+	origNonBlank, origMap := extractNonBlankNormalized(origLines)
+	oldNonBlank, _ := extractNonBlankNormalized(oldLines)
+
+	if len(oldNonBlank) == 0 {
+		return -1
+	}
+
+	// 在 origNonBlank 中查找 oldNonBlank 的连续子序列
+	matchIdx := findLineSequence(origNonBlank, oldNonBlank)
+	if matchIdx < 0 {
+		return -1
+	}
+
+	// 确认唯一性
+	if findLineSequence(origNonBlank[matchIdx+1:], oldNonBlank) >= 0 {
+		return -1
+	}
+
+	// 映射回原文行号：匹配的第一个非空行在原文中的位置
+	return origMap[matchIdx]
+}
+
+// extractNonBlankNormalized 提取所有非空行并做空白归一化。
+// 返回归一化后的非空行列表和每行在原始列表中的索引。
+func extractNonBlankNormalized(lines []string) (nonBlank []string, lineMap []int) {
+	for i, line := range lines {
+		n := normalizeLine(line)
+		if n != "" {
+			nonBlank = append(nonBlank, n)
+			lineMap = append(lineMap, i)
+		}
+	}
+	return
+}
+
+// ---------------------------------------------------------------------------
+// buildMultipleMatchError — 多匹配时生成带上下文的错误
+// ---------------------------------------------------------------------------
+
+// buildMultipleMatchError 当 old_string 在文件中多处匹配时，为每个匹配位置生成
+// 带 ±2 行上下文的错误消息，让 LLM 可以直接看到各位置的差异并构造唯一的 old_string。
+// autoFix 为 true 表示来自自动修复路径（空白归一化后仍不唯一），此时提示中会额外说明。
+func buildMultipleMatchError(original, oldStr, path string, autoFix bool) *ToolResult {
+	positions := findAllMatches(original, oldStr)
+	origLines := strings.Split(original, "\n")
+	oldLines := strings.Split(oldStr, "\n")
+	oldLineCount := len(oldLines)
+
+	// 限制最多展示的匹配位置数
+	const maxDisplay = 5
+	displayCount := len(positions)
+	truncated := false
+	if displayCount > maxDisplay {
+		displayCount = maxDisplay
+		truncated = true
+	}
+
+	var buf strings.Builder
+	if autoFix {
+		fmt.Fprintf(&buf, "auto-corrected old_string still matches %d locations in %s.\n", len(positions), path)
+	} else {
+		fmt.Fprintf(&buf, "old_string matches %d locations in %s.\n", len(positions), path)
+	}
+	buf.WriteString("Include more surrounding context to make it unique:\n")
+
+	for i := 0; i < displayCount; i++ {
+		pos := positions[i]
+		matchLine := lineForOffset(buildLineStarts(original), pos)
+
+		ctxStart := matchLine - 2
+		if ctxStart < 0 {
+			ctxStart = 0
+		}
+		ctxEnd := matchLine + oldLineCount + 2
+		if ctxEnd > len(origLines) {
+			ctxEnd = len(origLines)
+		}
+
+		fmt.Fprintf(&buf, "\n  Occurrence %d (line %d):\n", i+1, matchLine+1)
+		for j := ctxStart; j < ctxEnd; j++ {
+			marker := "   "
+			if j >= matchLine && j < matchLine+oldLineCount {
+				marker = " → "
+			}
+			fmt.Fprintf(&buf, "%s%4d  %s\n", marker, j+1, origLines[j])
+		}
+	}
+
+	if truncated {
+		fmt.Fprintf(&buf, "\n  ... and %d more occurrences (not shown).\n", len(positions)-maxDisplay)
+	}
+
+	buf.WriteString("\nPick one location and include 1-2 unique surrounding lines in old_string.")
+
+	return toolError(ErrorClassRecoverable, ErrKindMultipleMatch, buf.String(), nil)
+}
+
 // dirToListing returns a recoverable error with the directory contents listed,
 // so the LLM can immediately pick the correct file path without a separate ls call.
-// Mirrors the same pattern in read_file and write_file.
 func dirToListing(path string) *ToolResult {
 	entries, readErr := os.ReadDir(path)
 	if readErr == nil {
+		sortDirEntries(entries)
+
 		var listing strings.Builder
 		fmt.Fprintf(&listing, "Path is a directory, not a file: %s\n\n", path)
-		listing.WriteString("Use ls for full listing. Top entries:\n")
-		limit := 50
+
+		if suggestion := suggestFileInDir(path, entries); suggestion != "" {
+			fmt.Fprintf(&listing, "Did you mean %s?\n\n", suggestion)
+		}
+
+		const maxDisplay = 50
+		total := len(entries)
+		if total > maxDisplay {
+			fmt.Fprintf(&listing, "Showing first %d of %d entries:\n", maxDisplay, total)
+		} else {
+			listing.WriteString("Contents:\n")
+		}
 		for i, entry := range entries {
-			if i >= limit {
-				fmt.Fprintf(&listing, "  ... and %d more entries\n", len(entries)-limit)
+			if i >= maxDisplay {
+				fmt.Fprintf(&listing, "  ... and %d more entries\n", total-maxDisplay)
 				break
 			}
 			name := entry.Name()

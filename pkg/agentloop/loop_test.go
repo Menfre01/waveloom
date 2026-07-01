@@ -2508,14 +2508,22 @@ func TestShouldContinue(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 type mockCompactor struct {
-	tick compaction.Tick
+	tick       compaction.Tick
+	lastResult compaction.CompactionResult
 }
 
 func (m *mockCompactor) Compact(_ context.Context, _ *[]llm.Message, _ int) compaction.Tick {
+	m.lastResult = compaction.CompactionResult{
+		Tier:             m.tick.Tier,
+		TokensSaved:      m.tick.TokensSaved,
+		HardLimitReached: m.tick.HardLimitReached,
+		HardLimitReason:  m.tick.HardLimitReason,
+	}
 	return m.tick
 }
 
-func (m *mockCompactor) AdvanceTurn() int { return 0 }
+func (m *mockCompactor) AdvanceTurn() int                            { return 0 }
+func (m *mockCompactor) LastResult() compaction.CompactionResult { return m.lastResult }
 
 // ---------------------------------------------------------------------------
 // 压缩集成测试

@@ -3,11 +3,7 @@ package slashcommand
 import (
 	"context"
 	"errors"
-	"os"
-	"path/filepath"
 	"testing"
-
-	"github.com/Menfre01/waveloom/pkg/skill"
 )
 
 // stubSkillExecutor 用于测试的 SkillExecutor 桩。
@@ -22,25 +18,11 @@ func (s *stubSkillExecutor) ExecuteSkill(ctx context.Context, name, args string)
 
 func setupSkillCmd(t *testing.T) *SkillCommand {
 	t.Helper()
-	home := t.TempDir()
-	skillDir := filepath.Join(home, ".claude", "skills", "deploy")
-	if err := os.MkdirAll(skillDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte(`---
-name: deploy
-description: Deploy
-argument-hint: env
----
-Deploy $ARGUMENTS`), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	loader := skill.NewLoader(home, home, "test-sid", "medium", nil)
-	infos, err := loader.List()
-	if err != nil || len(infos) != 1 {
-		t.Fatalf("List failed: %v, %d skills", err, len(infos))
-	}
-	return NewSkillCommand(infos[0], &stubSkillExecutor{body: "Deploy production"})
+	return NewSkillCommand(SkillDescriptor{
+		Name:        "deploy",
+		Description: "Deploy",
+		Args:        "env",
+	}, &stubSkillExecutor{body: "Deploy production"})
 }
 
 func TestSkillCommand_Name(t *testing.T) {
@@ -54,6 +36,20 @@ func TestSkillCommand_ArgsPlaceholder(t *testing.T) {
 	cmd := setupSkillCmd(t)
 	if cmd.ArgsPlaceholder() != "env" {
 		t.Errorf("args = %q, want %q", cmd.ArgsPlaceholder(), "env")
+	}
+}
+
+func TestSkillCommand_Description(t *testing.T) {
+	cmd := setupSkillCmd(t)
+	if cmd.Description() != "Deploy" {
+		t.Errorf("description = %q, want %q", cmd.Description(), "Deploy")
+	}
+}
+
+func TestSkillCommand_Aliases(t *testing.T) {
+	cmd := setupSkillCmd(t)
+	if aliases := cmd.Aliases(); aliases != nil {
+		t.Errorf("Aliases = %v, want nil", aliases)
 	}
 }
 
@@ -94,13 +90,7 @@ func TestSkillCommand_ExecuteNoArgs(t *testing.T) {
 }
 
 func TestSkillCommand_ExecuteError(t *testing.T) {
-	home := t.TempDir()
-	loader := skill.NewLoader(home, home, "test-sid", "medium", nil)
-	infos, _ := loader.List()
-	info := skill.SkillInfo{Name: "gone", Description: "Gone"}
-	if len(infos) > 0 {
-		info = infos[0]
-	}
+	info := SkillDescriptor{Name: "gone", Description: "Gone"}
 	exec := &stubSkillExecutor{err: errors.New("skill not found: gone")}
 	cmd := NewSkillCommand(info, exec)
 	result, err := cmd.Execute(context.Background(), "")
