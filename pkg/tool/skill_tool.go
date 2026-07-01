@@ -4,9 +4,19 @@ import (
 	"context"
 	"encoding/json"
 	"strings"
-
-	"github.com/Menfre01/waveloom/pkg/skill"
 )
+
+// SkillLoadResult 是 SkillExecutor 加载 skill 后的结果。
+type SkillLoadResult struct {
+	Body    string // 渲染后的 body（变量已替换、!`cmd` 已执行、附属文件清单已追加）
+	DirPath string // SKILL.md 所在目录
+}
+
+// SkillExecutor 加载并渲染 skill。
+// skill 包实现此接口，tool 包通过接口消费，消除 tool → skill 的编译期依赖。
+type SkillExecutor interface {
+	Load(name, args string) (*SkillLoadResult, error)
+}
 
 // SkillParams 是 skill 工具的参数。
 type SkillParams struct {
@@ -17,12 +27,12 @@ type SkillParams struct {
 // SkillTool 让 LLM 可以调用用户定义的 skill。
 // 实现 TypedTool[SkillParams]。
 type SkillTool struct {
-	loader *skill.Loader
+	executor SkillExecutor
 }
 
 // NewSkillTool 构造 SkillTool。
-func NewSkillTool(loader *skill.Loader) *SkillTool {
-	return &SkillTool{loader: loader}
+func NewSkillTool(executor SkillExecutor) *SkillTool {
+	return &SkillTool{executor: executor}
 }
 
 func (t *SkillTool) Name() string        { return "skill" }
@@ -36,7 +46,7 @@ func (t *SkillTool) Schema() json.RawMessage {
 }
 
 func (t *SkillTool) Execute(ctx context.Context, p SkillParams) (*ToolResult, error) {
-	loaded, err := t.loader.Load(p.Name, p.Arguments)
+	loaded, err := t.executor.Load(p.Name, p.Arguments)
 	if err != nil {
 		msg := "Skill load failed: " + p.Name + " — " + err.Error()
 		// 区分“skill 不存在”和“加载失败（如白名单拦截）”
