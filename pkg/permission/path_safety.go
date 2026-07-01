@@ -15,6 +15,7 @@ import (
 // sensitiveFiles 是敏感配置文件列表。
 // 即使在工作目录内，操作这些文件也需要额外确认。
 var sensitiveFiles = map[string]bool{
+	// Shell / 环境配置
 	".gitconfig":    true,
 	".gitmodules":   true,
 	".bashrc":       true,
@@ -23,8 +24,23 @@ var sensitiveFiles = map[string]bool{
 	".zprofile":     true,
 	".profile":      true,
 	".ripgreprc":    true,
+	// 工具配置
 	".mcp.json":     true,
 	".claude.json":  true,
+	// 环境变量 / 密钥
+	".env":          true,
+	".env.local":    true,
+	".env.development": true,
+	".env.production":  true,
+	".env.staging":  true,
+	// 云服务凭证
+	".npmrc":        true,
+	".yarnrc":       true,
+	".yarnrc.yml":   true,
+	".netrc":        true,
+	".terraformrc":  true,
+	".pgpass":       true,
+	".my.cnf":       true,
 }
 
 // sensitiveDirs 是敏感目录名列表。
@@ -35,6 +51,19 @@ var sensitiveDirs = map[string]bool{
 	".waveloom": true,
 	".vscode":   true,
 	".idea":     true,
+	// 云服务凭证目录
+	".aws":      true,
+	".docker":   true,
+	".kube":     true,
+	".gnupg":    true,
+	// SSH 密钥
+	".ssh":      true,
+	// Terraform / 基础设施
+	".terraform": true,
+	// 通用密钥目录
+	"credentials": true,
+	"secrets":     true,
+	"tokens":      true,
 }
 
 // dangerousDirPrefixes 是危险目录前缀列表。
@@ -42,11 +71,25 @@ var sensitiveDirs = map[string]bool{
 var dangerousDirPrefixes = []string{
 	filepath.Join(string(filepath.Separator), "etc") + string(filepath.Separator),
 	filepath.Join(string(filepath.Separator), "System") + string(filepath.Separator),
+	filepath.Join(string(filepath.Separator), "boot") + string(filepath.Separator),
+	filepath.Join(string(filepath.Separator), "dev") + string(filepath.Separator),
+	filepath.Join(string(filepath.Separator), "proc") + string(filepath.Separator),
+	filepath.Join(string(filepath.Separator), "sys") + string(filepath.Separator),
+	filepath.Join(string(filepath.Separator), "bin") + string(filepath.Separator),
+	filepath.Join(string(filepath.Separator), "sbin") + string(filepath.Separator),
+	filepath.Join(string(filepath.Separator), "usr", "bin") + string(filepath.Separator),
+	filepath.Join(string(filepath.Separator), "usr", "sbin") + string(filepath.Separator),
+	filepath.Join(string(filepath.Separator), "Library") + string(filepath.Separator),
+	filepath.Join(string(filepath.Separator), "root") + string(filepath.Separator),
 }
 
 // dangerousFilePrefixes 是危险文件路径前缀。
 var dangerousFilePrefixes = []string{
 	filepath.Join(string(filepath.Separator), ".ssh") + string(filepath.Separator),
+	filepath.Join(string(filepath.Separator), ".gnupg") + string(filepath.Separator),
+	filepath.Join(string(filepath.Separator), ".aws") + string(filepath.Separator),
+	filepath.Join(string(filepath.Separator), ".docker") + string(filepath.Separator),
+	filepath.Join(string(filepath.Separator), ".kube") + string(filepath.Separator),
 }
 
 // ---------------------------------------------------------------------------

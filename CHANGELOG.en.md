@@ -1,5 +1,20 @@
 # Changelog
 
+## [v0.1.0-alpha.7] — 2026-07-01
+
+### Added
+- **i18n multilingual support**: full zh-CN / en-US bilingual UI, auto-detection from LANG environment variable
+- **--locale CLI flag**: `auto` (default) / `zh-CN` / `en-US`, three-tier priority: CLI > settings.json > LANG
+- **/locale slash command**: switch UI language in real time within TUI, persists to settings.json
+- **Bilingual CLI --help**: displays help text in the corresponding language based on locale
+- **Setup wizard rewrite**: Bubble Tea + huh form interaction with integrated language/theme/provider/model configuration
+- **Self-update check**: detects new GitHub Release versions when idle, Enter to download and install
+
+### Fixed
+- Permission command-chain bypass fix, risk level extension, DenialTracker sensitive path integration
+- Esc interrupt kills process group, preventing stuck long-running bash commands
+- install.sh removed GitHub API rate-limit dependency, switched to releases/latest/download redirects
+
 ## [v0.1.0-alpha.6] — 2026-06-30
 
 ### Added

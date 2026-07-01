@@ -14,6 +14,7 @@ func MatchBashPattern(command, pattern string) bool {
 	if pattern == "*" || pattern == "" {
 		return true
 	}
+	pattern = strings.TrimSpace(pattern)
 	trimmed := strings.TrimSpace(command)
 
 	// 包含匹配: *xxx*
@@ -31,18 +32,42 @@ func MatchBashPattern(command, pattern string) bool {
 		return strings.HasSuffix(trimmed, suffix)
 	}
 
-	// 前缀匹配: xxx* → 先尝试前缀，失败则回退为包含匹配
+	// 前缀匹配: xxx* → 先尝试前缀（保留空格边界），失败则回退为包含匹配
+	// 例: "git *" → prefix="git " → 匹配 "git status" 和 "git"
 	if strings.HasSuffix(pattern, "*") {
-		prefix := strings.TrimSpace(strings.TrimSuffix(pattern, "*"))
-		if strings.HasPrefix(trimmed, prefix) {
+		prefix := strings.TrimSuffix(pattern, "*")
+		word := strings.TrimRight(prefix, " ")
+
+		// 空格边界前缀匹配（精确或后跟空格）
+		if strings.HasSuffix(prefix, " ") {
+			if trimmed == word || strings.HasPrefix(trimmed, word+" ") {
+				return true
+			}
+			// 回退：词边界包含匹配 — 防止 "git *" 误匹配 "gitfoo"
+			// 词边界 = 字符串首尾 或 相邻字符为 空格/路径分隔符
+			if idx := strings.Index(trimmed, word); idx >= 0 {
+				beforeOK := idx == 0 || isBoundary(trimmed[idx-1])
+				afterOK := idx+len(word) == len(trimmed) || isBoundary(trimmed[idx+len(word)])
+				if beforeOK && afterOK {
+					return true
+				}
+			}
+			return false
+		}
+
+		// 无空格 suffix（如 "gstack*"）：先前缀，再简单包含
+		if strings.HasPrefix(trimmed, word) {
 			return true
 		}
-		// 回退：命令不以 prefix 开头时，尝试包含匹配
-		// 场景：pattern "gstack-update-check *" 匹配 "~/.claude/.../gstack-update-check"
-		return strings.Contains(trimmed, prefix)
+		return strings.Contains(trimmed, word)
 	}
 
 	return trimmed == pattern
+}
+
+// isBoundary 检查字符是否为词边界（空格或路径分隔符）。
+func isBoundary(c byte) bool {
+	return c == ' ' || c == '\t' || c == '/' || c == '\\'
 }
 
 // ParseAllowedBashPatterns 从 allowed-tools 列表中提取 Bash 白名单模式。

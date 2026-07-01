@@ -182,7 +182,8 @@ const (
 type CommandRiskLevel string
 
 const (
-	RiskLow    CommandRiskLevel = "low"    // 只读/查询命令
+	RiskNone   CommandRiskLevel = "none"   // 无风险：纯只读命令，直接放行跳过所有确认
+	RiskLow    CommandRiskLevel = "low"    // 低风险：构建工具等，子命令级白名单可放行
 	RiskMedium CommandRiskLevel = "medium" // 写入/修改命令
 	RiskHigh   CommandRiskLevel = "high"   // 危险命令模式匹配
 )

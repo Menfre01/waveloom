@@ -49,6 +49,7 @@ import (
 
 	"github.com/Menfre01/waveloom/pkg/agentloop"
 	ctxpkg "github.com/Menfre01/waveloom/pkg/context"
+	"github.com/Menfre01/waveloom/pkg/environment"
 	"github.com/Menfre01/waveloom/pkg/llm"
 	"github.com/Menfre01/waveloom/pkg/pathutil"
 	"github.com/Menfre01/waveloom/pkg/permission"
@@ -77,18 +78,19 @@ var defaultSystemPrompt = `You are Waveloom, a coding agent. You help users writ
 
 ## How you work
 
-- Read before you write — explore with search_file and grep, confirm with read_file before editing.
+- Read before you write — explore with search_file and grep. Before ANY edit_file call, you MUST call read_file (with line numbers) in the same tool-call batch to confirm the exact content of old_string (indentation, whitespace, punctuation). Never edit from memory — this is a hard constraint.
 - Verify before you claim — run tests/lint/build via shell when applicable, run lsp_diagnostic, check diffs after every change.
 - Check before you guess — confirm tool availability in ## Environment before calling any binary.
-- Edit surgically — prefer edit_file over write_file, never touch unrelated code.
+- Edit surgically — prefer edit_file over write_file, never touch unrelated code. After every edit_file call, run lsp_diagnostic to verify no new errors before proceeding to the next change.
 - Invoke parallel-safe tools (read_file, search_file, grep, ls, web_fetch, lsp_*) in the same response when independent — the system serializes write_file, edit_file, and shell automatically.
-- Use ls to explore directories before reading files — never pass a directory path to read_file.
+- Use ls or search_file to explore directories before reading files — never pass a directory path to read_file. Paths without a file extension (e.g., pkg/tool) are likely directories: use ls or search_file first, then pass the actual filename to read_file.
 - For throwaway verification scripts: prefer python, write to /tmp, and clean up after.
   Example: {"command":"python /tmp/check.py && rm /tmp/check.py"}
 
 ## Coding standards
 
 - Follow existing codebase conventions and linter configurations.
+- The user message immediately following this prompt contains the project's AGENTS.md instructions — these are project-specific rules. You MUST follow them. However, the rules in this system prompt are HARD CONSTRAINTS — they are not suggestions, defaults, or fallbacks. When AGENTS.md and system prompt address the same topic, system prompt takes precedence unconditionally. AGENTS.md supplements topics not covered by system prompt.
 - Write clear, self-documenting names. Avoid abbreviations.
 - Keep changes minimal — no unnecessary refactors or rewrites.
 
@@ -104,7 +106,10 @@ var defaultSystemPrompt = `You are Waveloom, a coding agent. You help users writ
 - Fatal (do not retry): permission_denied, security_violation, disk_full.
 - Recoverable (retry once with corrected input): command_failed, command_not_found, command_permission_denied, timeout, file_not_found, invalid_args, no_match, no_results, not_dir, binary_file, multiple_matches.
 - For not_dir: the error message includes a directory listing — pick a file from it and retry immediately.
+- For file_not_found: the error message includes CWD and may suggest a similar path (Did you mean). Use the suggested path, or use search_file to locate the correct file.
+- For binary_file: the file is not a readable text file — verify you have the correct filename; use ls to check the directory contents.
 - For no_match: the error includes a hint with the closest matching lines and line numbers — use read_file to verify the exact content at those lines, then copy text verbatim (including indentation).
+- For no_results: the skill was not found or not applicable — try a different skill name or check available skills.
 - Stop and ask for guidance when errors keep repeating — the loop enforces a hard limit.`
 
 // ---------------------------------------------------------------------------
@@ -135,7 +140,7 @@ All file paths are resolved relative to this directory unless a working_dir is s
 - The workspace directory is fixed for the entire session.
 - Shell commands run in isolated subprocesses — "cd" inside a shell command has NO effect on subsequent commands.
 - To operate in a different directory, use the working_dir parameter: {"command":"ls", "working_dir":"/tmp"}
-- Never prefix commands with "cd <path> &&" — use the working_dir parameter instead. cd breaks permission pattern matching.`, cwd)
+`, cwd)
 	return defaultSystemPrompt + cwdInfo
 }
 
@@ -156,33 +161,8 @@ type keyMap struct {
 	Paste         key.Binding
 }
 
-// permKeys 权限覆盖层的快捷键（用于 help 组件渲染）。
-var permKeys = []key.Binding{
-	key.NewBinding(key.WithKeys("↑/↓"), key.WithHelp("↑/↓", "导航")),
-	key.NewBinding(key.WithKeys("enter"), key.WithHelp("Enter", "确认")),
-	key.NewBinding(key.WithKeys("esc"), key.WithHelp("Esc", "拒绝")),
-}
-
-// questionSingleKeys 单选问题快捷键提示。
-var questionSingleKeys = []key.Binding{
-	key.NewBinding(key.WithKeys("↑/↓"), key.WithHelp("↑/↓", "导航")),
-	key.NewBinding(key.WithKeys("enter"), key.WithHelp("Enter", "确认")),
-	key.NewBinding(key.WithKeys("esc"), key.WithHelp("Esc", "拒绝")),
-}
-
-// questionMultiKeys 多选问题快捷键提示。
-var questionMultiKeys = []key.Binding{
-	key.NewBinding(key.WithKeys("↑/↓"), key.WithHelp("↑/↓", "导航")),
-	key.NewBinding(key.WithKeys("space"), key.WithHelp("Space", "勾选")),
-	key.NewBinding(key.WithKeys("enter"), key.WithHelp("Enter", "确认")),
-	key.NewBinding(key.WithKeys("esc"), key.WithHelp("Esc", "拒绝")),
-}
-
-// questionOtherKeys Other 文本输入快捷键提示。
-var questionOtherKeys = []key.Binding{
-	key.NewBinding(key.WithKeys("enter"), key.WithHelp("Enter", "确认")),
-	key.NewBinding(key.WithKeys("esc"), key.WithHelp("Esc", "返回")),
-}
+// permKeyBindings / questionSingleKeyBindings 等已移至 tui_overlay.go，
+// 作为接受 *Messages 的函数实现，支持国际化。
 
 var defaultKeys = keyMap{
 	Enter:         key.NewBinding(key.WithKeys("enter"), key.WithHelp("Enter", "发送消息")),
@@ -198,6 +178,25 @@ var defaultKeys = keyMap{
 	JumpBottom:    key.NewBinding(key.WithKeys("ctrl+e", "end"), key.WithHelp("Ctrl+E/End", "跳到底部")),
 	Picker:        key.NewBinding(key.WithKeys("@"), key.WithHelp("@", "选择文件/目录")),
 	Paste:         key.NewBinding(key.WithKeys("ctrl+v"), key.WithHelp("Ctrl+V", "粘贴")),
+}
+
+// makeKeyMap 根据 locale 生成带翻译帮助文本的 keyMap。
+func makeKeyMap(lc *Messages) keyMap {
+	return keyMap{
+		Enter:       key.NewBinding(key.WithKeys("enter"), key.WithHelp("Enter", lc.KeySend)),
+		Interrupt:   key.NewBinding(key.WithKeys("esc"), key.WithHelp("Esc", lc.KeyInterrupt)),
+		Quit:        key.NewBinding(key.WithKeys("ctrl+c"), key.WithHelp("Ctrl+C", lc.KeyQuit)),
+		FocusNext:   key.NewBinding(key.WithKeys("tab"), key.WithHelp("Tab", lc.KeyFocusNext)),
+		FocusPrev:   key.NewBinding(key.WithKeys("shift+tab"), key.WithHelp("Shift+Tab", lc.KeyFocusPrev)),
+		Up:          key.NewBinding(key.WithKeys("up"), key.WithHelp("↑", lc.KeyScrollUp)),
+		Down:        key.NewBinding(key.WithKeys("down"), key.WithHelp("↓", lc.KeyScrollDown)),
+		PageUp:      key.NewBinding(key.WithKeys("pgup"), key.WithHelp("PgUp", lc.KeyPageUp)),
+		PageDown:    key.NewBinding(key.WithKeys("pgdown"), key.WithHelp("PgDn", lc.KeyPageDown)),
+		ToggleTheme: key.NewBinding(key.WithKeys("ctrl+g"), key.WithHelp("Ctrl+G", lc.KeyToggleTheme)),
+		JumpBottom:  key.NewBinding(key.WithKeys("ctrl+e", "end"), key.WithHelp("Ctrl+E/End", lc.KeyJumpBottom)),
+		Picker:      key.NewBinding(key.WithKeys("@"), key.WithHelp("@", lc.KeyPicker)),
+		Paste:       key.NewBinding(key.WithKeys("ctrl+v"), key.WithHelp("Ctrl+V", lc.KeyPaste)),
+	}
 }
 
 // permissionReqMsg 权限确认请求。
@@ -303,6 +302,9 @@ type model struct {
 	verboseLog io.Writer // --verbose 日志输出（nil = 不记录）
 	loop       *agentloop.Loop
 
+	// 国际化
+	lc *Messages // 当前语言的文案实例（nil 时回退到 enUS）
+
 	// 段落模型（消息内容的数据源）
 	paras []Paragraph
 
@@ -333,6 +335,10 @@ type model struct {
 	modelPickerList     list.Model
 	modelPickerDelegate *list.DefaultDelegate
 	modelPickerItems    []llm.ModelInfo // 模型列表数据，主题切换时更新样式
+
+	// 语言选择器覆盖层
+	localeList     list.Model
+	localeDelegate *list.DefaultDelegate
 
 	// 文件选择器
 	pickerVisible         bool
@@ -432,6 +438,13 @@ type model struct {
 	scrollTop      int  // body 内容区第一可见行在 lines 中的索引
 	pinnedToBottom bool // 是否锁定在底部（自动跟随最新内容）
 	bodyHeight     int  // 上次渲染时 body 区域可用高度（行数），用于翻页计算
+
+	updateCache environment.UpdateCache // 版本更新检查结果缓存
+
+	// 全局通知（footer banner）
+	noticeBanner  string // 非空时在 footer 显示通知（版本更新等）
+	updating      bool   // 更新进行中
+	latestVersion string // 缓存的最新版本号
 }
 
 // ---------------------------------------------------------------------------
@@ -504,18 +517,19 @@ func colorHex(c color.Color) string {
 
 // ---------------------------------------------------------------------------
 
-// newTUIModel 创建 TUI model，依赖由外部注入（LLM client / tool registry / guard / expander / verboseLog）。
-func newTUIModel(llmClient llm.Client, registry tool.Registry, guard permission.Guard, expander *reference.Expander, modelName string, theme string, verboseLog io.Writer, contextLimit int, maxTurns int, toolTimeout time.Duration, toolTimeoutSource string) *model {
+// newTUIModel 创建 TUI model，依赖由外部注入（LLM client / tool registry / guard / expander / verboseLog / locale）。
+func newTUIModel(llmClient llm.Client, registry tool.Registry, guard permission.Guard, expander *reference.Expander, modelName string, theme string, verboseLog io.Writer, contextLimit int, maxTurns int, toolTimeout time.Duration, toolTimeoutSource string, loc Locale) *model {
 	if modelName == "" {
 		modelName = "deepseek-v4"
 	}
 
 	cwd, _ := os.Getwd()
 	cm := ctxpkg.New(buildSystemPrompt(cwd))
+	lc := messagesFor(loc)
 
 	ti := textinput.New()
 	ti.Prompt = "› "
-	ti.Placeholder = "输入消息, Enter 发送 · / 命令 · @ 选择文件 · Esc 中断"
+	ti.Placeholder = lc.InputPlaceholder
 	ti.CharLimit = 2048
 	ti.SetVirtualCursor(false) // real cursor 避免 virtual cursor 反色 ANSI 泄漏
 	styles := ti.Styles()
@@ -525,7 +539,7 @@ func newTUIModel(llmClient llm.Client, registry tool.Registry, guard permission.
 	// Other 自定义输入框（与主输入框同款 real cursor 模式）
 	otherTi := textinput.New()
 	otherTi.Prompt = "> "
-	otherTi.Placeholder = "输入自定义答案..."
+	otherTi.Placeholder = lc.InputOtherPlaceholder
 	otherTi.CharLimit = 200
 	otherTi.SetVirtualCursor(false)
 	otherStyles := otherTi.Styles()
@@ -593,7 +607,7 @@ func newTUIModel(llmClient llm.Client, registry tool.Registry, guard permission.
 		toolTimeout:     toolTimeout,
 		toolTimeoutSource: toolTimeoutSource,
 		glamourRenderer: glamourR,
-		keys:            defaultKeys,
+		keys:            makeKeyMap(lc),
 		help:            help.New(),
 		spinner:         sp,
 		spAsst:          spAsst,
@@ -608,7 +622,16 @@ func newTUIModel(llmClient llm.Client, registry tool.Registry, guard permission.
 		palette:         darkPalette, // 默认，initTheme 覆盖
 		focusIndex:      -1,
 		pinnedToBottom:  true,
+		lc:              lc,
 	}
+}
+
+// msg 返回当前语言的 Messages 实例，nil 时回退 enUS。
+func (m *model) msg() *Messages {
+	if m.lc != nil {
+		return m.lc
+	}
+	return &enUS
 }
 
 // wireLoop 在 model 创建后、program 注入后调用，创建 agent loop 并注入 tuiUserResponder。
@@ -640,13 +663,70 @@ func (m *model) Init() tea.Cmd {
 		m.spAsst.Tick,
 		m.spThought.Tick,
 		m.spTool.Tick,
+		m.checkUpdateCmd(),
 	)
+}
+
+// ---------------------------------------------------------------------------
+// 更新检查
+// ---------------------------------------------------------------------------
+
+type updateCheckMsg struct {
+	info *environment.UpdateInfo
+}
+
+// updateProgressMsg 更新进度推送（下载/解压/安装）。
+type updateProgressMsg struct {
+	phase    string  // "download", "extract", "install", "done"
+	pct      int     // 0-100
+	detail   string  // 人类可读的进度描述
+	err      string  // 非空表示失败
+}
+
+// updateDoneMsg 更新流程完成。
+type updateDoneMsg struct {
+	err   string // 非空表示失败
+	durMs int64  // 更新耗时（毫秒）
+}
+
+func (m *model) checkUpdateCmd() tea.Cmd {
+	return func() tea.Msg {
+		info, err := environment.CheckForUpdate(context.Background(), Version)
+		if err != nil || info == nil {
+			return updateCheckMsg{}
+		}
+		return updateCheckMsg{info: info}
+	}
 }
 
 func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
 
 	switch msg := msg.(type) {
+	// ------------------------------------------------------------------
+	// 更新检查
+	// ------------------------------------------------------------------
+	case updateCheckMsg:
+		if msg.info != nil {
+			m.updateCache.Set(msg.info)
+			if msg.info.UpdateAvailable {
+				m.noticeBanner = fmt.Sprintf(m.msg().UpdateAvailable, msg.info.LatestVersion)
+				m.latestVersion = msg.info.LatestVersion
+			}
+		}
+		return m, nil
+
+	// ------------------------------------------------------------------
+	// 更新进度
+	// ------------------------------------------------------------------
+	case updateProgressMsg:
+		m.handleUpdateProgress(msg)
+		return m, nil
+
+	case updateDoneMsg:
+		m.handleUpdateDone(msg)
+		return m, nil
+
 	// ------------------------------------------------------------------
 	// 窗口尺寸
 	// ------------------------------------------------------------------
@@ -768,16 +848,16 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.paras = append(m.paras, Paragraph{
 				Type:      paraSystem,
 				State:     stateDone,
-				Text:      "压缩完成。",
+				Text:      m.msg().SysCompactionDone,
 				NotifKind: notifInfo,
 			})
 			m.trimParas()
 		}
 		if msg.Compaction.HardLimitReached {
-			msgText := "上下文已满（98%）。/reset 重建。"
+			msgText := m.msg().SysContextHardLimit
 			msgKind := notifWarn
 			if msg.Compaction.HardLimitReason == "tier3_failures" {
-				msgText = "摘要连续失败。/reset 重建。"
+				msgText = m.msg().SysSummaryFailed
 				msgKind = notifError
 			}
 			m.paras = append(m.paras, Paragraph{
@@ -929,6 +1009,10 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		var cmd tea.Cmd
 		m.modelPickerList, cmd = m.modelPickerList.Update(msg)
 		cmds = append(cmds, cmd)
+	case overlayLocalePicker:
+		var cmd tea.Cmd
+		m.localeList, cmd = m.localeList.Update(msg)
+		cmds = append(cmds, cmd)
 	}
 
 	// 文件选择器：过滤同步 + 激活/关闭检测
@@ -1056,6 +1140,13 @@ func (m *model) handleKeyPress(msg tea.KeyPressMsg) (bool, tea.Cmd) {
 	}
 
 	// =====================================================================
+	// 3d. 语言选择器活跃时路由
+	// =====================================================================
+	if m.overlay == overlayLocalePicker {
+		return m.handleLocalePickerKey(msg)
+	}
+
+	// =====================================================================
 	// 4. 正常模式快捷键
 	// =====================================================================
 	switch {
@@ -1081,6 +1172,10 @@ func (m *model) handleKeyPress(msg tea.KeyPressMsg) (bool, tea.Cmd) {
 		if !m.running {
 			userInput := strings.TrimSpace(m.input.Value())
 			if userInput == "" {
+			// 空 Enter + 更新 banner 可见 → 触发更新
+			if m.noticeBanner != "" && !m.updating {
+					return true, m.startUpdate()
+				}
 				return true, nil
 			}
 			if strings.EqualFold(userInput, "exit") {
@@ -1095,10 +1190,10 @@ func (m *model) handleKeyPress(msg tea.KeyPressMsg) (bool, tea.Cmd) {
 			// 硬临界值阻断：上下文已达上限时直接拒绝新 prompt
 			if m.cm.Compactor().LastResult().HardLimitReached {
 				reason := m.cm.Compactor().LastResult().HardLimitReason
-				msg := "上下文已满（98%）。/reset 重建。"
+				msg := m.msg().SysContextHardLimit
 				msgKind := notifWarn
 				if reason == "tier3_failures" {
-					msg = "摘要连续失败。/reset 重建。"
+					msg = m.msg().SysSummaryFailed
 					msgKind = notifError
 				}
 				m.paras = append(m.paras, Paragraph{
@@ -1110,19 +1205,19 @@ func (m *model) handleKeyPress(msg tea.KeyPressMsg) (bool, tea.Cmd) {
 				return true, nil
 			}
 
-			m.input.Reset()
-			return true, m.doTurn(userInput)
-		}
-
-		// running == true：用户输入优先于 agent loop。
-		// 立即中断当前 loop，将输入内容作为新任务启动。
-		userInput := strings.TrimSpace(m.input.Value())
-		if userInput == "" {
-			// 空输入 → 不做任何响应，不中断运行中的 session
-			return true, nil
-		}
 		m.input.Reset()
 		return true, m.doTurn(userInput)
+	}
+
+// running == true：用户输入优先于 agent loop。
+// 立即中断当前 loop，将输入内容作为新任务启动。
+userInput := strings.TrimSpace(m.input.Value())
+if userInput == "" {
+	// 空输入 → 不做任何响应，不中断运行中的 session
+	return true, nil
+}
+m.input.Reset()
+return true, m.doTurn(userInput)
 
 	case key.Matches(msg, m.keys.Interrupt):
 		// 焦点在段落上 → 归位到输入框
@@ -1135,6 +1230,12 @@ func (m *model) handleKeyPress(msg tea.KeyPressMsg) (bool, tea.Cmd) {
 			m.cancelRun = nil
 			return true, nil
 		}
+	// 空闲态 + 通知 banner 可见 → 单击 Esc 关闭通知
+	if !m.running && m.overlay == overlayNone && !m.pickerVisible && m.noticeBanner != "" && !m.updating {
+		m.noticeBanner = ""
+		m.lastEscTime = time.Time{}
+		return true, nil
+	}
 		// 空闲态双击 Esc → 清空输入框
 		if !m.running && m.overlay == overlayNone && !m.pickerVisible {
 			now := time.Now()
@@ -1234,9 +1335,9 @@ func (m *model) handlePermKey(key string) (bool, tea.Cmd) {
 // buildPermList 构建权限确认选项列表。
 func (m *model) buildPermList() list.Model {
 	items := []list.Item{
-		permItem{title: "Allow (本次放行)", choice: permAllow},
-		permItem{title: "Always Allow (记住，不再询问)", choice: permAllowAll},
-		permItem{title: "Deny (本次拒绝)", choice: permDeny},
+		permItem{title: m.msg().PermAllow, choice: permAllow},
+		permItem{title: m.msg().PermAllowAll, choice: permAllowAll},
+		permItem{title: m.msg().PermDeny, choice: permDeny},
 	}
 
 	delegate := list.NewDefaultDelegate()
@@ -1363,7 +1464,7 @@ func (m *model) buildQuestionForm() {
 		}
 		opts[i] = huh.NewOption(key, opt.Label)
 	}
-	opts[len(q.Options)] = huh.NewOption("Other...", otherOptionKey)
+	opts[len(q.Options)] = huh.NewOption(m.msg().QuestionOtherOption, otherOptionKey)
 
 	theme := themeWaveloom()
 	formWidth := m.overlayInnerWidth()
@@ -2313,7 +2414,7 @@ func (m *model) handleToolResult(ev agentloop.ToolCallResult) {
 						m.paras = append(m.paras, Paragraph{
 							Type:      paraSystem,
 							State:     stateDone,
-							Text:      fmt.Sprintf("Skills activated: %s", strings.Join(activated, ", ")),
+							Text:      fmt.Sprintf(m.msg().SysSkillActivated, strings.Join(activated, ", ")),
 							NotifKind: notifInfo,
 						})
 					}
@@ -2370,7 +2471,7 @@ func (m *model) handleLoopDone(ev agentloop.LoopDone, generation int) {
 	if !isStale {
 		m.running = false
 		m.focusIndex = -1
-		m.input.Placeholder = "输入消息, Enter 发送 · / 命令 · @ 选择文件 · Esc 中断"
+		m.input.Placeholder = m.msg().InputPlaceholder
 		m.cancelRun = nil
 
 		// 计算延迟（必须在 CompleteRun 之前，因为 CompleteRun 需要 durationMs）
@@ -2436,21 +2537,21 @@ func (m *model) handleLoopDone(ev agentloop.LoopDone, generation int) {
 			m.paras = append(m.paras, Paragraph{
 				Type:      paraSystem,
 				State:     stateDone,
-				Text:      fmt.Sprintf("完成（%d轮, %s, ↑%s, ↓%s）", ev.Turn, elapsedStr, shortTokens(loopIn), shortTokens(loopOut)),
+				Text:      fmt.Sprintf(m.msg().LoopCompleted, ev.Turn, elapsedStr, shortTokens(loopIn), shortTokens(loopOut)),
 				NotifKind: notifInfo,
 			})
 		case agentloop.ReasonMaxTurns:
 			m.paras = append(m.paras, Paragraph{
 				Type:      paraSystem,
 				State:     stateDone,
-				Text:      fmt.Sprintf("已达最大轮次（%d轮, %s, ↑%s, ↓%s）。继续对话。", ev.Turn, elapsedStr, shortTokens(loopIn), shortTokens(loopOut)),
+				Text:      fmt.Sprintf(m.msg().LoopMaxTurns, ev.Turn, elapsedStr, shortTokens(loopIn), shortTokens(loopOut)),
 				NotifKind: notifInfo,
 			})
 		case agentloop.ReasonAborted:
-			abortText := fmt.Sprintf("已中断（%s）", elapsedStr)
+			abortText := fmt.Sprintf(m.msg().LoopAborted, elapsedStr)
 			abortKind := notifInfo
 			if m.toolTimeout > 0 && isTimeoutError(ev.Err) {
-				abortText = fmt.Sprintf("工具执行超时（%s %s）%s", m.toolTimeoutSource, formatDuration(m.toolTimeout.Milliseconds()), elapsedStr)
+				abortText = fmt.Sprintf(m.msg().LoopToolTimeout, m.toolTimeoutSource, formatDuration(m.toolTimeout.Milliseconds()), elapsedStr)
 				abortKind = notifError
 			}
 			m.paras = append(m.paras, Paragraph{
@@ -2463,13 +2564,13 @@ func (m *model) handleLoopDone(ev agentloop.LoopDone, generation int) {
 			m.paras = append(m.paras, Paragraph{
 				Type:      paraSystem,
 				State:     stateDone,
-				Text:      fmt.Sprintf("模型错误（%s, %v）", elapsedStr, ev.Err),
+				Text:      fmt.Sprintf(m.msg().LoopModelError, elapsedStr, ev.Err),
 				NotifKind: notifError,
 			})
 		case agentloop.ReasonToolFatal:
-			text := fmt.Sprintf("工具错误（%s, %v）", elapsedStr, ev.Err)
+			text := fmt.Sprintf(m.msg().LoopToolFatal, elapsedStr, ev.Err)
 			if m.toolTimeout > 0 && isTimeoutError(ev.Err) {
-				text = fmt.Sprintf("工具执行超时（%s %s）%s", m.toolTimeoutSource, formatDuration(m.toolTimeout.Milliseconds()), elapsedStr)
+				text = fmt.Sprintf(m.msg().LoopToolTimeout, m.toolTimeoutSource, formatDuration(m.toolTimeout.Milliseconds()), elapsedStr)
 			}
 			m.paras = append(m.paras, Paragraph{
 				Type:      paraSystem,
@@ -2759,7 +2860,7 @@ func countWrappedLinesNonEmpty(text string, width int) int {
 // enterFocusMode 进入段落焦点模式：输入框失焦、placeholder 提示退出方式。
 func (m *model) enterFocusMode() {
 	m.input.Blur()
-	m.input.Placeholder = "段落已聚焦 · Enter 展开/折叠 · Esc 回到输入"
+	m.input.Placeholder = m.msg().InputFocusModePlaceholder
 }
 
 // exitFocusMode 退出段落焦点模式：输入框恢复焦点、placeholder 恢复默认。
@@ -2769,10 +2870,10 @@ func (m *model) exitFocusMode() tea.Cmd {
 	// 借此区分测试中未初始化的 input，避免 virtualCursor.Blink 空指针。
 	if m.input.Prompt != "" {
 		cmd := m.input.Focus()
-		m.input.Placeholder = "输入消息, Enter 发送 · / 命令 · @ 选择文件 · Esc 中断"
+		m.input.Placeholder = m.msg().InputPlaceholder
 		return cmd
 	}
-	m.input.Placeholder = "输入消息, Enter 发送 · / 命令 · @ 选择文件 · Esc 中断"
+	m.input.Placeholder = m.msg().InputPlaceholder
 	return nil
 }
 
@@ -2874,6 +2975,7 @@ func (m *model) viewportCtx() ViewportCtx {
 		Tool:    m.spTool,
 		Glamour: m.glamourRenderer,
 		Width:   contentWidth,
+		LC:      m.msg(),
 	}
 }
 
@@ -2922,7 +3024,7 @@ func (m *model) doTurn(userInput string) tea.Cmd {
 
 	m.running = true
 	m.focusIndex = -1
-	m.input.Placeholder = "Agent 执行中... Esc 中断"
+	m.input.Placeholder = m.msg().InputAgentRunning
 	m.runGeneration++
 	m.turnStartTime = time.Now()
 	m.scrollToBottom() // 用户输入新消息 → 滚动到底部
@@ -3211,6 +3313,12 @@ func (m *model) View() tea.View {
 			boxWidth = 60
 		}
 		overlayContent = m.renderModelPickerOverlay(boxWidth)
+	case overlayLocalePicker:
+		boxWidth := contentWidth
+		if boxWidth > 50 {
+			boxWidth = 50
+		}
+		overlayContent = m.renderLocalePickerOverlay(boxWidth)
 	}
 	var pickerContent string
 	if m.pickerVisible {
@@ -3239,7 +3347,7 @@ func (m *model) View() tea.View {
 	headerHeight := lipgloss.Height(header) + 1 // +1 是 header 后的空行
 
 	footer := m.renderFooter()
-	footerHeight := lipgloss.Height(footer) // 2 行
+	footerHeight := lipgloss.Height(footer) // 2-3 行（有 noticeBanner 时 +1）
 
 	// 固定底部元素（在 styleApp 内）：
 	// separator(1) + input(1) + 空行(1) + footer(footerHeight)
@@ -3414,7 +3522,7 @@ var asciiArt = []string{
 // 焦点模式下嵌入段落聚焦提示，正常模式为纯横线。
 func (m *model) renderInputSeparator(contentWidth int) string {
 	if m.focusIndex >= 0 {
-		hint := " ◆ 段落已聚焦  Enter 展开/折叠  Esc 退出焦点模式 ◆ "
+		hint := m.msg().FocusSeparatorHint
 		hintStyle := lipgloss.NewStyle().Foreground(colorAccentGold)
 		lineStyle := lipgloss.NewStyle().Foreground(colorMuted)
 		// hint 居中，两侧用 ─ 补齐
@@ -3465,7 +3573,7 @@ func (m *model) renderHeader() string {
 	// 信息行：session ID（左） + 版本号（右对齐），形成统一顶栏
 	sidLine := ""
 	if sid := m.cm.SessionID(); sid != "" {
-		sidPart := styleHeaderAccent.Render("session: ") +
+		sidPart := styleHeaderAccent.Render(m.msg().HeaderSession) +
 			styleHeader.Render(sid)
 		verStr := styleHeaderAccent.Render(Version)
 		leftWidth := lipgloss.Width(sidPart)
@@ -3485,7 +3593,7 @@ func (m *model) renderHeader() string {
 	sb.WriteString(sidLine)
 	sb.WriteString("\n")
 
-	// 工作区
+	// 工作区（左对齐）+ 更新提示（右对齐），合并为一行
 	cwdDisplay := m.cwd
 	maxCwdLen := contentWidth - 6
 	if maxCwdLen < 10 {
@@ -3495,6 +3603,7 @@ func (m *model) renderHeader() string {
 		cwdDisplay = cwdDisplay[:maxCwdLen] + "..."
 	}
 	cwdPart := styleHeaderAccent.Render("↳ ") + styleHeader.Render(cwdDisplay)
+
 	lineCwd := lipgloss.NewStyle().Width(contentWidth).Render(cwdPart)
 	sb.WriteString(lineCwd)
 
@@ -3527,6 +3636,18 @@ func (m *model) renderFooter() string {
 	contentWidth := max(m.width-4, 20)
 	sep := "  "
 
+	var sb strings.Builder
+
+	// Line 0: 全局通知 banner（版本更新等）
+	if m.noticeBanner != "" {
+		bannerStyle := lipgloss.NewStyle().
+			Foreground(colorAccentGold).
+			Bold(true).
+			Width(contentWidth)
+		sb.WriteString(bannerStyle.Render(m.noticeBanner))
+		sb.WriteString("\n")
+	}
+
 	// Line 1: spinner + model name + ctx progress bar
 	indicator := styleFooterLabel.Render("•") + " "
 	if m.running && m.overlay != overlayQuestion {
@@ -3549,7 +3670,11 @@ func (m *model) renderFooter() string {
 	line2Content := strings.Join(line2Parts, sep)
 	line2 := styleFooter.Width(contentWidth).Render(line2Content)
 
-	return line1 + "\n" + line2
+	sb.WriteString(line1)
+	sb.WriteString("\n")
+	sb.WriteString(line2)
+
+	return sb.String()
 }
 
 // renderCtxBarCompact 渲染固定宽度的上下文窗口进度条（barWidth=20，每格 5%，ratio < 5% 时进度条留空）。
@@ -3880,7 +4005,7 @@ func (m *model) handleSlashCommand(input string) tea.Cmd {
 		m.paras = append(m.paras, Paragraph{
 			Type:      paraSystem,
 			State:     stateDone,
-			Text:      fmt.Sprintf("未知命令: %s。输入 /help 查看可用命令。", input),
+			Text:      fmt.Sprintf(m.msg().SysUnknownCommand, input),
 			NotifKind: notifWarn,
 		})
 		m.trimParas()
@@ -3894,7 +4019,7 @@ func (m *model) handleSlashCommand(input string) tea.Cmd {
 		m.paras = append(m.paras, Paragraph{
 			Type:      paraSystem,
 			State:     stateDone,
-			Text:      fmt.Sprintf("命令执行失败: %v", err),
+			Text:      fmt.Sprintf(m.msg().SysCommandFailed, err),
 			NotifKind: notifError,
 		})
 		m.trimParas()
@@ -3930,17 +4055,24 @@ func (m *model) handleSlashCommand(input string) tea.Cmd {
 			m.hudMessages = 0
 			m.hudCacheHit = 0
 			m.hudCacheMiss = 0
+			m.hudLatMs = 0
+			m.lastPromptTokens = 0
 			m.focusIndex = -1
 			m.paras = append(m.paras, Paragraph{
 				Type:      paraSystem,
 				State:     stateDone,
-				Text:      "新 session 已创建。",
+				Text:      m.msg().SysNewSessionCreated,
 				NotifKind: notifInfo,
 			})
 
 		case slashcommand.SideEffectOpenThemePicker:
 			m.buildThemeList()
 			m.overlay = overlayThemePicker
+			m.input.Blur()
+
+		case slashcommand.SideEffectOpenLocalePicker:
+			m.buildLocaleList()
+			m.overlay = overlayLocalePicker
 			m.input.Blur()
 
 		case slashcommand.SideEffectOpenModelPicker:
@@ -3973,7 +4105,7 @@ func (m *model) handleSlashCommand(input string) tea.Cmd {
 						State:        stateError,
 						ToolName:     "skill",
 						ToolArgs:     args,
-						ToolError:    "Skill load failed: " + skillName + " — " + skillError,
+						ToolError:    fmt.Sprintf(m.msg().SysSkillLoadFailed, skillName, skillError),
 						ToolErrorKind: "no_results",
 					})
 					m.trimParas()
@@ -4003,7 +4135,7 @@ func (m *model) handleSlashCommand(input string) tea.Cmd {
 			messagesSnapshot := m.cm.PrepareRun(skillBody)
 			m.running = true
 			m.focusIndex = -1
-			m.input.Placeholder = "Agent 执行中... Esc 中断"
+			m.input.Placeholder = m.msg().InputAgentRunning
 			m.runGeneration++
 			m.turnStartTime = time.Now()
 			m.scrollToBottom()
@@ -4079,16 +4211,20 @@ func (s *tuiSettingsStore) LoadLLM() (*llm.LLMSettings, error) {
 }
 
 func (s *tuiSettingsStore) SaveLLM(settings *llm.LLMSettings) error {
-	return writeFullSettings(s.projectPath, settings, "")
+	return writeFullSettings(s.projectPath, settings, "", "")
 }
 
 func (s *tuiSettingsStore) SaveTheme(mode string) error {
-	return writeFullSettings(s.projectPath, nil, mode)
+	return writeFullSettings(s.projectPath, nil, mode, "")
 }
 
-// writeFullSettings 全量 read-modify-write settings.json，替换 llm section 和/或 theme。
-// llmSettings 为 nil 时保留已有的 llm section；theme 为空时保留已有的 theme。
-func writeFullSettings(path string, llmSettings *llm.LLMSettings, theme string) error {
+func (s *tuiSettingsStore) SaveLocale(locale string) error {
+	return writeFullSettings(s.projectPath, nil, "", locale)
+}
+
+// writeFullSettings 全量 read-modify-write settings.json，替换 llm / theme / locale section。
+// llmSettings 为 nil 时保留已有的 llm section；theme / locale 为空时保留已有值。
+func writeFullSettings(path string, llmSettings *llm.LLMSettings, theme, locale string) error {
 	// 读取现有完整文件
 	full := make(map[string]any)
 	if data, err := os.ReadFile(path); err == nil {
@@ -4108,6 +4244,10 @@ func writeFullSettings(path string, llmSettings *llm.LLMSettings, theme string) 
 
 	if theme != "" {
 		full["theme"] = theme
+	}
+
+	if locale != "" {
+		full["locale"] = locale
 	}
 
 	// 写回
@@ -4181,6 +4321,7 @@ func newSlashRegistry(creator slashcommand.SessionCreator, store slashcommand.Se
 	r.Register(slashcommand.NewNewCommand(creator))
 	r.Register(slashcommand.NewModelCommand(store, lister, currentModel))
 	r.Register(slashcommand.NewThemeCommand())
+	r.Register(slashcommand.NewLocaleCommand())
 	r.Register(slashcommand.NewHelpCommand(r))
 
 	// 注册 user-invocable skills
@@ -4202,9 +4343,9 @@ func newSlashRegistry(creator slashcommand.SessionCreator, store slashcommand.Se
 // 覆盖层 — 主题选择器
 // ---------------------------------------------------------------------------
 
-// themeItems 返回主题选择器的固定选项。
+// themeItems 返回主题选择器的固定选项。label 为占位值，运行时由 buildThemeList 根据 locale 替换。
 var themeItems = []themeItem{
-	{label: "Auto（自动检测终端背景色）", mode: "auto"},
+	{label: "Auto", mode: "auto"},
 	{label: "Dark", mode: "dark"},
 	{label: "Light", mode: "light"},
 }
@@ -4214,7 +4355,11 @@ func (m *model) buildThemeList() {
 	items := make([]list.Item, len(themeItems))
 	selectedIdx := 0
 	for i, ti := range themeItems {
-		items[i] = ti
+		label := ti.label
+		if ti.mode == "auto" {
+			label = m.msg().PickerThemeAuto
+		}
+		items[i] = themeItem{label: label, mode: ti.mode}
 		if ti.mode == m.themeMode {
 			selectedIdx = i
 		}
@@ -4288,6 +4433,102 @@ func (m *model) applyThemeMode(mode string) {
 }
 
 func (m *model) closeThemePicker() {
+	m.overlay = overlayNone
+	m.input.Focus()
+}
+
+// ---------------------------------------------------------------------------
+// 覆盖层 — 语言选择器
+// ---------------------------------------------------------------------------
+
+// localeItem 表示语言选择器的选项。
+type localeItem struct {
+	label  string
+	locale Locale
+}
+
+func (i localeItem) Title() string       { return i.label }
+func (i localeItem) Description() string { return "" }
+func (i localeItem) FilterValue() string { return i.label }
+
+// localeItems 返回语言选择器的固定选项。
+var localeItems = []localeItem{
+	{label: "简体中文", locale: LocaleZhCN},
+	{label: "English", locale: LocaleEnUS},
+}
+
+// buildLocaleList 构建语言选择列表覆盖层。
+func (m *model) buildLocaleList() {
+	items := make([]list.Item, len(localeItems))
+	selectedIdx := 0
+	currentLocale := LocaleEnUS
+	if m.lc != nil {
+		switch m.lc {
+		case &zhCN:
+			currentLocale = LocaleZhCN
+		}
+	}
+	for i, li := range localeItems {
+		items[i] = li
+		if li.locale == currentLocale {
+			selectedIdx = i
+		}
+	}
+
+	delegate := list.NewDefaultDelegate()
+	delegate.ShowDescription = false
+	delegate.SetSpacing(0)
+	delegate.Styles = listItemStyles()
+	m.localeDelegate = &delegate
+
+	l := list.New(items, delegate, 0, 2)
+	l.SetShowTitle(false)
+	l.SetShowPagination(false)
+	l.SetShowStatusBar(false)
+	l.SetShowFilter(false)
+	l.SetShowHelp(false)
+	l.KeyMap.Quit = key.NewBinding()
+	l.KeyMap.ForceQuit = key.NewBinding()
+	if selectedIdx < 2 {
+		l.Select(selectedIdx)
+	}
+	m.localeList = l
+}
+
+// handleLocalePickerKey 处理语言选择器中的按键。
+func (m *model) handleLocalePickerKey(msg tea.KeyPressMsg) (bool, tea.Cmd) {
+	keyStr := msg.String()
+	switch keyStr {
+	case "up", "down":
+		var cmd tea.Cmd
+		m.localeList, cmd = m.localeList.Update(msg)
+		return true, cmd
+	case "enter":
+		idx := m.localeList.Index()
+		if idx >= 0 && idx < len(localeItems) {
+			m.applyLocale(localeItems[idx].locale)
+		}
+		m.closeLocalePicker()
+		return true, nil
+	case "esc":
+		m.closeLocalePicker()
+		return true, nil
+	}
+	return false, nil
+}
+
+// applyLocale 应用指定语言并保存到 settings.json。
+func (m *model) applyLocale(loc Locale) {
+	m.lc = messagesFor(loc)
+	// 即时更新 input placeholder
+	m.input.Placeholder = m.msg().InputPlaceholder
+	m.otherInput.Placeholder = m.msg().InputOtherPlaceholder
+	if m.settingsStore != nil {
+		_ = m.settingsStore.SaveLocale(string(loc))
+	}
+}
+
+func (m *model) closeLocalePicker() {
 	m.overlay = overlayNone
 	m.input.Focus()
 }
@@ -4380,8 +4621,8 @@ func (m *model) closeModelPicker() {
 // ---------------------------------------------------------------------------
 
 // runTUI 启动交互式 TUI 模式。依赖由 main() 统一初始化后传入，无需重复创建。
-func runTUI(llmClient llm.Client, registry tool.Registry, guard permission.Guard, expander *reference.Expander, modelName string, theme string, verboseLog io.Writer, contextLimit int, maxTurns int, toolTimeout time.Duration, toolTimeoutSource string, bypassPerm bool, ctxMgr *ctxpkg.ContextManager, isResume bool, sessionDir string, globalPath string, projectPath string, agentsMdText string) {
-	m := newTUIModel(llmClient, registry, guard, expander, modelName, theme, verboseLog, contextLimit, maxTurns, toolTimeout, toolTimeoutSource)
+func runTUI(llmClient llm.Client, registry tool.Registry, guard permission.Guard, expander *reference.Expander, modelName string, theme string, verboseLog io.Writer, contextLimit int, maxTurns int, toolTimeout time.Duration, toolTimeoutSource string, bypassPerm bool, ctxMgr *ctxpkg.ContextManager, isResume bool, sessionDir string, globalPath string, projectPath string, agentsMdText string, loc Locale) {
+	m := newTUIModel(llmClient, registry, guard, expander, modelName, theme, verboseLog, contextLimit, maxTurns, toolTimeout, toolTimeoutSource, loc)
 	m.agentsMdText = agentsMdText
 	m.sessionDir = sessionDir
 
@@ -4444,5 +4685,112 @@ func runTUI(llmClient llm.Client, registry tool.Registry, guard permission.Guard
 		_ = ctxpkg.UpdateRecentSessions(sessionDir, sid, stats.MessageCount)
 		fmt.Fprintf(os.Stderr, "已保存 session: %s\n", sid)
 		fmt.Fprintf(os.Stderr, "  恢复对话: waveloom --resume %s\n", sid)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// 自更新
+// ---------------------------------------------------------------------------
+
+// startUpdate 返回一个 tea.Cmd，在 goroutine 中下载并安装新版本。
+// 进度通过 program.Send 推送到 TUI Update 循环。
+func (m *model) startUpdate() tea.Cmd {
+	m.updating = true
+	m.noticeBanner = "" // 清除 banner，避免重复触发
+
+	// 追加 tool 段落
+	m.paras = append(m.paras, Paragraph{
+		Type:     paraTool,
+		State:    stateStreaming,
+		ToolName: "▲",
+		ToolArgs: "waveloom self-update → " + m.latestVersion,
+	})
+
+	return func() tea.Msg {
+		startTime := time.Now()
+
+		execPath, err := os.Executable()
+		if err != nil {
+			m.program.Send(updateDoneMsg{err: fmt.Sprintf("获取当前二进制路径失败: %v", err), durMs: time.Since(startTime).Milliseconds()})
+			return nil
+		}
+
+		downloadURL := environment.BuildDownloadURL()
+
+		err = environment.SelfUpdate(context.Background(), execPath, downloadURL,
+			func(phase environment.SelfUpdatePhase, pct int, detail string) {
+				m.program.Send(updateProgressMsg{
+					phase:  string(phase),
+					pct:    pct,
+					detail: detail,
+				})
+			})
+
+		durMs := time.Since(startTime).Milliseconds()
+
+		if err != nil {
+			m.program.Send(updateDoneMsg{err: err.Error(), durMs: durMs})
+			return nil
+		}
+
+		m.program.Send(updateDoneMsg{durMs: durMs})
+		return nil
+	}
+}
+
+// handleUpdateProgress 更新 tool 段落的内容。
+func (m *model) handleUpdateProgress(msg updateProgressMsg) {
+	if msg.err != "" {
+		// 进度中的错误转为 done 消息
+		m.program.Send(updateDoneMsg{err: msg.err})
+		return
+	}
+	// 找到最后一个 stateStreaming 的 paraTool 段落
+	for i := len(m.paras) - 1; i >= 0; i-- {
+		p := &m.paras[i]
+		if p.Type == paraTool && p.State == stateStreaming {
+			p.ToolResult += msg.detail + "\n"
+			p.renderDirty = true
+			return
+		}
+	}
+}
+
+// handleUpdateDone 完成或失败更新流程。
+func (m *model) handleUpdateDone(msg updateDoneMsg) {
+	m.updating = false
+
+	// 找到最后一个 streaming tool 段落
+	for i := len(m.paras) - 1; i >= 0; i-- {
+		p := &m.paras[i]
+		if p.Type == paraTool && p.State == stateStreaming {
+			p.ToolDurMs = msg.durMs
+			if msg.err != "" {
+				p.ToolResult += "✗ " + msg.err + "\n"
+				p.ToolError = msg.err
+				p.State = stateError
+			} else {
+				p.State = stateDone
+			}
+			p.renderDirty = true
+			break
+		}
+	}
+
+	if msg.err != "" {
+		m.paras = append(m.paras, Paragraph{
+			Type:      paraSystem,
+			State:     stateDone,
+			Text:      m.msg().SysUpdateFailed,
+			NotifKind: notifError,
+		})
+	} else {
+		m.paras = append(m.paras, Paragraph{
+			Type:      paraSystem,
+			State:     stateDone,
+			Text:      fmt.Sprintf(m.msg().SysUpdateInstalled, m.latestVersion),
+			NotifKind: notifInfo,
+		})
+		m.trimParas()
 	}
 }

@@ -1,154 +1,527 @@
 package main
 
 import (
-	"bufio"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 
+	tea "charm.land/bubbletea/v2"
+	"charm.land/huh/v2"
+	"charm.land/lipgloss/v2"
+
 	"github.com/Menfre01/waveloom/pkg/llm"
 )
 
-// runSetup 首次设置向导。引导用户完成必要配置，写入 ~/.waveloom/settings.json。
-func runSetup() {
-	fmt.Println()
-	fmt.Println("  ╭─────────────────────────────────────────────╮")
-	fmt.Println("  │         Waveloom · 首次设置                  │")
-	fmt.Println("  ╰─────────────────────────────────────────────╯")
-	fmt.Println()
+// ---------------------------------------------------------------------------
+// setupState
+// ---------------------------------------------------------------------------
 
-	reader := bufio.NewReader(os.Stdin)
+type setupState struct {
+	theme  string
+	locale string
+	prov   string
+	model  string
+	apiKey string
+	lc     *Messages
+}
 
-	// 1. 确定配置文件路径（全局 ~/.waveloom/settings.json）
+// ---------------------------------------------------------------------------
+// setupModel
+// ---------------------------------------------------------------------------
+
+type setupModel struct {
+	state       *setupState
+	step        int
+	form        *huh.Form
+	formInitCmd tea.Cmd
+	width       int
+	height      int
+	showBanner  bool
+	quitting    bool
+}
+
+const totalSteps = 5
+
+func newSetupModel(loc Locale) *setupModel {
+	lc := messagesFor(loc)
+	return &setupModel{
+		state: &setupState{
+			theme:  "auto",
+			locale: string(loc),
+			prov:   "deepseek",
+			model:  "deepseek-v4-pro",
+			lc:     lc,
+		},
+	}
+}
+
+func (m *setupModel) Init() tea.Cmd {
+	homeDir, _ := os.UserHomeDir()
+	configPath := filepath.Join(homeDir, ".waveloom", "settings.json")
+	_ = os.MkdirAll(filepath.Dir(configPath), 0o755)
+	if settings, err := llm.LoadSettingsIfExists(configPath); err == nil && settings != nil && settings.APIKey != "" {
+		m.showBanner = true
+	}
+	m.buildForm()
+	initCmd := m.formInitCmd
+	m.formInitCmd = nil
+	return initCmd
+}
+
+func (m *setupModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if m.quitting {
+		return m, tea.Quit
+	}
+
+	// 全局 Ctrl+C 退出 / ESC 回退
+	if keyMsg, ok := msg.(tea.KeyPressMsg); ok {
+		switch keyMsg.String() {
+		case "ctrl+c":
+			m.quitting = true
+			return m, tea.Quit
+		case "esc":
+			if m.step > 0 {
+				m.step--
+				m.buildForm()
+				initCmd := m.formInitCmd
+				m.formInitCmd = nil
+				return m, initCmd
+			}
+			m.quitting = true
+			return m, tea.Quit
+		}
+	}
+
+	// 终端 resize → 记录尺寸，如果变化超过阈值则重建 form
+	if ws, ok := msg.(tea.WindowSizeMsg); ok {
+		prevW := m.width
+		m.width = ws.Width
+		m.height = ws.Height
+		if prevW == 0 || abs(ws.Width-prevW) > 4 {
+			m.buildForm()
+			initCmd := m.formInitCmd
+			m.formInitCmd = nil
+			return m, tea.Batch(initCmd, func() tea.Msg {
+				return tea.WindowSizeMsg{Width: ws.Width, Height: ws.Height}
+			})
+		}
+	}
+
+	// 全部消息路由到 huh form
+	f, cmd := m.form.Update(msg)
+	m.form = f.(*huh.Form)
+
+	// 处理遗留 init 命令
+	if m.formInitCmd != nil {
+		cmd = tea.Batch(cmd, m.formInitCmd)
+		m.formInitCmd = nil
+	}
+
+	// 状态转换
+	switch m.form.State {
+	case huh.StateCompleted:
+		m.handleStepComplete()
+		if m.step < 6 {
+			m.buildForm()
+			initCmd := m.formInitCmd
+			m.formInitCmd = nil
+			return m, initCmd
+		}
+		m.quitting = true
+		return m, tea.Quit
+	}
+
+	return m, cmd
+}
+
+func abs(n int) int {
+	if n < 0 {
+		return -n
+	}
+	return n
+}
+
+func (m *setupModel) View() tea.View {
+	if m.quitting {
+		return tea.NewView("")
+	}
+
+	var parts []string
+
+	// Logo
+	parts = append(parts, renderSetupLogo(m.width))
+
+	// Banner
+	if m.showBanner {
+		parts = append(parts, renderBannerLine(m.state.lc))
+	}
+
+	// Form（左缩进 4 列）
+	formView := lipgloss.NewStyle().PaddingLeft(4).Render(m.form.View())
+	parts = append(parts, formView)
+
+	// 底部快捷键提示
+	parts = append(parts, renderSetupHelp(m.state.lc))
+
+	v := tea.NewView(lipgloss.JoinVertical(lipgloss.Left, parts...))
+	v.AltScreen = true
+	return v
+}
+
+// ---------------------------------------------------------------------------
+// 步骤完成
+// ---------------------------------------------------------------------------
+
+func (m *setupModel) handleStepComplete() {
+	switch m.step {
+	case 0:
+		m.state.theme = m.form.GetString("theme")
+		// 立即应用主题，setup 自身配色跟随变化
+		switch m.state.theme {
+		case "light":
+			applyTheme(lightPalette)
+		case "dark":
+			applyTheme(darkPalette)
+		default:
+			applyTheme(darkPalette)
+		}
+		m.step++
+	case 1:
+		m.state.locale = m.form.GetString("locale")
+		m.state.lc = messagesFor(Locale(m.state.locale))
+		m.step++
+	case 2:
+		m.state.prov = m.form.GetString("provider")
+		if m.state.prov == "openai" {
+			m.state.model = "gpt-4o"
+		} else {
+			m.state.model = "deepseek-v4-pro"
+		}
+		m.step++
+	case 3:
+		m.state.apiKey = m.form.GetString("apiKey")
+		if m.state.apiKey == "" {
+			fmt.Println("  " + m.state.lc.SetupAPIKeyEmptyWarn)
+			os.Exit(1)
+		}
+		m.step++
+	case 4:
+		model := m.form.GetString("model")
+		if model != "" {
+			m.state.model = model
+		}
+		m.step++
+	case 5:
+		choice := m.form.GetString("saveChoice")
+		if choice == "save" {
+			m.saveAndFinish()
+			m.step++
+		} else {
+			// Back → 回到 Step 4
+			m.step = 4
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// buildForm
+// ---------------------------------------------------------------------------
+
+func (m *setupModel) buildForm() {
+	lc := m.state.lc
+	theme := setupHuhTheme()
+	formWidth := m.width - 8
+	if formWidth < 40 {
+		formWidth = 40
+	}
+	if formWidth > 72 {
+		formWidth = 72
+	}
+
+	switch m.step {
+	case 0:
+		sel := huh.NewSelect[string]().
+			Key("theme").
+			Title(fmt.Sprintf(lc.SetupStepTheme, 1, totalSteps)).
+			Options(
+				huh.NewOption(lc.PickerThemeAuto, "auto"),
+				huh.NewOption("Dark", "dark"),
+				huh.NewOption("Light", "light"),
+			).
+			Value(&m.state.theme)
+		m.form = huh.NewForm(huh.NewGroup(sel)).
+			WithTheme(theme).WithWidth(formWidth).WithShowHelp(false)
+
+	case 1:
+		localeVal := m.state.locale
+		sel := huh.NewSelect[string]().
+			Key("locale").
+			Title(fmt.Sprintf(lc.SetupStepLocale, 2, totalSteps)).
+			Options(
+				huh.NewOption("简体中文  (zh-CN)", "zh-CN"),
+				huh.NewOption("English   (en-US)", "en-US"),
+			).
+			Value(&localeVal)
+		m.form = huh.NewForm(huh.NewGroup(sel)).
+			WithTheme(theme).WithWidth(formWidth).WithShowHelp(false)
+
+	case 2:
+		provVal := m.state.prov
+		sel := huh.NewSelect[string]().
+			Key("provider").
+			Title(fmt.Sprintf(lc.SetupStepProvider, 3, totalSteps)).
+			Options(
+				huh.NewOption("DeepSeek  (Recommended)", "deepseek"),
+				huh.NewOption("OpenAI", "openai"),
+			).
+			Value(&provVal)
+		m.form = huh.NewForm(huh.NewGroup(sel)).
+			WithTheme(theme).WithWidth(formWidth).WithShowHelp(false)
+
+	case 3:
+		apiKeyVal := m.state.apiKey
+		apiDesc := fmt.Sprintf("https://platform.%s.com/api_keys", m.state.prov)
+		inp := huh.NewInput().
+			Key("apiKey").
+			Title(fmt.Sprintf(lc.SetupStepAPIKey, 4, totalSteps)).
+			Description(apiDesc).
+			Placeholder("sk-...").
+			EchoMode(huh.EchoModePassword).
+			Value(&apiKeyVal)
+		m.form = huh.NewForm(huh.NewGroup(inp)).
+			WithTheme(theme).WithWidth(formWidth).WithShowHelp(false)
+
+	case 4:
+		defaultModel := m.state.model
+		modelVal := defaultModel
+		desc := ""
+		if m.state.prov == "deepseek" {
+			desc = "deepseek-v4-pro (Recommended) / deepseek-v4-flash"
+		} else {
+			desc = "gpt-4o (Recommended) / gpt-4o-mini"
+		}
+		inp := huh.NewInput().
+			Key("model").
+			Title(fmt.Sprintf(lc.SetupStepModel, 5, totalSteps)).
+			Description(desc).
+			Placeholder(defaultModel).
+			Value(&modelVal)
+		m.form = huh.NewForm(huh.NewGroup(inp)).
+			WithTheme(theme).WithWidth(formWidth).WithShowHelp(false)
+
+	case 5:
+		note := huh.NewNote().
+			Title(lc.SetupConfirmTitle).
+			Description(renderSummary(m.state))
+		saveChoice := "save"
+		sel := huh.NewSelect[string]().
+			Key("saveChoice").
+			Title(lc.SetupConfirmPrompt).
+			Options(
+				huh.NewOption(lc.SetupConfirmSave, "save"),
+				huh.NewOption(lc.SetupConfirmBack, "back"),
+			).
+			Value(&saveChoice)
+		m.form = huh.NewForm(huh.NewGroup(note, sel)).
+			WithTheme(theme).WithWidth(formWidth).WithShowHelp(false)
+	}
+
+	m.formInitCmd = m.form.Init()
+}
+
+// ---------------------------------------------------------------------------
+// 渲染
+// ---------------------------------------------------------------------------
+
+func renderSetupLogo(width int) string {
+	var sb strings.Builder
+	if width >= 80 {
+		for i, line := range asciiArt {
+			s := lipgloss.NewStyle().
+				Foreground(colorLogoGradient[i]).
+				Bold(true).
+				Width(width).
+				Align(lipgloss.Center).
+				Render(line)
+			sb.WriteString(s)
+			sb.WriteString("\n")
+		}
+	} else {
+		logoLine := lipgloss.NewStyle().
+			Foreground(colorLogoGradient[0]).
+			Bold(true).
+			Width(width).
+			Align(lipgloss.Center).
+			Render("WAVELOOM")
+		sb.WriteString(logoLine)
+		sb.WriteString("\n")
+	}
+	return sb.String()
+}
+
+func renderBannerLine(lc *Messages) string {
+	return lipgloss.NewStyle().
+		Foreground(colorAccentGold).
+		Padding(0, 2).
+		Render("  " + lc.SetupOverwriteWarn)
+}
+
+func renderSetupHelp(lc *Messages) string {
+	return lipgloss.NewStyle().
+		Foreground(colorMuted).
+		Padding(0, 4).
+		Render(lc.SetupHelpHint)
+}
+
+func renderSummary(s *setupState) string {
+	lc := s.lc
+	lines := []string{
+		fmt.Sprintf("%s:  %s", lc.SetupSummaryTheme, s.theme),
+		fmt.Sprintf("%s:  %s", lc.SetupSummaryLanguage, s.locale),
+		fmt.Sprintf("%s:  %s", lc.SetupSummaryProvider, s.prov),
+		fmt.Sprintf("%s:  %s", lc.SetupSummaryModel, s.model),
+		fmt.Sprintf("%s:  %s", lc.SetupSummaryAPIKey, maskKey(s.apiKey)),
+	}
+	return strings.Join(lines, "\n")
+}
+
+// ---------------------------------------------------------------------------
+// saveAndFinish
+// ---------------------------------------------------------------------------
+
+func (m *setupModel) saveAndFinish() {
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
-		fmt.Println("  Error: 无法获取用户主目录")
-		os.Exit(1)
+		return
 	}
 	configPath := filepath.Join(homeDir, ".waveloom", "settings.json")
+	_ = os.MkdirAll(filepath.Dir(configPath), 0o755)
 
-	// 提示已有配置将被覆盖
-	if settings, err := llm.LoadSettingsIfExists(configPath); err == nil && settings != nil && settings.APIKey != "" {
-		fmt.Printf("  检测到已有配置: %s\n", configPath)
-		fmt.Println("  继续操作将覆盖当前的 api_key。")
-		fmt.Println()
+	baseURL := "https://api.deepseek.com"
+	if m.state.prov == "openai" {
+		baseURL = "https://api.openai.com/v1"
 	}
 
-	// 2. 选择 Provider
-	fmt.Println("  Step 1/3 — 选择 Provider")
-	fmt.Println()
-	fmt.Println("  [1] DeepSeek（推荐）")
-	fmt.Println("  [2] OpenAI")
-	fmt.Println()
-	fmt.Print("  请输入数字 (1-2) [默认: 1]: ")
-
-	input, _ := reader.ReadString('\n')
-	input = strings.TrimSpace(input)
-
-	provider := "deepseek"
-	defaultModel := "deepseek-v4-pro"
-	defaultBaseURL := "https://api.deepseek.com"
-
-	if input == "2" {
-		provider = "openai"
-		defaultModel = "gpt-4o"
-		defaultBaseURL = "https://api.openai.com/v1"
-	}
-
-	fmt.Println()
-
-	// 3. 输入 API Key
-	fmt.Println("  Step 2/3 — API Key")
-	fmt.Println()
-	if provider == "deepseek" {
-		fmt.Println("  前往 https://platform.deepseek.com/api_keys 创建 Key")
-	} else {
-		fmt.Println("  前往 https://platform.openai.com/api-keys 创建 Key")
-	}
-	fmt.Println()
-	fmt.Print("  请输入 API Key: ")
-
-	apiKey, _ := reader.ReadString('\n')
-	apiKey = strings.TrimSpace(apiKey)
-
-	if apiKey == "" {
-		fmt.Println()
-		fmt.Println("  ⚠️  API Key 不能为空。你可以之后设置 LLM_API_KEY 环境变量再运行 waveloom setup。")
-		os.Exit(1)
-	}
-
-	fmt.Println()
-
-	// 4. 模型名称
-	fmt.Printf("  Step 3/3 — 模型名称\n\n")
-	if provider == "deepseek" {
-		fmt.Println("  可用: deepseek-v4-pro（推荐，增强推理）")
-		fmt.Println("        deepseek-v4-flash（快速推理）")
-	} else {
-		fmt.Println("  可用: gpt-4o（推荐）")
-		fmt.Println("        gpt-4o-mini（快速）")
-	}
-	fmt.Println()
-	fmt.Printf("  输入模型名 [默认: %s]: ", defaultModel)
-
-	model, _ := reader.ReadString('\n')
-	model = strings.TrimSpace(model)
-	if model == "" {
-		model = defaultModel
-	}
-
-	fmt.Println()
-
-	// 5. 构建配置并写入
 	settings := &llm.LLMSettings{
-		APIKey:   apiKey,
-		Provider: provider,
-		Model:    model,
-		BaseURL:  defaultBaseURL,
+		APIKey:   m.state.apiKey,
+		Provider: m.state.prov,
+		Model:    m.state.model,
+		BaseURL:  baseURL,
 		Timeout:  "600s",
 	}
-
-	if provider == "deepseek" {
+	if m.state.prov == "deepseek" {
 		settings.ExtraParams = map[string]any{
 			"thinking":         map[string]any{"type": "enabled"},
 			"reasoning_effort": "max",
 		}
 	}
-
-	if err := llm.WriteSettingsFile(configPath, settings); err != nil {
-		fmt.Printf("  Error: 无法写入配置文件: %v\n", err)
-		os.Exit(1)
-	}
-
-	fmt.Println("  ╭─────────────────────────────────────────────╮")
-	fmt.Println("  │         设置完成！                           │")
-	fmt.Println("  ├─────────────────────────────────────────────┤")
-	fmt.Printf("  │  配置已保存到 ~/.waveloom/settings.json      │\n")
-	fmt.Printf("  │  Provider:  %-32s │\n", provider)
-	fmt.Printf("  │  Model:     %-32s │\n", model)
-	fmt.Println("  ╰─────────────────────────────────────────────╯")
-	fmt.Println()
-	fmt.Println("  现在可以运行 waveloom 进入交互模式了。")
+	_ = writeFullSetup(configPath, settings, m.state.locale, m.state.theme)
 }
 
-// needsSetup 检查是否缺少 API Key 配置。
-// 检查顺序：项目配置 → 全局配置 → 环境变量。
+// ---------------------------------------------------------------------------
+// setupHuhTheme
+// ---------------------------------------------------------------------------
+
+func setupHuhTheme() huh.Theme {
+	return huh.ThemeFunc(func(isDark bool) *huh.Styles {
+		t := huh.ThemeBase(isDark)
+		t.Focused.Title = t.Focused.Title.Foreground(colorHeaderAccent)
+		t.Focused.Description = t.Focused.Description.Foreground(colorFooterFg)
+		t.Focused.Base = lipgloss.NewStyle().
+			PaddingLeft(1).
+			BorderStyle(lipgloss.NormalBorder()).
+			BorderLeft(true).
+			BorderForeground(colorHeaderAccent)
+		t.Focused.SelectSelector = lipgloss.NewStyle().Foreground(colorOK).SetString("▌ ")
+		t.Blurred.SelectSelector = lipgloss.NewStyle().Foreground(colorMuted).SetString("  ")
+		t.Focused.TextInput.Cursor = t.Focused.TextInput.Cursor.Foreground(colorOK)
+		t.Focused.TextInput.Prompt = t.Focused.TextInput.Prompt.Foreground(colorOK)
+		t.Blurred.Title = t.Blurred.Title.Foreground(colorHeaderFg)
+		t.Blurred.Description = t.Blurred.Description.Foreground(colorFooterFg)
+		t.Blurred.Base = t.Blurred.Base.BorderForeground(lipgloss.Color("#444444"))
+		return t
+	})
+}
+
+// ---------------------------------------------------------------------------
+// 入口
+// ---------------------------------------------------------------------------
+
+func runSetup(loc Locale) {
+	// 跟随终端背景色自动选择初始主题
+	if lipgloss.HasDarkBackground(os.Stdin, os.Stdout) {
+		applyTheme(darkPalette)
+	} else {
+		applyTheme(lightPalette)
+	}
+	m := newSetupModel(loc)
+	p := tea.NewProgram(m)
+	if _, err := p.Run(); err != nil {
+		fmt.Fprintf(os.Stderr, "Setup error: %v\n", err)
+		os.Exit(1)
+	}
+	lc := m.state.lc
+	fmt.Printf("\n  %s\n\n", lc.SetupDoneTitle)
+	fmt.Printf("  %s\n", lc.SetupDoneConfigSaved)
+	fmt.Printf("  Language:  %s\n", m.state.locale)
+	fmt.Printf("  Theme:     %s\n", m.state.theme)
+	fmt.Printf("  Provider:  %s\n", m.state.prov)
+	fmt.Printf("  Model:     %s\n", m.state.model)
+	fmt.Printf("\n  %s\n\n", lc.SetupDoneReady)
+}
+
+// ---------------------------------------------------------------------------
+// 辅助
+// ---------------------------------------------------------------------------
+
+func maskKey(key string) string {
+	if len(key) <= 8 {
+		return strings.Repeat("*", len(key))
+	}
+	return key[:4] + strings.Repeat("*", len(key)-8) + key[len(key)-4:]
+}
+
+func writeFullSetup(path string, llmSettings *llm.LLMSettings, locale, theme string) error {
+	full := make(map[string]any)
+	if data, err := os.ReadFile(path); err == nil {
+		_ = json.Unmarshal(data, &full)
+	}
+	if llmSettings != nil {
+		b, err := json.Marshal(llmSettings)
+		if err != nil {
+			return err
+		}
+		var llmMap map[string]any
+		_ = json.Unmarshal(b, &llmMap)
+		full["llm"] = llmMap
+	}
+	if locale != "" {
+		full["locale"] = locale
+	}
+	if theme != "" {
+		full["theme"] = theme
+	}
+	out, err := json.MarshalIndent(full, "", "    ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, out, 0o644)
+}
+
 func needsSetup() bool {
 	projectPath := filepath.Join(".waveloom", "settings.json")
 	if s, _ := llm.LoadSettingsIfExists(projectPath); s != nil && s.APIKey != "" {
 		return false
 	}
-
 	homeDir, _ := os.UserHomeDir()
 	globalPath := filepath.Join(homeDir, ".waveloom", "settings.json")
 	if s, _ := llm.LoadSettingsIfExists(globalPath); s != nil && s.APIKey != "" {
 		return false
 	}
-
 	if os.Getenv("LLM_API_KEY") != "" {
 		return false
 	}
-
 	return true
 }
