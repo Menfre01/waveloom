@@ -1,5 +1,20 @@
 # Changelog
 
+## [v0.1.0-alpha.7] — 2026-07-01
+
+### 新增功能
+- **i18n 多语言支持**：zh-CN / en-US 完整双语文案，TUI 界面全覆盖，LANG 环境变量自动检测
+- **--locale CLI 参数**：`auto`（默认）/ `zh-CN` / `en-US`，三级优先级：CLI > settings.json > LANG
+- **/locale slash 命令**：TUI 内实时切换界面语言，立即生效并持久化到 settings.json
+- **CLI --help 中英双语**：根据 locale 显示对应语言的帮助文本
+- **首次设置向导重写**：Bubble Tea + huh 表单交互，集成语言/主题/Provider/模型一站式配置
+- **自更新检查**：空闲时检测 GitHub Release 新版本，Enter 一键下载安装
+
+### 修复
+- 权限命令链绕过修复，风险分级扩展，DenialTracker 敏感路径接入
+- Esc 中断时杀死进程组，防止长时间 bash 命令无法退出
+- install.sh 移除 GitHub API 限流依赖，改用 releases/latest/download 重定向
+
 ## [v0.1.0-alpha.6] — 2026-06-30
 
 ### 新增功能
