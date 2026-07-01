@@ -11,7 +11,7 @@ var readFileSchema = json.RawMessage(`{
   "properties": {
     "file_path": {
       "type": "string",
-      "description": "File path (absolute, or relative to working_dir / workspace root). Must be a file, not a directory — use ls first to explore directories."
+      "description": "File path (absolute, or relative to working_dir / workspace root). Must be a file, not a directory — use ls first to explore directories. Paths without a file extension are likely directories."
     },
     "offset": {
       "type": "integer",
@@ -34,7 +34,7 @@ var writeFileSchema = json.RawMessage(`{
   "properties": {
     "file_path": {
       "type": "string",
-      "description": "File path (absolute, or relative to working_dir / workspace root)"
+      "description": "File path (absolute, or relative to working_dir / workspace root). Must be a file, not a directory — use ls to explore directories first."
     },
     "content": {
       "type": "string",
@@ -53,7 +53,7 @@ var editFileSchema = json.RawMessage(`{
   "properties": {
     "file_path": {
       "type": "string",
-      "description": "File path (absolute, or relative to working_dir / workspace root)"
+      "description": "File path (absolute, or relative to working_dir / workspace root). Must be an existing file, not a directory — confirm with read_file first."
     },
     "old_string": {
       "type": "string",

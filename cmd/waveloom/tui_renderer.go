@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/Menfre01/waveloom/pkg/llm"
+	"github.com/Menfre01/waveloom/pkg/pathutil"
 	"github.com/Menfre01/waveloom/pkg/tool"
 
 	"charm.land/bubbles/v2/spinner"
@@ -130,7 +131,12 @@ func formatToolArgs(toolName string, argsJSON string, cwd string) string {
 	case "edit_file":
 		return stripCWDPrefix(extractField(argsJSON, "file_path"), cwd)
 	case "bash":
-		return extractField(argsJSON, "command")
+		cmd := extractField(argsJSON, "command")
+		// 归一化：剥离 "cd <path> &&" 前缀，避免 turn log 中显示冗长的 cd 前缀
+		if normalized, _ := pathutil.NormalizeShellCommand(cmd); normalized != "" {
+			return normalized
+		}
+		return cmd
 	case "grep":
 		pattern := extractField(argsJSON, "pattern")
 		dir := extractField(argsJSON, "working_dir")

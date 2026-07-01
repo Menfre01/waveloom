@@ -336,3 +336,56 @@ func TestRuleEngine_CheckAsk_FilePathPattern(t *testing.T) {
 		t.Errorf("CheckAsk decision = %s, want %s", result.Decision, DecisionAsk)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// REGRESSION: matchContent — web_fetch 和 working_dir 路径解析
+// ---------------------------------------------------------------------------
+
+func TestMatchContent_WebFetch(t *testing.T) {
+	// web_fetch URL pattern 匹配
+	result := matchContent("web_fetch", "https://example.com/*", json.RawMessage(`{"url": "https://example.com/page"}`))
+	if !result {
+		t.Error("web_fetch URL pattern should match")
+	}
+
+	// 不匹配
+	result = matchContent("web_fetch", "https://example.com/*", json.RawMessage(`{"url": "https://other.com/page"}`))
+	if result {
+		t.Error("web_fetch URL pattern should NOT match different domain")
+	}
+
+	// 空 URL
+	result = matchContent("web_fetch", "https://*", json.RawMessage(`{"url": ""}`))
+	if result {
+		t.Error("empty URL should not match")
+	}
+}
+
+func TestMatchContent_WorkingDirPathResolution(t *testing.T) {
+	// 通过 working_dir 将相对路径解析为绝对路径后匹配
+	result := matchContent("read_file", "/tmp/test/*.go", json.RawMessage(`{"file_path": "test/main.go", "working_dir": "/tmp"}`))
+	if !result {
+		t.Error("relative path with working_dir should resolve and match absolute pattern")
+	}
+}
+
+func TestMatchContent_PathFieldFallback(t *testing.T) {
+	// 使用 "path" 字段（非 file_path）
+	result := matchContent("ls", "src/*", json.RawMessage(`{"path": "src/main.go"}`))
+	if !result {
+		t.Error("'path' field should be used when 'file_path' is empty")
+	}
+}
+
+func TestMatchContent_RemoveRuleFrom_OtherScope(t *testing.T) {
+	re := NewRuleEngine()
+	rule := Rule{Behavior: RuleAllow, ToolName: "read_file"}
+	// session scope rule
+	re.AddRule(RuleEntry{Rule: rule, Source: SourceSession, Scope: ScopeSession})
+	// 移除 config scope 同名规则 — 不同 scope 不应被移除
+	re.RemoveRule(rule, ScopeConfig)
+	all := re.AllRules()
+	if len(all) != 1 {
+		t.Errorf("removing rule with different scope should not affect other: got %d rules, want 1", len(all))
+	}
+}

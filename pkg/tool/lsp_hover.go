@@ -13,7 +13,7 @@ var lspHoverSchema = json.RawMessage(`{
   "properties": {
     "file_path": {
       "type": "string",
-      "description": "File path (absolute, or relative to working_dir / workspace root)"
+      "description": "File path (absolute, or relative to working_dir / workspace root). Must be an existing file, not a directory."
     },
     "line": {
       "type": "integer",
@@ -54,7 +54,9 @@ func (t *LSPHover) Schema() json.RawMessage { return lspHoverSchema }
 func (t *LSPHover) ConcurrentSafe() bool    { return true }
 
 func (t *LSPHover) Description() string {
-	return "Get the type signature and documentation (Markdown) for a symbol at the cursor position. Use for quickly viewing API usage."
+	return "Get the type signature and documentation (Markdown) for a symbol at the cursor position. " +
+		"Use for quickly viewing API usage. " +
+		"NOTE: line and character are 0-based (first line = 0, first column = 0)."
 }
 
 func (t *LSPHover) Execute(ctx context.Context, p LSPHoverParams) (*ToolResult, error) {

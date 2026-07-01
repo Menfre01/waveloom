@@ -225,8 +225,17 @@ func TestIsWithinDir_Outside(t *testing.T) {
 	}
 }
 
+func TestIsWithinDir_Error(t *testing.T) {
+	// 不同卷/设备路径可能导致 Rel 出错（Windows 场景，Unix 上不容易触发）
+	// 测试边界：绝对路径 + 相对路径混用
+	// isWithinDir 对 Rel 错误返回 false
+	if isWithinDir("relative/path", "/absolute/dir") {
+		t.Error("relative path should not be within absolute dir (Rel error path)")
+	}
+}
+
 // ---------------------------------------------------------------------------
-// evalExistingPrefix — 部分路径符号链接解析
+// REGRESSION: evalExistingPrefix — 全分支覆盖
 // ---------------------------------------------------------------------------
 
 func TestEvalExistingPrefix_PartialExists(t *testing.T) {
