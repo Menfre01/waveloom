@@ -6,7 +6,8 @@ import (
 )
 
 func TestLocaleCommand(t *testing.T) {
-	cmd := NewLocaleCommand()
+	msg := testMessagesZhCN()
+	cmd := NewLocaleCommand(msg)
 	if cmd.Name() != "locale" {
 		t.Errorf("Name = %q, want locale", cmd.Name())
 	}

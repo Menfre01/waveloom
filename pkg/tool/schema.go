@@ -53,15 +53,15 @@ var editFileSchema = json.RawMessage(`{
   "properties": {
     "file_path": {
       "type": "string",
-      "description": "File path (absolute, or relative to working_dir / workspace root). Must be an existing file, not a directory — confirm with read_file first."
+      "description": "File path (absolute, or relative to working_dir / workspace root)"
     },
     "old_string": {
       "type": "string",
-      "description": "Text to replace (must exactly match original content, including indentation)"
+      "description": "Text to replace — must match original exactly (indentation, whitespace, punctuation). Must be unique in the file; if ambiguous, include more surrounding context lines."
     },
     "new_string": {
       "type": "string",
-      "description": "Replacement text"
+      "description": "Replacement text. Use empty string to delete the matched text."
     },
     "replace_all": {
       "type": "boolean",
