@@ -106,6 +106,10 @@ func TestParseRule_BashCompatibility(t *testing.T) {
 		{"bash", "bash", "bash"},
 		{"BASH", "BASH", "bash"},
 		{"Bash(git status)", "Bash(git status)", "bash"},
+		// REGRESSION: 存量配置 "shell" 小写
+		{"shell", "shell", "bash"},
+		{"Shell", "Shell", "bash"},
+		{"Shell(go test)", "Shell(go test)", "bash"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -117,6 +121,23 @@ func TestParseRule_BashCompatibility(t *testing.T) {
 				t.Errorf("ParseRule(%q).ToolName = %q, want %q", tt.input, got.ToolName, tt.want)
 			}
 		})
+	}
+}
+
+// TestNormalizeToolName_ShellLowerCase 验证存量配置中 "shell" 归一化为 "bash"。
+func TestNormalizeToolName_ShellLowerCase(t *testing.T) {
+	if normalizeToolName("shell") != "bash" {
+		t.Error(`normalizeToolName("shell") should be "bash"`)
+	}
+	if normalizeToolName("Shell") != "bash" {
+		t.Error(`normalizeToolName("Shell") should be "bash"`)
+	}
+	if normalizeToolName("BASH") != "bash" {
+		t.Error(`normalizeToolName("BASH") should be "bash"`)
+	}
+	// 非 Bash/Shell 名称原样返回
+	if normalizeToolName("read_file") != "read_file" {
+		t.Error(`normalizeToolName("read_file") should be "read_file"`)
 	}
 }
 

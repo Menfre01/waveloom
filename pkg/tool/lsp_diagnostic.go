@@ -14,7 +14,7 @@ var lspDiagnosticSchema = json.RawMessage(`{
   "properties": {
     "file_path": {
       "type": "string",
-      "description": "File path (absolute, or relative to working_dir / workspace root)"
+      "description": "File path (absolute, or relative to working_dir / workspace root). Must be an existing file."
     },
     "working_dir": {
       "type": "string",
