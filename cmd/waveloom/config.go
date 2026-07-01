@@ -41,7 +41,7 @@ func parseCLI() CLIConfig {
 	var contextLimitRaw string
 
 	flag.Usage = func() {
-		printHelp()
+		printHelpWithAutoDetect()
 	}
 
 	flag.StringVar(&cfg.Model, "model", "", "LLM 模型名称（默认从环境变量 LLM_MODEL 读取）")
@@ -163,54 +163,11 @@ func parseTokenLimit(s string) (int, error) {
 }
 
 // printHelp 显示帮助信息。
-func printHelp() {
-	fmt.Fprintf(os.Stderr, `Waveloom — Code Agent CLI
+func printHelp(loc Locale) {
+	fmt.Fprint(os.Stderr, messagesFor(loc).HelpUsageText)
+}
 
-用法:
-  waveloom                     交互式 TUI 模式
-  waveloom ls                  列出最近 sessions
-  waveloom setup               首次设置向导
-  waveloom completion <shell>  输出 shell 补全脚本 (bash/zsh/fish)
-  waveloom "prompt"            单次执行模式
-  waveloom --help              显示帮助
-  waveloom --version           显示版本号
-
-选项:
-  --settings PATH         配置文件路径（项目级；全局 ~/.waveloom/settings.json 自动合并）
-  --version               显示版本号
-  --model NAME            LLM 模型名称
-  --theme MODE            主题模式: auto（默认）/ dark / light
-                          auto 自动检测终端背景色
-  --locale LANG           界面语言: auto（默认）/ zh-CN / en-US
-                          auto 从 LANG 环境变量自动检测
-  --verbose               记录 LLM 调用和工具执行日志到 .waveloom/waveloom.log
-  --max-turns N           最大 turn 数（0=无限制）
-  --system-prompt TEXT    系统提示词
-  --context-limit N       上下文窗口 token 上限，支持 1M / 200k / 1048576 等格式（默认: 1M）
-  --bypass-permissions    跳过权限检查（CI/测试）
-  --tool-timeout D         单个工具执行超时（Go Duration 格式，如 10m / 600s / 0s，0 禁用，默认 10m）
-  --resume ID             恢复指定 session ID 的对话
-  --continue              恢复最近一个 session 的对话
-
-配置文件（settings.json）:
-  ~/.waveloom/settings.json  用户全局配置（安全基线）
-  .waveloom/settings.json    项目级配置（字段覆盖全局，权限同键覆盖全局）
-  --settings PATH            显式指定项目配置文件
-
-  llm.api_key              API Key（必填；为空时回退 LLM_API_KEY 环境变量）
-  llm.provider              Provider（openai / deepseek）
-  llm.model                 模型名称
-  llm.base_url              API 端点
-  llm.timeout               请求超时（如 "600s"）
-  llm.extra_params          额外参数（如 temperature, max_tokens, thinking 等）
-
-  permissions.allow[]       直接允许的规则
-  permissions.deny[]        直接拒绝的规则
-  permissions.ask[]         需用户确认的规则
-                           格式: "tool_name" 或 "tool_name(pattern)"
-
-环境变量:
-  LLM_API_KEY             API Key（settings.json 未设置时的回退）
-
-`)
+// printHelpWithAutoDetect 用于 flag.Usage，此时可能尚未解析 --locale，从环境变量自动检测。
+func printHelpWithAutoDetect() {
+	printHelp(DetectLocale())
 }
