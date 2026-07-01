@@ -55,7 +55,7 @@ func checkLatestRelease(ctx context.Context, url, currentVersion string) (*Updat
 	if err != nil {
 		return nil, fmt.Errorf("check update: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	// releases/latest 返回 302，Location header 包含 /releases/tag/<version>
 	if resp.StatusCode != http.StatusFound {
