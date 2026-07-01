@@ -16,6 +16,7 @@ import (
 func newTestModelForPerm() *model {
 	m := &model{
 		themeMode: "dark",
+		lc:        &enUS,
 		permReq: &permissionReqMsg{
 			toolName:   "bash",
 			args:       "go test ./...",
@@ -173,7 +174,7 @@ func TestToolSuffix_ReadFile(t *testing.T) {
 		ToolDurMs:  8,
 		State:      stateDone,
 	}
-	suffix := toolSuffix(p)
+	suffix := toolSuffix(p, &enUS)
 	if !strings.Contains(suffix, "KB") && !strings.Contains(suffix, "B") {
 		t.Errorf("expected size suffix, got %q", suffix)
 	}
@@ -189,7 +190,7 @@ func TestToolSuffix_ShellExitCode(t *testing.T) {
 		ToolDurMs:  120,
 		State:      stateDone,
 	}
-	suffix := toolSuffix(p)
+	suffix := toolSuffix(p, &enUS)
 	if !strings.Contains(suffix, "exit=0") {
 		t.Errorf("expected exit code, got %q", suffix)
 	}
@@ -201,7 +202,7 @@ func TestToolSuffix_Denied(t *testing.T) {
 		ToolDenied: true,
 		State:      stateError,
 	}
-	suffix := toolSuffix(p)
+	suffix := toolSuffix(p, &enUS)
 	if !strings.Contains(suffix, "permission denied") {
 		t.Errorf("expected denied message, got %q", suffix)
 	}
@@ -214,7 +215,7 @@ func TestToolSuffix_Error(t *testing.T) {
 		ToolErrorKind: "command_not_found",
 		State:         stateError,
 	}
-	suffix := toolSuffix(p)
+	suffix := toolSuffix(p, &enUS)
 	if !strings.Contains(suffix, "command_not_found") {
 		t.Errorf("expected error kind in suffix, got %q", suffix)
 	}
@@ -225,7 +226,7 @@ func TestToolSuffix_Streaming(t *testing.T) {
 		ToolName: "read_file",
 		State:    stateStreaming,
 	}
-	suffix := toolSuffix(p)
+	suffix := toolSuffix(p, &enUS)
 	if suffix != "" {
 		t.Errorf("expected empty suffix for streaming, got %q", suffix)
 	}
@@ -580,7 +581,7 @@ func newTestModelForQuestion() *model {
 	otherTi := textinput.New()
 	otherTi.Prompt = "> "
 	otherTi.SetVirtualCursor(false)
-	otherTi.Placeholder = "输入自定义答案..."
+	otherTi.Placeholder = enUS.InputOtherPlaceholder
 
 	m := &model{
 		themeMode: "dark",

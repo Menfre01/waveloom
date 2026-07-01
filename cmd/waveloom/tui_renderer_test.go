@@ -90,7 +90,7 @@ func TestWrapLine_PrefersSpaceBreak(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestBuildViewportContent_EmptyParagraphs(t *testing.T) {
-	ctx := ViewportCtx{Width: 80}
+	ctx := ViewportCtx{LC: &enUS, Width: 80}
 	lines, starts := buildViewportContent(nil, ctx, -1, 0)
 	if len(lines) != 0 {
 		t.Errorf("expected 0 lines, got %d", len(lines))
@@ -104,7 +104,7 @@ func TestBuildViewportContent_UserParagraph(t *testing.T) {
 	paras := []Paragraph{
 		{Type: paraUser, State: stateDone, Text: "hello"},
 	}
-	ctx := ViewportCtx{Width: 80}
+	ctx := ViewportCtx{LC: &enUS, Width: 80}
 	lines, starts := buildViewportContent(paras, ctx, -1, 0)
 
 	if len(starts) != 1 {
@@ -130,7 +130,7 @@ func TestBuildViewportContent_StreamingThought(t *testing.T) {
 			Text:  "thinking about code...",
 		},
 	}
-	ctx := ViewportCtx{Width: 80, Thought: sp}
+	ctx := ViewportCtx{LC: &enUS, Width: 80, Thought: sp}
 	lines, _ := buildViewportContent(paras, ctx, -1, 0)
 
 	// 渲染末尾有换行符，split 后末尾多一个空串，实际内容 ≥3 行
@@ -155,7 +155,7 @@ func TestBuildViewportContent_CollapsedThought(t *testing.T) {
 			ThoughtTokens: 120,
 		},
 	}
-	ctx := ViewportCtx{Width: 80}
+	ctx := ViewportCtx{LC: &enUS, Width: 80}
 	lines, _ := buildViewportContent(paras, ctx, -1, 0)
 
 	foundToken := false
@@ -180,7 +180,7 @@ func TestBuildViewportContent_ToolStreaming(t *testing.T) {
 			ToolArgs: "main.go",
 		},
 	}
-	ctx := ViewportCtx{Width: 80, Tool: sp}
+	ctx := ViewportCtx{LC: &enUS, Width: 80, Tool: sp}
 	lines, _ := buildViewportContent(paras, ctx, -1, 0)
 
 	if len(lines) < 1 {
@@ -202,7 +202,7 @@ func TestBuildViewportContent_ToolDone(t *testing.T) {
 			ToolDurMs:  123,
 		},
 	}
-	ctx := ViewportCtx{Width: 80}
+	ctx := ViewportCtx{LC: &enUS, Width: 80}
 	lines, _ := buildViewportContent(paras, ctx, -1, 0)
 
 	if len(lines) < 1 {
@@ -234,7 +234,7 @@ func TestBuildViewportContent_ToolError(t *testing.T) {
 			ToolError: "command not found",
 		},
 	}
-	ctx := ViewportCtx{Width: 80}
+	ctx := ViewportCtx{LC: &enUS, Width: 80}
 	lines, _ := buildViewportContent(paras, ctx, -1, 0)
 
 	hasError := false
@@ -253,7 +253,7 @@ func TestBuildViewportContent_SystemParagraph(t *testing.T) {
 	paras := []Paragraph{
 		{Type: paraSystem, State: stateDone, Text: "执行被中断。"},
 	}
-	ctx := ViewportCtx{Width: 80}
+	ctx := ViewportCtx{LC: &enUS, Width: 80}
 	lines, _ := buildViewportContent(paras, ctx, -1, 0)
 
 	if len(lines) < 1 {
@@ -279,7 +279,7 @@ func TestBuildViewportContent_UsesCache(t *testing.T) {
 			renderDirty:  false,
 		},
 	}
-	ctx := ViewportCtx{Width: 80}
+	ctx := ViewportCtx{LC: &enUS, Width: 80}
 	lines, _ := buildViewportContent(paras, ctx, -1, 0)
 
 	if len(lines) != 1 || lines[0] != "› hello" {
@@ -298,7 +298,7 @@ func TestBuildViewportContent_DiscardsCacheOnWidthChange(t *testing.T) {
 			renderDirty:  false,
 		},
 	}
-	ctx := ViewportCtx{Width: 40} // different width → cache invalid
+	ctx := ViewportCtx{LC: &enUS, Width: 40} // different width → cache invalid
 	lines, _ := buildViewportContent(paras, ctx, -1, 0)
 
 	// Should re-render; the cached line won't be used
@@ -318,7 +318,7 @@ func TestBuildViewportContent_DiscardsCacheWhenDirty(t *testing.T) {
 			renderDirty:  true, // dirty → re-render
 		},
 	}
-	ctx := ViewportCtx{Width: 80}
+	ctx := ViewportCtx{LC: &enUS, Width: 80}
 	lines, _ := buildViewportContent(paras, ctx, -1, 0)
 
 	if len(lines) < 1 {
@@ -335,7 +335,7 @@ func TestBuildViewportContent_LineHintPreAlloc(t *testing.T) {
 	paras := []Paragraph{
 		{Type: paraUser, State: stateDone, Text: "hello"},
 	}
-	ctx := ViewportCtx{Width: 80}
+	ctx := ViewportCtx{LC: &enUS, Width: 80}
 	// Large hint should be fine
 	lines, _ := buildViewportContent(paras, ctx, -1, 10000)
 	if len(lines) == 0 {
@@ -353,7 +353,7 @@ func TestBuildViewportContent_LineStarts(t *testing.T) {
 		{Type: paraSystem, State: stateDone, Text: "second"},
 		{Type: paraUser, State: stateDone, Text: "third"},
 	}
-	ctx := ViewportCtx{Width: 80}
+	ctx := ViewportCtx{LC: &enUS, Width: 80}
 	lines, starts := buildViewportContent(paras, ctx, -1, 0)
 
 	if len(starts) != 3 {
