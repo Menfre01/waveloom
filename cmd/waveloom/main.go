@@ -34,7 +34,7 @@ func main() {
 		return
 	}
 	if cfg.ShowHelp {
-		printHelp()
+		printHelp(resolveLocale(cfg.Locale))
 		return
 	}
 
