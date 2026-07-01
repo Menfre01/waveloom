@@ -146,7 +146,6 @@ func NewGuard(opts ...GuardOption) *GuardImpl {
 //
 //  0. 内置白名单 → ALLOW
 //  1. deny 规则（工具级 + 内容级）→ DENY
-//  1.5 拒绝上限保护 → DENY（连续拒绝 ≥3 或累计 ≥10）
 //  2. ask 规则（工具级 + 内容级）→ ASK
 //  2.5 Skill Bash 白名单（shell 工具且命令匹配）→ ALLOW（绕过 Step 3 高危拦截）
 //  3. 工具特有安全检查 → DENY（硬拦截，不允许规则覆盖）
@@ -169,16 +168,6 @@ func (g *GuardImpl) Check(ctx context.Context, toolName string, input json.RawMe
 	if result, found := g.ruleEngine.CheckDeny(toolName, input); found {
 		g.denialTracker.RecordDenial()
 		return result
-	}
-
-	// Step 1.5: 拒绝上限保护
-	// 连续拒绝 ≥3 或累计 ≥10 → 强制 DENY，防止 LLM 暴力试探
-	if g.denialTracker.AtLimit() {
-		return DecisionResult{
-			Decision: DecisionDeny,
-			Reason:   ReasonSafety,
-			Message:  fmt.Sprintf("too many denials (%d consecutive, %d total): further requests blocked", g.denialTracker.Consecutive(), g.denialTracker.Total()),
-		}
 	}
 
 	// Step 2: ask 规则检查
