@@ -65,8 +65,9 @@ const (
 	SideEffectNone            SideEffectKind = ""
 	SideEffectSessionReset    SideEffectKind = "session_reset"
 	SideEffectModelSwitched   SideEffectKind = "model_switched"
-	SideEffectOpenThemePicker SideEffectKind = "open_theme_picker"
-	SideEffectOpenModelPicker SideEffectKind = "open_model_picker"
+	SideEffectOpenThemePicker  SideEffectKind = "open_theme_picker"
+	SideEffectOpenModelPicker  SideEffectKind = "open_model_picker"
+	SideEffectOpenLocalePicker SideEffectKind = "open_locale_picker"
 	SideEffectInvokeSkill     SideEffectKind = "invoke_skill" // TUI: 注入 skill body → doTurn
 )
 

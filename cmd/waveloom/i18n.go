@@ -85,9 +85,10 @@ type Messages struct {
 	QuestionOtherOption string
 
 	// ── Theme / Model picker ─────────────────────────────
-	PickerSelectTheme string
-	PickerSelectModel string
-	PickerThemeAuto   string
+	PickerSelectTheme  string
+	PickerSelectModel  string
+	PickerSelectLocale string
+	PickerThemeAuto    string
 
 	// ── Key bindings ─────────────────────────────────────
 	KeyNav         string
@@ -218,9 +219,10 @@ var zhCN = Messages{
 	QuestionOtherOption: "Other...",
 
 	// Picker
-	PickerSelectTheme: "▲ 选择主题",
-	PickerSelectModel: "▲ 选择模型",
-	PickerThemeAuto:   "Auto（自动检测终端背景色）",
+	PickerSelectTheme:  "▲ 选择主题",
+	PickerSelectModel:  "▲ 选择模型",
+	PickerSelectLocale: "▲ 选择界面语言",
+	PickerThemeAuto:    "Auto（自动检测终端背景色）",
 
 	// Key bindings
 	KeyNav:         "导航",
@@ -347,9 +349,10 @@ var enUS = Messages{
 	QuestionOtherOption: "Other...",
 
 	// Picker
-	PickerSelectTheme: "▲ Select Theme",
-	PickerSelectModel: "▲ Select Model",
-	PickerThemeAuto:   "Auto (detect terminal background)",
+	PickerSelectTheme:  "▲ Select Theme",
+	PickerSelectModel:  "▲ Select Model",
+	PickerSelectLocale: "▲ Select Language",
+	PickerThemeAuto:    "Auto (detect terminal background)",
 
 	// Key bindings
 	KeyNav:         "Navigate",

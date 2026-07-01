@@ -336,6 +336,10 @@ type model struct {
 	modelPickerDelegate *list.DefaultDelegate
 	modelPickerItems    []llm.ModelInfo // 模型列表数据，主题切换时更新样式
 
+	// 语言选择器覆盖层
+	localeList     list.Model
+	localeDelegate *list.DefaultDelegate
+
 	// 文件选择器
 	pickerVisible         bool
 	pickerFilter          string
@@ -1005,6 +1009,10 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		var cmd tea.Cmd
 		m.modelPickerList, cmd = m.modelPickerList.Update(msg)
 		cmds = append(cmds, cmd)
+	case overlayLocalePicker:
+		var cmd tea.Cmd
+		m.localeList, cmd = m.localeList.Update(msg)
+		cmds = append(cmds, cmd)
 	}
 
 	// 文件选择器：过滤同步 + 激活/关闭检测
@@ -1129,6 +1137,13 @@ func (m *model) handleKeyPress(msg tea.KeyPressMsg) (bool, tea.Cmd) {
 	// =====================================================================
 	if m.overlay == overlayModelPicker {
 		return m.handleModelPickerKey(msg)
+	}
+
+	// =====================================================================
+	// 3d. 语言选择器活跃时路由
+	// =====================================================================
+	if m.overlay == overlayLocalePicker {
+		return m.handleLocalePickerKey(msg)
 	}
 
 	// =====================================================================
@@ -3298,6 +3313,12 @@ func (m *model) View() tea.View {
 			boxWidth = 60
 		}
 		overlayContent = m.renderModelPickerOverlay(boxWidth)
+	case overlayLocalePicker:
+		boxWidth := contentWidth
+		if boxWidth > 50 {
+			boxWidth = 50
+		}
+		overlayContent = m.renderLocalePickerOverlay(boxWidth)
 	}
 	var pickerContent string
 	if m.pickerVisible {
@@ -4049,6 +4070,11 @@ func (m *model) handleSlashCommand(input string) tea.Cmd {
 			m.overlay = overlayThemePicker
 			m.input.Blur()
 
+		case slashcommand.SideEffectOpenLocalePicker:
+			m.buildLocaleList()
+			m.overlay = overlayLocalePicker
+			m.input.Blur()
+
 		case slashcommand.SideEffectOpenModelPicker:
 			var models []llm.ModelInfo
 			if err := json.Unmarshal([]byte(se.Detail), &models); err == nil {
@@ -4185,16 +4211,20 @@ func (s *tuiSettingsStore) LoadLLM() (*llm.LLMSettings, error) {
 }
 
 func (s *tuiSettingsStore) SaveLLM(settings *llm.LLMSettings) error {
-	return writeFullSettings(s.projectPath, settings, "")
+	return writeFullSettings(s.projectPath, settings, "", "")
 }
 
 func (s *tuiSettingsStore) SaveTheme(mode string) error {
-	return writeFullSettings(s.projectPath, nil, mode)
+	return writeFullSettings(s.projectPath, nil, mode, "")
 }
 
-// writeFullSettings 全量 read-modify-write settings.json，替换 llm section 和/或 theme。
-// llmSettings 为 nil 时保留已有的 llm section；theme 为空时保留已有的 theme。
-func writeFullSettings(path string, llmSettings *llm.LLMSettings, theme string) error {
+func (s *tuiSettingsStore) SaveLocale(locale string) error {
+	return writeFullSettings(s.projectPath, nil, "", locale)
+}
+
+// writeFullSettings 全量 read-modify-write settings.json，替换 llm / theme / locale section。
+// llmSettings 为 nil 时保留已有的 llm section；theme / locale 为空时保留已有值。
+func writeFullSettings(path string, llmSettings *llm.LLMSettings, theme, locale string) error {
 	// 读取现有完整文件
 	full := make(map[string]any)
 	if data, err := os.ReadFile(path); err == nil {
@@ -4214,6 +4244,10 @@ func writeFullSettings(path string, llmSettings *llm.LLMSettings, theme string) 
 
 	if theme != "" {
 		full["theme"] = theme
+	}
+
+	if locale != "" {
+		full["locale"] = locale
 	}
 
 	// 写回
@@ -4287,6 +4321,7 @@ func newSlashRegistry(creator slashcommand.SessionCreator, store slashcommand.Se
 	r.Register(slashcommand.NewNewCommand(creator))
 	r.Register(slashcommand.NewModelCommand(store, lister, currentModel))
 	r.Register(slashcommand.NewThemeCommand())
+	r.Register(slashcommand.NewLocaleCommand())
 	r.Register(slashcommand.NewHelpCommand(r))
 
 	// 注册 user-invocable skills
@@ -4398,6 +4433,102 @@ func (m *model) applyThemeMode(mode string) {
 }
 
 func (m *model) closeThemePicker() {
+	m.overlay = overlayNone
+	m.input.Focus()
+}
+
+// ---------------------------------------------------------------------------
+// 覆盖层 — 语言选择器
+// ---------------------------------------------------------------------------
+
+// localeItem 表示语言选择器的选项。
+type localeItem struct {
+	label  string
+	locale Locale
+}
+
+func (i localeItem) Title() string       { return i.label }
+func (i localeItem) Description() string { return "" }
+func (i localeItem) FilterValue() string { return i.label }
+
+// localeItems 返回语言选择器的固定选项。
+var localeItems = []localeItem{
+	{label: "简体中文", locale: LocaleZhCN},
+	{label: "English", locale: LocaleEnUS},
+}
+
+// buildLocaleList 构建语言选择列表覆盖层。
+func (m *model) buildLocaleList() {
+	items := make([]list.Item, len(localeItems))
+	selectedIdx := 0
+	currentLocale := LocaleEnUS
+	if m.lc != nil {
+		switch m.lc {
+		case &zhCN:
+			currentLocale = LocaleZhCN
+		}
+	}
+	for i, li := range localeItems {
+		items[i] = li
+		if li.locale == currentLocale {
+			selectedIdx = i
+		}
+	}
+
+	delegate := list.NewDefaultDelegate()
+	delegate.ShowDescription = false
+	delegate.SetSpacing(0)
+	delegate.Styles = listItemStyles()
+	m.localeDelegate = &delegate
+
+	l := list.New(items, delegate, 0, 2)
+	l.SetShowTitle(false)
+	l.SetShowPagination(false)
+	l.SetShowStatusBar(false)
+	l.SetShowFilter(false)
+	l.SetShowHelp(false)
+	l.KeyMap.Quit = key.NewBinding()
+	l.KeyMap.ForceQuit = key.NewBinding()
+	if selectedIdx < 2 {
+		l.Select(selectedIdx)
+	}
+	m.localeList = l
+}
+
+// handleLocalePickerKey 处理语言选择器中的按键。
+func (m *model) handleLocalePickerKey(msg tea.KeyPressMsg) (bool, tea.Cmd) {
+	keyStr := msg.String()
+	switch keyStr {
+	case "up", "down":
+		var cmd tea.Cmd
+		m.localeList, cmd = m.localeList.Update(msg)
+		return true, cmd
+	case "enter":
+		idx := m.localeList.Index()
+		if idx >= 0 && idx < len(localeItems) {
+			m.applyLocale(localeItems[idx].locale)
+		}
+		m.closeLocalePicker()
+		return true, nil
+	case "esc":
+		m.closeLocalePicker()
+		return true, nil
+	}
+	return false, nil
+}
+
+// applyLocale 应用指定语言并保存到 settings.json。
+func (m *model) applyLocale(loc Locale) {
+	m.lc = messagesFor(loc)
+	// 即时更新 input placeholder
+	m.input.Placeholder = m.msg().InputPlaceholder
+	m.otherInput.Placeholder = m.msg().InputOtherPlaceholder
+	if m.settingsStore != nil {
+		_ = m.settingsStore.SaveLocale(string(loc))
+	}
+}
+
+func (m *model) closeLocalePicker() {
 	m.overlay = overlayNone
 	m.input.Focus()
 }
