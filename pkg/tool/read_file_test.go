@@ -189,8 +189,8 @@ func TestReadFileIsDir_SuggestsMatchingFile(t *testing.T) {
 		t.Fatal(err)
 	}
 	// 干扰文件
-	os.WriteFile(filepath.Join(dir, "helper.py"), []byte("def helper(): pass"), 0o644)
-	os.WriteFile(filepath.Join(dir, "README.md"), []byte("# doc"), 0o644)
+	_ = os.WriteFile(filepath.Join(dir, "helper.py"), []byte("def helper(): pass"), 0o644)
+	_ = os.WriteFile(filepath.Join(dir, "README.md"), []byte("# doc"), 0o644)
 
 	tool := &ReadFile{}
 	result, err := tool.Execute(context.Background(), ReadFileParams{FilePath: dir})
@@ -211,8 +211,8 @@ func TestReadFileIsDir_SuggestsMatchingFile(t *testing.T) {
 func TestReadFileIsDir_SuggestsEntryFile(t *testing.T) {
 	dir := t.TempDir()
 	// 没有目录同名文件，但有 index.ts —— 应优先建议入口文件
-	os.WriteFile(filepath.Join(dir, "index.ts"), []byte("export {}"), 0o644)
-	os.WriteFile(filepath.Join(dir, "utils.ts"), []byte("export {}"), 0o644)
+	_ = os.WriteFile(filepath.Join(dir, "index.ts"), []byte("export {}"), 0o644)
+	_ = os.WriteFile(filepath.Join(dir, "utils.ts"), []byte("export {}"), 0o644)
 
 	tool := &ReadFile{}
 	result, err := tool.Execute(context.Background(), ReadFileParams{FilePath: dir})
@@ -233,11 +233,11 @@ func TestReadFileIsDir_SuggestsEntryFile(t *testing.T) {
 func TestReadFileIsDir_SmartSort(t *testing.T) {
 	dir := t.TempDir()
 	// 创建多种类型的文件和目录
-	os.MkdirAll(filepath.Join(dir, "subdir"), 0o755)
-	os.WriteFile(filepath.Join(dir, "README.md"), []byte("# doc"), 0o644)
-	os.WriteFile(filepath.Join(dir, "main.rs"), []byte("fn main() {}"), 0o644)
-	os.WriteFile(filepath.Join(dir, "lib.py"), []byte("def foo(): pass"), 0o644)
-	os.MkdirAll(filepath.Join(dir, "alpha_dir"), 0o755)
+	_ = os.MkdirAll(filepath.Join(dir, "subdir"), 0o755)
+	_ = os.WriteFile(filepath.Join(dir, "README.md"), []byte("# doc"), 0o644)
+	_ = os.WriteFile(filepath.Join(dir, "main.rs"), []byte("fn main() {}"), 0o644)
+	_ = os.WriteFile(filepath.Join(dir, "lib.py"), []byte("def foo(): pass"), 0o644)
+	_ = os.MkdirAll(filepath.Join(dir, "alpha_dir"), 0o755)
 
 	tool := &ReadFile{}
 	result, err := tool.Execute(context.Background(), ReadFileParams{FilePath: dir})
@@ -289,8 +289,8 @@ func TestReadFileIsDir_SmartSort(t *testing.T) {
 func TestReadFileIsDir_NoSuggestion(t *testing.T) {
 	dir := t.TempDir()
 	// 只有子目录和隐藏文件 — 不应产生文件建议
-	os.MkdirAll(filepath.Join(dir, "subdir"), 0o755)
-	os.WriteFile(filepath.Join(dir, ".hidden"), []byte("secret"), 0o644)
+	_ = os.MkdirAll(filepath.Join(dir, "subdir"), 0o755)
+	_ = os.WriteFile(filepath.Join(dir, ".hidden"), []byte("secret"), 0o644)
 
 	tool := &ReadFile{}
 	result, err := tool.Execute(context.Background(), ReadFileParams{FilePath: dir})
