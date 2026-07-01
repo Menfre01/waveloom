@@ -4355,7 +4355,11 @@ func newSlashRegistry(creator slashcommand.SessionCreator, store slashcommand.Se
 		executor := &tuiSkillExecutor{registry: registry}
 		for _, info := range skills {
 			if info.UserInvocable {
-				r.Register(slashcommand.NewSkillCommand(info, executor))
+				r.Register(slashcommand.NewSkillCommand(slashcommand.SkillDescriptor{
+					Name:        info.Name,
+					Description: info.Description,
+					Args:        info.Args,
+				}, executor))
 			}
 		}
 	}
