@@ -14,7 +14,7 @@ var lspReferencesSchema = json.RawMessage(`{
   "properties": {
     "file_path": {
       "type": "string",
-      "description": "File path (absolute, or relative to working_dir / workspace root). Must be an existing file, not a directory."
+      "description": "File path (absolute, or relative to working_dir / workspace root). Must be an existing source code file, not a directory. Not for .md, .txt, .json, .yaml, or other non-code files."
     },
     "line": {
       "type": "integer",
