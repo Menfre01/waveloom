@@ -49,6 +49,7 @@ import (
 
 	"github.com/Menfre01/waveloom/pkg/agentloop"
 	ctxpkg "github.com/Menfre01/waveloom/pkg/context"
+	"github.com/Menfre01/waveloom/pkg/environment"
 	"github.com/Menfre01/waveloom/pkg/llm"
 	"github.com/Menfre01/waveloom/pkg/pathutil"
 	"github.com/Menfre01/waveloom/pkg/permission"
@@ -432,6 +433,13 @@ type model struct {
 	scrollTop      int  // body 内容区第一可见行在 lines 中的索引
 	pinnedToBottom bool // 是否锁定在底部（自动跟随最新内容）
 	bodyHeight     int  // 上次渲染时 body 区域可用高度（行数），用于翻页计算
+
+	updateCache environment.UpdateCache // 版本更新检查结果缓存
+
+	// 全局通知（footer banner）
+	noticeBanner  string // 非空时在 footer 显示通知（版本更新等）
+	updating      bool   // 更新进行中
+	latestVersion string // 缓存的最新版本号
 }
 
 // ---------------------------------------------------------------------------
@@ -640,13 +648,70 @@ func (m *model) Init() tea.Cmd {
 		m.spAsst.Tick,
 		m.spThought.Tick,
 		m.spTool.Tick,
+		m.checkUpdateCmd(),
 	)
+}
+
+// ---------------------------------------------------------------------------
+// 更新检查
+// ---------------------------------------------------------------------------
+
+type updateCheckMsg struct {
+	info *environment.UpdateInfo
+}
+
+// updateProgressMsg 更新进度推送（下载/解压/安装）。
+type updateProgressMsg struct {
+	phase    string  // "download", "extract", "install", "done"
+	pct      int     // 0-100
+	detail   string  // 人类可读的进度描述
+	err      string  // 非空表示失败
+}
+
+// updateDoneMsg 更新流程完成。
+type updateDoneMsg struct {
+	err   string // 非空表示失败
+	durMs int64  // 更新耗时（毫秒）
+}
+
+func (m *model) checkUpdateCmd() tea.Cmd {
+	return func() tea.Msg {
+		info, err := environment.CheckForUpdate(context.Background(), Version)
+		if err != nil || info == nil {
+			return updateCheckMsg{}
+		}
+		return updateCheckMsg{info: info}
+	}
 }
 
 func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
 
 	switch msg := msg.(type) {
+	// ------------------------------------------------------------------
+	// 更新检查
+	// ------------------------------------------------------------------
+	case updateCheckMsg:
+		if msg.info != nil {
+			m.updateCache.Set(msg.info)
+			if msg.info.UpdateAvailable {
+				m.noticeBanner = fmt.Sprintf("↑ %s available — Enter 更新  Esc 忽略", msg.info.LatestVersion)
+				m.latestVersion = msg.info.LatestVersion
+			}
+		}
+		return m, nil
+
+	// ------------------------------------------------------------------
+	// 更新进度
+	// ------------------------------------------------------------------
+	case updateProgressMsg:
+		m.handleUpdateProgress(msg)
+		return m, nil
+
+	case updateDoneMsg:
+		m.handleUpdateDone(msg)
+		return m, nil
+
 	// ------------------------------------------------------------------
 	// 窗口尺寸
 	// ------------------------------------------------------------------
@@ -1081,6 +1146,10 @@ func (m *model) handleKeyPress(msg tea.KeyPressMsg) (bool, tea.Cmd) {
 		if !m.running {
 			userInput := strings.TrimSpace(m.input.Value())
 			if userInput == "" {
+			// 空 Enter + 更新 banner 可见 → 触发更新
+			if m.noticeBanner != "" && !m.updating {
+					return true, m.startUpdate()
+				}
 				return true, nil
 			}
 			if strings.EqualFold(userInput, "exit") {
@@ -1110,19 +1179,19 @@ func (m *model) handleKeyPress(msg tea.KeyPressMsg) (bool, tea.Cmd) {
 				return true, nil
 			}
 
-			m.input.Reset()
-			return true, m.doTurn(userInput)
-		}
-
-		// running == true：用户输入优先于 agent loop。
-		// 立即中断当前 loop，将输入内容作为新任务启动。
-		userInput := strings.TrimSpace(m.input.Value())
-		if userInput == "" {
-			// 空输入 → 不做任何响应，不中断运行中的 session
-			return true, nil
-		}
 		m.input.Reset()
 		return true, m.doTurn(userInput)
+	}
+
+// running == true：用户输入优先于 agent loop。
+// 立即中断当前 loop，将输入内容作为新任务启动。
+userInput := strings.TrimSpace(m.input.Value())
+if userInput == "" {
+	// 空输入 → 不做任何响应，不中断运行中的 session
+	return true, nil
+}
+m.input.Reset()
+return true, m.doTurn(userInput)
 
 	case key.Matches(msg, m.keys.Interrupt):
 		// 焦点在段落上 → 归位到输入框
@@ -1135,6 +1204,12 @@ func (m *model) handleKeyPress(msg tea.KeyPressMsg) (bool, tea.Cmd) {
 			m.cancelRun = nil
 			return true, nil
 		}
+	// 空闲态 + 通知 banner 可见 → 单击 Esc 关闭通知
+	if !m.running && m.overlay == overlayNone && !m.pickerVisible && m.noticeBanner != "" && !m.updating {
+		m.noticeBanner = ""
+		m.lastEscTime = time.Time{}
+		return true, nil
+	}
 		// 空闲态双击 Esc → 清空输入框
 		if !m.running && m.overlay == overlayNone && !m.pickerVisible {
 			now := time.Now()
@@ -3239,7 +3314,7 @@ func (m *model) View() tea.View {
 	headerHeight := lipgloss.Height(header) + 1 // +1 是 header 后的空行
 
 	footer := m.renderFooter()
-	footerHeight := lipgloss.Height(footer) // 2 行
+	footerHeight := lipgloss.Height(footer) // 2-3 行（有 noticeBanner 时 +1）
 
 	// 固定底部元素（在 styleApp 内）：
 	// separator(1) + input(1) + 空行(1) + footer(footerHeight)
@@ -3485,7 +3560,7 @@ func (m *model) renderHeader() string {
 	sb.WriteString(sidLine)
 	sb.WriteString("\n")
 
-	// 工作区
+	// 工作区（左对齐）+ 更新提示（右对齐），合并为一行
 	cwdDisplay := m.cwd
 	maxCwdLen := contentWidth - 6
 	if maxCwdLen < 10 {
@@ -3495,6 +3570,7 @@ func (m *model) renderHeader() string {
 		cwdDisplay = cwdDisplay[:maxCwdLen] + "..."
 	}
 	cwdPart := styleHeaderAccent.Render("↳ ") + styleHeader.Render(cwdDisplay)
+
 	lineCwd := lipgloss.NewStyle().Width(contentWidth).Render(cwdPart)
 	sb.WriteString(lineCwd)
 
@@ -3527,6 +3603,18 @@ func (m *model) renderFooter() string {
 	contentWidth := max(m.width-4, 20)
 	sep := "  "
 
+	var sb strings.Builder
+
+	// Line 0: 全局通知 banner（版本更新等）
+	if m.noticeBanner != "" {
+		bannerStyle := lipgloss.NewStyle().
+			Foreground(colorAccentGold).
+			Bold(true).
+			Width(contentWidth)
+		sb.WriteString(bannerStyle.Render(m.noticeBanner))
+		sb.WriteString("\n")
+	}
+
 	// Line 1: spinner + model name + ctx progress bar
 	indicator := styleFooterLabel.Render("•") + " "
 	if m.running && m.overlay != overlayQuestion {
@@ -3549,7 +3637,11 @@ func (m *model) renderFooter() string {
 	line2Content := strings.Join(line2Parts, sep)
 	line2 := styleFooter.Width(contentWidth).Render(line2Content)
 
-	return line1 + "\n" + line2
+	sb.WriteString(line1)
+	sb.WriteString("\n")
+	sb.WriteString(line2)
+
+	return sb.String()
 }
 
 // renderCtxBarCompact 渲染固定宽度的上下文窗口进度条（barWidth=20，每格 5%，ratio < 5% 时进度条留空）。
@@ -4444,5 +4536,112 @@ func runTUI(llmClient llm.Client, registry tool.Registry, guard permission.Guard
 		_ = ctxpkg.UpdateRecentSessions(sessionDir, sid, stats.MessageCount)
 		fmt.Fprintf(os.Stderr, "已保存 session: %s\n", sid)
 		fmt.Fprintf(os.Stderr, "  恢复对话: waveloom --resume %s\n", sid)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// 自更新
+// ---------------------------------------------------------------------------
+
+// startUpdate 返回一个 tea.Cmd，在 goroutine 中下载并安装新版本。
+// 进度通过 program.Send 推送到 TUI Update 循环。
+func (m *model) startUpdate() tea.Cmd {
+	m.updating = true
+	m.noticeBanner = "" // 清除 banner，避免重复触发
+
+	// 追加 tool 段落
+	m.paras = append(m.paras, Paragraph{
+		Type:     paraTool,
+		State:    stateStreaming,
+		ToolName: "▲",
+		ToolArgs: "waveloom self-update → " + m.latestVersion,
+	})
+
+	return func() tea.Msg {
+		startTime := time.Now()
+
+		execPath, err := os.Executable()
+		if err != nil {
+			m.program.Send(updateDoneMsg{err: fmt.Sprintf("获取当前二进制路径失败: %v", err), durMs: time.Since(startTime).Milliseconds()})
+			return nil
+		}
+
+		downloadURL := environment.BuildDownloadURL()
+
+		err = environment.SelfUpdate(context.Background(), execPath, downloadURL,
+			func(phase environment.SelfUpdatePhase, pct int, detail string) {
+				m.program.Send(updateProgressMsg{
+					phase:  string(phase),
+					pct:    pct,
+					detail: detail,
+				})
+			})
+
+		durMs := time.Since(startTime).Milliseconds()
+
+		if err != nil {
+			m.program.Send(updateDoneMsg{err: err.Error(), durMs: durMs})
+			return nil
+		}
+
+		m.program.Send(updateDoneMsg{durMs: durMs})
+		return nil
+	}
+}
+
+// handleUpdateProgress 更新 tool 段落的内容。
+func (m *model) handleUpdateProgress(msg updateProgressMsg) {
+	if msg.err != "" {
+		// 进度中的错误转为 done 消息
+		m.program.Send(updateDoneMsg{err: msg.err})
+		return
+	}
+	// 找到最后一个 stateStreaming 的 paraTool 段落
+	for i := len(m.paras) - 1; i >= 0; i-- {
+		p := &m.paras[i]
+		if p.Type == paraTool && p.State == stateStreaming {
+			p.ToolResult += msg.detail + "\n"
+			p.renderDirty = true
+			return
+		}
+	}
+}
+
+// handleUpdateDone 完成或失败更新流程。
+func (m *model) handleUpdateDone(msg updateDoneMsg) {
+	m.updating = false
+
+	// 找到最后一个 streaming tool 段落
+	for i := len(m.paras) - 1; i >= 0; i-- {
+		p := &m.paras[i]
+		if p.Type == paraTool && p.State == stateStreaming {
+			p.ToolDurMs = msg.durMs
+			if msg.err != "" {
+				p.ToolResult += "✗ " + msg.err + "\n"
+				p.ToolError = msg.err
+				p.State = stateError
+			} else {
+				p.State = stateDone
+			}
+			p.renderDirty = true
+			break
+		}
+	}
+
+	if msg.err != "" {
+		m.paras = append(m.paras, Paragraph{
+			Type:      paraSystem,
+			State:     stateDone,
+			Text:      "更新失败。你可以重新打开 waveloom 后重试，或手动运行 install.sh。",
+			NotifKind: notifError,
+		})
+	} else {
+		m.paras = append(m.paras, Paragraph{
+			Type:      paraSystem,
+			State:     stateDone,
+			Text:      fmt.Sprintf("✓ %s 已安装，重启后生效。", m.latestVersion),
+			NotifKind: notifInfo,
+		})
+		m.trimParas()
 	}
 }
