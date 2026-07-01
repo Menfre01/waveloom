@@ -35,7 +35,12 @@ type GrepParams struct {
 type Grep struct{}
 
 func (t *Grep) Name() string            { return "grep" }
-func (t *Grep) Description() string     { return "Search for lines matching a regular expression. Supports glob file filtering and context lines. Returns up to 250 matches." }
+func (t *Grep) Description() string {
+	return "Search for lines matching a regular expression (RE2 syntax). " +
+		"Supports glob file filtering (include parameter) and context lines. Returns up to 250 matches. " +
+		"IMPORTANT: use RE2 regex syntax, not PCRE — no lookahead/lookbehind/backreferences. " +
+		"If pattern returns no results, try a simpler pattern or use search_file to locate files first."
+}
 func (t *Grep) Schema() json.RawMessage { return grepSchema }
 func (t *Grep) ConcurrentSafe() bool    { return true }
 
@@ -55,8 +60,11 @@ func (t *Grep) Execute(ctx context.Context, p GrepParams) (*ToolResult, error) {
 	}
 	re, err := regexp.Compile(pattern)
 	if err != nil {
-		return toolError(ErrorClassRecoverable, ErrKindInvalidArgs,
-			fmt.Sprintf("invalid regex pattern: %v", err), err), nil
+		msg := fmt.Sprintf("invalid regex pattern: %v", err)
+		if hint := pcreHint(p.Pattern); hint != "" {
+			msg += "\n" + hint
+		}
+		return toolError(ErrorClassRecoverable, ErrKindInvalidArgs, msg, err), nil
 	}
 
 	// ── Step 2: 搜索目录 ──
@@ -258,4 +266,39 @@ func formatGrepResults(matches []grepMatch, dir string, pattern string, truncate
 	buf.WriteByte('\n')
 
 	return buf.String()
+}
+
+// pcreHint detects common PCRE-only constructs in a regex pattern and returns
+// a hint for converting to RE2-compatible syntax.
+// Like edit_file's line-number-prefix detection, this catches a frequent LLM mistake
+// before the user has to diagnose it from a raw regex compile error.
+func pcreHint(pattern string) string {
+	// Lookahead / lookbehind — the most common PCRE mistake
+	if strings.Contains(pattern, "(?=") || strings.Contains(pattern, "(?!") ||
+		strings.Contains(pattern, "(?<=") || strings.Contains(pattern, "(?<!") {
+		return "Hint: lookahead/lookbehind are not supported in RE2. Use a simpler pattern or match and filter in a second step."
+	}
+	// Backreferences like \1, \2
+	for i := 1; i <= 9; i++ {
+		if strings.Contains(pattern, fmt.Sprintf("\\%d", i)) {
+			return "Hint: backreferences are not supported in RE2. Use a repeated subpattern or match-and-filter approach."
+		}
+	}
+	// \K (keep out)
+	if strings.Contains(pattern, `\K`) {
+		return "Hint: \\K is a PCRE-only feature. Use a capture group and reference the group instead."
+	}
+	// Recursive / subroutine patterns
+	if strings.Contains(pattern, "(?R)") || strings.Contains(pattern, "(?&") || strings.Contains(pattern, "(?P<") {
+		return "Hint: recursive/subroutine patterns are not supported in RE2. Simplify to a bounded repetition."
+	}
+	// Atomic groups
+	if strings.Contains(pattern, "(?>") {
+		return "Hint: atomic groups are not supported in RE2. Remove the ?> prefix from the group."
+	}
+	// Possessive quantifiers
+	if strings.Contains(pattern, "++") || strings.Contains(pattern, "*+") || strings.Contains(pattern, "?+") {
+		return "Hint: possessive quantifiers are not supported in RE2. Remove the + after the quantifier."
+	}
+	return ""
 }

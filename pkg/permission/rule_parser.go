@@ -62,10 +62,6 @@ func normalizeToolName(name string) string {
 	if strings.EqualFold(name, "Bash") || strings.EqualFold(name, "Shell") {
 		return "bash"
 	}
-	// 兼容存量配置中的小写 "shell"
-	if name == "shell" {
-		return "bash"
-	}
 	return name
 }
 

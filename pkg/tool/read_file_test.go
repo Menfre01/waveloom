@@ -369,3 +369,26 @@ func containsSubstr(s, substr string) bool {
 	}
 	return false
 }
+
+func TestFileExtension(t *testing.T) {
+	tests := []struct {
+		path string
+		want string
+	}{
+		{"foo.go", ".go"},
+		{"path/to/file.txt", ".txt"},
+		{"noextension", ""},
+		{"hidden.rc", ".rc"},
+		{".hidden", ".hidden"},   // dotfile, last dot returns full name
+		{".hidden.txt", ".txt"},  // dotfile with extension, last dot wins
+		{"a/b", ""},
+		{"tar.gz", ".gz"},   // only last extension
+		{"path/to/file", ""},
+	}
+	for _, tt := range tests {
+		got := fileExtension(tt.path)
+		if got != tt.want {
+			t.Errorf("fileExtension(%q) = %q, want %q", tt.path, got, tt.want)
+		}
+	}
+}

@@ -243,3 +243,117 @@ func TestShellPrefixFuzzyMatch(t *testing.T) {
 		})
 	}
 }
+
+// ---------------------------------------------------------------------------
+// REGRESSION: Snapshot / Load — session 序列化/反序列化 0% 覆盖补充
+// ---------------------------------------------------------------------------
+
+func TestSessionMemory_Snapshot(t *testing.T) {
+	sm := NewSessionMemory()
+	sm.Remember("bash", "git status", DecisionAllow)
+	sm.Remember("write_file", "/tmp/test.go", DecisionDeny)
+
+	snap := sm.Snapshot()
+	if len(snap) != 2 {
+		t.Fatalf("Snapshot() returned %d entries, want 2", len(snap))
+	}
+
+	// 验证条目内容
+	foundBash := false
+	foundWrite := false
+	for _, e := range snap {
+		if e.ToolName == "bash" && e.Pattern == "git status" && e.Decision == DecisionAllow {
+			foundBash = true
+		}
+		if e.ToolName == "write_file" && e.Pattern == "/tmp/test.go" && e.Decision == DecisionDeny {
+			foundWrite = true
+		}
+	}
+	if !foundBash {
+		t.Error("snapshot should contain bash entry")
+	}
+	if !foundWrite {
+		t.Error("snapshot should contain write_file entry")
+	}
+}
+
+func TestSessionMemory_Snapshot_Empty(t *testing.T) {
+	sm := NewSessionMemory()
+	snap := sm.Snapshot()
+	if snap == nil {
+		t.Error("Snapshot() on empty memory should return empty slice, not nil")
+	}
+	if len(snap) != 0 {
+		t.Errorf("Snapshot() on empty = %d entries, want 0", len(snap))
+	}
+}
+
+func TestSessionMemory_Load(t *testing.T) {
+	sm := NewSessionMemory()
+
+	entries := []MemoryEntry{
+		{ToolName: "bash", Pattern: "go test", Decision: DecisionAllow},
+		{ToolName: "write_file", Pattern: "/tmp/data.go", Decision: DecisionDeny},
+	}
+	sm.Load(entries)
+
+	if sm.Len() != 2 {
+		t.Fatalf("after Load: Len = %d, want 2", sm.Len())
+	}
+
+	// 验证查找
+	d, found := sm.Lookup("bash", "go test")
+	if !found || d != DecisionAllow {
+		t.Errorf("Load+Lookup bash: Decision = %s, found = %v, want %s/true", d, found, DecisionAllow)
+	}
+
+	d, found = sm.Lookup("write_file", "/tmp/data.go")
+	if !found || d != DecisionDeny {
+		t.Errorf("Load+Lookup write_file: Decision = %s, found = %v, want %s/true", d, found, DecisionDeny)
+	}
+}
+
+func TestSessionMemory_LoadAppend(t *testing.T) {
+	sm := NewSessionMemory()
+	sm.Remember("bash", "existing", DecisionAllow)
+
+	// Load 应追加而非清空
+	sm.Load([]MemoryEntry{
+		{ToolName: "bash", Pattern: "new", Decision: DecisionDeny},
+	})
+
+	if sm.Len() != 2 {
+		t.Fatalf("after Load append: Len = %d, want 2", sm.Len())
+	}
+
+	d, found := sm.Lookup("bash", "existing")
+	if !found || d != DecisionAllow {
+		t.Error("existing entry should be retained after Load")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// REGRESSION: behaviorFromDecision — DecisionAsk 分支
+// ---------------------------------------------------------------------------
+
+func TestBehaviorFromDecision_Ask(t *testing.T) {
+	// DecisionAsk → RuleAsk
+	if behaviorFromDecision(DecisionAsk) != RuleAsk {
+		t.Errorf("behaviorFromDecision(DecisionAsk) = %s, want %s", behaviorFromDecision(DecisionAsk), RuleAsk)
+	}
+}
+
+func TestBehaviorFromDecision_Covered(t *testing.T) {
+	// DecisionAllow → RuleAllow
+	if behaviorFromDecision(DecisionAllow) != RuleAllow {
+		t.Error("behaviorFromDecision(DecisionAllow) should be RuleAllow")
+	}
+	// DecisionDeny → RuleDeny
+	if behaviorFromDecision(DecisionDeny) != RuleDeny {
+		t.Error("behaviorFromDecision(DecisionDeny) should be RuleDeny")
+	}
+	// 未知 → RuleAsk (default)
+	if behaviorFromDecision("unknown") != RuleAsk {
+		t.Error("behaviorFromDecision(unknown) should default to RuleAsk")
+	}
+}

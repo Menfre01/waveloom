@@ -28,7 +28,9 @@ type ReadFile struct{}
 
 func (t *ReadFile) Name() string         { return "read_file" }
 func (t *ReadFile) Description() string {
-	return "Read a file with line numbers. Supports offset and limit parameters to read partial content. IMPORTANT: file_path must be a file, not a directory. Use ls to explore directories first."
+	return "Read a file with line numbers. Supports offset and limit parameters to read partial content. " +
+		"IMPORTANT: file_path must be a file, not a directory. Paths without a file extension (e.g., 'pkg/tool') are likely directories — use ls or search_file to discover files first, then pass the actual filename. " +
+		"On error: if path was a directory, pick a file from the listing in the error; if file not found, check the Did you mean suggestion."
 }
 func (t *ReadFile) Schema() json.RawMessage { return readFileSchema }
 func (t *ReadFile) ConcurrentSafe() bool { return true }

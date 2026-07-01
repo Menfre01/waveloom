@@ -46,6 +46,7 @@ specs/           各组件规格书（修改前先阅读）
 - **独立只读操作并行**（read_file、grep、search_file、lsp_*），写操作串行
 - **优先专用工具**：能用 read_file/grep/search_file/ls 的场景，禁止用 shell 替代
 - **局部修改用 edit_file**，新建或完全覆写才用 write_file
+- **edit_file 铁律**：每次 edit_file 前必须在同一轮工具调用中先 read_file 目标文件（带行号），确认 old_string 精确内容（缩进、空行、标点完全一致），禁止凭记忆编辑。每次 edit_file 后必须 lsp_diagnostic 验证，确认无新错误后才能继续下一处修改。
 - `no_match` → 不要盲目重试，先 read_file 确认 old_string 精确内容（含缩进），再重试
 - `security_violation` → 致命错误，停止当前路径
 
