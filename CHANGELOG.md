@@ -1,5 +1,18 @@
 # Changelog
 
+## [v0.1.0-alpha.8] — 2026-07-01
+
+### 新增功能
+- **Slash 命令中英双语**：SlashMessages 注入机制实现 slash 命令文案根据 locale 自动切换
+- **not_dir 增强**：read_file 传入目录时提供 Did you mean 文件建议，blank-line 自动修正
+
+### 修复
+- **DenialTracker 熔断移除**：连续拒绝后不再封锁所有工具，每个请求独立评估（Step 1.5 移除）
+- **LSP 工具 schema**：增加非代码文件软约束，减少误用
+
+### 重构
+- **组件解耦**：消除 tool / slashcommand / context / agentloop / pathutil 间编译期耦合，提升独立演进能力
+
 ## [v0.1.0-alpha.7] — 2026-07-01
 
 ### 新增功能

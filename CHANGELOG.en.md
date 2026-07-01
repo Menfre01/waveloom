@@ -1,5 +1,18 @@
 # Changelog
 
+## [v0.1.0-alpha.8] — 2026-07-01
+
+### Added
+- **Bilingual slash commands**: SlashMessages injection mechanism enables automatic locale-based slash command text switching
+- **Enhanced not_dir**: read_file on a directory now provides Did you mean file suggestions with blank-line auto-correction
+
+### Fixed
+- **DenialTracker circuit breaker removed**: tools are no longer blocked after consecutive denials; each request is evaluated independently (Step 1.5 removed)
+- **LSP tool schema**: added soft constraints for non-code files to reduce misuse
+
+### Refactored
+- **Component decoupling**: eliminated compile-time coupling among tool / slashcommand / context / agentloop / pathutil for independent evolution
+
 ## [v0.1.0-alpha.7] — 2026-07-01
 
 ### Added

@@ -215,13 +215,25 @@ func summarizeChange(old, new string) string {
 func (t *WriteFile) dirError(path string) *ToolResult {
 	entries, readErr := os.ReadDir(path)
 	if readErr == nil {
+		sortDirEntries(entries)
+
 		var listing strings.Builder
 		fmt.Fprintf(&listing, "Path is a directory, cannot write: %s\n\n", path)
-		listing.WriteString("Use ls for full listing. Top entries:\n")
-		limit := 50
+
+		if suggestion := suggestFileInDir(path, entries); suggestion != "" {
+			fmt.Fprintf(&listing, "Did you mean %s?\n\n", suggestion)
+		}
+
+		const maxDisplay = 50
+		total := len(entries)
+		if total > maxDisplay {
+			fmt.Fprintf(&listing, "Showing first %d of %d entries:\n", maxDisplay, total)
+		} else {
+			listing.WriteString("Contents:\n")
+		}
 		for i, entry := range entries {
-			if i >= limit {
-				fmt.Fprintf(&listing, "  ... and %d more entries\n", len(entries)-limit)
+			if i >= maxDisplay {
+				fmt.Fprintf(&listing, "  ... and %d more entries\n", total-maxDisplay)
 				break
 			}
 			name := entry.Name()

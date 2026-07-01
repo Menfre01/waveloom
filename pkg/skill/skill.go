@@ -18,6 +18,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Menfre01/waveloom/pkg/pathutil"
 	"github.com/Menfre01/waveloom/pkg/permission"
 
 	"gopkg.in/yaml.v3"
@@ -94,7 +95,7 @@ func NewLoader(cwd, homeDir, sessionID, effort string, guard permission.Guard) *
 
 // List 扫描所有 skill 目录和 commands 文件，返回可用 skill 的摘要列表。
 func (l *Loader) List() ([]SkillInfo, error) {
-	projectRoot := findProjectRoot(l.CWD)
+	projectRoot := pathutil.FindProjectRoot(l.CWD)
 
 	// 收集所有 skill 来源，按优先级排序
 	type source struct {
@@ -356,7 +357,7 @@ func (l *Loader) parseSkillInfo(filePath, defaultName string, isFlatFile bool) (
 
 // Load 加载并渲染指定名称的 skill。
 func (l *Loader) Load(name string, args string) (*LoadedSkill, error) {
-	projectRoot := findProjectRoot(l.CWD)
+	projectRoot := pathutil.FindProjectRoot(l.CWD)
 
 	type candidate struct {
 		path       string
@@ -1071,23 +1072,6 @@ func parseArgumentsList(val any) []string {
 		return result
 	default:
 		return nil
-	}
-}
-
-// findProjectRoot 从 cwd 向上查找包含 .git 的目录。
-func findProjectRoot(cwd string) string {
-	dir, _ := filepath.Abs(cwd)
-	for {
-		gitPath := filepath.Join(dir, ".git")
-		info, err := os.Stat(gitPath)
-		if err == nil && (info.IsDir() || info.Mode().IsRegular()) {
-			return dir
-		}
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			return ""
-		}
-		dir = parent
 	}
 }
 

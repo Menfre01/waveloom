@@ -13,6 +13,8 @@ import (
 	"path/filepath"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/Menfre01/waveloom/pkg/pathutil"
 )
 
 const maxBytes = 64 * 1024 // 64KB
@@ -57,7 +59,7 @@ func (l *Loader) Load() (text string, warnings []string, err error) {
 		return "", nil, fmt.Errorf("resolve absolute cwd: %w", absErr)
 	}
 
-	projectRoot := findProjectRoot(absCWD)
+	projectRoot := pathutil.FindProjectRoot(absCWD)
 
 	var dirs []string
 	if projectRoot != "" {
@@ -106,24 +108,6 @@ func (l *Loader) Load() (text string, warnings []string, err error) {
 	}
 
 	return text, warnings, nil
-}
-
-// findProjectRoot 从 cwd 向上查找包含 .git 的目录。
-// 返回绝对路径，未找到返回空字符串。
-func findProjectRoot(cwd string) string {
-	dir := cwd
-	for {
-		gitPath := filepath.Join(dir, ".git")
-		info, err := os.Stat(gitPath)
-		if err == nil && (info.IsDir() || info.Mode().IsRegular()) {
-			return dir
-		}
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			return "" // 到达文件系统根
-		}
-		dir = parent
-	}
 }
 
 // dirChain 返回从 root 到 leaf（含两端）的目录链。

@@ -153,6 +153,22 @@ type Messages struct {
 	SetupConfirmSave     string
 	SetupConfirmBack     string
 
+	// ── Slash commands ────────────────────────────────────
+	SlashNewDescription        string
+	SlashNewCreated            string
+	SlashNewFailed             string // 含 %v
+	SlashModelDescription      string
+	SlashModelListFailed       string // 含 %v
+	SlashModelListFailedNoNet  string
+	SlashModelUnknown          string // 含 %s
+	SlashModelConfigReadFailed string // 含 %v
+	SlashModelConfigSaveFailed string // 含 %v
+	SlashModelSwitched         string // 含 %s
+	SlashThemeDescription      string
+	SlashLocaleDescription     string
+	SlashHelpDescription       string
+	SlashHelpText              string
+
 	// ── CLI help ──────────────────────────────────────────
 	HelpUsageText string
 }
@@ -289,6 +305,40 @@ var zhCN = Messages{
 	SetupSummaryAPIKey:   "API Key",
 	SetupConfirmSave:     "Save  — 确认保存",
 	SetupConfirmBack:     "Back  — 回退修改",
+
+	// Slash commands
+	SlashNewDescription:        "创建全新 session",
+	SlashNewCreated:            "新 session 已创建。",
+	SlashNewFailed:             "创建新 session 失败: %v",
+	SlashModelDescription:      "显示或切换模型",
+	SlashModelListFailed:       "无法获取模型列表: %v",
+	SlashModelListFailedNoNet:  "无法获取模型列表，请检查网络连接后重试。",
+	SlashModelUnknown:          "未知模型: %s。输入 /model 查看可用列表。",
+	SlashModelConfigReadFailed: "读取配置失败: %v",
+	SlashModelConfigSaveFailed: "保存配置失败: %v",
+	SlashModelSwitched:         "模型已切换为 %s。",
+	SlashThemeDescription:      "选择主题（Auto / Dark / Light）",
+	SlashLocaleDescription:     "切换语言（zh-CN / en-US）",
+	SlashHelpDescription:       "显示所有可用命令",
+	SlashHelpText: `使用技巧:
+
+  —— 以下仅在空闲时生效 ——
+  输入 /         查看并补全命令（↑↓ 导航，Enter 确认，Tab 自动补全）
+  输入 @         引用文件（↑↓ 导航，Enter 确认，Tab 深入目录）
+  ↑↓              浏览输入历史
+  Tab / Shift+Tab 段落间导航，Enter 展开 / 折叠
+  Esc（双击）      清空输入框
+  exit            退出程序
+
+  —— 以下任意时刻生效 ——
+  Ctrl+G          循环切换主题（dark → light → auto）
+  Ctrl+E / End    跳到底部
+  Ctrl+C          退出
+  PgUp / PgDn     上下翻页
+  Esc（运行中）     中断当前 Agent 执行
+
+  会话结束时 session 自动保存，使用 waveloom --continue 恢复最近会话。
+  单次执行：waveloom "解释这段代码"`,
 
 	// CLI help
 	HelpUsageText: `Waveloom — Code Agent CLI
@@ -469,6 +519,39 @@ var enUS = Messages{
 	SetupSummaryAPIKey:   "API Key",
 	SetupConfirmSave:     "Save",
 	SetupConfirmBack:     "Back",
+
+	// Slash commands
+	SlashNewDescription:        "Create new session",
+	SlashNewCreated:            "New session created.",
+	SlashNewFailed:             "Failed to create session: %v",
+	SlashModelDescription:      "Show or switch model",
+	SlashModelListFailed:       "Unable to fetch model list: %v",
+	SlashModelListFailedNoNet:  "Unable to fetch model list. Please check your network and retry.",
+	SlashModelUnknown:          "Unknown model: %s. Type /model to see available models.",
+	SlashModelConfigReadFailed: "Failed to read config: %v",
+	SlashModelConfigSaveFailed: "Failed to save config: %v",
+	SlashModelSwitched:         "Model switched to %s.",
+	SlashThemeDescription:      "Select theme (Auto / Dark / Light)",
+	SlashLocaleDescription:     "Switch language (zh-CN / en-US)",
+	SlashHelpDescription:       "Show all available commands",
+	SlashHelpText: `Usage tips:
+
+  —— Idle only ——
+  Type /         View and complete commands (↑↓ navigate, Enter confirm, Tab autocomplete)
+  Type @         Reference files (↑↓ navigate, Enter confirm, Tab dive into directories)
+  ↑↓              Browse input history
+  Tab / Shift+Tab Navigate between paragraphs, Enter expand / collapse
+  Esc (double)    Clear input
+  exit            Exit program
+
+  —— Anytime ——
+  Ctrl+G          Cycle theme (dark → light → auto)
+  Ctrl+E / End    Jump to bottom
+  Ctrl+C          Quit
+  PgUp / PgDn     Page up / down
+  Esc (running)   Interrupt current agent execution
+
+  Sessions are auto-saved on exit. Use waveloom --continue to resume.`,
 
 	// CLI help
 	HelpUsageText: `Waveloom — Code Agent CLI

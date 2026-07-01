@@ -9,6 +9,28 @@ import (
 	"github.com/Menfre01/waveloom/pkg/llm"
 )
 
+// --- Test helpers ---
+
+// testMessagesZhCN 返回中文测试文案，与 cmd/waveloom/i18n.go 中 zhCN 保持一致。
+func testMessagesZhCN() *SlashMessages {
+	return &SlashMessages{
+		NewDescription:        "创建全新 session",
+		NewCreated:            "新 session 已创建。",
+		NewFailed:             "创建新 session 失败: %v",
+		ModelDescription:      "显示或切换模型",
+		ModelListFailed:       "无法获取模型列表: %v",
+		ModelListFailedNoNet:  "无法获取模型列表，请检查网络连接后重试。",
+		ModelUnknown:          "未知模型: %s。输入 /model 查看可用列表。",
+		ModelConfigReadFailed: "读取配置失败: %v",
+		ModelConfigSaveFailed: "保存配置失败: %v",
+		ModelSwitched:         "模型已切换为 %s。",
+		ThemeDescription:      "选择主题（Auto / Dark / Light）",
+		LocaleDescription:     "切换语言（zh-CN / en-US）",
+		HelpDescription:       "显示所有可用命令",
+		HelpText:              "使用技巧:\n\nwaveloom --continue",
+	}
+}
+
 // --- Mocks ---
 
 type mockSessionCreator struct {
@@ -18,10 +40,10 @@ type mockSessionCreator struct {
 func (m *mockSessionCreator) NewSession() error { return m.err }
 
 type mockSettingsStore struct {
-	settings  *llm.LLMSettings
-	loadErr   error
+	settings      *llm.LLMSettings
+	loadErr       error
 	savedSettings *llm.LLMSettings
-	saveErr      error
+	saveErr       error
 }
 
 func (m *mockSettingsStore) LoadLLM() (*llm.LLMSettings, error) {
@@ -52,7 +74,8 @@ func (m *mockModelLister) ListModels(ctx context.Context) ([]llm.ModelInfo, erro
 
 func TestNewCommandSuccess(t *testing.T) {
 	creator := &mockSessionCreator{}
-	cmd := NewNewCommand(creator)
+	msg := testMessagesZhCN()
+	cmd := NewNewCommand(creator, msg)
 	result, err := cmd.Execute(context.Background(), "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -67,7 +90,8 @@ func TestNewCommandSuccess(t *testing.T) {
 
 func TestNewCommandError(t *testing.T) {
 	creator := &mockSessionCreator{err: errors.New("session dir not writable")}
-	cmd := NewNewCommand(creator)
+	msg := testMessagesZhCN()
+	cmd := NewNewCommand(creator, msg)
 	result, err := cmd.Execute(context.Background(), "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -78,13 +102,61 @@ func TestNewCommandError(t *testing.T) {
 }
 
 func TestNewCommandAliases(t *testing.T) {
-	cmd := NewNewCommand(nil)
+	msg := testMessagesZhCN()
+	cmd := NewNewCommand(nil, msg)
 	if cmd.Name() != "new" {
 		t.Errorf("Name = %q, want new", cmd.Name())
 	}
 	aliases := cmd.Aliases()
 	if len(aliases) != 1 || aliases[0] != "clear" {
 		t.Errorf("Aliases = %v, want [clear]", aliases)
+	}
+}
+
+// --- Getters — 验证 SlashMessages 注入后 getter 非空且不会 nil panic ---
+
+func TestNewCommandGetters(t *testing.T) {
+	msg := testMessagesZhCN()
+	cmd := NewNewCommand(nil, msg)
+	if cmd.Name() != "new" {
+		t.Errorf("Name = %q, want new", cmd.Name())
+	}
+	if cmd.Description() != msg.NewDescription {
+		t.Errorf("Description = %q, want %q", cmd.Description(), msg.NewDescription)
+	}
+	if cmd.ArgsPlaceholder() != "" {
+		t.Errorf("ArgsPlaceholder = %q, want empty", cmd.ArgsPlaceholder())
+	}
+}
+
+func TestModelCommandGetters(t *testing.T) {
+	msg := testMessagesZhCN()
+	cmd := NewModelCommand(nil, nil, "deepseek-v4", msg)
+	if cmd.Name() != "model" {
+		t.Errorf("Name = %q, want model", cmd.Name())
+	}
+	if cmd.Description() != msg.ModelDescription {
+		t.Errorf("Description = %q, want %q", cmd.Description(), msg.ModelDescription)
+	}
+	if cmd.ArgsPlaceholder() != "model" {
+		t.Errorf("ArgsPlaceholder = %q, want model", cmd.ArgsPlaceholder())
+	}
+	if aliases := cmd.Aliases(); aliases != nil {
+		t.Errorf("Aliases = %v, want nil", aliases)
+	}
+}
+
+func TestThemeCommandGetters(t *testing.T) {
+	msg := testMessagesZhCN()
+	cmd := NewThemeCommand(msg)
+	if cmd.Description() != msg.ThemeDescription {
+		t.Errorf("Description = %q, want %q", cmd.Description(), msg.ThemeDescription)
+	}
+	if cmd.ArgsPlaceholder() != "" {
+		t.Errorf("ArgsPlaceholder = %q, want empty", cmd.ArgsPlaceholder())
+	}
+	if aliases := cmd.Aliases(); aliases != nil {
+		t.Errorf("Aliases = %v, want nil", aliases)
 	}
 }
 
@@ -97,7 +169,8 @@ func TestModelCommandNoArgsSuccess(t *testing.T) {
 			{ID: "deepseek-v4-flash", Object: "model", OwnedBy: "deepseek"},
 		},
 	}
-	cmd := NewModelCommand(nil, lister, "deepseek-v4-pro")
+	msg := testMessagesZhCN()
+	cmd := NewModelCommand(nil, lister, "deepseek-v4-pro", msg)
 	result, err := cmd.Execute(context.Background(), "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -116,7 +189,8 @@ func TestModelCommandNoArgsSuccess(t *testing.T) {
 
 func TestModelCommandNoArgsAPIError(t *testing.T) {
 	lister := &mockModelLister{err: errors.New("network timeout")}
-	cmd := NewModelCommand(nil, lister, "deepseek-v4-pro")
+	msg := testMessagesZhCN()
+	cmd := NewModelCommand(nil, lister, "deepseek-v4-pro", msg)
 	result, err := cmd.Execute(context.Background(), "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -139,7 +213,8 @@ func TestModelCommandWithArgsSuccess(t *testing.T) {
 			{ID: "deepseek-v4-flash", Object: "model", OwnedBy: "deepseek"},
 		},
 	}
-	cmd := NewModelCommand(store, lister, "deepseek-v4-pro")
+	msg := testMessagesZhCN()
+	cmd := NewModelCommand(store, lister, "deepseek-v4-pro", msg)
 	result, err := cmd.Execute(context.Background(), "deepseek-v4-flash")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -163,7 +238,8 @@ func TestModelCommandWithArgsSuccess(t *testing.T) {
 
 func TestModelCommandWithArgsAPIError(t *testing.T) {
 	lister := &mockModelLister{err: errors.New("network timeout")}
-	cmd := NewModelCommand(nil, lister, "deepseek-v4-pro")
+	msg := testMessagesZhCN()
+	cmd := NewModelCommand(nil, lister, "deepseek-v4-pro", msg)
 	result, err := cmd.Execute(context.Background(), "deepseek-v4-flash")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -182,7 +258,8 @@ func TestModelCommandWithArgsUnknownModel(t *testing.T) {
 			{ID: "deepseek-v4-pro", Object: "model", OwnedBy: "deepseek"},
 		},
 	}
-	cmd := NewModelCommand(nil, lister, "deepseek-v4-pro")
+	msg := testMessagesZhCN()
+	cmd := NewModelCommand(nil, lister, "deepseek-v4-pro", msg)
 	result, err := cmd.Execute(context.Background(), "gpt-nonexistent")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -202,7 +279,8 @@ func TestModelCommandWithArgsLoadError(t *testing.T) {
 			{ID: "deepseek-v4-flash", Object: "model", OwnedBy: "deepseek"},
 		},
 	}
-	cmd := NewModelCommand(store, lister, "deepseek-v4-pro")
+	msg := testMessagesZhCN()
+	cmd := NewModelCommand(store, lister, "deepseek-v4-pro", msg)
 	result, err := cmd.Execute(context.Background(), "deepseek-v4-flash")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -222,7 +300,8 @@ func TestModelCommandWithArgsSaveError(t *testing.T) {
 			{ID: "deepseek-v4-flash", Object: "model", OwnedBy: "deepseek"},
 		},
 	}
-	cmd := NewModelCommand(store, lister, "deepseek-v4-pro")
+	msg := testMessagesZhCN()
+	cmd := NewModelCommand(store, lister, "deepseek-v4-pro", msg)
 	result, err := cmd.Execute(context.Background(), "deepseek-v4-flash")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -235,7 +314,8 @@ func TestModelCommandWithArgsSaveError(t *testing.T) {
 // --- /theme Tests ---
 
 func TestThemeCommand(t *testing.T) {
-	cmd := NewThemeCommand()
+	msg := testMessagesZhCN()
+	cmd := NewThemeCommand(msg)
 	if cmd.Name() != "theme" {
 		t.Errorf("Name = %q, want theme", cmd.Name())
 	}
@@ -255,7 +335,8 @@ func TestThemeCommand(t *testing.T) {
 
 func TestHelpCommandEmpty(t *testing.T) {
 	r := NewRegistry()
-	cmd := NewHelpCommand(r)
+	msg := testMessagesZhCN()
+	cmd := NewHelpCommand(r, msg)
 	result, err := cmd.Execute(context.Background(), "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -267,11 +348,12 @@ func TestHelpCommandEmpty(t *testing.T) {
 
 func TestHelpCommandWithCommands(t *testing.T) {
 	r := NewRegistry()
-	r.Register(NewThemeCommand())
-	r.Register(NewNewCommand(nil))
-	r.Register(NewHelpCommand(r))
+	msg := testMessagesZhCN()
+	r.Register(NewThemeCommand(msg))
+	r.Register(NewNewCommand(nil, msg))
+	r.Register(NewHelpCommand(r, msg))
 
-	cmd := NewHelpCommand(r)
+	cmd := NewHelpCommand(r, msg)
 	result, err := cmd.Execute(context.Background(), "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)

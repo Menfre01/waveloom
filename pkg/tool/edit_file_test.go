@@ -562,27 +562,6 @@ func TestEditFileDiffHunksNoMatch(t *testing.T) {
 	}
 }
 
-// ── normalizeWhitespace ──
-
-func TestNormalizeWhitespace(t *testing.T) {
-	tests := []struct {
-		input, want string
-	}{
-		{"hello world", "hello world"},
-		{"hello   world", "hello world"},
-		{"\thello\t\tworld", "hello world"},
-		{"  hello world  ", "hello world"},
-		{"line1\n\nline2", "line1 line2"},
-		{"\tfunc hello() {\n\t\tfmt.Println(\"hi\")\n\t}", "func hello() { fmt.Println(\"hi\") }"},
-	}
-	for _, tt := range tests {
-		got := normalizeWhitespace(tt.input)
-		if got != tt.want {
-			t.Errorf("normalizeWhitespace(%q) = %q, want %q", tt.input, got, tt.want)
-		}
-	}
-}
-
 // ── tryNormalizedMatch ──
 
 func TestTryNormalizedMatch_WhitespaceMismatch(t *testing.T) {
@@ -771,7 +750,275 @@ func TestEditFileIsDirectory(t *testing.T) {
 	if result.Error.Kind != ErrKindNotDir {
 		t.Errorf("Error.Kind = %q, want %q", result.Error.Kind, ErrKindNotDir)
 	}
-	if !strings.Contains(result.Error.Message, "Top entries:") {
-		t.Error("directory error should list top entries")
+	if !strings.Contains(result.Error.Message, "Contents:") {
+		t.Error("directory error should list contents")
+	}
+}
+
+func TestEditFileIsDirectoryWithFiles(t *testing.T) {
+	dir := t.TempDir()
+	// 在目录中放置文件，覆盖 suggestFileInDir 的 Did you mean 分支
+	if err := os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte("# Project\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	tool := &EditFile{}
+	result, err := tool.Execute(context.Background(), EditFileParams{
+		FilePath:  dir,
+		OldString: "hello",
+		NewString: "goodbye",
+	})
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if result.Error == nil {
+		t.Fatal("Error should not be nil when editing a directory")
+	}
+	if result.Error.Kind != ErrKindNotDir {
+		t.Errorf("Error.Kind = %q, want %q", result.Error.Kind, ErrKindNotDir)
+	}
+	// 非空目录应列出内容
+	if !strings.Contains(result.Error.Message, "Contents:") {
+		t.Error("directory error should list contents")
+	}
+}
+
+// ── buildMultipleMatchError — 多匹配上下文错误 ──
+
+func TestEditFileMultipleMatchesContextualError(t *testing.T) {
+	dir := t.TempDir()
+	filePath := filepath.Join(dir, "code.go")
+	// 两个 cfg.Apply() 出现在不同函数中
+	content := "func init() {\n\tcfg := loadConfig()\n\tcfg.Apply()\n\tregisterRoutes(cfg)\n}\n\nfunc reload() {\n\tcfg.Apply()\n\tlog.Println(\"reloaded\")\n}\n"
+	if err := os.WriteFile(filePath, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	tool := &EditFile{}
+	result, err := tool.Execute(context.Background(), EditFileParams{
+		FilePath:  filePath,
+		OldString: "\tcfg.Apply()",
+		NewString: "\tcfg.ApplyDefaults()",
+	})
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if result.Error == nil {
+		t.Fatal("Error should not be nil for multiple matches")
+	}
+	if result.Error.Kind != ErrKindMultipleMatch {
+		t.Errorf("Error.Kind = %q, want %q", result.Error.Kind, ErrKindMultipleMatch)
+	}
+
+	msg := result.Error.Message
+	// 应包含每个匹配位置的上下文
+	if !strings.Contains(msg, "Occurrence 1") {
+		t.Error("error should list Occurrence 1")
+	}
+	if !strings.Contains(msg, "Occurrence 2") {
+		t.Error("error should list Occurrence 2")
+	}
+	// 应包含行号
+	if !strings.Contains(msg, "line ") {
+		t.Error("error should include line numbers")
+	}
+	// 应包含匹配行的标记
+	if !strings.Contains(msg, " → ") {
+		t.Error("error should mark matching lines with →")
+	}
+	// 应包含周边上下文（init 和 reload 函数）
+	if !strings.Contains(msg, "func init()") {
+		t.Error("error should show context of first match: func init()")
+	}
+	if !strings.Contains(msg, "func reload()") {
+		t.Error("error should show context of second match: func reload()")
+	}
+	// 应包含 actionable 提示
+	if !strings.Contains(msg, "unique surrounding lines") {
+		t.Error("error should suggest adding unique surrounding lines")
+	}
+}
+
+// ── findMatchSkippingBlankLines — 空行容错 ──
+
+func TestEditFileBlankLineTolerance_ExtraBlank(t *testing.T) {
+	dir := t.TempDir()
+	filePath := filepath.Join(dir, "code.go")
+	// 文件中实际有 1 个空行
+	content := "func hello() {\n\n\tfmt.Println(\"hello\")\n}\n"
+	if err := os.WriteFile(filePath, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	tool := &EditFile{}
+	// old_string 有 2 个空行（多余空行）
+	result, err := tool.Execute(context.Background(), EditFileParams{
+		FilePath:  filePath,
+		OldString: "func hello() {\n\n\n\tfmt.Println(\"hello\")\n}",
+		NewString: "func hello() {\n\n\tfmt.Println(\"hi\")\n}",
+	})
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	// 应自动修复成功
+	if result.Error != nil {
+		t.Fatalf("Execute() result.Error = %v, want nil (blank-line tolerance should auto-fix)", result.Error)
+	}
+
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	if !strings.Contains(string(data), `fmt.Println("hi")`) {
+		t.Errorf("file should contain replacement, got: %s", string(data))
+	}
+	// 应标注 blank lines 自动修复
+	if !strings.Contains(result.Content, "blank lines") {
+		t.Errorf("Content should mention blank lines fix: %s", result.Content)
+	}
+}
+
+func TestEditFileBlankLineTolerance_MissingBlank(t *testing.T) {
+	dir := t.TempDir()
+	filePath := filepath.Join(dir, "code.go")
+	// 文件中有 2 个空行
+	content := "func hello() {\n\n\n\tfmt.Println(\"hello\")\n}\n"
+	if err := os.WriteFile(filePath, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	tool := &EditFile{}
+	// old_string 只有 1 个空行（缺少空行）
+	result, err := tool.Execute(context.Background(), EditFileParams{
+		FilePath:  filePath,
+		OldString: "func hello() {\n\n\tfmt.Println(\"hello\")\n}",
+		NewString: "func hello() {\n\n\n\tfmt.Println(\"hi\")\n}",
+	})
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if result.Error != nil {
+		t.Fatalf("Execute() result.Error = %v, want nil (blank-line tolerance should auto-fix)", result.Error)
+	}
+
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	if !strings.Contains(string(data), `fmt.Println("hi")`) {
+		t.Errorf("file should contain replacement, got: %s", string(data))
+	}
+}
+
+func TestEditFileBlankLineCollapseAmbiguous(t *testing.T) {
+	dir := t.TempDir()
+	filePath := filepath.Join(dir, "code.go")
+	// 两个函数非空行完全相同（"func doWork() {" + "fmt.Println(\"hello\")" + "}"），
+	// 仅空行数量不同：第一个无空行，第二个有 1 个空行
+	content := "func doWork() {\n\tfmt.Println(\"hello\")\n}\n\nfunc doWork() {\n\n\tfmt.Println(\"hello\")\n}\n"
+	if err := os.WriteFile(filePath, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	tool := &EditFile{}
+	// old_string 的空行模式与两处都不完全一致（2 个空行），
+	// 但非空行在文件中出现 2 次 → 跳过空行后应检测到不唯一
+	result, err := tool.Execute(context.Background(), EditFileParams{
+		FilePath:  filePath,
+		OldString: "func doWork() {\n\n\n\tfmt.Println(\"hello\")\n}",
+		NewString: "func doWork() {\n\tfmt.Println(\"hi\")\n}",
+	})
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	// Tier 1 归一化匹配失败（空行数不匹配），
+	// Tier 2 跳过空行匹配发现两处非空行结构完全一致 → 不唯一 → 回退到错误
+	if result.Error == nil {
+		t.Fatal("Error should not be nil when non-blank structure is ambiguous")
+	}
+	// 不唯一时走 renderSearchHint，错误 kind 为 no_match
+	if result.Error.Kind != ErrKindNoMatch {
+		t.Errorf("Error.Kind = %q, want %q", result.Error.Kind, ErrKindNoMatch)
+	}
+}
+
+// ── extractNonBlankNormalized ──
+
+func TestExtractNonBlankNormalized(t *testing.T) {
+	lines := []string{"func hello() {", "", "    fmt.Println(\"hi\")", "}", "", ""}
+	nonBlank, lineMap := extractNonBlankNormalized(lines)
+
+	if len(nonBlank) != 3 {
+		t.Fatalf("nonBlank count = %d, want 3", len(nonBlank))
+	}
+	if lineMap[0] != 0 {
+		t.Errorf("lineMap[0] = %d, want 0", lineMap[0])
+	}
+	if lineMap[1] != 2 {
+		t.Errorf("lineMap[1] = %d, want 2 (blank line at idx 1 skipped)", lineMap[1])
+	}
+	if lineMap[2] != 3 {
+		t.Errorf("lineMap[2] = %d, want 3", lineMap[2])
+	}
+	// 空白行被跳过但归一化后仍为空的行不应出现
+	for _, nb := range nonBlank {
+		if strings.TrimSpace(nb) == "" {
+			t.Error("nonBlank should not contain empty strings")
+		}
+	}
+}
+
+// ── formatCharDiffHint ──
+
+func TestFormatCharDiffHint_MidCharDiff(t *testing.T) {
+	query := "m.slashRegistry = newSlashRegistry(sessionCreator, store, lister, modelName, skillLoader, registry"
+	fileLine := "m.slashRegistry = newSlashRegistry(sessionCreator, store, lister, modelName, skillLoader, registry)"
+
+	hint := formatCharDiffHint(query, fileLine)
+	if hint == "" {
+		t.Fatal("expected non-empty char diff hint")
+	}
+	if !strings.Contains(hint, "differs here") {
+		t.Error("hint should mark the difference location")
+	}
+	if !strings.Contains(hint, "File:") {
+		t.Error("hint should show file line")
+	}
+	if !strings.Contains(hint, "Yours:") {
+		t.Error("hint should show your line")
+	}
+}
+
+func TestFormatCharDiffHint_Identical(t *testing.T) {
+	// 完全相同时返回空字符串（防御性处理）
+	hint := formatCharDiffHint("hello", "hello")
+	if hint != "" {
+		t.Errorf("expected empty hint for identical strings, got: %s", hint)
+	}
+}
+
+func TestFormatCharDiffHint_LengthDiff(t *testing.T) {
+	// 长度不同（末尾多了字符）
+	hint := formatCharDiffHint("fmt.Println(x)", "fmt.Println(xyz)")
+	if !strings.Contains(hint, "differs here") {
+		t.Error("hint should mark difference for length mismatch")
+	}
+}
+
+func TestFormatCharDiffHint_LongPrefixTruncated(t *testing.T) {
+	// 公共前缀超过 30 字符时应截断
+	prefix := "this is a very long common prefix that exceeds thirty characters"
+	query := prefix + "AAA"
+	fileLine := prefix + "BBB"
+
+	hint := formatCharDiffHint(query, fileLine)
+	if !strings.Contains(hint, "...") {
+		t.Error("long prefix should be truncated with ...")
+	}
+	if !strings.Contains(hint, "differs here") {
+		t.Error("hint should still mark the difference")
 	}
 }

@@ -400,15 +400,7 @@ func (l *Loop) Run(ctx context.Context, messages []llm.Message) <-chan TurnEvent
 							CacheMissTokens:  lastUsage.CacheMissTokens,
 							ReasoningTokens:  lastUsage.ReasoningTokens,
 							MessageCount:     len(state.Messages) - 1,
-							Compaction: CompactionInfo{
-								TokensSaved:              tick.TokensSaved,
-								Tier:                     tick.Tier,
-								SummaryDone:              tick.Tier3SummaryDone,
-								HardLimitReached:          tick.HardLimitReached,
-								HardLimitReason:           tick.HardLimitReason,
-								UsageRatio:                tick.UsageRatio,
-								Tier3ConsecutiveFailures:  tick.Tier3ConsecutiveFailures,
-							},
+							Compaction: compactionInfoFromTick(tick),
 						}
 					}
 					if tick.HardLimitReached {
@@ -491,15 +483,7 @@ func (l *Loop) Run(ctx context.Context, messages []llm.Message) <-chan TurnEvent
 						CacheMissTokens:  lastUsage.CacheMissTokens,
 						ReasoningTokens:  lastUsage.ReasoningTokens,
 						MessageCount:     len(state.Messages),
-						Compaction: CompactionInfo{
-							TokensSaved:              tick.TokensSaved,
-							Tier:                     tick.Tier,
-							SummaryDone:              tick.Tier3SummaryDone,
-							HardLimitReached:          tick.HardLimitReached,
-							HardLimitReason:           tick.HardLimitReason,
-							UsageRatio:                tick.UsageRatio,
-							Tier3ConsecutiveFailures:  tick.Tier3ConsecutiveFailures,
-						},
+						Compaction: compactionInfoFromTick(tick),
 					}
 				}
 

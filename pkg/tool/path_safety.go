@@ -200,9 +200,9 @@ func ShouldSkipDir(name string) bool {
 }
 
 // ---------------------------------------------------------------------------
-// FindSimilarFile — 在目标文件的父目录中查找相似文件名
-// ---------------------------------------------------------------------------
-
+// FindSimilarFile — 在目标文件的父目录中查找相似文件名（仅当父目录存在时调用）。
+// 返回相对路径（优先相对于 CWD）；未找到足够相似的返回 ""。
+// 阈值：max(3, len(name)/4)，避免把无关文件当"相似"建议。
 func FindSimilarFile(targetPath string) string {
 	dir := filepath.Dir(targetPath)
 	name := filepath.Base(targetPath)
@@ -212,8 +212,22 @@ func FindSimilarFile(targetPath string) string {
 		return ""
 	}
 
+	// 收紧阈值：至少需要 75% 以上字符匹配
+	threshold := len(name) / 4
+	if threshold < 3 {
+		threshold = 3
+	}
+	// 但阈值不能超过文件名长度的 60%，否则只要名字稍长就什么都能匹配
+	maxThreshold := len(name) * 6 / 10
+	if threshold > maxThreshold {
+		threshold = maxThreshold
+	}
+	if threshold < 1 {
+		threshold = 1
+	}
+
 	var best string
-	bestDist := len(name)/2 + 1 // 至少要有一定相似度
+	bestDist := threshold + 1
 
 	for _, e := range entries {
 		if e.IsDir() {
@@ -225,7 +239,17 @@ func FindSimilarFile(targetPath string) string {
 			best = e.Name()
 		}
 	}
-	return best
+	if best == "" {
+		return ""
+	}
+
+	// 返回相对路径（优先相对于 CWD）
+	fullPath := filepath.Join(dir, best)
+	cwd, _ := os.Getwd()
+	if rel, err := filepath.Rel(cwd, fullPath); err == nil && !strings.HasPrefix(rel, "..") {
+		return rel
+	}
+	return fullPath
 }
 
 // editDistance 计算两个字符串的 Levenshtein 距离（简化版，仅用于短字符串）。
