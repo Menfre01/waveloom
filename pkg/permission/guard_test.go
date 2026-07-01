@@ -992,84 +992,56 @@ func TestGuard_Check_FormerlySafeNowAsk(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// REGRESSION: DenialTracker 接入 Check() — 连续拒绝达上限后强制 DENY
+// REGRESSION: 拒绝上限熔断已移除
 // ---------------------------------------------------------------------------
 
-// TestRegression_DenialTrackerBlocksAfterLimit 验证连续拒绝 ≥3 次后，
-// 后续任何 Check() 在 Step 1.5 直接返回 DENY，防止暴力试探。
-func TestRegression_DenialTrackerBlocksAfterLimit(t *testing.T) {
+// TestRegression_NoCircuitBreakerBlocking 验证连续 deny 规则命中后，
+// 后续请求不会被任何熔断器拦截，各自独立走完整的权限检查流程。
+// 回归防护：Step 1.5 DenialTracker.AtLimit() 熔断逻辑已移除，
+// 每个工具调用应独立评估，拒绝历史不应影响后续请求的决策。
+func TestRegression_NoCircuitBreakerBlocking(t *testing.T) {
 	dir := testGuardDir(t)
 	g := NewGuard(WithWorkingDirs(dir))
 
-	// 触发 3 次连续拒绝（通过 deny 规则）
+	// 通过 deny 规则触发 3 次拒绝
 	for i := 0; i < 3; i++ {
 		_ = g.AddRule(Rule{Behavior: RuleDeny, ToolName: "bash"}, ScopeSession)
-	}
-	// 第 1 次：deny rule 命中
-	result := g.Check(context.Background(), "bash", json.RawMessage(`{"command": "ls"}`))
-	if result.Decision != DecisionDeny {
-		t.Fatalf("step 1: expected deny rule to hit, got %s", result.Decision)
-	}
-	// 移除 deny 规则，后续应靠 tracker 拦截
-	_ = g.RemoveRule(Rule{Behavior: RuleDeny, ToolName: "bash"}, ScopeSession)
-	// 确认规则已移除
-	g.ruleEngine.LoadRules(nil)
-
-	// 再触发 2 次 deny（合计 3 次连续）
-	for i := 0; i < 2; i++ {
-		_ = g.AddRule(Rule{Behavior: RuleDeny, ToolName: "bash"}, ScopeSession)
-		result = g.Check(context.Background(), "bash", json.RawMessage(`{"command": "ls"}`))
+		g.Check(context.Background(), "bash", json.RawMessage(`{"command": "git status"}`))
 		_ = g.RemoveRule(Rule{Behavior: RuleDeny, ToolName: "bash"}, ScopeSession)
 		g.ruleEngine.LoadRules(nil)
 	}
 
-	// 验证已达上限
-	if !g.denialTracker.AtLimit() {
-		t.Fatal("denial tracker should be at limit after 3 consecutive denials")
+	// 所有 deny 规则已移除，后续请求应恢复正常流程：
+	// - bash git status（RiskLow）→ 默认 ASK
+	bashResult := g.Check(context.Background(), "bash", json.RawMessage(`{"command": "git status"}`))
+	if bashResult.Decision != DecisionAsk {
+		t.Errorf("bash after denials: Decision = %s, want %s (should not be blocked by circuit breaker)", bashResult.Decision, DecisionAsk)
 	}
 
-	// 此时 deny 规则已全部移除，但 tracker at limit → Step 1.5 应强制 DENY
-	result = g.Check(context.Background(), "bash", json.RawMessage(`{"command": "ls"}`))
-	if result.Decision != DecisionDeny {
-		t.Errorf("after 3 denials: Decision = %s, want %s (tracker should force DENY)", result.Decision, DecisionDeny)
+	// - write_file（RiskClassWrite）→ 默认 ASK
+	absFile := filepath.Join(dir, "src", "new.go")
+	writeInput := json.RawMessage(fmt.Sprintf(`{"file_path": %q}`, absFile))
+	writeResult := g.Check(context.Background(), "write_file", writeInput)
+	if writeResult.Decision != DecisionAsk {
+		t.Errorf("write_file after denials: Decision = %s, want %s (should not be blocked)", writeResult.Decision, DecisionAsk)
 	}
-	if result.Reason != ReasonSafety {
-		t.Errorf("after 3 denials: Reason = %s, want %s", result.Reason, ReasonSafety)
+
+	// - read_file（RiskClassRead）→ 默认 ALLOW
+	readInput := json.RawMessage(fmt.Sprintf(`{"file_path": %q}`, filepath.Join(dir, "src", "main.go")))
+	readResult := g.Check(context.Background(), "read_file", readInput)
+	if readResult.Decision != DecisionAllow {
+		t.Errorf("read_file after denials: Decision = %s, want %s", readResult.Decision, DecisionAllow)
 	}
 
-	// Allow 操作应重置连续计数（但 total 仍较高）
-	g.denialTracker.RecordAllow()
-	g.ruleEngine.LoadRules(nil)
-
-	result = g.Check(context.Background(), "bash", json.RawMessage(`{"command": "ls"}`))
-	// 连续计数已重置，应走默认策略（RiskLow → ASK）
-	if result.Decision == DecisionDeny && result.Reason == ReasonSafety {
-		t.Errorf("after RecordAllow: Decision = %s, want non-denial (consecutive reset)", result.Decision)
-	}
-}
-
-// TestRegression_BuiltinAllowBypassesTracker 验证内置白名单工具不受 DenialTracker 限制。
-func TestRegression_BuiltinAllowBypassesTracker(t *testing.T) {
-	dir := testGuardDir(t)
-	g := NewGuard(WithWorkingDirs(dir))
-
-	// 触发 3 次连续拒绝
+	// 再触发 3 次安全检查拒绝（高危命令）
 	for i := 0; i < 3; i++ {
-		_ = g.AddRule(Rule{Behavior: RuleDeny, ToolName: "read_file"}, ScopeSession)
-		g.Check(context.Background(), "read_file", json.RawMessage(`{"file_path": "/etc/hosts"}`))
-		_ = g.RemoveRule(Rule{Behavior: RuleDeny, ToolName: "read_file"}, ScopeSession)
-		g.ruleEngine.LoadRules(nil)
+		g.Check(context.Background(), "bash", json.RawMessage(`{"command": "rm -rf /"}`))
 	}
 
-	if !g.denialTracker.AtLimit() {
-		t.Fatal("denial tracker should be at limit")
-	}
-
-	// ask_user_question 是 Step 0 内置白名单，不受 tracker 限制
-	args := json.RawMessage(`{"questions":[{"question":"Q?","header":"H","options":[{"label":"A","description":"d"}]}]}`)
-	result := g.Check(context.Background(), "ask_user_question", args)
-	if result.Decision != DecisionAllow {
-		t.Errorf("builtin allow should bypass tracker: Decision = %s, want %s", result.Decision, DecisionAllow)
+	// 后续正常命令同样不受影响
+	bashResult2 := g.Check(context.Background(), "bash", json.RawMessage(`{"command": "git status"}`))
+	if bashResult2.Decision != DecisionAsk {
+		t.Errorf("bash after safety denials: Decision = %s, want %s (should not be blocked)", bashResult2.Decision, DecisionAsk)
 	}
 }
 
