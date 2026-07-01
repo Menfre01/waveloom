@@ -513,5 +513,6 @@ func TestPermItem_TitleDescription(t *testing.T) {
 
 func TestPrintHelp_NoPanic(t *testing.T) {
 	// printHelp 写入 os.Stderr，仅验证不 panic
-	printHelp()
+	printHelp(LocaleEnUS)
+	printHelp(LocaleZhCN)
 }

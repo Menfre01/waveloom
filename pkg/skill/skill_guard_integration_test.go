@@ -13,12 +13,13 @@ import (
 // 1. Load() 时 !`cmd` 通过白名单执行
 // 2. Load() 后白名单持续生效，后续 shell 调用也放行
 // 3. 非白名单命令不受影响
+// 注意：RiskNone 命令（echo/ls/cat 等）始终 ALLOW，此处使用构建工具命令验证白名单。
 func TestSkillWhitelistPersistsAfterLoad(t *testing.T) {
 	home := tmpDir(t)
 
-	// 创建 SKILL.md，whitelist pattern "echo *"
+	// 创建 SKILL.md，whitelist pattern "git *"
 	skillDir := filepath.Join(home, ".claude", "skills", "my-skill")
-	body := "---\ndescription: Test skill\nallowed-tools:\n  - \"Bash(echo *)\"\n---\n" + "!" + "`echo hello-from-inject`"
+	body := "---\ndescription: Test skill\nallowed-tools:\n  - \"Bash(git *)\"\n---\n" + "!" + "`git --version`"
 	writeFile(t, filepath.Join(skillDir, "SKILL.md"), body)
 
 	guard := permission.NewGuard()
@@ -29,18 +30,18 @@ func TestSkillWhitelistPersistsAfterLoad(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load failed: %v", err)
 	}
-	if !strings.Contains(loaded.Body, "hello-from-inject") {
+	if !strings.Contains(loaded.Body, "git version") {
 		t.Errorf("injected output not found in body:\n%s", loaded.Body)
 	}
 
 	// 2. Load 返回后白名单仍在 → 后续 shell 调用也放行
-	output := l.runCommand("echo after-load-whitelisted", "/tmp")
-	if !strings.Contains(output, "after-load-whitelisted") {
+	output := l.runCommand("git --version", "/tmp")
+	if strings.Contains(output, "skill command denied") {
 		t.Errorf("whitelisted command after Load should succeed, got: %q", output)
 	}
 
 	// 3. 非白名单命令走默认策略（shell 默认 ASK → runCommand 拒绝）
-	output = l.runCommand("non-whitelisted-cmd", "/tmp")
+	output = l.runCommand("python --version", "/tmp")
 	if !strings.Contains(output, "skill command denied") {
 		t.Errorf("non-whitelisted command should be denied, got: %q", output)
 	}
@@ -91,43 +92,44 @@ func TestSkillWhitelistFullPathMatch(t *testing.T) {
 
 // TestSkillWhitelistClearsOnNextLoad 验证：
 // 加载新 skill 时旧白名单被清除，新白名单生效。
+// 注意：RiskNone 命令（echo/ls/cat 等纯只读命令）始终 ALLOW，不依赖 skill 白名单。
 func TestSkillWhitelistClearsOnNextLoad(t *testing.T) {
 	home := tmpDir(t)
 
-	// Skill A: whitelist "echo *"
+	// Skill A: whitelist "git *"
 	skillDirA := filepath.Join(home, ".claude", "skills", "skill-a")
-	bodyA := "---\ndescription: Skill A\nallowed-tools:\n  - \"Bash(echo *)\"\n---\nbody-a"
+	bodyA := "---\ndescription: Skill A\nallowed-tools:\n  - \"Bash(git *)\"\n---\nbody-a"
 	writeFile(t, filepath.Join(skillDirA, "SKILL.md"), bodyA)
 
-	// Skill B: whitelist "ls *"（不含 echo）
+	// Skill B: whitelist "go *"（不含 git）
 	skillDirB := filepath.Join(home, ".claude", "skills", "skill-b")
-	bodyB := "---\ndescription: Skill B\nallowed-tools:\n  - \"Bash(ls *)\"\n---\nbody-b"
+	bodyB := "---\ndescription: Skill B\nallowed-tools:\n  - \"Bash(go *)\"\n---\nbody-b"
 	writeFile(t, filepath.Join(skillDirB, "SKILL.md"), bodyB)
 
 	guard := permission.NewGuard()
 	l := NewLoader(home, home, "test-sid", "medium", guard)
 
-	// 加载 Skill A → echo 应被放行
+	// 加载 Skill A → git 应被白名单放行
 	_, err := l.Load("skill-a", "")
 	if err != nil {
 		t.Fatalf("Load skill-a failed: %v", err)
 	}
-	output := l.runCommand("echo test-a", "/tmp")
-	if !strings.Contains(output, "test-a") {
-		t.Errorf("echo should be whitelisted after loading skill-a, got: %q", output)
+	output := l.runCommand("git --version", "/tmp")
+	if strings.Contains(output, "skill command denied") {
+		t.Errorf("git should be whitelisted after loading skill-a, got: %q", output)
 	}
 
-	// 加载 Skill B → echo 白名单应被清除，ls 被放行
+	// 加载 Skill B → git 白名单应被清除，go 被放行
 	_, err = l.Load("skill-b", "")
 	if err != nil {
 		t.Fatalf("Load skill-b failed: %v", err)
 	}
-	output = l.runCommand("echo test-b", "/tmp")
+	output = l.runCommand("git --version", "/tmp")
 	if !strings.Contains(output, "skill command denied") {
-		t.Errorf("echo should NOT be whitelisted after loading skill-b, got: %q", output)
+		t.Errorf("git should NOT be whitelisted after loading skill-b, got: %q", output)
 	}
-	output = l.runCommand("ls /tmp", "/tmp")
-	// ls 应该被 whitelist 放行，但如果 ls 本身在 default 策略被 ASK 也合理
-	// 这里只验证 ls 没有被 deny 规则拦截
-	_ = output
+	output = l.runCommand("go version", "/tmp")
+	if strings.Contains(output, "skill command denied") {
+		t.Errorf("go should be whitelisted after loading skill-b, got: %q", output)
+	}
 }

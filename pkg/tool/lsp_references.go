@@ -14,7 +14,7 @@ var lspReferencesSchema = json.RawMessage(`{
   "properties": {
     "file_path": {
       "type": "string",
-      "description": "File path (absolute, or relative to working_dir / workspace root)"
+      "description": "File path (absolute, or relative to working_dir / workspace root). Must be an existing file, not a directory."
     },
     "line": {
       "type": "integer",
@@ -61,7 +61,9 @@ func (t *LSPReferences) Schema() json.RawMessage { return lspReferencesSchema }
 func (t *LSPReferences) ConcurrentSafe() bool    { return true }
 
 func (t *LSPReferences) Description() string {
-	return "Find all references to a symbol (including its definition). Returns a list of file paths, lines, and columns. Use for tracing dependencies and impact analysis."
+	return "Find all references to a symbol (including its definition). Returns a list of file paths, lines, and columns. " +
+		"Use for tracing dependencies and impact analysis. " +
+		"NOTE: line and character are 0-based (first line = 0, first column = 0)."
 }
 
 func (t *LSPReferences) Execute(ctx context.Context, p LSPReferencesParams) (*ToolResult, error) {
