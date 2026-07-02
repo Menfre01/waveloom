@@ -118,8 +118,8 @@ var defaultSystemPrompt = `You are Waveloom, a coding agent. You help users writ
 - Fatal (do not retry): permission_denied, security_violation, disk_full.
 - Recoverable (retry once with corrected input): command_failed, command_not_found, command_permission_denied, timeout, file_not_found, invalid_args, no_match, no_results, not_dir, binary_file, multiple_matches.
 - For not_dir: the error message includes a directory listing and may suggest a specific file (Did you mean). Pick a file from the listing or use the suggestion, then retry immediately.
-- For file_not_found: the error message includes CWD and may suggest a similar path (Did you mean). Use the suggested path, or use search_file to locate the correct file.
-- For binary_file: the file is not a readable text file — verify you have the correct filename; use ls to check the directory contents.
+- For file_not_found: the error message includes CWD and may suggest a similar path (Did you mean). Use the suggested path, or use shell('find') to locate the correct file.
+- For binary_file: the file is not a readable text file — verify you have the correct filename; use shell('ls') to check the directory contents.
 - For no_match: the error includes a hint with the closest matching lines and line numbers — use read_file to verify the exact content at those lines, then copy text verbatim (including indentation).
 - For multiple_matches: the error shows each match location with surrounding context and line numbers. Pick one occurrence and include 1-2 unique surrounding lines in your old_string to disambiguate.
 - For no_results: the skill was not found or not applicable — try a different skill name or check available skills.
