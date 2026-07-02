@@ -176,6 +176,8 @@ func formatToolArgs(toolName string, argsJSON string, cwd string) string {
 		return name
 	case "ask_user_question":
 		return formatQuestionArgs(argsJSON)
+	case "enter_plan_mode", "exit_plan_mode":
+		return "" // 无参数工具，不显示 {}
 	default:
 		return truncateStr(argsJSON, 50)
 	}
@@ -350,6 +352,10 @@ func toolSuffix(p *Paragraph, lc *Messages) string {
 			return webFetchErrorSuffix(p.ToolErrorKind, p.ToolError)
 		case "edit_file":
 			return editFileErrorSuffix(p.ToolErrorKind, p.ToolError)
+		case "exit_plan_mode":
+			if p.ToolErrorKind == "user_declined" {
+				return "(rejected)"
+			}
 		}
 		// 通用回退：用错误分类作为后缀，避免路径等长信息与预览区重叠
 		return fmt.Sprintf("(%s)", p.ToolErrorKind)
@@ -430,6 +436,10 @@ func toolSuffix(p *Paragraph, lc *Messages) string {
 			n = parseQuestionCount(p.ToolArgs)
 		}
 		return fmt.Sprintf(lc.ToolNQuestions, n)
+	case "enter_plan_mode":
+		return "" // 进入 plan 模式，无额外摘要
+	case "exit_plan_mode":
+		return "" // 审批通过，无额外摘要
 	default:
 		dur := formatDuration(p.ToolDurMs)
 		return fmt.Sprintf("(%s)", dur)

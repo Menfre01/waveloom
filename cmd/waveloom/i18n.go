@@ -30,6 +30,7 @@ type Messages struct {
 	InputOtherPlaceholder     string
 	InputAgentRunning         string
 	InputFocusModePlaceholder string
+	InputPlanModePlaceholder  string
 
 	// ── System notifications ──────────────────────────────
 	SysCompactionDone     string
@@ -113,6 +114,16 @@ type Messages struct {
 	// ── Focus separator ──────────────────────────────────
 	FocusSeparatorHint string
 
+	// ── Plan mode ─────────────────────────────────────────
+	PlanEnterTitle   string
+	PlanEnterDesc1   string
+	PlanEnterDesc2   string
+	PlanEnterConfirm string
+	PlanEnterCancel  string
+	PlanExitTitle    string
+	PlanExitApprove  string
+	PlanExitReject   string
+
 	// ── Header ───────────────────────────────────────────
 	HeaderSession string
 
@@ -183,6 +194,7 @@ var zhCN = Messages{
 	InputOtherPlaceholder:     "输入自定义答案...",
 	InputAgentRunning:         "Agent 执行中... Esc 中断",
 	InputFocusModePlaceholder: "段落已聚焦 · Enter 展开/折叠 · Esc 回到输入",
+	InputPlanModePlaceholder:  "[Plan] 输入消息, Enter 发送 · Shift+Tab 退出",
 
 	// System
 	SysCompactionDone:    "压缩完成。",
@@ -264,7 +276,17 @@ var zhCN = Messages{
 	KeyPaste:       "粘贴",
 
 	// Focus separator
-	FocusSeparatorHint: " ◆ 段落已聚焦  Enter 展开/折叠  Esc 退出焦点模式 ◆ ",
+	FocusSeparatorHint: " ◆ 段落已聚焦 · Enter 展开/折叠 · Esc 退出 ◆ ",
+
+	// Plan mode
+	PlanEnterTitle:   "进入 Plan 模式？",
+	PlanEnterDesc1:   "Agent 将探索代码库并设计实现方案，",
+	PlanEnterDesc2:   "期间无法编辑源文件，方案完成后需你审批。",
+	PlanEnterConfirm: "确认",
+	PlanEnterCancel:  "取消",
+	PlanExitTitle:    "Plan 审批",
+	PlanExitApprove:   "批准",
+	PlanExitReject:    "拒绝，继续修改",
 
 	// Header
 	HeaderSession: "session: ",
@@ -397,6 +419,7 @@ var enUS = Messages{
 	InputOtherPlaceholder:     "Type custom answer...",
 	InputAgentRunning:         "Agent running... Esc to interrupt",
 	InputFocusModePlaceholder: "Paragraph focused · Enter expand/collapse · Esc back to input",
+	InputPlanModePlaceholder:  "[Plan] Type a message, Enter to send · Shift+Tab to exit",
 
 	// System
 	SysCompactionDone:    "Compaction complete.",
@@ -478,7 +501,17 @@ var enUS = Messages{
 	KeyPaste:       "Paste",
 
 	// Focus separator
-	FocusSeparatorHint: " ◆ Paragraph focused  Enter expand/collapse  Esc exit focus ◆ ",
+	FocusSeparatorHint: " ◆ Paragraph focused · Enter expand/collapse · Esc exit ◆ ",
+
+	// Plan mode
+	PlanEnterTitle:   "Enter plan mode?",
+	PlanEnterDesc1:   "Agent will explore the codebase and design an approach,",
+	PlanEnterDesc2:   "source edits are blocked until you approve the plan.",
+	PlanEnterConfirm: "Confirm",
+	PlanEnterCancel:  "Cancel",
+	PlanExitTitle:    "Plan Approval",
+	PlanExitApprove:   "Approve",
+	PlanExitReject:    "Reject, continue editing",
 
 	// Header
 	HeaderSession: "session: ",

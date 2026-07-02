@@ -71,9 +71,10 @@ waveloom
 - **LSP 原生集成** — Agent 主动调用 `lsp_diagnostic` / `lsp_definition` / `lsp_references` / `lsp_hover`，像你一样理解代码
 - **权限安全模型** — 三级决策（allow / deny / ask），规则引擎支持模式匹配，写操作和命令执行需要你确认
 - **会话持久恢复** — 关闭终端几天后 `waveloom --continue` 回来，Agent 记得所有上下文接着工作
-- **14 个内置工具** — `read_file` / `edit_file` / `grep` / `shell` / `web_fetch` / `ask_user_question` / `skill` / LSP 系列，Agent 自主调用
+- **Plan 模式** — 先规划后执行的二阶段工作流：探索设计 → 审批 → 编码。`Shift+Tab` 一键进入/退出，Guard 写保护拦截，`[plan:start]/[plan:end]` 消息对保证前缀缓存不失效。
+- **16 个内置工具** — `read_file` / `edit_file` / `grep` / `shell` / `web_fetch` / `ask_user_question` / `enter_plan_mode` / `exit_plan_mode` / `skill` / LSP 系列，Agent 自主调用
 - **i18n 多语言** — 完整中英双语界面，`--locale` CLI 参数 / `/locale` 命令 / `settings.json` 持久化，LANG 环境变量自动检测
-- **TUI 交互** — `@` 引用文件 / `@` 文件选择器 / `/` 命令面板 / `/locale` 切换语言 / `Tab` 段落导航 / `Ctrl+G` 主题切换
+- **TUI 交互** — `@` 引用文件 / `@` 文件选择器 / `/` 命令面板 / `/locale` 切换语言 / `Tab` 段落导航 / `Shift+Tab` Plan 模式 / `Ctrl+G` 主题切换
 
 ---
 

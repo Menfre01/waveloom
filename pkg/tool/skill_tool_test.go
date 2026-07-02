@@ -143,3 +143,6 @@ func (guardStub) SessionAllow(_ string, _ json.RawMessage)                    {}
 func (guardStub) SessionDeny(_ string, _ json.RawMessage)                     {}
 func (guardStub) ClearSession()                                               {}
 func (guardStub) SessionMemoryLen() int                                       { return 0 }
+func (guardStub) EnterPlanMode(_ string)                                     {}
+func (guardStub) ExitPlanMode()                                              {}
+func (guardStub) SetAvailableBuildTools(_ []string)                          {}

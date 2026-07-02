@@ -23,6 +23,8 @@ const (
 	overlayModelPicker                   // /model 无参触发：模型选择列表
 	overlayLocalePicker                  // /locale 触发：语言选择列表
 	overlayCommandPicker                 // / 命令补全（预留）
+	overlayPlanEnter                     // 进入 plan 模式确认（阻断式）
+	overlayPlanExit                      // plan 审批（阻断式，展示 plan 内容）
 )
 
 // ---------------------------------------------------------------------------
@@ -317,6 +319,68 @@ func (m *model) renderLocalePickerOverlay(boxWidth int) string {
 	m.help.SetWidth(innerWidth)
 	hintWrapper := lipgloss.NewStyle().Foreground(colorMuted).Width(innerWidth)
 	hint := hintWrapper.Render(m.help.ShortHelpView(localePickerKeyBindings(m.msg())))
+	contentLines = append(contentLines, hint)
+
+	boxStyle := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(colorHeaderAccent).
+		Padding(1, 2).
+		Width(boxWidth)
+
+	return boxStyle.Render(strings.Join(contentLines, "\n"))
+}
+
+// ---------------------------------------------------------------------------
+// Plan 进入确认覆盖层渲染
+// ---------------------------------------------------------------------------
+
+func (m *model) renderPlanEnterOverlay(boxWidth int) string {
+	innerWidth := boxWidth - 2 - 4
+	overlayFgStyle := lipgloss.NewStyle().Foreground(colorFooterFg).Width(innerWidth)
+
+	msg := m.msg()
+	title := styleOverlayTitle.Width(innerWidth).Render(msg.PlanEnterTitle)
+	contentLines := []string{title, ""}
+	contentLines = append(contentLines, overlayFgStyle.Render(msg.PlanEnterDesc1))
+	contentLines = append(contentLines, overlayFgStyle.Render(msg.PlanEnterDesc2))
+	contentLines = append(contentLines, "")
+
+	m.help.SetWidth(innerWidth)
+	hintWrapper := lipgloss.NewStyle().Foreground(colorMuted).Width(innerWidth)
+	hint := hintWrapper.Render(m.help.ShortHelpView([]key.Binding{
+		key.NewBinding(key.WithKeys("enter"), key.WithHelp("Enter", msg.PlanEnterConfirm)),
+		key.NewBinding(key.WithKeys("esc"), key.WithHelp("Esc", msg.PlanEnterCancel)),
+	}))
+	contentLines = append(contentLines, hint)
+
+	boxStyle := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(colorHeaderAccent).
+		Padding(1, 2).
+		Width(boxWidth)
+
+	return boxStyle.Render(strings.Join(contentLines, "\n"))
+}
+
+// ---------------------------------------------------------------------------
+// Plan 退出审批覆盖层渲染
+// ---------------------------------------------------------------------------
+
+func (m *model) renderPlanExitOverlay(boxWidth int) string {
+	innerWidth := boxWidth - 2 - 4
+	titleStyle := styleOverlayTitle.Width(innerWidth)
+
+	msg := m.msg()
+	title := titleStyle.Render(msg.PlanExitTitle)
+	contentLines := []string{title}
+
+	m.help.SetWidth(innerWidth)
+	hintWrapper := lipgloss.NewStyle().Foreground(colorMuted).Width(innerWidth)
+	hint := hintWrapper.Render(m.help.ShortHelpView([]key.Binding{
+		key.NewBinding(key.WithKeys("enter"), key.WithHelp("Enter", msg.PlanExitApprove)),
+		key.NewBinding(key.WithKeys("esc"), key.WithHelp("Esc", msg.PlanExitReject)),
+	}))
+	contentLines = append(contentLines, "")
 	contentLines = append(contentLines, hint)
 
 	boxStyle := lipgloss.NewStyle().
