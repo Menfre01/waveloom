@@ -235,24 +235,14 @@ type truncationStrategy struct {
 var toolTruncationStrategies = map[string]truncationStrategy{
 	"read_file":      {200, 150, 10, 4000, 30000},
 	"bash":           {60, 20, 30, 2000, 12000},
-	"grep":           {60, 50, 0, 2000, 15000},
 	"web_fetch":      {200, 150, 10, 4000, 30000},
-	"ls":             {100, 80, 10, 2000, 10000},
-	"search_file":    {80, 60, 10, 2000, 10000},
-	"lsp_diagnostic": {60, 40, 10, 2000, 8000},
-	"lsp_references": {60, 40, 10, 2000, 8000},
 }
 
 // truncatableTools Tier 2 中可替换为占位符的工具集合。
 var truncatableTools = map[string]bool{
 	"read_file":      true,
 	"bash": true,
-	"grep":           true,
 	"web_fetch":      true,
-	"ls":             true,
-	"search_file":    true,
-	"lsp_diagnostic": true,
-	"lsp_references": true,
 }
 
 // ---------------------------------------------------------------------------
