@@ -16,7 +16,7 @@ var completionScripts = map[string]string{
 func runCompletion(shell string) {
 	script, ok := completionScripts[shell]
 	if !ok {
-		fmt.Fprintf(os.Stderr, "不支持的 shell: %s（支持: bash, zsh, fish）\n", shell)
+		fmt.Fprintf(os.Stderr, "Unsupported shell: %s (supported: bash, zsh, fish)\n", shell)
 		os.Exit(1)
 	}
 	fmt.Print(script)

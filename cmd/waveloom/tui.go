@@ -137,7 +137,17 @@ const maxToolResultBytes = 100 * 1024 // 100 KB
 
 // buildSystemPrompt 构造完整的系统提示词。
 // CWD 在会话期间固定，不存在 cd 工具。
-func buildSystemPrompt(cwd string) string {
+func buildSystemPrompt(cwd string, loc Locale) string {
+	prompt := defaultSystemPrompt
+	// 根据 locale 替换 Personality 中的语言指令
+	switch loc {
+	case LocaleEnUS:
+		prompt = strings.Replace(prompt,
+			"- Communicate in Chinese when addressing the user; keep English code and terminal output as-is.",
+			"- Communicate in English when addressing the user.", 1)
+	default:
+		// zh-CN / auto → 保持中文指令不变
+	}
 	cwdInfo := fmt.Sprintf(`
 
 ## Workspace
@@ -151,7 +161,7 @@ All file paths are resolved relative to this directory unless a working_dir is s
 - Shell commands run in isolated subprocesses — "cd" inside a shell command has NO effect on subsequent commands.
 - To operate in a different directory, use the working_dir parameter: {"command":"ls", "working_dir":"/tmp"}
 `, cwd)
-	return defaultSystemPrompt + cwdInfo
+	return prompt + cwdInfo
 }
 
 // keyMap 定义所有快捷键绑定。
@@ -563,7 +573,7 @@ func newTUIModel(llmClient llm.Client, registry tool.Registry, guard permission.
 	}
 
 	cwd, _ := os.Getwd()
-	cm := ctxpkg.New(buildSystemPrompt(cwd))
+	cm := ctxpkg.New(buildSystemPrompt(cwd, loc))
 	lc := messagesFor(loc)
 
 	ti := textinput.New()
@@ -4313,7 +4323,9 @@ func (m *model) handleSlashCommand(input string) tea.Cmd {
 		notifKind := notifInfo
 		// 含错误关键词时用 warn 样式
 		if strings.Contains(result.Text, "失败") || strings.Contains(result.Text, "未知") ||
-			strings.Contains(result.Text, "无法") || strings.Contains(result.Text, "error") {
+			strings.Contains(result.Text, "无法") || strings.Contains(result.Text, "error") ||
+			strings.Contains(result.Text, "failed") || strings.Contains(result.Text, "unknown") ||
+			strings.Contains(result.Text, "unable") {
 			notifKind = notifWarn
 		}
 		m.paras = append(m.paras, Paragraph{
@@ -5011,7 +5023,7 @@ func runTUI(llmClient llm.Client, registry tool.Registry, guard permission.Guard
 	m.initTheme() // 根据 themeMode + 终端背景自动检测并应用主题
 
 	if _, err := p.Run(); err != nil {
-		fmt.Fprintf(os.Stderr, "TUI 运行出错: %v\n", err)
+		fmt.Fprintf(os.Stderr, "TUI runtime error: %v\n", err)
 		os.Exit(1)
 	}
 
@@ -5021,8 +5033,8 @@ func runTUI(llmClient llm.Client, registry tool.Registry, guard permission.Guard
 		// 退出时用最终统计更新 recent.json（覆盖启动时写入的初始值）
 		stats := m.cm.Stats()
 		_ = ctxpkg.UpdateRecentSessions(sessionDir, sid, stats.MessageCount)
-		fmt.Fprintf(os.Stderr, "已保存 session: %s\n", sid)
-		fmt.Fprintf(os.Stderr, "  恢复对话: waveloom --resume %s\n", sid)
+		fmt.Fprintf(os.Stderr, m.lc.SessionSaved, sid)
+		fmt.Fprintf(os.Stderr, m.lc.SessionResumeHint, sid)
 	}
 }
 
@@ -5049,7 +5061,7 @@ func (m *model) startUpdate() tea.Cmd {
 
 		execPath, err := os.Executable()
 		if err != nil {
-			m.program.Send(updateDoneMsg{err: fmt.Sprintf("获取当前二进制路径失败: %v", err), durMs: time.Since(startTime).Milliseconds()})
+			m.program.Send(updateDoneMsg{err: fmt.Sprintf("failed to get current binary path: %v", err), durMs: time.Since(startTime).Milliseconds()})
 			return nil
 		}
 
