@@ -3444,7 +3444,7 @@ func TestExecuteToolCalls_ContextCancelledDuringSerialSend(t *testing.T) {
 		makeToolCall("tc1", "serial_tool", `{}`),
 	}
 
-	ch := make(chan TurnEvent, 0) // 无缓冲 channel — sendEvent 会阻塞
+	ch := make(chan TurnEvent) // 无缓冲 channel — sendEvent 会阻塞
 	// 在 goroutine 中执行，立即取消 ctx
 	go func() {
 		time.Sleep(10 * time.Millisecond)
