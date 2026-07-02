@@ -85,7 +85,7 @@ func (t *LSPDefinition) Execute(ctx context.Context, p LSPDefinitionParams) (*To
 	}, &locations)
 	if err != nil {
 		return toolError(ErrorClassRecoverable, ErrKindCommandFailed,
-			fmt.Sprintf("definition 查询失败: %s", err.Error()), err), nil
+			fmt.Sprintf("definition query failed: %s", err.Error()), err), nil
 	}
 
 	if len(locations) == 0 {
@@ -93,7 +93,7 @@ func (t *LSPDefinition) Execute(ctx context.Context, p LSPDefinitionParams) (*To
 	}
 
 	var b strings.Builder
-	fmt.Fprintf(&b, "找到 %d 个定义:\n\n", len(locations))
+	fmt.Fprintf(&b, "Found %d definitions:\n\n", len(locations))
 	for i, loc := range locations {
 		fmt.Fprintf(&b, "%d. %s\n   L%d:%d - L%d:%d\n",
 			i+1, loc.URI,

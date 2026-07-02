@@ -73,7 +73,7 @@ func parseCLI() CLIConfig {
 	var parseErr error
 	cfg.ContextLimit, parseErr = parseTokenLimit(contextLimitRaw)
 	if parseErr != nil {
-		fmt.Fprintf(os.Stderr, "警告: 无法解析 --context-limit '%s' (%v)，回退为 1M\n", contextLimitRaw, parseErr)
+		fmt.Fprintf(os.Stderr, "Warning: cannot parse --context-limit '%s' (%v), falling back to 1M\n", contextLimitRaw, parseErr)
 		cfg.ContextLimit = 1000000
 	}
 
@@ -83,7 +83,7 @@ func parseCLI() CLIConfig {
 	} else {
 		d, err := time.ParseDuration(cfg.ToolTimeoutRaw)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "警告: 无法解析 --tool-timeout '%s' (%v)，回退为 10m\n", cfg.ToolTimeoutRaw, err)
+			fmt.Fprintf(os.Stderr, "Warning: cannot parse --tool-timeout '%s' (%v), falling back to 10m\n", cfg.ToolTimeoutRaw, err)
 			cfg.ToolTimeout = agentloop.DefaultToolTimeout
 			cfg.ToolTimeoutSource = "默认"
 		} else {
@@ -105,7 +105,7 @@ func parseCLI() CLIConfig {
 			if len(args) >= 2 {
 				cfg.CompletionShell = args[1]
 			} else {
-				fmt.Fprintf(os.Stderr, "用法: waveloom completion <bash|zsh|fish>\n")
+				fmt.Fprintf(os.Stderr, "Usage: waveloom completion <bash|zsh|fish>\n")
 				os.Exit(1)
 			}
 		default:
@@ -118,7 +118,7 @@ func parseCLI() CLIConfig {
 	case "auto", "dark", "light":
 		// ok
 	default:
-		fmt.Fprintf(os.Stderr, "警告: 未知主题 '%s'，回退为 auto\n", cfg.Theme)
+		fmt.Fprintf(os.Stderr, "Warning: unknown theme '%s', falling back to auto\n", cfg.Theme)
 		cfg.Theme = "auto"
 	}
 
@@ -127,7 +127,7 @@ func parseCLI() CLIConfig {
 	case "auto", "zh-CN", "en-US":
 		// ok
 	default:
-		fmt.Fprintf(os.Stderr, "警告: 未知语言 '%s'，回退为 auto\n", cfg.Locale)
+		fmt.Fprintf(os.Stderr, "Warning: unknown locale '%s', falling back to auto\n", cfg.Locale)
 		cfg.Locale = "auto"
 	}
 

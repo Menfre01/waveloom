@@ -54,9 +54,12 @@ func main() {
 	// 3. 解析配置文件路径（全局 + 项目）
 	globalPath, projectPath := resolveSettingsPaths(cfg.SettingsPath)
 
+	// 解析 locale（后续多处使用）
+	loc := resolveLocaleWithSettings(cfg.Locale, projectPath, globalPath)
+
 	// 3.2 设置模式 — 首次配置向导（无需 LLM client）
 	if cfg.Setup {
-		runSetup(resolveLocaleWithSettings(cfg.Locale, projectPath, globalPath))
+		runSetup(loc)
 		return
 	}
 
@@ -68,16 +71,16 @@ func main() {
 
 	// 3.5 ls — 列出最近 sessions（无需 LLM client）
 	if cfg.ListSessions {
-		listSessions(projectPath, globalPath)
+		listSessions(projectPath, globalPath, loc)
 		return
 	}
 
 	// 4. 加载 LLM Client（合并全局和项目配置，项目字段优先；--model 覆盖配置文件）
-	llmClient, llmClientCfg, err := createLLMClient(globalPath, projectPath, cfg.Model)
+	llmClient, llmClientCfg, err := createLLMClient(globalPath, projectPath, cfg.Model, loc)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		if needsSetup() {
-			fmt.Fprintf(os.Stderr, "\n  请运行 waveloom setup 完成首次配置，或设置 LLM_API_KEY 环境变量。\n")
+			fmt.Fprint(os.Stderr, messagesFor(loc).CLINoAPIKeySetupHint)
 		}
 		os.Exit(1)
 	}
@@ -127,7 +130,7 @@ func main() {
 		loader := memory.NewLoader(cwd, homeDir)
 		text, warnings, loadErr := loader.Load()
 		if loadErr != nil {
-			fmt.Fprintf(os.Stderr, "Warning: 加载 AGENTS.md 失败: %v\n", loadErr)
+			fmt.Fprintf(os.Stderr, "Warning: failed to load AGENTS.md: %v\n", loadErr)
 		}
 		for _, w := range warnings {
 			fmt.Fprintf(os.Stderr, "Warning: %s\n", w)
@@ -139,7 +142,7 @@ func main() {
 	if agentsMdText != "" {
 		expanded, _, expandErr := expander.Expand(context.Background(), agentsMdText, cwd)
 		if expandErr != nil {
-			fmt.Fprintf(os.Stderr, "Warning: AGENTS.md @ 引用展开失败: %v\n", expandErr)
+			fmt.Fprintf(os.Stderr, "Warning: AGENTS.md @ reference expansion failed: %v\n", expandErr)
 		} else {
 			agentsMdText = expanded
 		}
@@ -148,7 +151,7 @@ func main() {
 	// 12. 创建 Context Manager（跨 Loop 调用累积消息历史，启用 DeepSeek 前缀缓存）
 	systemPrompt := cfg.SystemPrompt
 	if systemPrompt == "" {
-		systemPrompt = buildSystemPrompt(cwd)
+		systemPrompt = buildSystemPrompt(cwd, loc)
 	}
 
 	// 注入环境探测结果：让 LLM 在首次交互前就知道系统可用工具链，
@@ -205,9 +208,9 @@ func main() {
 		if cfg.ContinueSession {
 			if sid, err := ctxpkg.ContinueSessionID(sessionDir); err == nil && sid != "" {
 				cfg.ResumeSessionID = sid
-				fmt.Fprintf(os.Stderr, "继续最近 session: %s\n", sid)
+				fmt.Fprintf(os.Stderr, messagesFor(loc).CLIContinueSession, sid)
 			} else {
-				fmt.Fprintf(os.Stderr, "没有找到最近的 session，将创建新 session\n")
+				fmt.Fprint(os.Stderr, messagesFor(loc).CLINoRecentSession)
 			}
 		}
 		if cfg.ResumeSessionID != "" {
@@ -217,7 +220,7 @@ func main() {
 				os.Exit(1)
 			}
 			isResume = true
-			fmt.Fprintf(os.Stderr, "已恢复 session: %s\n", cfg.ResumeSessionID)
+			fmt.Fprintf(os.Stderr, messagesFor(loc).CLIResumedSession, cfg.ResumeSessionID)
 		} else {
 			sessionPath := filepath.Join(sessionDir, ctxpkg.NewSessionID()+".json")
 			ctxMgr.SetSessionPath(sessionPath)
@@ -233,12 +236,11 @@ func main() {
 
 	// 15. 分支：无 prompt → 交互式 TUI，有 prompt → 单次执行
 	if cfg.OneShot == "" {
-		loc := resolveLocaleWithSettings(cfg.Locale, projectPath, globalPath)
 		runTUI(llmClient, registry, guard, expander, cfg.Model, cfg.Theme, verboseLog, cfg.ContextLimit, cfg.MaxTurns, cfg.ToolTimeout, cfg.ToolTimeoutSource, cfg.BypassPerm, ctxMgr, isResume, sessionDir, globalPath, projectPath, agentsMdText, loc)
 		return
 	}
 
-	runOneShot(cfg, llmClient, registry, guard, expander, cwd, verboseLog, ctxMgr)
+	runOneShot(cfg, llmClient, registry, guard, expander, cwd, verboseLog, ctxMgr, loc)
 }
 
 // registerBuiltinTools 注册内置工具。
@@ -323,7 +325,7 @@ func resolveSettingsPaths(explicit string) (globalPath, projectPath string) {
 // createLLMClient 合并全局和项目配置创建 LLM Client。
 // 项目配置字段覆盖全局。若均无配置则生成默认项目配置。
 // cliModel 为 --model 命令行参数，非空时覆盖配置文件中的模型名。
-func createLLMClient(globalPath, projectPath, cliModel string) (llm.Client, llm.ClientConfig, error) {
+func createLLMClient(globalPath, projectPath, cliModel string, loc Locale) (llm.Client, llm.ClientConfig, error) {
 	globalSettings, _ := llm.LoadSettingsIfExists(globalPath)
 	projectSettings, _ := llm.LoadSettingsIfExists(projectPath)
 
@@ -332,8 +334,8 @@ func createLLMClient(globalPath, projectPath, cliModel string) (llm.Client, llm.
 		if err := llm.WriteDefaultSettings(projectPath); err != nil {
 			return nil, llm.ClientConfig{}, fmt.Errorf("failed to create default settings: %w", err)
 		}
-		fmt.Fprintf(os.Stderr, "📝 已生成默认配置文件: %s\n", projectPath)
-		fmt.Fprintf(os.Stderr, "   💡 运行 waveloom setup 完成首次配置，或设置 LLM_API_KEY 环境变量\n")
+		fmt.Fprintf(os.Stderr, messagesFor(loc).CLIDefaultConfigCreated, projectPath)
+		fmt.Fprint(os.Stderr, messagesFor(loc).CLISetupHint)
 		var loadErr error
 		projectSettings, loadErr = llm.LoadSettingsIfExists(projectPath)
 		if loadErr != nil {
@@ -379,8 +381,8 @@ func setupVerboseLog(verbose bool) (io.WriteCloser, error) {
 		return nil, fmt.Errorf("create log file: %w", err)
 	}
 
-	fmt.Fprintf(os.Stderr, "📝 verbose 日志: %s\n", logPath)
-	fmt.Fprintf(os.Stderr, "   另一个终端运行: tail -f %s\n", logPath)
+	fmt.Fprintf(os.Stderr, "Verbose log: %s\n", logPath)
+	fmt.Fprintf(os.Stderr, "   Monitor: tail -f %s\n", logPath)
 	return f, nil
 }
 
@@ -439,7 +441,8 @@ func formatEnvironmentSection(results []environment.ProbeResult, cwd, globalPath
 }
 
 // listSessions 列出最近的 sessions（waveloom ls）。
-func listSessions(projectPath, globalPath string) {
+func listSessions(projectPath, globalPath string, loc Locale) {
+	lc := messagesFor(loc)
 	sessionOverride := ctxpkg.LoadSessionDir(projectPath)
 	if sessionOverride == "" {
 		sessionOverride = ctxpkg.LoadSessionDir(globalPath)
@@ -461,16 +464,16 @@ func listSessions(projectPath, globalPath string) {
 		os.Exit(1)
 	}
 	if len(entries) == 0 {
-		fmt.Println("没有找到最近的 session。")
+		fmt.Println(lc.CLILsNoRecent)
 		return
 	}
 
-	fmt.Println("最近 sessions:")
+	fmt.Println(lc.CLILsHeader)
 	for _, e := range entries {
 		fmt.Printf("  %s  (%d messages, %s)\n", e.ID, e.MessageCount, e.UpdatedAt)
 	}
 	fmt.Println()
-	fmt.Println("恢复: waveloom --resume <id>  或  waveloom --continue")
+	fmt.Println(lc.CLILsRestoreHint)
 }
 
 // resolveLocaleWithSettings 解析 locale，优先级：

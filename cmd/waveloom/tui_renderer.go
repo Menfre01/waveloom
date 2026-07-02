@@ -406,14 +406,14 @@ func toolSuffix(p *Paragraph, lc *Messages) string {
 		dur := formatDuration(p.ToolDurMs)
 		return fmt.Sprintf(lc.ToolNDiagnostics, n, e, w, i, h, dur)
 	case "lsp_definition":
-		n := parseLocationCount(p.ToolResult, "定义")
+		n := parseLocationCount(p.ToolResult, "definitions")
 		if n == 0 {
 			return lc.ToolNotFound
 		}
 		dur := formatDuration(p.ToolDurMs)
 		return fmt.Sprintf(lc.ToolNDefinitions, n, dur)
 	case "lsp_references":
-		n := parseLocationCount(p.ToolResult, "引用")
+		n := parseLocationCount(p.ToolResult, "references")
 		if n == 0 {
 			return lc.ToolNotFound
 		}
@@ -553,15 +553,15 @@ func formatTokens(n int) string {
 }
 
 // formatBalance 将余额信息格式化为单行紧凑显示。
-// 优先展示 CNY 余额，若无则取首个币种；不支持时返回空字符串。
+// 优先展示 USD 余额，若无则取首个币种；不支持时返回空字符串。
 func formatBalance(balance *llm.BalanceInfo) string {
 	if balance == nil || len(balance.BalanceInfos) == 0 {
 		return ""
 	}
-	// 优先取 CNY
+	// 优先取 USD
 	var cb *llm.CurrencyBalance
 	for i := range balance.BalanceInfos {
-		if balance.BalanceInfos[i].Currency == "CNY" {
+		if balance.BalanceInfos[i].Currency == "USD" {
 			cb = &balance.BalanceInfos[i]
 			break
 		}
@@ -722,13 +722,13 @@ func parseQuestionCount(jsonStr string) int {
 }
 
 // parseLocationCount 从 lsp_definition/lsp_references 输出首行提取位置数。
-// 格式: "找到 N 个定义:\n" 或 "找到 N 个引用（仅显示前 100 条）:\n"
+// 格式: "Found N definitions:\n" 或 "Found N references:\n"
 func parseLocationCount(output, kind string) int {
 	firstLine := strings.SplitN(output, "\n", 2)[0]
-	if strings.Contains(firstLine, "未找到") {
+	if strings.Contains(firstLine, "No "+kind) {
 		return 0
 	}
-	prefix := "找到 "
+	prefix := "Found "
 	after := strings.TrimPrefix(firstLine, prefix)
 	if after == firstLine {
 		return 0
@@ -1565,8 +1565,8 @@ func renderToolPreview(sb *strings.Builder, p *Paragraph, textWidth int, indent 
 
 	case "lsp_diagnostic":
 		lines := strings.Split(result, "\n")
-		start := 1
-		if len(lines) > 0 && strings.HasPrefix(lines[0], "诊断结果") {
+		start := 0
+		if len(lines) > 0 && (strings.HasPrefix(lines[0], "✓") || strings.Contains(lines[0], "diagnostics")) {
 			start = 1
 		}
 		for _, line := range lines[start:] {
@@ -1582,7 +1582,7 @@ func renderToolPreview(sb *strings.Builder, p *Paragraph, textWidth int, indent 
 		lines := strings.Split(result, "\n")
 		start := 0
 		for i, line := range lines {
-			if strings.HasPrefix(line, "找到 ") {
+			if strings.HasPrefix(line, "Found ") {
 				start = i + 1
 				continue
 			}

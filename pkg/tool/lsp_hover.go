@@ -84,7 +84,7 @@ func (t *LSPHover) Execute(ctx context.Context, p LSPHoverParams) (*ToolResult, 
 	}, &hover)
 	if err != nil {
 		return toolError(ErrorClassRecoverable, ErrKindCommandFailed,
-			fmt.Sprintf("hover 查询失败: %s", err.Error()), err), nil
+			fmt.Sprintf("hover query failed: %s", err.Error()), err), nil
 	}
 
 	if hover.Contents.Value == "" {

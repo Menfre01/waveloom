@@ -180,7 +180,7 @@ func TestCompactionSummarizer_Integration(t *testing.T) {
 	delta := []llm.Message{
 		{Role: llm.RoleUser, Content: "请帮我重构 pkg/compaction/compaction.go 中的 CompactMessages 函数，提取 Tier 判定逻辑为独立函数。"},
 		{Role: llm.RoleAssistant, Content: "好的，我来分析 CompactMessages 的 Tier 判定逻辑。"},
-		{Role: llm.RoleTool, Name: "read_file", Content: "// Package compaction — 四级水位线上下文压缩系统。\n// ...（文件内容已截断）", ToolCallID: "tc1"},
+		{Role: llm.RoleTool, Name: "read_file", Content: "// Package compaction — four-tier context compaction system.\n// ...(file content truncated)", ToolCallID: "tc1"},
 		{Role: llm.RoleAssistant, Content: "已读取文件，Tier 判定逻辑位于 switch 语句中。提取为 determineTier 函数。"},
 	}
 

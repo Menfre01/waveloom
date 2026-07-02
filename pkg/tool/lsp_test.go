@@ -229,7 +229,7 @@ func main() {
 		t.Fatalf("unexpected error: %v", result.Error)
 	}
 	t.Logf("references: %s", result.Content)
-	if !strings.Contains(result.Content, "引用") {
+	if !strings.Contains(result.Content, "references") {
 		t.Errorf("expected references in: %s", result.Content)
 	}
 }
