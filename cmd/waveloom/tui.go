@@ -2288,24 +2288,43 @@ func (m *model) scanFiles() {
 }
 
 // doScanFiles 执行实际的文件扫描（通过 shell find 命令），返回结果。
+// 当 filter 包含 ../ 或绝对路径前缀时，自动切换搜索起点到对应目录。
 func doScanFiles(registry tool.Registry, cwd, filter string) []pickerItem {
 	ctx := context.Background()
 
+	// 解析 filter 中可能的外部目录前缀
+	searchRoot := "."
+	searchDir := cwd
+	if dirPrefix := extractDirPrefix(filter); dirPrefix != "" && dirPrefix != "." {
+		// 若是相对路径，基于 cwd 解析
+		resolved := dirPrefix
+		if !filepath.IsAbs(resolved) {
+			resolved = filepath.Join(cwd, resolved)
+		}
+		resolved = filepath.Clean(resolved)
+		if info, err := os.Stat(resolved); err == nil && info.IsDir() {
+			searchRoot = resolved
+			searchDir = resolved
+		}
+	}
+
 	doSearch := func(namePattern string) (files []string) {
-		cmd := "find . -maxdepth 10 -type f -not -path './.git/*' -not -path './node_modules/*'"
+		cmd := fmt.Sprintf("find %s -maxdepth 10 -type f -not -path '*/.git/*' -not -path '*/node_modules/*'", shellQuote(searchRoot))
 		if namePattern != "" && namePattern != "*" {
 			cmd += fmt.Sprintf(" -name '%s'", namePattern)
 		}
 		cmd += " | sort"
 		jsonBytes, _ := json.Marshal(map[string]string{
 			"command":     cmd,
-			"working_dir": cwd,
+			"working_dir": searchDir,
 		})
 		result, err := registry.Execute(ctx, "bash", jsonBytes)
 		if err != nil || result.IsError() {
 			return nil
 		}
-		return parseFindOutput(result.Content)
+		// 将 find 输出路径转换为相对于 cwd 的路径（模糊过滤 + @ 引用都需要 cwd 相对路径）
+		rawFiles := parseFindOutput(result.Content)
+		return relativizePaths(rawFiles, cwd)
 	}
 
 	var files []string
@@ -2384,6 +2403,50 @@ func parseFindOutput(content string) []string {
 		files = append(files, line)
 	}
 	return files
+}
+
+// extractDirPrefix 从 filter 中提取可能的外部目录前缀。
+// 若 filter 以 /, ~, ., .. 开头，返回其目录部分作为搜索起点。
+func extractDirPrefix(filter string) string {
+	if filter == "" {
+		return ""
+	}
+	if filter[0] == '/' || filter[0] == '~' || filter[0] == '.' {
+		if idx := strings.LastIndex(filter, "/"); idx >= 0 {
+			return filter[:idx+1]
+		}
+		return filter
+	}
+	return ""
+}
+
+// shellQuote 为 shell 命令安全转义路径参数。
+func shellQuote(path string) string {
+	return "'" + strings.ReplaceAll(path, "'", "'\\''") + "'"
+}
+
+// relativizePaths 将绝对路径或 ./ 前缀路径转换为相对于 cwd 的路径。
+// find 在外部目录搜索时输出绝对路径，需要转回 cwd 相对路径以支持模糊过滤和 @ 引用。
+func relativizePaths(paths []string, cwd string) []string {
+	result := make([]string, 0, len(paths))
+	for _, p := range paths {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
+		}
+		// 转绝对路径
+		abs := p
+		if !filepath.IsAbs(abs) {
+			abs = filepath.Join(cwd, abs)
+		}
+		// 转 cwd 相对路径
+		rel, err := filepath.Rel(cwd, abs)
+		if err != nil {
+			rel = abs
+		}
+		result = append(result, rel)
+	}
+	return result
 }
 
 // isHiddenOrBinary 检查路径是否应被过滤。
