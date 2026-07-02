@@ -26,6 +26,14 @@ func (m *mockQuestionResponder) AnswerQuestion(ctx context.Context, questions []
 	return m.responses, nil
 }
 
+func (m *mockQuestionResponder) EnterPlan(ctx context.Context) (bool, error) {
+	return true, nil
+}
+
+func (m *mockQuestionResponder) ApprovePlan(ctx context.Context, plan string) (permission.PlanApproval, error) {
+	return permission.PlanApproval{Approved: true}, nil
+}
+
 func TestExecuteAskUserQuestion_SingleSelect(t *testing.T) {
 	responder := &mockQuestionResponder{
 		responses: []permission.QuestionResponse{

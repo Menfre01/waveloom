@@ -2,8 +2,12 @@ package agentloop
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -213,6 +217,55 @@ func (l *Loop) executeToolCalls(ctx context.Context, calls []llm.ToolCall, state
 		// 改为通过 UserResponder 进行阻塞式交互
 		if t, ok := l.toolRegistry.Get(tc.Name); ok {
 			if uit, ok := t.(tool.UserInteractionTool); ok && uit.RequiresUserInteraction() {
+				// plan 模式工具由 Loop 层面的特殊处理完成
+				if tc.Name == "enter_plan_mode" {
+					result, skipErr := l.executeEnterPlanMode(ctx, tc, state, ch)
+					results[tc.ID] = result
+					durations[tc.ID] = 0
+					ev := ToolCallResult{
+						Turn:         state.TurnCount,
+						ToolCallID:   tc.ID,
+						ToolCallName: tc.Name,
+						DurationMs:   0,
+					}
+					if result.IsError() {
+						ev.Error = result.Error.Message
+						ev.ErrorKind = result.Error.Kind
+					} else {
+						ev.Result = result.Content
+					}
+					if !sendEvent(ctx, ch, ev) {
+						return nil, ReasonAborted, ctx.Err()
+					}
+					if skipErr != nil {
+						return nil, ReasonAborted, skipErr
+					}
+					continue
+				}
+				if tc.Name == "exit_plan_mode" {
+					result, skipErr := l.executeExitPlanMode(ctx, tc, state, ch)
+					results[tc.ID] = result
+					durations[tc.ID] = 0
+					ev := ToolCallResult{
+						Turn:         state.TurnCount,
+						ToolCallID:   tc.ID,
+						ToolCallName: tc.Name,
+						DurationMs:   0,
+					}
+					if result.IsError() {
+						ev.Error = result.Error.Message
+						ev.ErrorKind = result.Error.Kind
+					} else {
+						ev.Result = result.Content
+					}
+					if !sendEvent(ctx, ch, ev) {
+						return nil, ReasonAborted, ctx.Err()
+					}
+					if skipErr != nil {
+						return nil, ReasonAborted, skipErr
+					}
+					continue
+				}
 				result, skipErr := l.executeAskUserQuestion(ctx, tc, state, ch)
 				results[tc.ID] = result
 				durations[tc.ID] = 0
@@ -300,12 +353,38 @@ func (l *Loop) executeToolCalls(ctx context.Context, calls []llm.ToolCall, state
 		}
 	}
 
-	// 5. 构造 tool 消息 + 错误分类检查
+	// 5. 构造 tool 消息 + 错误分类检查 + [plan:start] 注入
 	//
 	// 即使检测到 Fatal 错误，仍为所有 tool call 生成对应的 tool 消息。
 	// 这保证 assistant(tool_calls) 和 tool 消息的配对完整性，避免后续 LLM 调用时
 	// 因孤儿 tool_calls 导致 API 400。
+	//
+	// [plan:start] 必须在 tool 消息之后注入，确保消息序列符合 API 要求：
+	// assistant(tool_calls) → tool(result) → user([plan:start])
 	messages, reason, execErr := l.buildToolMessages(calls, results, skip, state)
+
+	// 若本轮执行了 enter_plan_mode 且成功，在 tool 消息之后注入 [plan:start]
+	// 若本轮执行了 exit_plan_mode 且审批通过，在 tool 消息之后注入 [plan:end]
+	for _, tc := range calls {
+		switch tc.Name {
+		case "enter_plan_mode":
+			if r, ok := results[tc.ID]; ok && !r.IsError() && !skip[tc.ID] {
+				messages = append(messages, llm.Message{
+					Role:    llm.RoleUser,
+					Content: l.planModeStartMessage(),
+				})
+			}
+		case "exit_plan_mode":
+			if r, ok := results[tc.ID]; ok && !r.IsError() && !skip[tc.ID] && l.approvedPlan != "" {
+				messages = append(messages, llm.Message{
+					Role:    llm.RoleUser,
+					Content: l.planModeEndMessage(l.approvedPlan),
+				})
+				l.approvedPlan = "" // 消费后清除
+			}
+		}
+	}
+
 	return messages, reason, execErr
 }
 
@@ -594,4 +673,255 @@ func formatAnswersAsText(questions []QuestionPrompt, responses []QuestionRespons
 		b.WriteString("\n")
 	}
 	return b.String()
+}
+
+// executeEnterPlanMode 处理 enter_plan_mode 工具调用。
+// 通过 UserResponder.EnterPlan() 阻塞等待用户确认，然后设置 plan 模式状态。
+func (l *Loop) executeEnterPlanMode(ctx context.Context, tc llm.ToolCall, state *LoopState, ch chan<- TurnEvent) (*tool.ToolResult, error) {
+	// 已在 plan 模式中（如用户通过 Shift+Tab 提前进入）→ 直接返回成功
+	if l.plan {
+		return &tool.ToolResult{
+			Content: fmt.Sprintf(`Already in plan mode. Continue exploring and designing. Write your plan to %s.
+
+Remember: DO NOT write or edit any source files — these operations will be blocked by the permission system.`, l.config.PlanFile),
+		}, nil
+	}
+
+	if l.config.UserResponder == nil {
+		return &tool.ToolResult{
+			Error: &tool.ToolError{
+				Class:   tool.ErrorClassRecoverable,
+				Kind:    "user_declined",
+				Message: "no user responder available for plan mode",
+			},
+		}, nil
+	}
+
+	confirmed, err := l.config.UserResponder.EnterPlan(ctx)
+	if err != nil || !confirmed {
+		return &tool.ToolResult{
+			Error: &tool.ToolError{
+				Class:   tool.ErrorClassRecoverable,
+				Kind:    "user_declined",
+				Message: "user declined to enter plan mode",
+			},
+		}, nil
+	}
+
+	// 保存进入 plan 前的状态
+	l.prePlanMode = l.config.Guard != nil // 简化：记录是否有 Guard
+	_ = l.prePlanMode
+
+	// 生成 plan 文件路径（如未设置）
+	if l.config.PlanFile == "" {
+		l.config.PlanFile = l.generatePlanFilePath()
+	}
+
+	// 启用 plan 模式
+	l.plan = true
+	l.planPairID = generatePairID()
+	l.config.Guard.EnterPlanMode(l.config.PlanFile)
+
+	emitPlanEnter(ch, state.TurnCount, l.config.PlanFile, l.planPairID)
+
+	return &tool.ToolResult{
+		Content: fmt.Sprintf(`Entered plan mode. You should now focus on exploring the codebase and designing an implementation approach.
+
+In plan mode, you should:
+1. Thoroughly explore the codebase to understand existing patterns
+2. Identify similar features and architectural approaches
+3. Consider multiple approaches and their trade-offs
+4. Use ask_user_question if you need to clarify the approach
+5. Design a concrete implementation strategy
+6. Write your plan to %s
+7. When ready, use exit_plan_mode to present your plan for approval
+
+Remember: DO NOT write or edit any source files — these operations will be blocked by the permission system. Use write_file only for the plan file. Use shell for analysis commands (lint, test, version checks, git log/diff) — destructive commands will be blocked.`, l.config.PlanFile),
+	}, nil
+}
+
+// executeExitPlanMode 处理 exit_plan_mode 工具调用。
+// 读取 plan 文件内容，通过 UserResponder.ApprovePlan() 提交审批。
+func (l *Loop) executeExitPlanMode(ctx context.Context, tc llm.ToolCall, state *LoopState, ch chan<- TurnEvent) (*tool.ToolResult, error) {
+	// 校验：仅 plan 模式下有效
+	if !l.plan {
+		return &tool.ToolResult{
+			Error: &tool.ToolError{
+				Class:   tool.ErrorClassRecoverable,
+				Kind:    tool.ErrKindInvalidArgs,
+				Message: "You are not in plan mode. This tool is only for exiting plan mode after writing a plan.",
+			},
+		}, nil
+	}
+
+	// 读取 plan 文件
+	planContent, err := os.ReadFile(l.config.PlanFile)
+	if err != nil {
+		return &tool.ToolResult{
+			Error: &tool.ToolError{
+				Class:   tool.ErrorClassRecoverable,
+				Kind:    tool.ErrKindFileNotFound,
+				Message: fmt.Sprintf("Plan file not found at %s. Write your plan to this file first using write_file.", l.config.PlanFile),
+			},
+		}, nil
+	}
+
+	if l.config.UserResponder == nil {
+		return &tool.ToolResult{
+			Error: &tool.ToolError{
+				Class:   tool.ErrorClassRecoverable,
+				Kind:    "user_declined",
+				Message: "no user responder available for plan approval",
+			},
+		}, nil
+	}
+
+	planStr := string(planContent)
+
+	approval, err := l.config.UserResponder.ApprovePlan(ctx, planStr)
+	if err != nil {
+		return &tool.ToolResult{
+			Error: &tool.ToolError{
+				Class:   tool.ErrorClassRecoverable,
+				Kind:    "user_declined",
+				Message: err.Error(),
+			},
+		}, nil
+	}
+
+	if !approval.Approved {
+		// 拒绝：留在 plan 模式
+		msg := "User rejected the plan"
+		if approval.Feedback != "" {
+			msg += ": " + approval.Feedback
+		}
+		return &tool.ToolResult{
+			Error: &tool.ToolError{
+				Class:   tool.ErrorClassRecoverable,
+				Kind:    "user_declined",
+				Message: msg,
+			},
+		}, nil
+	}
+
+	// 审批通过：退出 plan 模式
+	l.plan = false
+	l.approvedPlan = planStr // 暂存，由 executeToolCalls 在 tool 消息后注入 [plan:end]
+	l.config.PlanFile = ""   // 清除，确保下次进入生成新文件
+	l.config.Guard.ExitPlanMode()
+
+	emitPlanExit(ch, state.TurnCount, planStr, l.config.PlanFile)
+
+	return &tool.ToolResult{
+		Content: "Plan approved. The approved plan is in the next user message ([plan:end #xxxx]).",
+	}, nil
+}
+
+// planModeStartMessage 返回 [plan:start #xxxx] user 消息。
+func (l *Loop) planModeStartMessage() string {
+	return fmt.Sprintf(`[plan:start #%s] Plan file: %s
+
+You are now in plan mode. Explore the codebase, analyze architectures,
+use shell for analysis (lint, test, git log/diff), ask questions via
+ask_user_question, and write your plan to the file above.
+
+DO NOT write or edit any source files — those will be blocked.
+Call exit_plan_mode when ready.
+
+This message is paired with [plan:end #%s]. You remain in plan mode
+as long as [plan:end #%s] has NOT appeared. Check the message history:
+if you see [plan:end #%s], plan mode has ended. If you only see this
+[plan:start #%s] without its matching end, you are still in plan mode.`, l.planPairID, l.config.PlanFile, l.planPairID, l.planPairID, l.planPairID, l.planPairID)
+}
+
+// planModeEndMessage 返回 [plan:end #xxxx] user 消息（含已审批 plan）。
+func (l *Loop) planModeEndMessage(planContent string) string {
+	return fmt.Sprintf(`[plan:end #%s] Plan approved. You are now in normal mode.
+Start implementing according to the approved plan below.
+
+This message is paired with [plan:start #%s]. Plan mode has ended.
+Ignore any earlier [plan:start #%s] — it is now overridden by this
+[plan:end #%s] marker.
+
+Plan saved to: %s
+
+## Approved Plan:
+%s`, l.planPairID, l.planPairID, l.planPairID, l.planPairID, l.config.PlanFile, planContent)
+}
+
+// generatePairID 生成 4 位 hex 随机配对 ID（如 "a3f7"）。
+func generatePairID() string {
+	b := make([]byte, 2)
+	rand.Read(b)
+	return hex.EncodeToString(b)
+}
+
+// plansDirectory 返回 plan 文件存储目录。
+func (l *Loop) plansDirectory() string {
+	homeDir, _ := os.UserHomeDir()
+	return filepath.Join(homeDir, ".waveloom", "plans")
+}
+
+// generatePlanFilePath 在 plans 目录下生成随机 word slug 文件路径。
+func (l *Loop) generatePlanFilePath() string {
+	plansDir := l.plansDirectory()
+	_ = os.MkdirAll(plansDir, 0o755)
+
+	for i := 0; i < 10; i++ {
+		slug := generateWordSlug()
+		path := filepath.Join(plansDir, slug+".md")
+		if _, err := os.Stat(path); os.IsNotExist(err) {
+			return path
+		}
+	}
+	// 兜底：用随机 hex
+	b := make([]byte, 4)
+	rand.Read(b)
+	return filepath.Join(plansDir, hex.EncodeToString(b)+".md")
+}
+
+// generateWordSlug 生成 "adjective-noun" 格式的随机 slug。
+func generateWordSlug() string {
+	adj := adjectives[randInt(len(adjectives))]
+	noun := nouns[randInt(len(nouns))]
+	return adj + "-" + noun
+}
+
+// randInt 使用 crypto/rand 生成 [0, max) 范围内的随机整数。
+func randInt(max int) int {
+	b := make([]byte, 4)
+	rand.Read(b)
+	return int(uint32(b[0])|uint32(b[1])<<8|uint32(b[2])<<16|uint32(b[3])<<24) % max
+}
+
+// emitPlanEnter 发送 PlanModeEnter 事件到 channel。
+func emitPlanEnter(ch chan<- TurnEvent, turn int, planFile, pairID string) {
+	sendEvent(context.Background(), ch, PlanModeEnter{Turn: turn, PlanFile: planFile, PairID: pairID})
+}
+
+// emitPlanExit 发送 PlanModeExit 事件到 channel。
+func emitPlanExit(ch chan<- TurnEvent, turn int, plan, filePath string) {
+	sendEvent(context.Background(), ch, PlanModeExit{
+		Turn:     turn,
+		Plan:     plan,
+		FilePath: filePath,
+		Approved: true, // 仅在审批通过后调用
+	})
+}
+
+// 词库：用于生成 plan 文件 slug
+var adjectives = []string{
+	"happy", "clever", "brave", "bright", "calm",
+	"eager", "fancy", "fresh", "grand", "green",
+	"jolly", "keen", "lucky", "merry", "noble",
+	"proud", "quick", "sharp", "smart", "swift",
+	"vivid", "warm", "wise", "bold", "cool",
+}
+
+var nouns = []string{
+	"badger", "crane", "dolphin", "eagle", "falcon",
+	"gecko", "heron", "ibis", "jackal", "koala",
+	"lemur", "marlin", "newt", "otter", "puffin",
+	"quokka", "raven", "salmon", "tapir", "urchin",
+	"viper", "weasel", "xerus", "yak", "zebra",
 }

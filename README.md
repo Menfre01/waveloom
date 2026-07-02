@@ -71,9 +71,10 @@ waveloom
 - **Native LSP integration** — Agent proactively calls `lsp_diagnostic` / `lsp_definition` / `lsp_references` / `lsp_hover` to understand your codebase.
 - **Permission safety** — Three-tier decisions (allow / deny / ask) with pattern-matching rule engine. Every write operation requires your confirmation.
 - **Session persistence** — Close the terminal, come back days later with `waveloom --continue`. The agent remembers all prior context.
-- **14 built-in tools** — `read_file` / `edit_file` / `grep` / `shell` / `web_fetch` / `ask_user_question` / `skill` / LSP tools — invoked autonomously by the agent.
+- **Plan Mode** — Two-stage workflow: explore & design first, implement after approval. `Shift+Tab` to enter/exit, Guard-enforced write protection, `[plan:start]/[plan:end]` message pairing for prefix-cache-safe context.
+- **16 built-in tools** — `read_file` / `edit_file` / `grep` / `shell` / `web_fetch` / `ask_user_question` / `enter_plan_mode` / `exit_plan_mode` / `skill` / LSP tools — invoked autonomously by the agent.
 - **i18n multilingual** — Full zh-CN / en-US bilingual UI. `--locale` CLI flag, `/locale` command, `settings.json` persistence, auto-detect from LANG env var.
-- **TUI interactions** — `@` file references / `@` fuzzy file picker / `/` command palette / `/locale` switch language / `Tab` paragraph navigation / `Ctrl+G` theme toggle
+- **TUI interactions** — `@` file references / `@` fuzzy file picker / `/` command palette / `/locale` switch language / `Tab` paragraph navigation / `Shift+Tab` Plan Mode / `Ctrl+G` theme toggle
 
 ---
 

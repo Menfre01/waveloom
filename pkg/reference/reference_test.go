@@ -35,6 +35,9 @@ func (m *mockGuard) SessionAllow(string, json.RawMessage)                       
 func (m *mockGuard) SessionDeny(string, json.RawMessage)                        {}
 func (m *mockGuard) ClearSession()                                               {}
 func (m *mockGuard) SessionMemoryLen() int                                       { return 0 }
+func (m *mockGuard) EnterPlanMode(string)                                        {}
+func (m *mockGuard) ExitPlanMode()                                               {}
+func (m *mockGuard) SetAvailableBuildTools([]string)                             {}
 
 func newMockGuard() *mockGuard {
 	return &mockGuard{decisions: make(map[string]permission.DecisionResult)}

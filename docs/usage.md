@@ -39,7 +39,7 @@ waveloom
 | `↑` `↓` / `PgUp` `PgDn` | 滚动对话历史 |
 | `Ctrl+E` / `End` | 跳到底部 |
 | `Tab` | 聚焦下一个可交互段落（thought / tool 输出） |
-| `Shift+Tab` | 聚焦上一个可交互段落 |
+| `Shift+Tab` | 聚焦上一个可交互段落；无焦点时进入/退出 Plan 模式 |
 | `Enter` | 展开/折叠当前聚焦的段落 |
 | `Ctrl+G` | 切换主题（dark / light / auto） |
 | `Ctrl+C` | 退出 |
@@ -70,6 +70,30 @@ waveloom --resume <session-id>  # 恢复指定会话
 ```
 帮我优化 @pkg/auth/login.go 的错误处理逻辑
 ```
+
+### AGENTS.md 自动加载
+
+## Plan 模式
+
+Plan 模式是"先规划后执行"的二阶段工作流。适合 3 个以上文件改动、涉及架构决策、或存在多种可行方案的任务。
+
+**进入方式**：
+- **快捷键**：空闲态按 `Shift+Tab`（无段落聚焦时）直接进入
+- **Agent 主动调用**：LLM 判断任务复杂度后调用 `enter_plan_mode`，弹出确认框
+
+**Plan 模式下**：
+- 所有工具正常可见，但 `write_file` / `edit_file` 仅允许写入 plan 文件
+- Shell 分析命令（`go test`、`git log`、`npm ls` 等）自动放行，危险命令硬拦截
+- LLM 通过 `ask_user_question` 与你持续沟通澄清需求
+- Plan 内容写入 `~/.waveloom/plans/<slug>.md`
+
+**退出方式**：
+- **快捷键**：plan 模式空闲态按 `Shift+Tab`，弹出审批框确认 approve / reject
+- **Agent 调用**：LLM 就绪后调用 `exit_plan_mode`，同样弹出审批框
+- 审批通过 → 恢复正常模式，LLM 开始编码
+- 审批拒绝 → 留在 plan 模式，LLM 根据反馈修改 plan
+
+输入框左侧 `▌Plan` 标记表示当前处于 Plan 模式。
 
 ### AGENTS.md 自动加载
 

@@ -23,6 +23,8 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -86,6 +88,13 @@ var defaultSystemPrompt = `You are Waveloom, a coding agent. You help users writ
 - Use ls or search_file to explore directories before reading files — never pass a directory path to read_file. Paths without a file extension (e.g., pkg/tool) are likely directories: use ls or search_file first, then pass the actual filename to read_file.
 - For throwaway verification scripts: prefer python, write to /tmp, and clean up after.
   Example: {"command":"python /tmp/check.py && rm /tmp/check.py"}
+
+## Plan Mode
+
+- Call enter_plan_mode ONLY when you need to implement a complex feature or refactoring (3+ files, architectural decisions, multiple valid approaches).
+- Do NOT use plan mode for: code review, bug analysis, performance investigation, explaining code, answering questions, or any task that does not involve writing implementation code.
+- Skip for single-file fixes, trivial bugs, or when the user gives precise step-by-step instructions.
+- Once in plan mode, follow the instructions in the [plan:start] system message.
 
 ## Coding standards
 
@@ -214,6 +223,23 @@ type questionReqMsg struct {
 	questions []permission.QuestionPrompt
 	reply     chan<- []permission.QuestionResponse
 }
+
+// planEnterReqMsg 进入 plan 模式确认请求。
+type planEnterReqMsg struct {
+	reply chan<- bool
+}
+
+// planExitReqMsg 退出 plan 模式审批请求（含 plan 内容）。
+type planExitReqMsg struct {
+	plan  string
+	reply chan<- permission.PlanApproval
+}
+
+// enterPlanModeByUserMsg 用户通过 Shift+Tab 主动进入 plan 模式的消息。
+type enterPlanModeByUserMsg struct{}
+
+// exitPlanModeByUserMsg 用户通过审批界面批准退出 plan 模式的消息。
+type exitPlanModeByUserMsg struct{}
 
 // pickerScanDoneMsg 文件扫描完成消息（异步）。
 type pickerScanDoneMsg struct {
@@ -430,6 +456,15 @@ type model struct {
 
 	// 状态
 	running       bool               // agent loop 正在执行中
+	inPlanMode    bool               // 当前是否在 plan 模式
+	planEnteredByUser bool           // plan 模式由用户快捷键进入（true）还是 LLM 调用 enter_plan_mode（false）
+	planFile      string             // plan 文件路径
+	planPairID    string             // START/END 配对 ID
+	planEnterReply   chan<- bool              // plan 进入确认的 reply channel
+	planExitReply  chan<- permission.PlanApproval // plan 退出审批的 reply channel
+	planExitPending bool              // 用户快捷键退出 plan，下轮需注入 [plan:end]
+	planExitPendingPairID string     // 待注入的配对 ID
+	planStartSent  bool              // [plan:start] 已注入消息历史（退出时需配对 [plan:end]）
 	cancelRun     context.CancelFunc // 取消当前运行的 agent loop（nil 表示无运行中 loop）
 	runGeneration int                // 每次 doTurn 递增，闭包捕获后用于 LoopDone 去重
 	themeMode     string             // 当前主题模式: auto / dark / light
@@ -882,6 +917,23 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case agentloop.PlanModeEnter:
+		m.inPlanMode = true
+		m.planEnteredByUser = false
+		m.planPairID = msg.PairID
+		m.planStartSent = true
+		m.input.Placeholder = m.msg().InputPlanModePlaceholder
+		return m, nil
+
+	case agentloop.PlanModeExit:
+		if msg.Approved {
+			m.inPlanMode = false
+			m.planEnteredByUser = false
+			m.planStartSent = false
+			m.input.Placeholder = m.msg().InputPlaceholder
+		}
+		return m, nil
+
 	case agentloop.LoopDoneWithGen:
 		m.handleLoopDone(msg.LoopDone, msg.Generation)
 		m.flushTranscript()
@@ -917,6 +969,39 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		initCmd := m.questionFormInitCmd
 		m.questionFormInitCmd = nil
 		return m, initCmd
+
+	// ------------------------------------------------------------------
+	// Plan 模式进入确认 / 退出审批（由 tuiUserResponder 推送）
+	// ------------------------------------------------------------------
+	case planEnterReqMsg:
+		m.overlay = overlayPlanEnter
+		m.planEnterReply = msg.reply
+		m.input.Blur()
+		return m, nil
+
+	case planExitReqMsg:
+		// plan 内容作为段落插入消息流（Markdown 渲染），审批框仅显示确认提示
+		m.paras = append(m.paras, Paragraph{
+			Type:  paraAssistant,
+			State: stateDone,
+			Text:  msg.plan,
+		})
+		m.overlay = overlayPlanExit
+		m.planExitReply = msg.reply
+		m.input.Blur()
+		return m, nil
+
+	// ------------------------------------------------------------------
+	// Plan 模式用户快捷键消息
+	// ------------------------------------------------------------------
+	case enterPlanModeByUserMsg:
+		m.inPlanMode = true
+		m.planEnteredByUser = true
+		return m, nil
+
+	case exitPlanModeByUserMsg:
+		m.inPlanMode = false
+		return m, nil
 
 	// ------------------------------------------------------------------
 	// 文件扫描完成（异步）
@@ -1151,6 +1236,68 @@ func (m *model) handleKeyPress(msg tea.KeyPressMsg) (bool, tea.Cmd) {
 	}
 
 	// =====================================================================
+	// 3e. Plan 进入确认活跃时路由
+	// =====================================================================
+	if m.overlay == overlayPlanEnter {
+		keyStr := msg.String()
+		switch keyStr {
+		case "enter":
+			m.overlay = overlayNone
+			m.inPlanMode = true
+			m.planEnteredByUser = false
+			m.input.Placeholder = m.msg().InputPlanModePlaceholder
+			// plan 文件路径和配对 ID 由 Loop 的 executeEnterPlanMode 生成，
+			// [plan:start] 由 Loop 注入消息历史，TUI 不重复管理。
+			if m.planEnterReply != nil {
+				m.planEnterReply <- true
+				m.planEnterReply = nil
+			}
+			m.input.Focus()
+			return true, nil
+		case "esc":
+			m.overlay = overlayNone
+			if m.planEnterReply != nil {
+				m.planEnterReply <- false
+				m.planEnterReply = nil
+			}
+			m.input.Focus()
+			return true, nil
+		}
+		return false, nil
+	}
+
+	// =====================================================================
+	// 3f. Plan 退出审批活跃时路由
+	// =====================================================================
+	if m.overlay == overlayPlanExit {
+		keyStr := msg.String()
+		switch keyStr {
+		case "enter":
+			m.overlay = overlayNone
+			m.inPlanMode = false
+			m.planStartSent = false
+			m.guard.ExitPlanMode()
+			m.input.Placeholder = m.msg().InputPlaceholder
+			if m.planExitReply != nil {
+				m.planExitReply <- permission.PlanApproval{Approved: true}
+				m.planExitReply = nil
+			}
+			m.input.Focus()
+			return true, nil
+		case "esc":
+			m.overlay = overlayNone
+			m.input.Placeholder = m.msg().InputPlanModePlaceholder
+			if m.planExitReply != nil {
+				m.planExitReply <- permission.PlanApproval{Approved: false, Feedback: "user declined the plan"}
+				m.planExitReply = nil
+			}
+			m.input.Focus()
+			return true, nil
+		}
+		return false, nil
+	}
+
+	// =====================================================================
 	// 4. 正常模式快捷键
 	// =====================================================================
 	switch {
@@ -1165,7 +1312,16 @@ func (m *model) handleKeyPress(msg tea.KeyPressMsg) (bool, tea.Cmd) {
 		if m.running || m.overlay != overlayNone || m.pickerVisible {
 			return false, nil
 		}
-		return true, m.focusPrev()
+		if m.focusIndex >= 0 {
+			return true, m.focusPrev()
+		}
+		// 无焦点 → plan 模式切换
+		if m.inPlanMode {
+			// plan 模式中 → 直接退出（用户主动切换，不走审批）
+			return true, m.exitPlanModeByUser()
+		}
+		// 非 plan 模式 → 直接进入 plan 模式
+		return true, m.enterPlanModeByUser()
 
 	case key.Matches(msg, m.keys.Enter):
 		// 焦点在段落上 → 展开/折叠
@@ -1178,10 +1334,10 @@ func (m *model) handleKeyPress(msg tea.KeyPressMsg) (bool, tea.Cmd) {
 			if userInput == "" {
 			// 空 Enter + 更新 banner 可见 → 触发更新
 			if m.noticeBanner != "" && !m.updating {
-					return true, m.startUpdate()
-				}
-				return true, nil
-			}
+			return true, m.startUpdate()
+		}
+		return true, nil
+	}
 			if strings.EqualFold(userInput, "exit") {
 				return true, tea.Quit
 			}
@@ -2475,7 +2631,11 @@ func (m *model) handleLoopDone(ev agentloop.LoopDone, generation int) {
 	if !isStale {
 		m.running = false
 		m.focusIndex = -1
-		m.input.Placeholder = m.msg().InputPlaceholder
+		if m.inPlanMode {
+			m.input.Placeholder = m.msg().InputPlanModePlaceholder
+		} else {
+			m.input.Placeholder = m.msg().InputPlaceholder
+		}
 		m.cancelRun = nil
 
 		// 计算延迟（必须在 CompleteRun 之前，因为 CompleteRun 需要 durationMs）
@@ -2996,6 +3156,41 @@ func (m *model) streamingIsLastOnly() bool {
 // Agent Loop 集成
 // ---------------------------------------------------------------------------
 
+// enterPlanModeByUser 用户通过 Shift+Tab 快捷键直接进入 plan 模式。
+func (m *model) enterPlanModeByUser() tea.Cmd {
+	m.inPlanMode = true
+	m.planEnteredByUser = true
+	m.input.Placeholder = m.msg().InputPlanModePlaceholder
+	// 生成 plan 文件路径 + 配对 ID（Guard 由 loop.SetPlanMode 在 doTurn 时激活）
+	m.planFile = m.generatePlanFilePath()
+	m.planPairID = generatePairIDForTUI()
+	// 直接设置状态即可，Update 返回后 Bubble Tea 会自动重绘。
+	// 不调用 m.program.Send() —— 在 Update 内同步 Send 会导致死锁：
+	// Send 写入 unbuffered p.msgs channel，而主循环在 Update 返回前不会读 channel。
+	return nil
+}
+
+// exitPlanModeByUser 用户通过 Shift+Tab 快捷键直接退出 plan 模式（不走审批）。
+//
+// 无论进入方式（用户快捷键 / LLM enter_plan_mode），均注入 [plan:end] 通知 LLM。
+// Guard 恢复由 TUI 管理（用户入口）或 Loop 后续处理（LLM 入口，Agent 下次执行时
+// executeExitPlanMode 会再次调用 Guard.ExitPlanMode，重复调用无害）。
+func (m *model) exitPlanModeByUser() tea.Cmd {
+	m.guard.ExitPlanMode()
+	m.loop.ResetPlanMode()
+	if m.planStartSent && m.planPairID != "" {
+		m.planExitPending = true
+		m.planExitPendingPairID = m.planPairID
+	}
+	m.inPlanMode = false
+	m.planEnteredByUser = false
+	m.planFile = ""
+	m.planPairID = ""
+	m.planStartSent = false
+	m.input.Placeholder = m.msg().InputPlaceholder
+	return nil
+}
+
 // doTurn 启动一轮真实的 agent loop 执行（异步流式）。
 func (m *model) doTurn(userInput string) tea.Cmd {
 	// 关闭文件选择器（如有）
@@ -3015,6 +3210,28 @@ func (m *model) doTurn(userInput string) tea.Cmd {
 
 	// 1. PrepareRun — 使用展开后的输入
 	messagesSnapshot := m.cm.PrepareRun(expanded)
+
+	// 1.4 上轮用户快捷键退出 plan 模式 → 注入 [plan:end] 通知 LLM
+	if m.planExitPending {
+		endMsg := llm.Message{
+			Role:    llm.RoleUser,
+			Content: fmt.Sprintf("[plan:end #%s] User exited plan mode. You are now in normal mode.", m.planExitPendingPairID),
+		}
+		messagesSnapshot = append(messagesSnapshot, endMsg)
+		m.planExitPending = false
+		m.planExitPendingPairID = ""
+	}
+
+	// 1.5 如果当前处于 plan 模式（用户快捷键进入），注入 [plan:start] 消息并配置 Loop
+	// 仅在首次进入时注入，后续轮次不重复注入（避免产生多个 [plan:start] 孤对）
+	if m.inPlanMode && m.planFile != "" && !m.planStartSent {
+		m.loop.SetPlanFile(m.planFile)
+		pairID, startMsg := m.loop.SetPlanMode(m.planFile)
+		m.planPairID = pairID
+		m.planStartSent = true
+		// 在 user 消息之后注入 plan:start
+		messagesSnapshot = append(messagesSnapshot, startMsg)
+	}
 
 	// ctx bar 保持上轮压缩后值，待 TurnStats 用 API PromptTokens 更新
 
@@ -3323,6 +3540,18 @@ func (m *model) View() tea.View {
 			boxWidth = 50
 		}
 		overlayContent = m.renderLocalePickerOverlay(boxWidth)
+	case overlayPlanEnter:
+		boxWidth := contentWidth
+		if boxWidth > 70 {
+			boxWidth = 70
+		}
+		overlayContent = m.renderPlanEnterOverlay(boxWidth)
+	case overlayPlanExit:
+		boxWidth := contentWidth
+		if boxWidth > 80 {
+			boxWidth = 80
+		}
+		overlayContent = m.renderPlanExitOverlay(boxWidth)
 	}
 	var pickerContent string
 	if m.pickerVisible {
@@ -3351,7 +3580,7 @@ func (m *model) View() tea.View {
 	headerHeight := lipgloss.Height(header) + 1 // +1 是 header 后的空行
 
 	footer := m.renderFooter()
-	footerHeight := lipgloss.Height(footer) // 2-3 行（有 noticeBanner 时 +1）
+	footerHeight := lipgloss.Height(footer) // 2 行（Line 1 + Line 2）
 
 	// 固定底部元素（在 styleApp 内）：
 	// separator(1) + input(1) + 空行(1) + footer(footerHeight)
@@ -3523,13 +3752,14 @@ var asciiArt = []string{
 }
 
 // renderInputSeparator 渲染输入框上方的分隔行。
-// 焦点模式下嵌入段落聚焦提示，正常模式为纯横线。
+// 焦点模式：居中全宽提示（操作指引，需要醒目）
+// plan 模式：左侧 "▌Plan" 前缀 + ─ 填充（状态标记，不抢眼）
+// 正常：纯横线
 func (m *model) renderInputSeparator(contentWidth int) string {
 	if m.focusIndex >= 0 {
 		hint := m.msg().FocusSeparatorHint
 		hintStyle := lipgloss.NewStyle().Foreground(colorAccentGold)
 		lineStyle := lipgloss.NewStyle().Foreground(colorMuted)
-		// hint 居中，两侧用 ─ 补齐
 		pad := contentWidth - lipgloss.Width(hint)
 		if pad < 2 {
 			pad = 2
@@ -3537,6 +3767,12 @@ func (m *model) renderInputSeparator(contentWidth int) string {
 		left := strings.Repeat("─", pad/2)
 		right := strings.Repeat("─", pad-pad/2)
 		return lineStyle.Render(left) + hintStyle.Render(hint) + lineStyle.Render(right)
+	}
+	if m.inPlanMode {
+		prefix := lipgloss.NewStyle().Foreground(colorAccentGold).Render("▌Plan")
+		lineStyle := lipgloss.NewStyle().Foreground(colorMuted)
+		rest := strings.Repeat("─", max(contentWidth-lipgloss.Width(prefix), 0))
+		return prefix + lineStyle.Render(rest)
 	}
 	return lipgloss.NewStyle().
 		Foreground(colorMuted).
@@ -3574,7 +3810,7 @@ func (m *model) renderHeader() string {
 		sb.WriteString("\n\n")
 	}
 
-	// 信息行：session ID（左） + 版本号（右对齐），形成统一顶栏
+	// 信息行：session ID（左） + 版本号（右）
 	sidLine := ""
 	if sid := m.cm.SessionID(); sid != "" {
 		sidPart := styleHeaderAccent.Render(m.msg().HeaderSession) +
@@ -3597,7 +3833,7 @@ func (m *model) renderHeader() string {
 	sb.WriteString(sidLine)
 	sb.WriteString("\n")
 
-	// 工作区（左对齐）+ 更新提示（右对齐），合并为一行
+	// 工作区
 	cwdDisplay := m.cwd
 	maxCwdLen := contentWidth - 6
 	if maxCwdLen < 10 {
@@ -3610,6 +3846,19 @@ func (m *model) renderHeader() string {
 
 	lineCwd := lipgloss.NewStyle().Width(contentWidth).Render(cwdPart)
 	sb.WriteString(lineCwd)
+
+	// 通知 banner：workspace 下方独立一行，仅在有通知时显示
+	if m.noticeBanner != "" {
+		sb.WriteString("\n")
+		bannerStyle := lipgloss.NewStyle().
+			Foreground(colorAccentGold).
+			Bold(true).
+			Background(colorToolCodeBg).
+			Width(contentWidth).
+			Padding(0, 1).
+			Align(lipgloss.Center)
+		sb.WriteString(bannerStyle.Render(m.noticeBanner))
+	}
 
 	return sb.String()
 }
@@ -3641,16 +3890,6 @@ func (m *model) renderFooter() string {
 	sep := "  "
 
 	var sb strings.Builder
-
-	// Line 0: 全局通知 banner（版本更新等）
-	if m.noticeBanner != "" {
-		bannerStyle := lipgloss.NewStyle().
-			Foreground(colorAccentGold).
-			Bold(true).
-			Width(contentWidth)
-		sb.WriteString(bannerStyle.Render(m.noticeBanner))
-		sb.WriteString("\n")
-	}
 
 	// Line 1: spinner + model name + ctx progress bar
 	indicator := styleFooterLabel.Render("•") + " "
@@ -3859,6 +4098,43 @@ func (r *tuiUserResponder) AnswerQuestion(ctx context.Context, questions []permi
 		return responses, nil
 	case <-ctx.Done():
 		return nil, ctx.Err()
+	}
+}
+
+// EnterPlan 实现 permission.UserResponder。
+// 发送 planEnterReqMsg 到 TUI，阻塞等待用户确认。
+func (r *tuiUserResponder) EnterPlan(ctx context.Context) (bool, error) {
+	replyCh := make(chan bool, 1)
+
+	if r.program != nil {
+		r.program.Send(planEnterReqMsg{reply: replyCh})
+	}
+
+	select {
+	case confirmed := <-replyCh:
+		return confirmed, nil
+	case <-ctx.Done():
+		return false, ctx.Err()
+	}
+}
+
+// ApprovePlan 实现 permission.UserResponder。
+// 发送 planExitReqMsg 到 TUI，阻塞等待用户审批。
+func (r *tuiUserResponder) ApprovePlan(ctx context.Context, plan string) (permission.PlanApproval, error) {
+	replyCh := make(chan permission.PlanApproval, 1)
+
+	if r.program != nil {
+		r.program.Send(planExitReqMsg{
+			plan: plan,
+			reply: replyCh,
+		})
+	}
+
+	select {
+	case approval := <-replyCh:
+		return approval, nil
+	case <-ctx.Done():
+		return permission.PlanApproval{}, ctx.Err()
 	}
 }
 
@@ -4224,6 +4500,33 @@ func (s *tuiSettingsStore) SaveTheme(mode string) error {
 
 func (s *tuiSettingsStore) SaveLocale(locale string) error {
 	return writeFullSettings(s.projectPath, nil, "", locale)
+}
+
+func (s *tuiSettingsStore) plansDirectory() string {
+	// 优先项目 settings，其次全局 settings
+	for _, p := range []string{s.projectPath, s.globalPath} {
+		if p == "" {
+			continue
+		}
+		data, err := os.ReadFile(p)
+		if err != nil {
+			continue
+		}
+		var cfg struct {
+			PlansDirectory string `json:"plans_directory"`
+		}
+		if json.Unmarshal(data, &cfg) == nil && cfg.PlansDirectory != "" {
+			if filepath.IsAbs(cfg.PlansDirectory) {
+				return cfg.PlansDirectory
+			}
+			// 相对路径：相对于配置文件所在目录解析
+			abs, err := filepath.Abs(filepath.Join(filepath.Dir(p), cfg.PlansDirectory))
+			if err == nil {
+				return abs
+			}
+		}
+	}
+	return ""
 }
 
 // writeFullSettings 全量 read-modify-write settings.json，替换 llm / theme / locale section。
@@ -4828,4 +5131,81 @@ func (m *model) handleUpdateDone(msg updateDoneMsg) {
 		})
 		m.trimParas()
 	}
+}
+
+// ---------------------------------------------------------------------------
+// Plan 模式辅助函数
+// ---------------------------------------------------------------------------
+
+// generatePlanFilePath 在 plans 目录下生成随机 word slug 文件路径。
+// 优先使用 settings.json 中 plans_directory，否则使用 ~/.waveloom/plans/。
+func (m *model) generatePlanFilePath() string {
+	plansDir := m.plansDirectory()
+	_ = os.MkdirAll(plansDir, 0o755)
+
+	for i := 0; i < 10; i++ {
+		slug := generateTUISlug()
+		path := filepath.Join(plansDir, slug+".md")
+		if _, err := os.Stat(path); os.IsNotExist(err) {
+			return path
+		}
+	}
+	b := make([]byte, 4)
+	rand.Read(b)
+	return filepath.Join(plansDir, hex.EncodeToString(b)+".md")
+}
+
+// plansDirectory 返回 plan 文件存储目录。
+func (m *model) plansDirectory() string {
+	// 读取 settings.json 中的 plans_directory 配置
+	if dir := loadPlansDirectory(m.settingsStore); dir != "" {
+		return dir
+	}
+	homeDir, _ := os.UserHomeDir()
+	return filepath.Join(homeDir, ".waveloom", "plans")
+}
+
+// loadPlansDirectory 从 settings 读取 plans_directory 配置。
+func loadPlansDirectory(store *tuiSettingsStore) string {
+	if store == nil {
+		return ""
+	}
+	// settingsStore 提供 settings 数据
+	return store.plansDirectory()
+}
+
+// generatePairIDForTUI 生成 4 位 hex 随机配对 ID。
+func generatePairIDForTUI() string {
+	b := make([]byte, 2)
+	rand.Read(b)
+	return hex.EncodeToString(b)
+}
+
+// generateTUISlug 生成 "adjective-noun" 格式的随机 slug。
+func generateTUISlug() string {
+	adj := tuiAdjectives[tuiRandInt(len(tuiAdjectives))]
+	noun := tuiNouns[tuiRandInt(len(tuiNouns))]
+	return adj + "-" + noun
+}
+
+func tuiRandInt(max int) int {
+	b := make([]byte, 4)
+	rand.Read(b)
+	return int(uint32(b[0])|uint32(b[1])<<8|uint32(b[2])<<16|uint32(b[3])<<24) % max
+}
+
+var tuiAdjectives = []string{
+	"happy", "clever", "brave", "bright", "calm",
+	"eager", "fancy", "fresh", "grand", "green",
+	"jolly", "keen", "lucky", "merry", "noble",
+	"proud", "quick", "sharp", "smart", "swift",
+	"vivid", "warm", "wise", "bold", "cool",
+}
+
+var tuiNouns = []string{
+	"badger", "crane", "dolphin", "eagle", "falcon",
+	"gecko", "heron", "ibis", "jackal", "koala",
+	"lemur", "marlin", "newt", "otter", "puffin",
+	"quokka", "raven", "salmon", "tapir", "urchin",
+	"viper", "weasel", "xerus", "yak", "zebra",
 }
