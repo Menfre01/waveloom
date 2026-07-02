@@ -450,7 +450,6 @@ func TestShellDescriptionGuidesToolUsage(t *testing.T) {
 	// Description 应引导 LLM 优先用专用工具
 	expectedMentions := []string{
 		"read_file", "write_file", "edit_file",
-		"search_file", "grep", "ls",
 	}
 	for _, toolName := range expectedMentions {
 		if !strings.Contains(desc, toolName) {

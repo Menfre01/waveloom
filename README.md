@@ -68,11 +68,10 @@ waveloom
 ## Highlights
 
 - **Prefix cache optimized** — Fixed System Prompt, append-only message history, four-tier watermark compaction. Maximum common prefix stays cache-hot across turns.
-- **Native LSP integration** — Agent proactively calls `lsp_diagnostic` / `lsp_definition` / `lsp_references` / `lsp_hover` to understand your codebase.
 - **Permission safety** — Three-tier decisions (allow / deny / ask) with pattern-matching rule engine. Every write operation requires your confirmation.
 - **Session persistence** — Close the terminal, come back days later with `waveloom --continue`. The agent remembers all prior context.
 - **Plan Mode** — Two-stage workflow: explore & design first, implement after approval. `Shift+Tab` to enter/exit, Guard-enforced write protection, `[plan:start]/[plan:end]` message pairing for prefix-cache-safe context.
-- **16 built-in tools** — `read_file` / `write_file` / `edit_file` / `grep` / `search_file` / `ls` / `shell` / `web_fetch` / `ask_user_question` / `enter_plan_mode` / `exit_plan_mode` / `skill` / LSP tools — invoked autonomously by the agent.
+- **9 built-in tools** — `read_file` / `write_file` / `edit_file` / `shell` / `web_fetch` / `ask_user_question` / `enter_plan_mode` / `exit_plan_mode` / `skill` — invoked autonomously by the agent.
 - **i18n multilingual** — Full zh-CN / en-US bilingual UI. `--locale` CLI flag, `/locale` command, `settings.json` persistence, auto-detect from LANG env var.
 - **TUI interactions** — `@` file references / `@` fuzzy file picker / `/` command palette / `/locale` switch language / `Tab` paragraph navigation / `Shift+Tab` Plan Mode / `Ctrl+G` theme toggle
 
@@ -90,7 +89,7 @@ Stored locally at `~/.waveloom/`. Keys connect directly to DeepSeek / OpenAI —
 Type `/locale` to toggle between Chinese and English, or `waveloom --locale zh-CN`. The setting persists automatically in `settings.json`.
 
 **Q: What languages are supported?**  
-LSP-native Go support (built-in gopls integration). Any language with an LSP server works. Plain-text projects can use `read_file` / `edit_file` / `grep` without LSP.
+Waveloom works with any text-based project. Code verification uses each language's native build tools (`go build`, `npx tsc`, `cargo build`, `make`, etc.) — no LSP server required.
 
 ---
 
@@ -102,7 +101,7 @@ LSP-native Go support (built-in gopls integration). Any language with an LSP ser
 | [`install`](./docs/install.en.md) | Homebrew / curl / source / shell completions |
 | [`settings`](./docs/settings.en.md) | API key, model, timeout, compaction |
 | [`prefix-cache`](./docs/prefix-cache.en.md) | DeepSeek caching, four-tier compaction |
-| [`environment`](./docs/environment.en.md) | LSP server, toolchain probing |
+| [`environment`](./docs/environment.en.md) | Toolchain probing |
 | [`faq`](./docs/faq.en.md) | Frequently asked questions |
 
 ---

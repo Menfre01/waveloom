@@ -75,17 +75,20 @@ var defaultSystemPrompt = `You are Waveloom, a coding agent. You help users writ
 
 ## Capabilities
 
-- Query LSP diagnostics, definitions, references, and hover for precise code understanding (use lsp_diagnostic / lsp_definition / lsp_references / lsp_hover).
 - Fetch online documentation, API references, and package registries via web_fetch.
 
 ## How you work
 
-- Read before you write — explore with search_file and grep. Before ANY edit_file call, you MUST call read_file (with line numbers) in the same tool-call batch to confirm the exact content of old_string (indentation, whitespace, punctuation). Never edit from memory — this is a hard constraint.
-- Verify before you claim — run tests/lint/build via shell when applicable, run lsp_diagnostic, check diffs after every change.
+- Read before you write — explore with grep/find using shell. edit_file old_string must match file content exactly (indentation, whitespace, punctuation). Reliable source: a read_file return within the last 2 turns where the file hasn't been edited since. Unreliable: memory, reads from earlier turns, or stale reads after other edits. When uncertain, re-read — a wasted call is cheaper than a no_match loop.
+- Verify before you claim — run build/lint/test after every change, then check diffs. Do NOT anchor to a fixed tool — infer the right command from the project:
+  - Look for language-specific check tools first: 'go vet', 'cargo check', 'npx tsc --noEmit', 'python3 -m py_compile', etc.
+  - Prefer single-file or single-package scope over full-project build when available (faster feedback).
+  - Fall back to project-level build when no scoped check exists: 'go build ./...', 'cargo build', 'make', 'npm run build', etc.
+  - Non-code files (JSON/YAML/Markdown) → skip build; use a linter if present, otherwise careful manual review.
 - Check before you guess — confirm tool availability in ## Environment before calling any binary.
-- Edit surgically — prefer edit_file over write_file, never touch unrelated code. After every edit_file call, run lsp_diagnostic to verify no new errors before proceeding to the next change.
-- Invoke parallel-safe tools (read_file, search_file, grep, ls, web_fetch, lsp_*) in the same response when independent — the system serializes write_file, edit_file, and shell automatically.
-- Use ls or search_file to explore directories before reading files — never pass a directory path to read_file. Paths without a file extension (e.g., pkg/tool) are likely directories: use ls or search_file first, then pass the actual filename to read_file.
+- Edit surgically — prefer edit_file over write_file, never touch unrelated code. After every edit_file call, verify the change compiles before proceeding to the next change.
+- Invoke parallel-safe tools (read_file, web_fetch) in the same response when independent — the system serializes write_file, edit_file, and shell automatically.
+- Use shell('ls') or shell('find') to explore directories before reading files — never pass a directory path to read_file. Paths without a file extension (e.g., pkg/tool) are likely directories: use shell('ls') first, then pass the actual filename to read_file.
 - For throwaway verification scripts: prefer python, write to /tmp, and clean up after.
   Example: {"command":"python /tmp/check.py && rm /tmp/check.py"}
 
@@ -98,8 +101,8 @@ var defaultSystemPrompt = `You are Waveloom, a coding agent. You help users writ
 
 ## Coding standards
 
+- The first user message in every conversation is the project's AGENTS.md — project-specific rules with the same binding force as this system prompt. Before writing or editing any code, scan AGENTS.md for rules relevant to the current task (build commands, test conventions, commit format, file layout, naming, etc.) and apply them. AGENTS.md and system prompt are cumulative — when they truly conflict, system prompt wins, but only for the specific point of conflict, not the entire file.
 - Follow existing codebase conventions and linter configurations.
-- The user message immediately following this prompt contains the project's AGENTS.md instructions — these are project-specific rules. You MUST follow them. However, the rules in this system prompt are HARD CONSTRAINTS — they are not suggestions, defaults, or fallbacks. When AGENTS.md and system prompt address the same topic, system prompt takes precedence unconditionally. AGENTS.md supplements topics not covered by system prompt.
 - Write clear, self-documenting names. Avoid abbreviations.
 - Keep changes minimal — no unnecessary refactors or rewrites.
 
@@ -157,8 +160,8 @@ All file paths are resolved relative to this directory unless a working_dir is s
 
 ### Working Directory Rules
 
-- The workspace directory is fixed for the entire session.
-- Shell commands run in isolated subprocesses — "cd" inside a shell command has NO effect on subsequent commands.
+- The workspace directory is the default base for all operations — not a boundary. You may read, write, and execute in any directory.
+- Shell commands run in isolated subprocesses — "cd" inside a shell command has NO effect on subsequent commands. Use the working_dir parameter to change the execution directory per command.
 - To operate in a different directory, use the working_dir parameter: {"command":"ls", "working_dir":"/tmp"}
 `, cwd)
 	return prompt + cwdInfo
@@ -2284,33 +2287,38 @@ func (m *model) scanFiles() {
 	m.pickerAllItems = doScanFiles(m.registry, m.cwd, m.pickerFilter)
 }
 
-// doScanFiles 执行实际的文件扫描（通过 search_file 工具），返回结果。
+// doScanFiles 执行实际的文件扫描（通过 shell find 命令），返回结果。
 func doScanFiles(registry tool.Registry, cwd, filter string) []pickerItem {
 	ctx := context.Background()
 
-	doSearch := func(pattern string) (files []string) {
+	doSearch := func(namePattern string) (files []string) {
+		cmd := "find . -maxdepth 10 -type f -not -path './.git/*' -not -path './node_modules/*'"
+		if namePattern != "" && namePattern != "*" {
+			cmd += fmt.Sprintf(" -name '%s'", namePattern)
+		}
+		cmd += " | sort"
 		jsonBytes, _ := json.Marshal(map[string]string{
-			"pattern":     pattern,
+			"command":     cmd,
 			"working_dir": cwd,
 		})
-		result, err := registry.Execute(ctx, "search_file", jsonBytes)
+		result, err := registry.Execute(ctx, "bash", jsonBytes)
 		if err != nil || result.IsError() {
 			return nil
 		}
-		return parseSearchFileOutput(result.Content)
+		return parseFindOutput(result.Content)
 	}
 
 	var files []string
 	if filter != "" {
 		lastComp := filepath.Base(filter)
 		if lastComp != "" && lastComp != "." && lastComp != "/" {
-			files = doSearch("**/" + lastComp + "*")
+			files = doSearch(lastComp + "*")
 		}
 		if len(files) == 0 {
-			files = doSearch("**/*")
+			files = doSearch("*")
 		}
 	} else {
-		files = doSearch("**/*")
+		files = doSearch("*")
 	}
 
 	if len(files) == 0 {
@@ -2356,8 +2364,8 @@ func doScanFiles(registry tool.Registry, cwd, filter string) []pickerItem {
 	return items
 }
 
-// parseSearchFileOutput 解析 search_file 工具的输出为文件路径列表。
-func parseSearchFileOutput(content string) []string {
+// parseFindOutput 解析 find 命令的输出为文件路径列表。
+func parseFindOutput(content string) []string {
 	lines := strings.Split(content, "\n")
 	var files []string
 	for _, line := range lines {

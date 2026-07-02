@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -15,7 +14,6 @@ import (
 	ctxpkg "github.com/Menfre01/waveloom/pkg/context"
 	"github.com/Menfre01/waveloom/pkg/environment"
 	"github.com/Menfre01/waveloom/pkg/llm"
-	"github.com/Menfre01/waveloom/pkg/lsp"
 	"github.com/Menfre01/waveloom/pkg/memory"
 	"github.com/Menfre01/waveloom/pkg/permission"
 	"github.com/Menfre01/waveloom/pkg/reference"
@@ -93,9 +91,6 @@ func main() {
 		summarizerClient = sc
 	}
 
-	// 5. 初始化 LSP Manager（全局，供 LSP 工具使用）
-	lspProvider := initLSPManager(globalPath, projectPath, verboseLog)
-
 	// 5.3 加载 Guard（权限系统，合并全局和项目权限规则）
 	// 必须在 skill loader 之前创建，skill 的 allowed-tools 白名单需注册到 Guard。
 	guard := createGuard(globalPath, projectPath)
@@ -119,7 +114,7 @@ func main() {
 
 	// 6. 初始化 Tool Registry
 	registry := tool.NewRegistry()
-	registerBuiltinTools(registry, lspProvider, skillLoader)
+	registerBuiltinTools(registry, skillLoader)
 
 	// 9. 创建 @ 引用展开器（用于 AGENTS.md 和用户输入中的 @ 引用展开）
 	expander := reference.New(guard)
@@ -244,23 +239,12 @@ func main() {
 }
 
 // registerBuiltinTools 注册内置工具。
-func registerBuiltinTools(r tool.Registry, lspProvider *tool.LSPProvider, skillLoader *skill.Loader) {
+func registerBuiltinTools(r tool.Registry, skillLoader *skill.Loader) {
 	r.Register(tool.Wrap(&tool.ReadFile{}))
 	r.Register(tool.Wrap(&tool.WriteFile{}))
 	r.Register(tool.Wrap(&tool.EditFile{}))
 	r.Register(tool.Wrap(&tool.Shell{}))
-	r.Register(tool.Wrap(&tool.Grep{}))
-	r.Register(tool.Wrap(&tool.SearchFile{}))
-	r.Register(tool.Wrap(&tool.Ls{}))
 	r.Register(tool.Wrap(&tool.WebFetch{}))
-
-	// LSP 工具：通过依赖注入初始化
-	if lspProvider != nil && lspProvider.Manager != nil {
-		r.Register(tool.Wrap(tool.NewLSDiagnostic(lspProvider)))
-		r.Register(tool.Wrap(tool.NewLSPDefinition(lspProvider)))
-		r.Register(tool.Wrap(tool.NewLSPReferences(lspProvider)))
-		r.Register(tool.Wrap(tool.NewLSPHover(lspProvider)))
-	}
 
 	// Skill 工具
 	if skillLoader != nil {
@@ -273,28 +257,6 @@ func registerBuiltinTools(r tool.Registry, lspProvider *tool.LSPProvider, skillL
 	// Plan mode — enter / exit
 	r.Register(tool.Wrap(&tool.EnterPlanMode{}))
 	r.Register(tool.Wrap(&tool.ExitPlanMode{}))
-}
-
-// initLSPManager 初始化 LSP Server 管理器。
-// 合并全局和项目 settings.json 中的 lsp 配置。
-func initLSPManager(globalPath, projectPath string, verboseLog io.Writer) *tool.LSPProvider {
-	// 加载用户覆盖配置
-	userServers := lsp.LoadUserServers(projectPath)
-	if globalOverrides := lsp.LoadUserServers(globalPath); len(globalOverrides) > 0 {
-		for ext, cfg := range globalOverrides {
-			if _, exists := userServers[ext]; !exists {
-				userServers[ext] = cfg
-			}
-		}
-	}
-
-	opts := []lsp.ManagerOption{lsp.WithUserServers(userServers)}
-	if verboseLog != nil {
-		opts = append(opts, lsp.WithLogger(log.New(verboseLog, "[lsp] ", log.LstdFlags)))
-	}
-	mgr := lsp.NewManager(opts...)
-
-	return tool.NewLSPProvider(mgr)
 }
 
 // resolveSettingsPaths 返回全局和项目配置文件路径。
