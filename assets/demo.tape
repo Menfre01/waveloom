@@ -13,7 +13,7 @@ Set Framerate 12
 Set PlaybackSpeed 1
 
 # 启动交互模式
-Type "waveloom"
+Type "./bin/waveloom"
 Enter
 
 # 等待 TUI 启动
@@ -65,8 +65,23 @@ Sleep 1s
 Escape
 Sleep 500ms
 
-# ── 第三问：收尾 ──
-Type "一句话总结 waveloom 相比其他 coding agent 最大的不同点"
+# ── 第三问：触发 Plan Mode 先规划后执行 ──
+Type "帮我规划并为 README.md 底部添加一个「Star History」章节，引用 star-history.com 的图表链接"
+Enter
+
+# 等待 LLM 进入 Plan Mode（弹出确认 Overlay），确认进入
+Sleep 5s
+Enter
+
+# 等待 LLM 写入 plan 并提交审批，弹出审批 Overlay，批准
+Sleep 15s
+Enter
+
+# 等待 LLM 在 Normal 模式执行 plan 内容（edit_file README.md）
+Sleep 25s
+
+# ── 第四问：收尾 ──
+Type "一句话总结 Plan Mode 给开发流程带来的最大变化"
 Enter
 
 Sleep 15s
