@@ -39,7 +39,7 @@ The prefix character at the beginning of each line tells you **who is speaking**
 | `↑` `↓` / `PgUp` `PgDn` | Scroll conversation history |
 | `Ctrl+E` / `End` | Jump to bottom |
 | `Tab` | Focus next interactive paragraph (thought / tool output) |
-| `Shift+Tab` | Focus previous interactive paragraph |
+| `Shift+Tab` | Focus previous interactive paragraph; when idle, enter/exit Plan Mode |
 | `Enter` | Expand/collapse the currently focused paragraph |
 | `Ctrl+G` | Toggle theme (dark / light / auto) |
 | `Ctrl+C` | Quit |
@@ -70,6 +70,30 @@ Type `@` in the input to open a fuzzy file picker (prefix > substring matching).
 ```
 help me optimize the error handling in @pkg/auth/login.go
 ```
+
+### AGENTS.md Auto-loading
+
+## Plan Mode
+
+Plan Mode is a two-stage "design first, implement later" workflow. Ideal for tasks involving 3+ files, architectural decisions, or multiple viable approaches.
+
+**How to enter**:
+- **Shortcut**: press `Shift+Tab` when idle (no paragraph focused) to enter directly
+- **Agent-invoked**: LLM assesses task complexity and calls `enter_plan_mode`, which pops up a confirmation dialog
+
+**In Plan Mode**:
+- All tools remain visible, but `write_file` / `edit_file` are restricted to the plan file only
+- Shell analysis commands (`go test`, `git log`, `npm ls`, etc.) are auto-allowed; dangerous commands are blocked
+- LLM communicates with you continuously via `ask_user_question` to clarify requirements
+- Plan content is written to `~/.waveloom/plans/<slug>.md`
+
+**How to exit**:
+- **Shortcut**: press `Shift+Tab` in plan mode with no focus, approve or reject in the dialog
+- **Agent-invoked**: LLM calls `exit_plan_mode` when ready, same approval dialog appears
+- Approved → returns to normal mode, LLM starts implementing
+- Rejected → stays in plan mode, LLM revises based on feedback
+
+The `▌Plan` indicator on the left of the input line shows you're in Plan Mode.
 
 ### AGENTS.md Auto-loading
 

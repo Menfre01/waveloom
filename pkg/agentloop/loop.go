@@ -57,6 +57,10 @@ type Config struct {
 	// 设为正值时，每个工具执行会在独立的超时 context 中运行，
 	// 防止工具因未正确处理 ctx 取消而永久阻塞 loop。
 	ToolTimeout time.Duration
+
+	// PlanFile plan 文件路径（首次进入 plan 时自动生成 slug 文件名）。
+	// 仅在 plan 模式下有效。
+	PlanFile string
 }
 
 // DefaultToolTimeout 是单个工具执行的推荐超时时间（10 分钟）。
@@ -139,6 +143,12 @@ type Loop struct {
 	llmClient    llm.Client
 	toolRegistry tool.Registry
 	config       Config
+
+	// plan 模式状态（仅在 Run goroutine 内访问，无竞态）
+	plan        bool   // 当前是否在 plan 模式
+	prePlanMode bool   // 进入 plan 前的 bypassMode 状态
+	planPairID  string // START/END 配对 ID（4 位 hex，如 "a3f7"）
+	approvedPlan string // 审批通过的 plan 内容（用于 executeToolCalls 在 tool 消息后注入 [plan:end]）
 }
 
 // New 创建一个新的 Loop 实例。
@@ -148,6 +158,39 @@ func New(llmClient llm.Client, toolRegistry tool.Registry, config Config) *Loop 
 		toolRegistry: toolRegistry,
 		config:       config,
 	}
+}
+
+// SetPlanFile 设置 plan 文件路径（用户快捷键进入 plan 模式时由 TUI 调用）。
+func (l *Loop) SetPlanFile(planFile string) {
+	l.config.PlanFile = planFile
+}
+
+// SetPlanMode 启用 plan 模式并注入 START 消息（用户快捷键进入 plan 模式时由 TUI 调用）。
+// 返回 [plan:start #xxxx] user 消息，调用方需将其注入 messages。
+func (l *Loop) SetPlanMode(planFile string) (planPairID string, startMessage llm.Message) {
+	l.plan = true
+	l.planPairID = generatePairID()
+	l.config.PlanFile = planFile
+	l.config.Guard.EnterPlanMode(planFile)
+	startMessage = llm.Message{
+		Role:    llm.RoleUser,
+		Content: l.planModeStartMessage(),
+	}
+	return l.planPairID, startMessage
+}
+
+// InPlanMode 返回当前是否在 plan 模式。
+func (l *Loop) InPlanMode() bool {
+	return l.plan
+}
+
+// ResetPlanMode 由 TUI 调用，在用户快捷键退出 plan 模式时清除 Loop 内部 plan 状态。
+// 仅重置 l.plan / l.planPairID / l.config.PlanFile，不操作 Guard（Guard 由 TUI 层统一管理）。
+func (l *Loop) ResetPlanMode() {
+	l.plan = false
+	l.planPairID = ""
+	l.config.PlanFile = ""
+	l.approvedPlan = ""
 }
 
 // Run 执行主循环，逐轮推送 TurnEvent 到返回的 channel。

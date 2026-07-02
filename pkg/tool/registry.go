@@ -91,5 +91,7 @@ func NewDefaultRegistry() Registry {
 	r.Register(Wrap(&LSPReferences{}))
 	r.Register(Wrap(&LSPHover{}))
 	r.Register(Wrap(&AskUserQuestion{}))
+	r.Register(Wrap(&EnterPlanMode{}))
+	r.Register(Wrap(&ExitPlanMode{}))
 	return r
 }
