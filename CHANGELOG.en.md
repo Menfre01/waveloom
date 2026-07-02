@@ -1,5 +1,13 @@
 # Changelog
 
+## [v0.1.0-alpha.9] — 2026-07-02
+
+### Added
+- **Plan Mode — plan-first workflow**: In Plan Mode, only plan files are writable; source files are write-protected; shell risk routing (RiskLow elevated to ALLOW, RiskMedium/High unchanged); code edits require plan approval; `Shift+Tab` shortcut to enter/exit; `enter_plan_mode` / `exit_plan_mode` tools; TUI overlay approval dialog; `[plan:start #xxxx]` / `[plan:end #xxxx]` message pair tracking
+
+### Fixed
+- **Shell multi-line continuation JSON escaping guide**: Added `\\\n` multi-line command escaping examples to Shell tool Description, reducing invalid JSON escaping from the LLM
+
 ## [v0.1.0-alpha.8] — 2026-07-01
 
 ### Added

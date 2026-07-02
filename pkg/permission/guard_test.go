@@ -1243,3 +1243,176 @@ func TestShellSafetyCheck_EmptyInput(t *testing.T) {
 		t.Error("empty command should still be checked (RiskNone → ALLOW)")
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Plan Mode Guard 测试
+// ---------------------------------------------------------------------------
+
+func TestGuardEnterPlanMode(t *testing.T) {
+	g := NewGuard()
+	planFile := "/tmp/test-plan.md"
+
+	g.EnterPlanMode(planFile)
+
+	if !g.planMode {
+		t.Error("expected planMode to be true after EnterPlanMode")
+	}
+	if g.planFilePath != planFile {
+		t.Errorf("expected planFilePath %q, got %q", planFile, g.planFilePath)
+	}
+}
+
+func TestGuardExitPlanMode(t *testing.T) {
+	g := NewGuard()
+	g.EnterPlanMode("/tmp/test-plan.md")
+	g.ExitPlanMode()
+
+	if g.planMode {
+		t.Error("expected planMode to be false after ExitPlanMode")
+	}
+	if g.planFilePath != "" {
+		t.Errorf("expected empty planFilePath after ExitPlanMode, got %q", g.planFilePath)
+	}
+}
+
+func TestGuardSetAvailableBuildTools(t *testing.T) {
+	g := NewGuard()
+	tools := []string{"go", "node", "npm"}
+
+	g.SetAvailableBuildTools(tools)
+
+	if len(g.availableBuildTools) != 3 {
+		t.Errorf("expected 3 build tools, got %d", len(g.availableBuildTools))
+	}
+	for _, tool := range tools {
+		if !g.availableBuildTools[tool] {
+			t.Errorf("expected %q in availableBuildTools", tool)
+		}
+	}
+}
+
+func TestGuardSetAvailableBuildTools_ReplacesPrevious(t *testing.T) {
+	g := NewGuard()
+	g.SetAvailableBuildTools([]string{"go"})
+	g.SetAvailableBuildTools([]string{"rustc", "cargo"})
+
+	if len(g.availableBuildTools) != 2 {
+		t.Errorf("expected 2 build tools after replacement, got %d", len(g.availableBuildTools))
+	}
+	if g.availableBuildTools["go"] {
+		t.Error("expected 'go' to be replaced")
+	}
+	if !g.availableBuildTools["rustc"] {
+		t.Error("expected 'rustc' in availableBuildTools")
+	}
+}
+
+func TestGuardSetAvailableBuildTools_Empty(t *testing.T) {
+	g := NewGuard()
+	g.SetAvailableBuildTools([]string{})
+
+	if len(g.availableBuildTools) != 0 {
+		t.Errorf("expected empty map, got %d entries", len(g.availableBuildTools))
+	}
+	if g.availableBuildTools == nil {
+		t.Error("expected non-nil map even for empty input")
+	}
+}
+
+func TestGuardSetSkillBashWhitelist(t *testing.T) {
+	g := NewGuard()
+	patterns := []string{"go test *", "go build *"}
+
+	g.SetSkillBashWhitelist(patterns)
+
+	if len(g.skillBashPatterns) != 2 {
+		t.Errorf("expected 2 patterns, got %d", len(g.skillBashPatterns))
+	}
+	if g.skillBashPatterns[0] != "go test *" {
+		t.Errorf("unexpected pattern[0]: %s", g.skillBashPatterns[0])
+	}
+}
+
+func TestGuardClearSkillBashWhitelist(t *testing.T) {
+	g := NewGuard()
+	g.SetSkillBashWhitelist([]string{"go test *"})
+	g.ClearSkillBashWhitelist()
+
+	if g.skillBashPatterns != nil {
+		t.Errorf("expected nil after clear, got %v", g.skillBashPatterns)
+	}
+}
+
+func TestGuardPlanMode_FileSafetyCheck_AllowsPlanFile(t *testing.T) {
+	dir := testGuardDir(t)
+	g := NewGuard(WithWorkingDirs(dir))
+	g.EnterPlanMode("/tmp/test-plan.md")
+
+	// 写入 plan 文件本身应被允许
+	input := json.RawMessage(`{"file_path":"/tmp/test-plan.md"}`)
+	result := g.fileSafetyCheck(input, true)
+
+	if result.Decision != DecisionAllow {
+		t.Errorf("expected ALLOW for plan file write, got %s: %s", result.Decision, result.Message)
+	}
+}
+
+func TestGuardPlanMode_FileSafetyCheck_DeniesOtherFiles(t *testing.T) {
+	dir := testGuardDir(t)
+	g := NewGuard(WithWorkingDirs(dir))
+	g.EnterPlanMode("/tmp/test-plan.md")
+
+	// 写入其他文件应被拒绝
+	input := json.RawMessage(`{"file_path":"/tmp/other-file.txt"}`)
+	result := g.fileSafetyCheck(input, true)
+
+	if result.Decision != DecisionDeny {
+		t.Errorf("expected DENY for non-plan file write, got %s: %s", result.Decision, result.Message)
+	}
+}
+
+func TestGuardPlanMode_FileSafetyCheck_AllowsReadOfOtherFiles(t *testing.T) {
+	dir := testGuardDir(t)
+	g := NewGuard(WithWorkingDirs(dir))
+	g.EnterPlanMode("/tmp/test-plan.md")
+
+	// 读取其他文件应通过（非写操作）
+	input := json.RawMessage(`{"file_path":"/tmp/other-file.txt"}`)
+	result := g.fileSafetyCheck(input, false) // isWriteOp=false
+
+	// read 操作在 plan 模式下不受限制，应 passthrough
+	if result.Decision != "" {
+		t.Errorf("expected passthrough (empty decision) for read in plan mode, got %s", result.Decision)
+	}
+}
+
+func TestGuardPlanMode_ShellSafetyCheck_RiskLowAllowed(t *testing.T) {
+	dir := testGuardDir(t)
+	g := NewGuard(WithWorkingDirs(dir))
+	g.EnterPlanMode("/tmp/test-plan.md")
+	g.SetAvailableBuildTools([]string{"go"})
+
+	// plan 模式：RiskLow 命令（构建工具）应直接 ALLOW
+	// go test 是 RiskLow 命令
+	input := json.RawMessage(`{"command":"go test ./..."}`)
+	result := g.shellSafetyCheck(input)
+
+	if result.Decision != DecisionAllow {
+		t.Errorf("expected ALLOW for RiskLow command in plan mode, got %s: %s", result.Decision, result.Message)
+	}
+}
+
+func TestGuardPlanMode_BuiltinAllowStillWorks(t *testing.T) {
+	g := NewGuard()
+	g.EnterPlanMode("/tmp/test-plan.md")
+
+	// 内置白名单工具在 plan 模式下仍应直接放行
+	result := g.Check(context.Background(), "ask_user_question", json.RawMessage(`{}`))
+
+	if result.Decision != DecisionAllow {
+		t.Errorf("expected ALLOW for builtin tool in plan mode, got %s", result.Decision)
+	}
+	if result.Reason != ReasonBuiltinAllow {
+		t.Errorf("expected ReasonBuiltinAllow, got %s", result.Reason)
+	}
+}

@@ -130,17 +130,6 @@ type UserChoice struct {
 	Feedback      string    // 可选的用户反馈文本
 }
 
-// UserResponder 处理 ask 决策的用户交互。
-// 具体实现由 CLI/UI 层提供，Guard 本身不感知 UI。
-type UserResponder interface {
-	// AskUser 向用户请求决策。
-	AskUser(ctx context.Context, toolName string, input json.RawMessage, result DecisionResult) UserChoice
-
-	// AnswerQuestion 向用户发起选择题交互。
-	// 阻塞直到用户回答完毕或拒绝。返回 nil, nil 表示用户拒绝。
-	AnswerQuestion(ctx context.Context, questions []QuestionPrompt) ([]QuestionResponse, error)
-}
-
 // ---------------------------------------------------------------------------
 // QuestionPrompt / QuestionResponse — 选择题类型
 // ---------------------------------------------------------------------------
@@ -198,6 +187,12 @@ const (
 )
 
 // ---------------------------------------------------------------------------
+// PlanApproval 用户对 plan 的审批结果。
+type PlanApproval struct {
+	Approved bool
+	Feedback string
+}
+
 // Guard — 核心接口
 // ---------------------------------------------------------------------------
 
@@ -231,4 +226,34 @@ type Guard interface {
 
 	// SessionMemoryLen 返回当前 session 记忆中的条目数。
 	SessionMemoryLen() int
+
+	// EnterPlanMode 启用 plan 模式路径白名单 + shell RiskLow→ALLOW。
+	EnterPlanMode(planFilePath string)
+
+	// ExitPlanMode 恢复正常模式。
+	ExitPlanMode()
+
+	// SetAvailableBuildTools 注入环境探测到的构建工具列表（用于 plan 模式 RiskLow→ALLOW）。
+	// tools 为第一个 token（如 "go"、"node"、"npm"）。重复调用会替换。
+	SetAvailableBuildTools(tools []string)
+}
+
+// UserResponder — 用户交互接口
+// ---------------------------------------------------------------------------
+
+// UserResponder 处理 ask 决策的用户交互。
+// 具体实现由 CLI/UI 层提供，Guard 本身不感知 UI。
+type UserResponder interface {
+	// AskUser 向用户请求决策。
+	AskUser(ctx context.Context, toolName string, input json.RawMessage, result DecisionResult) UserChoice
+
+	// AnswerQuestion 向用户发起选择题交互。
+	// 阻塞直到用户回答完毕或拒绝。返回 nil, nil 表示用户拒绝。
+	AnswerQuestion(ctx context.Context, questions []QuestionPrompt) ([]QuestionResponse, error)
+
+	// EnterPlan 请求用户确认进入 plan 模式。
+	EnterPlan(ctx context.Context) (bool, error)
+
+	// ApprovePlan 展示 plan 内容给用户审批。
+	ApprovePlan(ctx context.Context, plan string) (PlanApproval, error)
 }

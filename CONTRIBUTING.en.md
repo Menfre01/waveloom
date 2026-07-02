@@ -84,5 +84,5 @@ Follow [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/) v1
 ## Reference Docs
 
 - [`docs/system-prompt.md`](./docs/system-prompt.md) — Full System Prompt content and design principles
-- [`docs/tool-descriptions.md`](./docs/tool-descriptions.md) — Schema definitions for all 14 built-in tools
+- [`docs/tool-descriptions.md`](./docs/tool-descriptions.md) — Schema definitions for all 16 built-in tools
 - [`specs/`](./specs/) — Component design specs (read before modifying)
