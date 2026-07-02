@@ -132,13 +132,6 @@ func NewGuard(opts ...GuardOption) *GuardImpl {
 
 	// 内置工具风险分类
 	g.toolRiskClass["read_file"] = RiskClassRead
-	g.toolRiskClass["search_file"] = RiskClassRead
-	g.toolRiskClass["grep"] = RiskClassRead
-	g.toolRiskClass["ls"] = RiskClassRead
-	g.toolRiskClass["lsp_diagnostic"] = RiskClassRead
-	g.toolRiskClass["lsp_definition"] = RiskClassRead
-	g.toolRiskClass["lsp_references"] = RiskClassRead
-	g.toolRiskClass["lsp_hover"] = RiskClassRead
 	g.toolRiskClass["web_fetch"] = RiskClassRead
 	g.toolRiskClass["write_file"] = RiskClassWrite
 	g.toolRiskClass["edit_file"] = RiskClassWrite

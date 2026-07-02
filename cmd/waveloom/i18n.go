@@ -62,13 +62,9 @@ type Messages struct {
 	ThoughtCollapseHint  string
 
 	// ── Tool ──────────────────────────────────────────────
-	ToolNotFound          string
-	ToolNoInfo            string
-	ToolNoHoverOutput     string
-	ToolNDefinitions      string // 含 %d, %s
-	ToolNReferences       string // 含 %d, %s
-	ToolNQuestions        string // 含 %d
-	ToolNDiagnostics      string // 含 %d, %d, %d, %d, %d, %s
+	ToolNotFound      string
+	ToolNoInfo        string
+	ToolNQuestions    string // 含 %d
 	ToolQuestionDeclined  string
 	ToolTruncated         string
 	ToolTruncatedLines    string // 含 %d
@@ -251,11 +247,7 @@ var zhCN = Messages{
 	// Tool
 	ToolNotFound:         "(未找到)",
 	ToolNoInfo:           "(无信息)",
-	ToolNoHoverOutput:    "无悬浮信息",
-	ToolNDefinitions:     "(%d 个定义, %s)",
-	ToolNReferences:      "(%d 个引用, %s)",
 	ToolNQuestions:       "(%d 问)",
-	ToolNDiagnostics:     "(%d 条: %dE %dW %dI %dH, %s)",
 	ToolQuestionDeclined: "(declined)",
 	ToolTruncated:        "··· (truncated)",
 	ToolTruncatedLines:   "... (truncated to %d lines)",
@@ -498,11 +490,7 @@ var enUS = Messages{
 	// Tool
 	ToolNotFound:         "(not found)",
 	ToolNoInfo:           "(no info)",
-	ToolNoHoverOutput:    "No hover info",
-	ToolNDefinitions:     "(%d definitions, %s)",
-	ToolNReferences:      "(%d references, %s)",
 	ToolNQuestions:       "(%d questions)",
-	ToolNDiagnostics:     "(%d items: %dE %dW %dI %dH, %s)",
 	ToolQuestionDeclined: "(declined)",
 	ToolTruncated:        "··· (truncated)",
 	ToolTruncatedLines:   "... (truncated to %d lines)",

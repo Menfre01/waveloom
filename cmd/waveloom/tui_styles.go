@@ -176,7 +176,6 @@ var (
 	styleFooterLabel       lipgloss.Style
 	styleFooterValue       lipgloss.Style
 	styleFooterValueMuted  lipgloss.Style
-	styleFooterLatGold     lipgloss.Style
 	styleFooterLatRed      lipgloss.Style
 	styleCtxBarGreenFg     lipgloss.Style
 	styleCtxBarGoldFg      lipgloss.Style
@@ -262,7 +261,6 @@ func applyTheme(p palette) {
 	styleFooterLabel = lipgloss.NewStyle().Foreground(colorGray)
 	styleFooterValue = lipgloss.NewStyle().Foreground(colorFooterValue)
 	styleFooterValueMuted = lipgloss.NewStyle().Foreground(colorGray)
-	styleFooterLatGold = lipgloss.NewStyle().Foreground(colorAccentGold)
 	styleFooterLatRed = lipgloss.NewStyle().Foreground(colorErr)
 
 	// 上下文进度条百分比文字（仅前景色，无背景）
