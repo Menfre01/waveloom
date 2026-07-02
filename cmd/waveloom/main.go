@@ -97,6 +97,18 @@ func main() {
 	// 必须在 skill loader 之前创建，skill 的 allowed-tools 白名单需注册到 Guard。
 	guard := createGuard(globalPath, projectPath)
 
+	// 5.4 环境探测：预先执行，结果用于 Guard 和 system prompt
+	probeResults := environment.RunProbes(context.Background(), environment.DefaultProbes())
+
+	// 提取探测到的工具名列表，注入 Guard 的 RiskLow 白名单
+	var availableTools []string
+	for _, r := range probeResults {
+		if r.Found {
+			availableTools = append(availableTools, r.Binary)
+		}
+	}
+	guard.SetAvailableBuildTools(availableTools)
+
 	// 5.5 获取 CWD、homeDir、构造 skill loader
 	cwd, _ := os.Getwd()
 	homeDir, _ := os.UserHomeDir()
@@ -142,7 +154,7 @@ func main() {
 	// 注入环境探测结果：让 LLM 在首次交互前就知道系统可用工具链，
 	// 避免因命令缺失陷入探测死循环。
 	// globalPath 和 projectPath 用于加载用户配置的工具路径覆盖。
-	systemPrompt += probeEnvironment(cwd, globalPath, projectPath)
+	systemPrompt += formatEnvironmentSection(probeResults, cwd, globalPath, projectPath)
 
 	// 注入 skill 列表到 system prompt
 	if skillListing := skillLoader.FormatSkillListing(); skillListing != "" {
@@ -255,6 +267,10 @@ func registerBuiltinTools(r tool.Registry, lspProvider *tool.LSPProvider, skillL
 
 	// AskUserQuestion — LLM 向用户发起选择题式交互决策（TUI 模式）
 	r.Register(tool.Wrap(&tool.AskUserQuestion{}))
+
+	// Plan mode — enter / exit
+	r.Register(tool.Wrap(&tool.EnterPlanMode{}))
+	r.Register(tool.Wrap(&tool.ExitPlanMode{}))
 }
 
 // initLSPManager 初始化 LSP Server 管理器。
@@ -396,13 +412,10 @@ func createGuard(globalPath, projectPath string) permission.Guard {
 	return permission.NewGuard(opts...)
 }
 
-// probeEnvironment 探测系统环境（编译器、运行时、构建工具），
+// formatEnvironmentSection 探测系统环境（编译器、运行时、构建工具），
 // 返回格式化的 ## Environment 节追加到 System Prompt。
 // globalPath 和 projectPath 用于加载用户配置的工具路径覆盖（environment.tools）。
-func probeEnvironment(cwd, globalPath, projectPath string) string {
-	results := environment.RunProbes(context.Background(), environment.DefaultProbes())
-
-	// 合并工具路径覆盖：全局 + 项目，项目优先
+func formatEnvironmentSection(results []environment.ProbeResult, cwd, globalPath, projectPath string) string {
 	overrides := make(map[string]string)
 	for k, v := range environment.LoadToolOverrides(globalPath) {
 		overrides[k] = v

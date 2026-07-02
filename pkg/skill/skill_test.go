@@ -1880,6 +1880,9 @@ func (g *testGuard) SessionAllow(_ string, _ json.RawMessage)                   
 func (g *testGuard) SessionDeny(_ string, _ json.RawMessage)                     {}
 func (g *testGuard) ClearSession()                                               {}
 func (g *testGuard) SessionMemoryLen() int                                       { return 0 }
+func (g *testGuard) EnterPlanMode(_ string)                                      {}
+func (g *testGuard) ExitPlanMode()                                               {}
+func (g *testGuard) SetAvailableBuildTools(_ []string)                           {}
 
 func newTestLoaderWithGuard(homeDir, cwd string, guard permission.Guard) *Loader {
 	return NewLoader(cwd, homeDir, "test-session-123", "medium", guard)

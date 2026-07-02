@@ -344,6 +344,10 @@ func (g *mockGuard) ClearSession() {}
 
 func (g *mockGuard) SessionMemoryLen() int { return 0 }
 
+func (g *mockGuard) EnterPlanMode(planFilePath string) {}
+func (g *mockGuard) ExitPlanMode()                      {}
+func (g *mockGuard) SetAvailableBuildTools(tools []string) {}
+
 // mockUserResponder 实现 permission.UserResponder，返回预编程的用户选择。
 type mockUserResponder struct {
 	mu       sync.Mutex
@@ -366,6 +370,14 @@ func (u *mockUserResponder) AskUser(ctx context.Context, toolName string, input 
 func (u *mockUserResponder) AnswerQuestion(ctx context.Context, questions []permission.QuestionPrompt) ([]permission.QuestionResponse, error) {
 	// 默认拒绝
 	return nil, nil
+}
+
+func (u *mockUserResponder) EnterPlan(ctx context.Context) (bool, error) {
+	return true, nil
+}
+
+func (u *mockUserResponder) ApprovePlan(ctx context.Context, plan string) (permission.PlanApproval, error) {
+	return permission.PlanApproval{Approved: true}, nil
 }
 
 // ============================================================================
@@ -3181,6 +3193,271 @@ func TestRunStreamDeltaContextCancellation(t *testing.T) {
 	}
 	if lastLoopDone.Reason != ReasonAborted {
 		t.Errorf("expected ReasonAborted, got %s", lastLoopDone.Reason)
+	}
+}
+
+// ============================================================================
+// 12. 辅助函数测试
+// ============================================================================
+
+func TestTruncateText_Short(t *testing.T) {
+	result := truncateText("hello", 10)
+	if result != "hello" {
+		t.Errorf("expected 'hello', got %q", result)
+	}
+}
+
+func TestTruncateText_Long(t *testing.T) {
+	result := truncateText("hello world this is a long string", 10)
+	if len([]rune(result)) != 11 { // 10 runes + "…"
+		t.Errorf("expected 11 runes, got %d: %q", len([]rune(result)), result)
+	}
+}
+
+func TestTruncateText_Exact(t *testing.T) {
+	result := truncateText("hello", 5)
+	if result != "hello" {
+		t.Errorf("expected 'hello', got %q", result)
+	}
+}
+
+func TestSendEvent_ContextCancelled(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	// nil channel — send 永远阻塞，只有 ctx.Done() 可用
+	var nilCh chan TurnEvent
+	result := sendEvent(ctx, nilCh, StreamDelta{Turn: 1, ContentDelta: "x"})
+	if result {
+		t.Error("expected false when ctx is cancelled")
+	}
+}
+
+func TestSendEvent_Success(t *testing.T) {
+	ctx := context.Background()
+	ch := make(chan TurnEvent, 1)
+	result := sendEvent(ctx, ch, StreamDelta{Turn: 1, ContentDelta: "x"})
+	if !result {
+		t.Error("expected true when ctx is not cancelled")
+	}
+}
+
+// ============================================================================
+// 13. executeToolCalls 未知工具测试
+// ============================================================================
+
+func TestExecuteToolCalls_UnknownTool(t *testing.T) {
+	l := New(nil, newTestRegistry(), DefaultConfig())
+
+	calls := []llm.ToolCall{
+		makeToolCall("tc1", "nonexistent_tool", `{}`),
+	}
+
+	ch := make(chan TurnEvent, 16)
+	go func() { for range ch {} }()
+
+	_, reason, err := l.executeToolCalls(context.Background(), calls, &LoopState{}, ch)
+	if err == nil {
+		t.Fatal("expected error for unknown tool")
+	}
+	if reason != ReasonToolFatal {
+		t.Errorf("expected ReasonToolFatal, got %s", reason)
+	}
+}
+
+// ============================================================================
+// 14. 组合场景：同时触发退避和 Fatal 错误
+// ============================================================================
+
+func TestBuildToolMessages_FatalOverridesBackoff(t *testing.T) {
+	// 当一个 Fatal 错误和一个 Recoverable 错误同时存在时，Fatal 优先
+	l := New(nil, nil, Config{})
+
+	calls := []llm.ToolCall{
+		makeToolCall("tc1", "tool_a", `{}`),
+		makeToolCall("tc2", "tool_b", `{}`),
+	}
+
+	results := map[string]*tool.ToolResult{
+		"tc1": {
+			Error: &tool.ToolError{
+				Class:   tool.ErrorClassFatal,
+				Kind:    tool.ErrKindPermissionDenied,
+				Message: "fatal error",
+			},
+		},
+		"tc2": {
+			Error: &tool.ToolError{
+				Class:   tool.ErrorClassRecoverable,
+				Kind:    tool.ErrKindFileNotFound,
+				Message: "recoverable error",
+			},
+		},
+	}
+	skip := map[string]bool{}
+	state := &LoopState{}
+
+	_, reason, err := l.buildToolMessages(calls, results, skip, state)
+	if err == nil {
+		t.Fatal("expected error for fatal tool error")
+	}
+	if reason != ReasonToolFatal {
+		t.Errorf("expected ReasonToolFatal, got %s", reason)
+	}
+	// Fatal 优先返回，但退避计数器也会追踪 Recoverable 错误
+	if state.ConsecutiveSameError == 0 {
+		t.Error("expected ConsecutiveSameError to track Recoverable error even with Fatal present")
+	}
+}
+
+// ============================================================================
+// 15. ToolCallResult.IsError 测试
+// ============================================================================
+
+func TestToolCallResult_IsError(t *testing.T) {
+	errResult := ToolCallResult{Error: "something went wrong"}
+	if !errResult.IsError() {
+		t.Error("expected IsError=true when Error is non-empty")
+	}
+
+	okResult := ToolCallResult{Result: "success"}
+	if okResult.IsError() {
+		t.Error("expected IsError=false when Error is empty")
+	}
+}
+
+// ============================================================================
+// 16. CompactionInfo 测试
+// ============================================================================
+
+func TestCompactionInfo_HasCompaction(t *testing.T) {
+	noCompaction := CompactionInfo{Tier: 0, TokensSaved: 0}
+	if noCompaction.HasCompaction() {
+		t.Error("expected HasCompaction=false for Tier 0")
+	}
+
+	hasCompaction := CompactionInfo{Tier: 1, TokensSaved: 1000}
+	if !hasCompaction.HasCompaction() {
+		t.Error("expected HasCompaction=true for Tier 1 with savings")
+	}
+
+	tier3NoSavings := CompactionInfo{Tier: 3, TokensSaved: 0}
+	if tier3NoSavings.HasCompaction() {
+		t.Error("expected HasCompaction=false for Tier 3 with 0 savings")
+	}
+}
+
+func TestCompactionInfoFromTick(t *testing.T) {
+	tick := compaction.Tick{
+		Tier:             2,
+		TokensSaved:      5000,
+		Tier3SummaryDone: true,
+		HardLimitReached: true,
+		HardLimitReason:  "usage",
+		UsageRatio:       0.85,
+	}
+
+	info := compactionInfoFromTick(tick)
+
+	if info.Tier != 2 {
+		t.Errorf("expected Tier=2, got %d", info.Tier)
+	}
+	if info.TokensSaved != 5000 {
+		t.Errorf("expected TokensSaved=5000, got %d", info.TokensSaved)
+	}
+	if !info.SummaryDone {
+		t.Error("expected SummaryDone=true")
+	}
+	if !info.HardLimitReached {
+		t.Error("expected HardLimitReached=true")
+	}
+	if info.HardLimitReason != "usage" {
+		t.Errorf("expected HardLimitReason='usage', got %q", info.HardLimitReason)
+	}
+	if info.UsageRatio != 0.85 {
+		t.Errorf("expected UsageRatio=0.85, got %f", info.UsageRatio)
+	}
+}
+
+// ============================================================================
+// 17. verbose 函数测试
+// ============================================================================
+
+func TestVerbose_NilWriter(t *testing.T) {
+	l := New(nil, nil, Config{}) // VerboseWriter = nil
+	// 不应 panic
+	l.verbose("test %d", 42)
+}
+
+func TestVerbose_WithWriter(t *testing.T) {
+	var buf strings.Builder
+	l := New(nil, nil, Config{VerboseWriter: &buf})
+	l.verbose("hello %s", "world")
+	if !strings.Contains(buf.String(), "hello world") {
+		t.Errorf("expected 'hello world' in output, got %q", buf.String())
+	}
+}
+
+// ============================================================================
+// 18. Run context 取消在 tool 执行过程中
+// ============================================================================
+
+func TestExecuteToolCalls_ContextCancelledDuringConcurrent(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+
+	l := New(nil, newTestRegistry(
+		newSuccessTool("tool_a", true, "ok"),
+		newSuccessTool("tool_b", true, "ok"),
+	), DefaultConfig())
+
+	calls := []llm.ToolCall{
+		makeToolCall("tc1", "tool_a", `{}`),
+		makeToolCall("tc2", "tool_b", `{}`),
+	}
+
+	ch := make(chan TurnEvent, 16)
+	// 立即取消 ctx
+	cancel()
+
+	_, reason, err := l.executeToolCalls(ctx, calls, &LoopState{}, ch)
+	go func() { for range ch {} }()
+
+	if err == nil {
+		t.Fatal("expected error when ctx is cancelled")
+	}
+	if reason != ReasonAborted {
+		t.Errorf("expected ReasonAborted, got %s", reason)
+	}
+}
+
+// ============================================================================
+// 19. executeToolCalls context 取消在串行工具 SendEvent 阶段
+// ============================================================================
+
+func TestExecuteToolCalls_ContextCancelledDuringSerialSend(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+
+	l := New(nil, newTestRegistry(
+		newSuccessTool("serial_tool", false, "ok"),
+	), DefaultConfig())
+
+	calls := []llm.ToolCall{
+		makeToolCall("tc1", "serial_tool", `{}`),
+	}
+
+	ch := make(chan TurnEvent) // 无缓冲 channel — sendEvent 会阻塞
+	// 在 goroutine 中执行，立即取消 ctx
+	go func() {
+		time.Sleep(10 * time.Millisecond)
+		cancel()
+	}()
+
+	_, reason, err := l.executeToolCalls(ctx, calls, &LoopState{}, ch)
+	// 取消后 sendEvent 应返回 false，触发 ReasonAborted
+	if err == nil {
+		t.Fatal("expected error when ctx is cancelled during send")
+	}
+	if reason != ReasonAborted {
+		t.Errorf("expected ReasonAborted, got %s", reason)
 	}
 }
 

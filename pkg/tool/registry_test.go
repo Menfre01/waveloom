@@ -142,6 +142,7 @@ func TestNewDefaultRegistry(t *testing.T) {
 		"web_fetch",
 		"lsp_diagnostic", "lsp_definition", "lsp_references", "lsp_hover",
 		"ask_user_question",
+		"enter_plan_mode", "exit_plan_mode",
 	}
 	if len(specs) != len(expectedTools) {
 		t.Fatalf("List() length = %d, want %d", len(specs), len(expectedTools))

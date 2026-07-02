@@ -165,6 +165,30 @@ type AskUserQuestionEvent struct {
 func (AskUserQuestionEvent) turnEvent() {}
 
 // ---------------------------------------------------------------------------
+// PlanModeEnter / PlanModeExit — plan 模式事件
+// ---------------------------------------------------------------------------
+
+// PlanModeEnter 在进入 plan 模式时推送。
+type PlanModeEnter struct {
+	Turn     int
+	PlanFile string
+	PairID   string // START/END 配对 ID，TUI 用于用户手动退出时注入 [plan:end]
+}
+
+func (PlanModeEnter) turnEvent() {}
+
+// PlanModeExit 在退出 plan 模式时推送（无论 approve 或 reject）。
+type PlanModeExit struct {
+	Turn     int
+	Plan     string
+	FilePath string
+	Approved bool
+	Feedback string
+}
+
+func (PlanModeExit) turnEvent() {}
+
+// ---------------------------------------------------------------------------
 // LoopDone — 循环终止
 // ---------------------------------------------------------------------------
 

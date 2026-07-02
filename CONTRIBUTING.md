@@ -84,5 +84,5 @@ waveloom/
 ## 参考文档
 
 - [`docs/system-prompt.md`](./docs/system-prompt.md) — System Prompt 完整内容及设计原则
-- [`docs/tool-descriptions.md`](./docs/tool-descriptions.md) — 14 个内置工具的 Schema 定义
+- [`docs/tool-descriptions.md`](./docs/tool-descriptions.md) — 16 个内置工具的 Schema 定义
 - [`specs/`](./specs/) — 各组件设计规格书（修改前先阅读）

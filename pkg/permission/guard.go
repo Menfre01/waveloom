@@ -80,6 +80,14 @@ type GuardImpl struct {
 	// 在 shellSafetyCheck 中，白名单命令优先放行，不触发高危拦截。
 	// 由 skill.Loader 通过 SetSkillBashWhitelist / ClearSkillBashWhitelist 管理。
 	skillBashPatterns []string
+
+	// planMode 为 true 时，write_file/edit_file 仅放行 planFilePath，shell RiskLow→ALLOW。
+	planMode     bool
+	planFilePath string
+
+	// availableBuildTools 是环境探测到的构建工具列表（如 "go", "node", "npm"）。
+	// plan 模式下这些工具的 shell 命令从 RiskLow 提升为 ALLOW。
+	availableBuildTools map[string]bool
 }
 
 // SetSkillBashWhitelist 设置当前 skill 的 Bash 白名单模式。
@@ -91,6 +99,26 @@ func (g *GuardImpl) SetSkillBashWhitelist(patterns []string) {
 // ClearSkillBashWhitelist 清空 skill 白名单。
 func (g *GuardImpl) ClearSkillBashWhitelist() {
 	g.skillBashPatterns = nil
+}
+
+// EnterPlanMode 启用 plan 模式路径白名单 + shell RiskLow→ALLOW。
+func (g *GuardImpl) EnterPlanMode(planFilePath string) {
+	g.planMode = true
+	g.planFilePath = planFilePath
+}
+
+// ExitPlanMode 恢复正常模式。
+func (g *GuardImpl) ExitPlanMode() {
+	g.planMode = false
+	g.planFilePath = ""
+}
+
+// SetAvailableBuildTools 注入环境探测到的构建工具列表（用于 plan 模式 RiskLow→ALLOW）。
+func (g *GuardImpl) SetAvailableBuildTools(tools []string) {
+	g.availableBuildTools = make(map[string]bool, len(tools))
+	for _, t := range tools {
+		g.availableBuildTools[t] = true
+	}
 }
 
 // NewGuard 创建一个新的 GuardImpl。
@@ -120,6 +148,8 @@ func NewGuard(opts ...GuardOption) *GuardImpl {
 	g.builtinAllow = map[string]bool{
 		"ask_user_question": true,
 		"skill":             true, // 用户显式安装/调用的 skill，不受权限拦截
+		"enter_plan_mode":   true,
+		"exit_plan_mode":    true,
 	}
 
 	// 默认工作目录：项目根目录 + /tmp + 系统临时目录
@@ -297,6 +327,18 @@ func (g *GuardImpl) shellSafetyCheck(input json.RawMessage) DecisionResult {
 			Message:  cmdCheck.Message,
 		}
 
+	case RiskLow:
+		// plan 模式：构建工具（RiskLow）直接 ALLOW，无需逐条确认
+		if g.planMode {
+			return DecisionResult{
+				Decision: DecisionAllow,
+				Reason:   ReasonSafety,
+				Message:  fmt.Sprintf("plan mode: low-risk command allowed: %s", cmdCheck.Pattern),
+			}
+		}
+		// 非 plan 模式：passthrough，交给后续规则/默认策略
+		return DecisionResult{}
+
 	case RiskHigh:
 		return DecisionResult{
 			Decision: DecisionDeny,
@@ -306,17 +348,37 @@ func (g *GuardImpl) shellSafetyCheck(input json.RawMessage) DecisionResult {
 		}
 
 	default:
-		// RiskLow/RiskMedium → passthrough，交给后续规则/默认策略
+		// RiskMedium → passthrough，交给后续规则/默认策略
 		return DecisionResult{}
 	}
 }
 
 // fileSafetyCheck 对文件工具执行路径安全检查。
 // 仅返回 deny（危险路径 write 操作硬拦截），不返回 ask。
+// plan 模式下 write 操作仅放行 plan 文件路径。
 func (g *GuardImpl) fileSafetyCheck(input json.RawMessage, isWriteOp bool) DecisionResult {
 	filePath, _ := extractFilePath(input)
 	if filePath == "" {
 		return DecisionResult{}
+	}
+
+	// plan 模式：仅允许写入 plan 文件
+	if g.planMode && isWriteOp {
+		resolved, _ := pathutil.ResolvePathWithDir(filePath, "")
+		planResolved, _ := pathutil.ResolvePathWithDir(g.planFilePath, "")
+		if resolved != planResolved {
+			return DecisionResult{
+				Decision: DecisionDeny,
+				Reason:   ReasonSafety,
+				Message:  fmt.Sprintf("plan mode: only writes to %s are allowed", g.planFilePath),
+			}
+		}
+		// plan 文件 → 直接 ALLOW，不经过后续规则/默认策略
+		return DecisionResult{
+			Decision: DecisionAllow,
+			Reason:   ReasonSafety,
+			Message:  "plan mode: write to plan file allowed",
+		}
 	}
 
 	pathCheck := PathSafetyCheck(filePath, g.workingDirs)

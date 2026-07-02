@@ -65,6 +65,12 @@ The agent auto-detects available toolchains at startup. For tools not in PATH or
 |-------|-------------|---------|
 | `tool_timeout` | Single tool execution timeout (Go Duration format, e.g. `"10m"` / `"600s"` / `"0s"`, 0 to disable) | `"10m"` |
 
+### Plan Mode Configuration
+
+| Field | Description | Default |
+|-------|-------------|---------|
+| `plans_directory` | Plan file storage directory (relative paths are relative to the settings file directory) | `~/.waveloom/plans/` |
+
 ## CLI Flags
 
 | Flag | Description | Default |
