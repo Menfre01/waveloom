@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/Menfre01/waveloom/pkg/llm"
@@ -225,7 +226,7 @@ func TestExecuteEnterPlanMode_GeneratesPlanFile(t *testing.T) {
 	// 验证文件在 ~/.waveloom/plans/ 下
 	homeDir, _ := os.UserHomeDir()
 	plansDir := filepath.Join(homeDir, ".waveloom", "plans")
-	if !filepath.HasPrefix(l.config.PlanFile, plansDir) {
+	if !strings.HasPrefix(l.config.PlanFile, plansDir) {
 		t.Errorf("expected plan file under %s, got %s", plansDir, l.config.PlanFile)
 	}
 	go func() { for range ch {} }()
@@ -331,9 +332,9 @@ func TestExecuteExitPlanMode_NoResponder(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create temp file: %v", err)
 	}
-	defer os.Remove(tmpFile.Name())
-	tmpFile.WriteString("# Test Plan\nThis is a plan.")
-	tmpFile.Close()
+	defer os.Remove(tmpFile.Name()) //nolint:errcheck
+	_, _ = tmpFile.WriteString("# Test Plan\nThis is a plan.")
+	_ = tmpFile.Close()
 
 	l := New(nil, nil, Config{
 		PlanFile: tmpFile.Name(),
@@ -367,9 +368,9 @@ func TestExecuteExitPlanMode_UserRejected(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create temp file: %v", err)
 	}
-	defer os.Remove(tmpFile.Name())
-	tmpFile.WriteString("# Test Plan\nThis is a plan.")
-	tmpFile.Close()
+	defer os.Remove(tmpFile.Name()) //nolint:errcheck
+	_, _ = tmpFile.WriteString("# Test Plan\nThis is a plan.")
+	_ = tmpFile.Close()
 
 	l := New(nil, nil, Config{
 		UserResponder: &mockPlanResponder{
@@ -412,9 +413,9 @@ func TestExecuteExitPlanMode_UserRejectedNoFeedback(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create temp file: %v", err)
 	}
-	defer os.Remove(tmpFile.Name())
-	tmpFile.WriteString("# Test Plan\nThis is a plan.")
-	tmpFile.Close()
+	defer os.Remove(tmpFile.Name()) //nolint:errcheck
+	_, _ = tmpFile.WriteString("# Test Plan\nThis is a plan.")
+	_ = tmpFile.Close()
 
 	l := New(nil, nil, Config{
 		UserResponder: &mockPlanResponder{
@@ -450,9 +451,9 @@ func TestExecuteExitPlanMode_ApprovalSuccess(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create temp file: %v", err)
 	}
-	defer os.Remove(tmpFile.Name())
-	tmpFile.WriteString("# Test Plan\nThis is a plan.")
-	tmpFile.Close()
+	defer os.Remove(tmpFile.Name()) //nolint:errcheck
+	_, _ = tmpFile.WriteString("# Test Plan\nThis is a plan.")
+	_ = tmpFile.Close()
 
 	l := New(nil, nil, Config{
 		UserResponder: &mockPlanResponder{
@@ -498,9 +499,9 @@ func TestExecuteExitPlanMode_ApprovalError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create temp file: %v", err)
 	}
-	defer os.Remove(tmpFile.Name())
-	tmpFile.WriteString("# Test Plan\nThis is a plan.")
-	tmpFile.Close()
+	defer os.Remove(tmpFile.Name()) //nolint:errcheck
+	_, _ = tmpFile.WriteString("# Test Plan\nThis is a plan.")
+	_ = tmpFile.Close()
 
 	l := New(nil, nil, Config{
 		UserResponder: &mockPlanResponder{
@@ -693,7 +694,7 @@ func TestGeneratePlanFilePath(t *testing.T) {
 	// 应在 ~/.waveloom/plans/ 目录下
 	homeDir, _ := os.UserHomeDir()
 	expectedDir := filepath.Join(homeDir, ".waveloom", "plans")
-	if !filepath.HasPrefix(path, expectedDir) {
+	if !strings.HasPrefix(path, expectedDir) {
 		t.Errorf("expected path under %s, got %s", expectedDir, path)
 	}
 
@@ -775,9 +776,9 @@ func TestExecuteToolCalls_ExitPlanMode(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create temp file: %v", err)
 	}
-	defer os.Remove(tmpFile.Name())
-	tmpFile.WriteString("# Exec Plan\nTest.")
-	tmpFile.Close()
+	defer os.Remove(tmpFile.Name()) //nolint:errcheck
+	_, _ = tmpFile.WriteString("# Exec Plan\nTest.")
+	_ = tmpFile.Close()
 
 	guard := &mockGuard{}
 	l := New(nil, nil, Config{
