@@ -200,6 +200,9 @@ func (m *mockGuard) SessionAllow(toolName string, input json.RawMessage)  {}
 func (m *mockGuard) SessionDeny(toolName string, input json.RawMessage)   {}
 func (m *mockGuard) ClearSession()                               {}
 func (m *mockGuard) SessionMemoryLen() int                       { return 0 }
+func (m *mockGuard) EnterPlanMode(planFilePath string)           {}
+func (m *mockGuard) ExitPlanMode()                               {}
+func (m *mockGuard) SetAvailableBuildTools(tools []string)       {}
 
 func TestGuardInterfaceTypeAssertion(t *testing.T) {
 	var g Guard = &mockGuard{}
@@ -221,6 +224,14 @@ func (m *mockUserResponder) AskUser(ctx context.Context, toolName string, input 
 func (m *mockUserResponder) AnswerQuestion(ctx context.Context, questions []QuestionPrompt) ([]QuestionResponse, error) {
 	// 默认返回空答案（拒绝）
 	return nil, nil
+}
+
+func (m *mockUserResponder) EnterPlan(ctx context.Context) (bool, error) {
+	return true, nil
+}
+
+func (m *mockUserResponder) ApprovePlan(ctx context.Context, plan string) (PlanApproval, error) {
+	return PlanApproval{Approved: true}, nil
 }
 
 func TestUserResponderInterfaceTypeAssertion(t *testing.T) {
