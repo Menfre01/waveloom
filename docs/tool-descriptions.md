@@ -94,7 +94,20 @@ Whitespace and blank-line differences are auto-corrected when the match is unamb
 ## shell
 
 ```
-Execute a shell command in a subprocess. Configurable timeout (default 120s, max 600s), captures stdout and stderr. Unix/macOS uses sh -c, Windows uses cmd /c. Command syntax must target the correct platform (Windows does not support ; for multi-command, use &&). Prefer dedicated tools over shell:   - Read files: read_file (not cat/head/tail)   - Write files: write_file (not echo >/cat <<EOF)   - Edit files: edit_file (not sed/awk)   - Find files: search_file (not find)   - Search content: grep (not grep/rg)   - List directories: ls (not ls command) Launch multiple independent commands as parallel shell calls in a single response. Chain dependent commands with &&, not newlines. Avoid unnecessary sleep; use run_in_background for long tasks (future support). To change working directory, use the working_dir parameter. Do NOT prefix commands with cd. Example: for ls in /tmp, pass {"command":"ls", "working_dir":"/tmp"}, not {"command":"cd /tmp && ls"}.
+Execute a shell command in a subprocess. Configurable timeout (default 120s, max 600s), captures stdout and stderr. Unix/macOS uses sh -c, Windows uses cmd /c. Command syntax must target the correct platform (Windows does not support ; for multi-command, use &&). Prefer dedicated tools over shell:   - Read files: read_file (not cat/head/tail)   - Write files: write_file (not echo >/cat <<EOF)   - Edit files: edit_file (not sed/awk)   - Find files: search_file (not find)   - Search content: grep (not grep/rg)   - List directories: ls (not ls command) Launch multiple independent commands as parallel shell calls in a single response. Chain dependent commands with &&, not newlines.
+
+Multi-line commands: Use \ at the end of EVERY line to continue.
+In JSON, this is written as \\\n — three backslashes then n.
+The first two backslashes produce a literal \ (JSON \\ → \),
+the third backslash + n produces a newline (JSON \n → line break).
+Example: {"command":"echo line1 \\\nline2 \\\nline3"}
+becomes: echo line1 \
+line2 \
+line3 (all one logical line).
+Without \\ at the end of each JSON line, each physical newline
+starts a NEW command in bash -c, splitting your intended output.
+
+Commands already run in the workspace directory.
 ```
 
 ```json
