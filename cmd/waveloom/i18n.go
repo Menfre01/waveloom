@@ -182,6 +182,29 @@ type Messages struct {
 
 	// ── CLI help ──────────────────────────────────────────
 	HelpUsageText string
+
+	// ── CLI stdout (--continue / --resume / ls / oneshot) ──
+	CLINoAPIKeySetupHint    string
+	CLIContinueSession      string // 含 %s
+	CLINoRecentSession      string
+	CLIResumedSession       string // 含 %s
+	CLIDefaultConfigCreated string // 含 %s
+	CLISetupHint            string
+	CLILsNoRecent           string
+	CLILsHeader             string
+	CLILsRestoreHint        string
+
+	// ── One-shot mode ──────────────────────────────────────
+	OneShotHeader string // 含 %s, %s
+	OneShotError  string // 含 %v
+
+	// ── Session save on exit ──────────────────────────────
+	SessionSaved      string // 含 %s
+	SessionResumeHint string // 含 %s
+
+	// ── Setup locale options ──────────────────────────────
+	SetupLocaleZhCNLabel string
+	SetupLocaleEnUSLabel string
 }
 
 // ---------------------------------------------------------------------------
@@ -411,10 +434,32 @@ var zhCN = Messages{
 环境变量:
   LLM_API_KEY             API Key（settings.json 未设置时的回退）
 `,
+
+	// CLI stdout
+	CLINoAPIKeySetupHint:    "\n  请运行 waveloom setup 完成首次配置，或设置 LLM_API_KEY 环境变量。\n",
+	CLIContinueSession:      "继续最近 session: %s\n",
+	CLINoRecentSession:      "没有找到最近的 session，将创建新 session\n",
+	CLIResumedSession:       "已恢复 session: %s\n",
+	CLIDefaultConfigCreated: "📝 已生成默认配置文件: %s\n",
+	CLISetupHint:            "   💡 运行 waveloom setup 完成首次配置，或设置 LLM_API_KEY 环境变量\n",
+	CLILsNoRecent:           "没有找到最近的 session。",
+	CLILsHeader:             "最近 sessions:",
+	CLILsRestoreHint:        "恢复: waveloom --resume <id>  或  waveloom --continue",
+
+	// One-shot mode
+	OneShotHeader: "🤖 Waveloom (单次模式) — %s — %s\n\n",
+	OneShotError:  "❌ 错误: %v\n",
+
+	// Session save
+	SessionSaved:      "已保存 session: %s\n",
+	SessionResumeHint: "  恢复对话: waveloom --resume %s\n",
+
+	// Setup locale options
+	SetupLocaleZhCNLabel: "简体中文  (zh-CN)",
+	SetupLocaleEnUSLabel: "English   (en-US)",
 }
 
 var enUS = Messages{
-	// Input
 	InputPlaceholder:          "Type a message, Enter to send · / commands · @ pick files · Esc to interrupt",
 	InputOtherPlaceholder:     "Type custom answer...",
 	InputAgentRunning:         "Agent running... Esc to interrupt",
@@ -635,6 +680,29 @@ Configuration (settings.json):
 Environment variables:
   LLM_API_KEY            API key (fallback when not set in settings.json)
 `,
+
+	// CLI stdout
+	CLINoAPIKeySetupHint:    "\n  Run waveloom setup to complete initial configuration, or set LLM_API_KEY environment variable.\n",
+	CLIContinueSession:      "Continuing most recent session: %s\n",
+	CLINoRecentSession:      "No recent session found, creating new session\n",
+	CLIResumedSession:       "Resumed session: %s\n",
+	CLIDefaultConfigCreated: "Default config created: %s\n",
+	CLISetupHint:            "   💡 Run waveloom setup to complete configuration, or set LLM_API_KEY\n",
+	CLILsNoRecent:           "No recent sessions found.",
+	CLILsHeader:             "Recent sessions:",
+	CLILsRestoreHint:        "Restore: waveloom --resume <id>  or  waveloom --continue",
+
+	// One-shot mode
+	OneShotHeader: "🤖 Waveloom (oneshot) — %s — %s\n\n",
+	OneShotError:  "❌ Error: %v\n",
+
+	// Session save
+	SessionSaved:      "Session saved: %s\n",
+	SessionResumeHint: "  Resume: waveloom --resume %s\n",
+
+	// Setup locale options
+	SetupLocaleZhCNLabel: "简体中文  (zh-CN)",
+	SetupLocaleEnUSLabel: "English   (en-US)",
 }
 
 // ---------------------------------------------------------------------------

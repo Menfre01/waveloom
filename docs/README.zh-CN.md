@@ -58,7 +58,7 @@ waveloom
 |---|---|---|
 | 缓存设计 | 围绕 DeepSeek 前缀匹配：System Prompt 固定、消息追加、原地压缩 | 围绕 Anthropic `cache_control`：System Prompt 含动态段、压缩替换消息 |
 | 上下文压缩 | 原地修改，前缀字节稳定 | 摘要替换消息 |
-| 运行时 | 单二进制 ~17MB | Node.js |
+| 运行时 | 单二进制 ~18MB | Node.js |
 
 **选 Waveloom 如果**：用 DeepSeek、在意 API 费用、已有 Claude Code Skill、需要零依赖单二进制  
 **选 Claude Code 如果**：用 Anthropic API、需要 MCP、重度依赖 Claude 生态
@@ -72,7 +72,7 @@ waveloom
 - **权限安全模型** — 三级决策（allow / deny / ask），规则引擎支持模式匹配，写操作和命令执行需要你确认
 - **会话持久恢复** — 关闭终端几天后 `waveloom --continue` 回来，Agent 记得所有上下文接着工作
 - **Plan 模式** — 先规划后执行的二阶段工作流：探索设计 → 审批 → 编码。`Shift+Tab` 一键进入/退出，Guard 写保护拦截，`[plan:start]/[plan:end]` 消息对保证前缀缓存不失效。
-- **16 个内置工具** — `read_file` / `edit_file` / `grep` / `shell` / `web_fetch` / `ask_user_question` / `enter_plan_mode` / `exit_plan_mode` / `skill` / LSP 系列，Agent 自主调用
+- **16 个内置工具** — `read_file` / `write_file` / `edit_file` / `grep` / `search_file` / `ls` / `shell` / `web_fetch` / `ask_user_question` / `enter_plan_mode` / `exit_plan_mode` / `skill` / LSP 系列，Agent 自主调用
 - **i18n 多语言** — 完整中英双语界面，`--locale` CLI 参数 / `/locale` 命令 / `settings.json` 持久化，LANG 环境变量自动检测
 - **TUI 交互** — `@` 引用文件 / `@` 文件选择器 / `/` 命令面板 / `/locale` 切换语言 / `Tab` 段落导航 / `Shift+Tab` Plan 模式 / `Ctrl+G` 主题切换
 
@@ -110,6 +110,12 @@ LSP 原生支持 Go（内置 gopls 集成）。任何有 LSP Server 的语言均
 ## 开发
 
 Go 1.25+，`make build` / `make test`。项目结构及贡献指南详见 [`CONTRIBUTING.md`](../CONTRIBUTING.md)。
+
+---
+
+## Star 历史
+
+<a href="https://star-history.com/#Menfre01/waveloom&Date"><img src="https://api.star-history.com/svg?repos=Menfre01/waveloom&type=Date" alt="Star 历史图表" width="600"/></a>
 
 ---
 

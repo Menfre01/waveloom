@@ -47,7 +47,7 @@ waveloom
 > API key connects directly to DeepSeek / OpenAI — your code never passes through a third-party server. Every file write and command execution requires your confirmation.
 
 <p align="center">
-  <img src="./assets/demo.gif" alt="Waveloom Demo" width="900"/>
+  <img src="./assets/demo.en.gif" alt="Waveloom Demo" width="900"/>
 </p>
 
 ---
@@ -58,7 +58,7 @@ waveloom
 |---|---|---|
 | Cache design | Built for DeepSeek prefix matching: fixed System Prompt, append-only, in-place compaction | Built for Anthropic `cache_control`: dynamic System Prompt sections, compaction replaces messages |
 | Context compaction | In-place, prefix-stable | Replaces messages with summary |
-| Runtime | Single binary ~17MB | Node.js |
+| Runtime | Single binary ~18MB | Node.js |
 
 **Choose Waveloom if**: you use DeepSeek, care about API costs, have Claude Code Skills, need a zero-dependency binary  
 **Choose Claude Code if**: you use Anthropic, need MCP, are deep in the Claude ecosystem
@@ -72,7 +72,7 @@ waveloom
 - **Permission safety** — Three-tier decisions (allow / deny / ask) with pattern-matching rule engine. Every write operation requires your confirmation.
 - **Session persistence** — Close the terminal, come back days later with `waveloom --continue`. The agent remembers all prior context.
 - **Plan Mode** — Two-stage workflow: explore & design first, implement after approval. `Shift+Tab` to enter/exit, Guard-enforced write protection, `[plan:start]/[plan:end]` message pairing for prefix-cache-safe context.
-- **16 built-in tools** — `read_file` / `edit_file` / `grep` / `shell` / `web_fetch` / `ask_user_question` / `enter_plan_mode` / `exit_plan_mode` / `skill` / LSP tools — invoked autonomously by the agent.
+- **16 built-in tools** — `read_file` / `write_file` / `edit_file` / `grep` / `search_file` / `ls` / `shell` / `web_fetch` / `ask_user_question` / `enter_plan_mode` / `exit_plan_mode` / `skill` / LSP tools — invoked autonomously by the agent.
 - **i18n multilingual** — Full zh-CN / en-US bilingual UI. `--locale` CLI flag, `/locale` command, `settings.json` persistence, auto-detect from LANG env var.
 - **TUI interactions** — `@` file references / `@` fuzzy file picker / `/` command palette / `/locale` switch language / `Tab` paragraph navigation / `Shift+Tab` Plan Mode / `Ctrl+G` theme toggle
 

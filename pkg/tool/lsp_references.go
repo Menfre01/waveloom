@@ -96,7 +96,7 @@ func (t *LSPReferences) Execute(ctx context.Context, p LSPReferencesParams) (*To
 	}, &locations)
 	if err != nil {
 		return toolError(ErrorClassRecoverable, ErrKindCommandFailed,
-			fmt.Sprintf("references 查询失败: %s", err.Error()), err), nil
+			fmt.Sprintf("references query failed: %s", err.Error()), err), nil
 	}
 
 	if len(locations) == 0 {
@@ -110,9 +110,9 @@ func (t *LSPReferences) Execute(ctx context.Context, p LSPReferencesParams) (*To
 	}
 
 	var b strings.Builder
-	fmt.Fprintf(&b, "找到 %d 个引用", len(locations))
+	fmt.Fprintf(&b, "Found %d references", len(locations))
 	if len(locations) > 100 {
-		fmt.Fprintf(&b, "（仅显示前 100 条）")
+		fmt.Fprintf(&b, " (showing first 100)")
 	}
 	b.WriteString(":\n\n")
 
