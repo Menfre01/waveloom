@@ -1,5 +1,13 @@
 # Changelog
 
+## [v0.1.0-alpha.9] — 2026-07-02
+
+### 新增功能
+- **Plan Mode 先规划后执行工作流**：进入 Plan 模式后仅允许读写 plan 文件，源文件写保护；shell 风险分流（RiskLow 提升为 ALLOW，RiskMedium/High 不变）；审批通过后方可执行代码修改；支持 `Shift+Tab` 快捷键进入/退出；`enter_plan_mode` / `exit_plan_mode` 工具；TUI overlay 审批框；`[plan:start #xxxx]` / `[plan:end #xxxx]` 消息对追踪
+
+### 修复
+- **Shell 多行续行 JSON 转义指引**：Shell 工具 Description 增加 `\\\n` 多行命令转义示例，减少 LLM 生成无效转义 JSON 的概率
+
 ## [v0.1.0-alpha.8] — 2026-07-01
 
 ### 新增功能
