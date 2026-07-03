@@ -87,18 +87,18 @@ func (t *EditFile) Execute(ctx context.Context, p EditFileParams) (*ToolResult, 
 			}
 		}
 
-		// 降级1：空白归一化匹配唯一 → 自动修复，减少 LLM 重试轮次
-		if matchStart := findNormalizedMatchPosition(original, p.OldString); matchStart >= 0 {
+		// 降级1：空白归一化匹配 → 自动修复
+		if matchStart := findNormalizedMatchPosition(original, p.OldString, !p.ReplaceAll); matchStart >= 0 {
 			return t.applyAutoFix(ctx, original, p, path, matchStart, "whitespace")
 		}
 
-		// 降级2：跳过空行 + 空白归一化匹配唯一 → 自动修复
-		if matchStart := findMatchSkippingBlankLines(original, p.OldString); matchStart >= 0 {
+		// 降级2：跳过空行 + 空白归一化匹配 → 自动修复
+		if matchStart := findMatchSkippingBlankLines(original, p.OldString, !p.ReplaceAll); matchStart >= 0 {
 			return t.applyAutoFix(ctx, original, p, path, matchStart, "blank lines / whitespace")
 		}
 
-		// 降级3：Unicode 标点归一化 + 空白归一化匹配唯一 → 自动修复
-		if matchStart := findNormalizedMatchPositionWithUnicode(original, p.OldString); matchStart >= 0 {
+		// 降级3：Unicode 标点归一化 + 空白归一化匹配 → 自动修复
+		if matchStart := findNormalizedMatchPositionWithUnicode(original, p.OldString, !p.ReplaceAll); matchStart >= 0 {
 			return t.applyAutoFix(ctx, original, p, path, matchStart, "unicode / whitespace")
 		}
 
@@ -347,10 +347,11 @@ func diffStats(hunks []DiffHunk) (added, removed int) {
 	return
 }
 
-// findNormalizedMatchPosition 在空白归一化后查找 oldStr 的唯一匹配位置。
+// findNormalizedMatchPosition 在空白归一化后查找 oldStr 的匹配位置。
 // 将原文每行和 oldStr 每行的连续空白压缩为单空格后逐行比较。
-// 返回 0-based 起始行号；若未找到或匹配不唯一返回 -1。
-func findNormalizedMatchPosition(original, oldStr string) int {
+// requireUnique 为 true 时要求匹配唯一，否则只返回首次匹配。
+// 返回 0-based 起始行号；若未找到或（requireUnique 时）匹配不唯一返回 -1。
+func findNormalizedMatchPosition(original, oldStr string, requireUnique bool) int {
 	origLines := strings.Split(original, "\n")
 	oldLines := strings.Split(oldStr, "\n")
 
@@ -372,8 +373,8 @@ func findNormalizedMatchPosition(original, oldStr string) int {
 		return -1
 	}
 
-	// 确认唯一性：从 matchStart+1 开始不应再找到匹配
-	if findLineSequence(origNormalized[matchStart+1:], oldNormalized) >= 0 {
+	// 确认唯一性（仅当 requireUnique 时）
+	if requireUnique && findLineSequence(origNormalized[matchStart+1:], oldNormalized) >= 0 {
 		return -1
 	}
 
@@ -385,7 +386,7 @@ func findNormalizedMatchPosition(original, oldStr string) int {
 // 若找到唯一匹配，返回实际匹配文本的提示（含行号和内容）。
 // 若找不到匹配或多匹配，返回空字符串（继续走 renderSearchHint）。
 func tryNormalizedMatch(original, oldStr string) string {
-	matchStart := findNormalizedMatchPosition(original, oldStr)
+	matchStart := findNormalizedMatchPosition(original, oldStr, /*requireUnique*/ true)
 	if matchStart < 0 {
 		return ""
 	}
@@ -488,10 +489,11 @@ var unicodePunctToASCII = map[rune]rune{
 	'\u3000': ' ',
 }
 
-// findNormalizedMatchPositionWithUnicode 在 Unicode 归一化 + 空白归一化后查找 oldStr 的唯一匹配位置。
+// findNormalizedMatchPositionWithUnicode 在 Unicode 归一化 + 空白归一化后查找 oldStr 的匹配位置。
 // 将两边的 Unicode 标点映射为 ASCII、空白压缩后逐行比较。
-// 返回 0-based 起始行号；若未找到或匹配不唯一返回 -1。
-func findNormalizedMatchPositionWithUnicode(original, oldStr string) int {
+// requireUnique 为 true 时要求匹配唯一。
+// 返回 0-based 起始行号；若未找到或（requireUnique 时）匹配不唯一返回 -1。
+func findNormalizedMatchPositionWithUnicode(original, oldStr string, requireUnique bool) int {
 	origLines := strings.Split(original, "\n")
 	oldLines := strings.Split(oldStr, "\n")
 
@@ -513,8 +515,8 @@ func findNormalizedMatchPositionWithUnicode(original, oldStr string) int {
 		return -1
 	}
 
-	// 确认唯一性
-	if findLineSequence(origNormalized[matchStart+1:], oldNormalized) >= 0 {
+	// 确认唯一性（仅当 requireUnique 时）
+	if requireUnique && findLineSequence(origNormalized[matchStart+1:], oldNormalized) >= 0 {
 		return -1
 	}
 
@@ -959,8 +961,9 @@ func (t *EditFile) applyAutoFix(ctx context.Context, original string, p EditFile
 
 // findMatchSkippingBlankLines 在忽略空行差异的前提下进行空白归一化序列匹配。
 // 将原文和 oldStr 中的空行（含纯空白行）全部移除后，对剩余非空行做 normalizeLine 序列匹配。
-// 返回原文中的 0-based 起始行号；未找到或匹配不唯一返回 -1。
-func findMatchSkippingBlankLines(original, oldStr string) int {
+// requireUnique 为 true 时要求匹配唯一。
+// 返回原文中的 0-based 起始行号；未找到或（requireUnique 时）匹配不唯一返回 -1。
+func findMatchSkippingBlankLines(original, oldStr string, requireUnique bool) int {
 	origLines := strings.Split(original, "\n")
 	oldLines := strings.Split(oldStr, "\n")
 
@@ -978,7 +981,7 @@ func findMatchSkippingBlankLines(original, oldStr string) int {
 	}
 
 	// 确认唯一性
-	if findLineSequence(origNonBlank[matchIdx+1:], oldNonBlank) >= 0 {
+	if requireUnique && findLineSequence(origNonBlank[matchIdx+1:], oldNonBlank) >= 0 {
 		return -1
 	}
 
