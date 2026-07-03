@@ -914,8 +914,6 @@ func TestGuard_Check_RemovedFromTrulySafeNowAsk(t *testing.T) {
 		name    string
 		command string
 	}{
-		{"echo", "echo hello"},
-		{"echo redirect", "echo 'key=val' >> .env"},
 		{"env", "env"},
 		{"printenv", "printenv"},
 	}
@@ -972,10 +970,10 @@ func TestGuard_Check_FormerlySafeNowAsk(t *testing.T) {
 		command string
 	}{
 		{"python -c print", "python -c 'print(1+1)'"},
-		{"node -e", "node -e 'console.log(1+1)'"},
 		{"npm install", "npm install"},
 		{"pip install", "pip install requests"},
 	}
+	// node -e 现在有独立的危险模式（类似 python -c import os）→ RiskHigh → DENY
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

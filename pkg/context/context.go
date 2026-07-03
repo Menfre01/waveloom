@@ -257,7 +257,7 @@ func (cm *ContextManager) LoadFromFile(path string) bool {
 	if len(report) > 0 {
 		// 静默修复：输出修复详情到 stderr，不阻塞恢复
 		for _, entry := range report {
-			fmt.Fprintf(os.Stderr, "session 修复: msg[%d] role=%s action=%s — %s\n",
+			fmt.Fprintf(os.Stderr, "session repair: msg[%d] role=%s action=%s — %s\n",
 				entry.Index, entry.Role, entry.Action, entry.Detail)
 		}
 		messages = cleaned

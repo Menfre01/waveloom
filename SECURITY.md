@@ -19,4 +19,4 @@
 - Waveloom 不会静默执行命令或修改文件 —— 所有写操作默认需要用户确认
 - `--bypass-permissions` 仅应在受信任的 CI 环境中使用
 - 请勿将 `settings.json` 中的 API Key 提交到公开仓库
-- LSP Server 以当前用户身份运行，请确保 gopls 等工具来自可信来源
+- Shell 命令以当前用户身份运行，请确保 `make`、`go`、`npm` 等构建工具来自可信来源

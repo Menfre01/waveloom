@@ -102,7 +102,7 @@ func (l *Loader) Load() (text string, warnings []string, err error) {
 	text = fmt.Sprintf("# AGENTS.md instructions for %s\n\n<INSTRUCTIONS>\n\n%s\n</INSTRUCTIONS>", absCWD, body)
 
 	if remaining <= 0 {
-		text += "\n\n[AGENTS.md 内容被截断：已达到大小上限]"
+		text += "\n\n[AGENTS.md content truncated: max size limit reached]"
 		warnings = append(warnings, "AGENTS.md content truncated: max bytes limit reached")
 	}
 

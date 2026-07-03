@@ -9,6 +9,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
+	"github.com/Menfre01/waveloom/pkg/agentloop"
 	ctxpkg "github.com/Menfre01/waveloom/pkg/context"
 	"github.com/Menfre01/waveloom/pkg/llm"
 )
@@ -425,13 +426,6 @@ func TestIsExpandable(t *testing.T) {
 		{"read_file done", Paragraph{Type: paraTool, State: stateDone, ToolName: "read_file"}, false},
 		{"edit_file done", Paragraph{Type: paraTool, State: stateDone, ToolName: "edit_file"}, false},
 		{"write_file done", Paragraph{Type: paraTool, State: stateDone, ToolName: "write_file"}, false},
-		{"lsp_diagnostic done", Paragraph{Type: paraTool, State: stateDone, ToolName: "lsp_diagnostic"}, false},
-		{"lsp_definition done", Paragraph{Type: paraTool, State: stateDone, ToolName: "lsp_definition"}, false},
-		{"lsp_references done", Paragraph{Type: paraTool, State: stateDone, ToolName: "lsp_references"}, false},
-		{"lsp_hover done", Paragraph{Type: paraTool, State: stateDone, ToolName: "lsp_hover"}, false},
-		{"grep done", Paragraph{Type: paraTool, State: stateDone, ToolName: "grep"}, false},
-		{"search_file done", Paragraph{Type: paraTool, State: stateDone, ToolName: "search_file"}, false},
-		{"ls done", Paragraph{Type: paraTool, State: stateDone, ToolName: "ls"}, false},
 		{"user any", Paragraph{Type: paraUser, State: stateDone}, false},
 		{"assistant any", Paragraph{Type: paraAssistant, State: stateDone}, false},
 		{"system any", Paragraph{Type: paraSystem, State: stateDone}, false},
@@ -989,5 +983,59 @@ func TestRuneDisplayWidth_Mixed(t *testing.T) {
 	w := runeDisplayWidth("a你b好")
 	if w != 6 {
 		t.Errorf("expected width=6, got %d", w)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// handleToolStream 回归测试
+// ---------------------------------------------------------------------------
+
+func TestHandleToolStream_AppendsChunk(t *testing.T) {
+	m := &model{
+		paras: []Paragraph{
+			{Type: paraTool, State: stateStreaming, ToolName: "bash", ToolArgs: "make build"},
+		},
+	}
+	ev := agentloop.ToolCallStream{
+		ToolCallID:   "call_1",
+		ToolCallName: "bash",
+		Chunk:        "hello\n",
+	}
+	m.handleToolStream(ev)
+	p := &m.paras[0]
+	if p.ToolResult != "hello\n" {
+		t.Errorf("ToolResult = %q, want %q", p.ToolResult, "hello\n")
+	}
+	if !p.renderDirty {
+		t.Error("renderDirty should be true")
+	}
+}
+
+func TestHandleToolStream_Accumulates(t *testing.T) {
+	m := &model{
+		paras: []Paragraph{
+			{Type: paraTool, State: stateStreaming, ToolName: "bash", ToolArgs: "make build"},
+		},
+	}
+	m.handleToolStream(agentloop.ToolCallStream{ToolCallID: "call_1", ToolCallName: "bash", Chunk: "line1\n"})
+	m.handleToolStream(agentloop.ToolCallStream{ToolCallID: "call_1", ToolCallName: "bash", Chunk: "line2\n"})
+	p := &m.paras[0]
+	if p.ToolResult != "line1\nline2\n" {
+		t.Errorf("ToolResult = %q, want %q", p.ToolResult, "line1\nline2\n")
+	}
+}
+
+func TestHandleToolStream_NoMatch(t *testing.T) {
+	// 没有匹配的 streaming tool 段落时应 no-op
+	m := &model{
+		paras: []Paragraph{
+			{Type: paraTool, State: stateDone, ToolName: "bash", ToolArgs: "make build"},
+		},
+	}
+	m.handleToolStream(agentloop.ToolCallStream{ToolCallID: "call_1", ToolCallName: "bash", Chunk: "hello\n"})
+	// stateDone 的段落不应被修改
+	p := &m.paras[0]
+	if p.ToolResult != "" {
+		t.Errorf("ToolResult should remain empty for non-streaming paragraph, got %q", p.ToolResult)
 	}
 }

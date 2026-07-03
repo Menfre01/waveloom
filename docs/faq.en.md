@@ -24,10 +24,6 @@ Run `xattr -d com.apple.quarantine ~/.local/bin/waveloom` to remove the quaranti
 
 The TUI footer status bar shows the cache hit rate. You can also check `.waveloom/waveloom.log` (requires `--verbose`) for `cache_hit_tokens` info.
 
-**Q: LSP tools not working?**
-
-Ensure the corresponding language server is installed and in PATH. For Go projects, install gopls: `go install golang.org/x/tools/gopls@latest`.
-
 **Q: Do @ file references work in one-shot mode?**
 
 `@` file references are currently only supported in TUI interactive mode. In one-shot mode, `@pkg/foo.go` is treated as plain text.

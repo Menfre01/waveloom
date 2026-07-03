@@ -137,30 +137,6 @@ func formatToolArgs(toolName string, argsJSON string, cwd string) string {
 			return normalized
 		}
 		return cmd
-	case "grep":
-		pattern := extractField(argsJSON, "pattern")
-		dir := extractField(argsJSON, "working_dir")
-		if dir != "" {
-			return fmt.Sprintf(`"%s" in %s`, pattern, stripCWDPrefix(dir, cwd))
-		}
-		return fmt.Sprintf(`"%s"`, pattern)
-	case "search_file":
-		pattern := extractField(argsJSON, "pattern")
-		dir := extractField(argsJSON, "working_dir")
-		if dir != "" {
-			return fmt.Sprintf("%s in %s", pattern, stripCWDPrefix(dir, cwd))
-		}
-		return pattern
-	case "ls":
-		return stripCWDPrefix(extractField(argsJSON, "path"), cwd)
-	case "lsp_diagnostic", "lsp_definition", "lsp_references", "lsp_hover":
-		fp := extractField(argsJSON, "file_path")
-		line := extractField(argsJSON, "line")
-		col := extractField(argsJSON, "character")
-		if line != "" && col != "" {
-			return fmt.Sprintf("%s:%s:%s", stripCWDPrefix(fp, cwd), line, col)
-		}
-		return stripCWDPrefix(fp, cwd)
 	case "web_fetch":
 		u := extractField(argsJSON, "url")
 		if u != "" {
@@ -262,68 +238,87 @@ func parseQuestionResult(resultJSON string) (map[string]string, []string) {
 }
 
 // formatQuestionPreview 将问答结果渲染为可读预览行（折叠态）。
-func formatQuestionPreview(resultJSON string, indent string, lc *Messages) string {
+func formatQuestionPreview(resultJSON string, textWidth int, indent string, lc *Messages) string {
 	answers, order := parseQuestionResult(resultJSON)
 	if len(order) == 0 {
 		return ""
 	}
 	// 与其他工具预览的 "│ " 前缀保持一致，使用灰色
 	mutedStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#666666"))
+	contentWidth := textWidth - 2 // "│ " 前缀占 2 列
+	if contentWidth < 1 {
+		contentWidth = 1
+	}
 	var sb strings.Builder
+	wrapped := 0
+	truncated := false
 	for _, header := range order {
 		answer := answers[header]
 		if answer == "" {
 			answer = lc.ToolQuestionDeclined
 		}
+		line := header + " → " + answer
+		for _, wl := range wrapLine(line, contentWidth) {
+			if wrapped >= maxPreviewWrapped {
+				truncated = true
+				break
+			}
+			sb.WriteString(indent)
+			sb.WriteString(mutedStyle.Render("│ "))
+			sb.WriteString(wl)
+			sb.WriteString("\n")
+			wrapped++
+		}
+		if truncated {
+			break
+		}
+	}
+	if truncated {
 		sb.WriteString(indent)
-		sb.WriteString(mutedStyle.Render("│ "))
-		sb.WriteString(header)
-		sb.WriteString(" → ")
-		sb.WriteString(answer)
+		sb.WriteString(styleToolPreviewHint.Render(lc.ToolTruncated))
 		sb.WriteString("\n")
 	}
 	return sb.String()
 }
 
-// formatQuestionExpanded 将问答结果渲染为展开态（含完整问题文本）。
+// formatQuestionExpanded 将问答结果渲染为展开态，与 shell output 对齐（│ header → answer）。
 func formatQuestionExpanded(resultJSON string, indent string, textWidth int, lc *Messages) string {
-	var data struct {
-		Questions []struct {
-			Question string `json:"question"`
-			Header   string `json:"header"`
-			Options  []struct {
-				Label       string `json:"label"`
-				Description string `json:"description"`
-			} `json:"options"`
-		} `json:"questions"`
-		Answers map[string]string `json:"answers"`
-	}
-	if err := json.Unmarshal([]byte(resultJSON), &data); err != nil || len(data.Questions) == 0 {
-		// 回退到普通文本渲染
+	answers, order := parseQuestionResult(resultJSON)
+	if len(order) == 0 {
 		return ""
 	}
-	selStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#00d700"))
 	mutedStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#666666"))
-	headerStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#5A56E0")).Bold(true)
+	contentWidth := textWidth - 2 // "│ " 前缀占 2 列
+	if contentWidth < 1 {
+		contentWidth = 1
+	}
 	var sb strings.Builder
-	for _, q := range data.Questions {
-		answer := data.Answers[q.Question]
-		sb.WriteString(indent)
-		sb.WriteString(headerStyle.Render("▲ " + q.Header))
-		sb.WriteString("\n")
-		sb.WriteString(indent)
-		sb.WriteString("  " + q.Question)
-		sb.WriteString("\n")
-		if answer != "" {
-			sb.WriteString(indent)
-			sb.WriteString(selStyle.Render("  ▸ "))
-			sb.WriteString(answer)
-			sb.WriteString("\n")
-		} else {
-			sb.WriteString(indent)
-			sb.WriteString(mutedStyle.Render("  ▸ " + lc.ToolQuestionDeclined))
-			sb.WriteString("\n")
+	wrapped := 0
+	truncated := false
+	for _, header := range order {
+		answer := answers[header]
+		if answer == "" {
+			answer = lc.ToolQuestionDeclined
 		}
+		line := header + " → " + answer
+		for _, wl := range wrapLine(line, contentWidth) {
+			if wrapped >= maxExpandedWrapped {
+				truncated = true
+				break
+			}
+			sb.WriteString(indent)
+			sb.WriteString(mutedStyle.Render("│ "))
+			sb.WriteString(wl)
+			sb.WriteString("\n")
+			wrapped++
+		}
+		if truncated {
+			break
+		}
+	}
+	if truncated {
+		sb.WriteString(indent)
+		sb.WriteString(styleToolPreviewHint.Render(fmt.Sprintf(lc.ToolTruncatedLines, maxExpandedWrapped)))
 		sb.WriteString("\n")
 	}
 	return sb.String()
@@ -389,43 +384,6 @@ func toolSuffix(p *Paragraph, lc *Messages) string {
 			return fmt.Sprintf("(exit=%d, %s)", code, dur)
 		}
 		return fmt.Sprintf("(%s)", dur)
-	case "grep":
-		matches := countMatches(p.ToolResult)
-		return fmt.Sprintf("(%d matches)", matches)
-	case "search_file":
-		files := countLines(p.ToolResult)
-		return fmt.Sprintf("(%d files)", files)
-	case "ls":
-		entries := countLines(p.ToolResult)
-		return fmt.Sprintf("(%d entries)", entries)
-	case "lsp_diagnostic":
-		n, e, w, i, h := parseDiagnosticSummary(p.ToolResult)
-		if n < 0 {
-			return "✓"
-		}
-		dur := formatDuration(p.ToolDurMs)
-		return fmt.Sprintf(lc.ToolNDiagnostics, n, e, w, i, h, dur)
-	case "lsp_definition":
-		n := parseLocationCount(p.ToolResult, "定义")
-		if n == 0 {
-			return lc.ToolNotFound
-		}
-		dur := formatDuration(p.ToolDurMs)
-		return fmt.Sprintf(lc.ToolNDefinitions, n, dur)
-	case "lsp_references":
-		n := parseLocationCount(p.ToolResult, "引用")
-		if n == 0 {
-			return lc.ToolNotFound
-		}
-		dur := formatDuration(p.ToolDurMs)
-		return fmt.Sprintf(lc.ToolNReferences, n, dur)
-	case "lsp_hover":
-		if strings.TrimSpace(p.ToolResult) == "" || strings.TrimSpace(p.ToolResult) == lc.ToolNoHoverOutput {
-			return lc.ToolNoInfo
-		}
-		size := formatBytes(len(p.ToolResult))
-		dur := formatDuration(p.ToolDurMs)
-		return fmt.Sprintf("(%s, %s)", size, dur)
 	case "web_fetch", "skill":
 		size := formatBytes(len(p.ToolResult))
 		dur := formatDuration(p.ToolDurMs)
@@ -553,15 +511,15 @@ func formatTokens(n int) string {
 }
 
 // formatBalance 将余额信息格式化为单行紧凑显示。
-// 优先展示 CNY 余额，若无则取首个币种；不支持时返回空字符串。
+// 优先展示 USD 余额，若无则取首个币种；不支持时返回空字符串。
 func formatBalance(balance *llm.BalanceInfo) string {
 	if balance == nil || len(balance.BalanceInfos) == 0 {
 		return ""
 	}
-	// 优先取 CNY
+	// 优先取 USD
 	var cb *llm.CurrencyBalance
 	for i := range balance.BalanceInfos {
-		if balance.BalanceInfos[i].Currency == "CNY" {
+		if balance.BalanceInfos[i].Currency == "USD" {
 			cb = &balance.BalanceInfos[i]
 			break
 		}
@@ -583,56 +541,6 @@ func countDiffLines(output string) (added, removed int) {
 		}
 	}
 	return
-}
-
-// countMatches 从 grep 输出首行提取匹配数。
-func countMatches(output string) int {
-	n := parseHeaderCount(output)
-	if n < 0 {
-		return 0
-	}
-	return n
-}
-
-// countLines 统计输出中的条目数（从 header 提取，用于 search_file / ls）。
-func countLines(output string) int {
-	n := parseHeaderCount(output)
-	if n < 0 {
-		return 0
-	}
-	return n
-}
-
-// parseHeaderCount 从工具输出的 header 行中提取计数。
-// 支持格式: "Found N match(es)/file(s) ..." 或 "Listed ... (N entries, ...)"
-func parseHeaderCount(output string) int {
-	firstLine := strings.SplitN(output, "\n", 2)[0]
-
-	if strings.HasPrefix(firstLine, "Found ") {
-		after := strings.TrimPrefix(firstLine, "Found ")
-		numStr := takeDigits(after)
-		if numStr != "" {
-			return atoi(numStr)
-		}
-		return -1
-	}
-
-	if strings.HasPrefix(firstLine, "Listed ") {
-		// "Listed /path (N entries, 1ms):"
-		idx := strings.Index(firstLine, " entries")
-		if idx < 0 {
-			return -1
-		}
-		// 向左找 '('
-		left := strings.LastIndex(firstLine[:idx], "(")
-		if left < 0 {
-			return -1
-		}
-		numStr := strings.TrimSpace(firstLine[left+1 : idx])
-		return atoi(numStr)
-	}
-
-	return -1
 }
 
 // takeDigits 提取字符串开头的连续数字。
@@ -669,47 +577,6 @@ func parseExitCode(output string) int {
 	return atoi(numStr)
 }
 
-// parseDiagnosticSummary 从 lsp_diagnostic 输出首行提取诊断计数。
-// 格式: "N diagnostics (E errors, W warnings, I info, H hints)"
-// 无诊断时为 "✓ No diagnostics"，返回 -1。
-func parseDiagnosticSummary(output string) (total, errors, warnings, infos, hints int) {
-	firstLine := strings.SplitN(output, "\n", 2)[0]
-	if strings.Contains(firstLine, "No diagnostics") {
-		return -1, 0, 0, 0, 0
-	}
-	// 提取总数
-	total = -1
-	if idx := strings.Index(firstLine, " diagnostics"); idx >= 0 {
-		totalStr := takeDigits(strings.TrimSpace(firstLine[:idx]))
-		if totalStr != "" {
-			total = atoi(totalStr)
-		}
-	}
-	// 提取分类计数
-	errors = extractParenInt(firstLine, "errors")
-	warnings = extractParenInt(firstLine, "warnings")
-	infos = extractParenInt(firstLine, "info")
-	hints = extractParenInt(firstLine, "hints")
-	return
-}
-
-// extractParenInt 从字符串中提取 "N key" 格式中的数字。
-func extractParenInt(s, key string) int {
-	idx := strings.Index(s, key)
-	if idx < 1 {
-		return 0
-	}
-	// 向左找数字
-	start := idx - 1
-	for start >= 0 && s[start] >= '0' && s[start] <= '9' {
-		start--
-	}
-	if start+1 < idx {
-		return atoi(s[start+1 : idx])
-	}
-	return 0
-}
-
 // parseQuestionCount 从 ask_user_question 的 JSON 中解析问题数量。
 func parseQuestionCount(jsonStr string) int {
 	var params struct {
@@ -719,25 +586,6 @@ func parseQuestionCount(jsonStr string) int {
 		return 0
 	}
 	return len(params.Questions)
-}
-
-// parseLocationCount 从 lsp_definition/lsp_references 输出首行提取位置数。
-// 格式: "找到 N 个定义:\n" 或 "找到 N 个引用（仅显示前 100 条）:\n"
-func parseLocationCount(output, kind string) int {
-	firstLine := strings.SplitN(output, "\n", 2)[0]
-	if strings.Contains(firstLine, "未找到") {
-		return 0
-	}
-	prefix := "找到 "
-	after := strings.TrimPrefix(firstLine, prefix)
-	if after == firstLine {
-		return 0
-	}
-	numStr := takeDigits(strings.TrimSpace(after))
-	if numStr != "" {
-		return atoi(numStr)
-	}
-	return 0
 }
 
 // parseWebFetchBody 从 web_fetch 输出中剥离元数据头部，返回纯正文。
@@ -751,88 +599,8 @@ func parseWebFetchBody(output string) string {
 }
 
 // ---------------------------------------------------------------------------
-// LSP / web_fetch 专用完整渲染
+// web_fetch 专用完整渲染
 // ---------------------------------------------------------------------------
-
-// renderLSPDiagnosticFull 渲染 lsp_diagnostic 的展开态输出。
-// 首行摘要着色，后续条目按严重级别着色（error=红, warning=金, info=灰, hint=弱）。
-func renderLSPDiagnosticFull(sb *strings.Builder, result string, textWidth int, indent string, lc *Messages) {
-	wrapped := 0
-	lines := strings.Split(result, "\n")
-	for i, line := range lines {
-		styled := line
-		if i == 0 {
-			styled = styleHeaderAccent.Render(line)
-		} else if strings.Contains(line, ": error:") {
-			styled = styleToolPrefixErr.Render(line)
-		} else if strings.Contains(line, ": warning:") {
-			styled = styleFooterLatGold.Render(line)
-		} else if strings.Contains(line, ": info:") {
-			styled = styleMuted.Render(line)
-		} else if strings.Contains(line, ": hint:") {
-			styled = styleToolPreview.Render(line)
-		}
-		for _, wl := range wrapLine(styled, textWidth) {
-			if wrapped >= maxExpandedWrapped {
-				sb.WriteString(indent)
-				sb.WriteString(styleToolPreviewHint.Render(fmt.Sprintf(lc.ToolTruncatedLines, maxExpandedWrapped)))
-				sb.WriteString("\n")
-				return
-			}
-			sb.WriteString(indent)
-			sb.WriteString(wl)
-			sb.WriteString("\n")
-			wrapped++
-		}
-	}
-}
-
-// renderLSPLocationFull 渲染 lsp_definition / lsp_references 的展开态输出。
-// 首行总结着色，后续条目中等亮度。
-func renderLSPLocationFull(sb *strings.Builder, result string, textWidth int, indent string, lc *Messages) {
-	wrapped := 0
-	lines := strings.Split(result, "\n")
-	for i, line := range lines {
-		styled := line
-		if i == 0 {
-			styled = styleHeaderAccent.Render(line)
-		}
-		for _, wl := range wrapLine(styled, textWidth) {
-			if wrapped >= maxExpandedWrapped {
-				sb.WriteString(indent)
-				sb.WriteString(styleToolPreviewHint.Render(fmt.Sprintf(lc.ToolTruncatedLines, maxExpandedWrapped)))
-				sb.WriteString("\n")
-				return
-			}
-			sb.WriteString(indent)
-			sb.WriteString(wl)
-			sb.WriteString("\n")
-			wrapped++
-		}
-	}
-}
-
-// renderLSPHoverFull 渲染 lsp_hover 的展开态输出（Markdown 类型签名 + 文档）。
-func renderLSPHoverFull(sb *strings.Builder, result string, textWidth int, indent string, lc *Messages) {
-	wrapped := 0
-	lines := strings.Split(result, "\n")
-	for _, line := range lines {
-		for _, wl := range wrapLine(line, textWidth) {
-			if wrapped >= maxExpandedWrapped {
-				sb.WriteString(indent)
-				sb.WriteString(styleToolPreviewHint.Render(fmt.Sprintf(lc.ToolTruncatedLines, maxExpandedWrapped)))
-				sb.WriteString("\n")
-				return
-			}
-			sb.WriteString(indent)
-			sb.WriteString(styleToolExpanded.Render(wl))
-			sb.WriteString("\n")
-			wrapped++
-		}
-	}
-}
-
-// renderWebFetchFull 渲染 web_fetch 的展开态输出。头部元数据着色，正文默认样式。
 func renderWebFetchFull(sb *strings.Builder, result string, textWidth int, indent string, lc *Messages) {
 	wrapped := 0
 
@@ -1024,6 +792,10 @@ func renderAssistantPara(sb *strings.Builder, p *Paragraph, ctx ViewportCtx) {
 	}
 	prefixWidth := lipgloss.Width(prefixStr)
 	indent := strings.Repeat(" ", prefixWidth)
+	textWidth := ctx.Width - prefixWidth
+	if textWidth < 1 {
+		textWidth = 1
+	}
 
 	if p.Text == "" {
 		sb.WriteString(prefixStr)
@@ -1034,14 +806,17 @@ func renderAssistantPara(sb *strings.Builder, p *Paragraph, ctx ViewportCtx) {
 	// 流式输出中跳过 Glamour（markdown 结构不完整，渲染无意义且极慢）；
 	// 仅在 done 时使用 Glamour，并缓存结果避免重复渲染。
 	rendered := p.Text
+	glamourUsed := false
 	if !streaming && ctx.Glamour != nil {
 		if p.renderedCache != "" && p.cacheWidth == ctx.Width {
 			rendered = p.renderedCache
+			glamourUsed = true
 		} else {
 			if out, err := ctx.Glamour.Render(p.Text); err == nil {
 				rendered = out
 				p.renderedCache = out
 				p.cacheWidth = ctx.Width
+				glamourUsed = true
 			}
 		}
 	}
@@ -1056,14 +831,21 @@ func renderAssistantPara(sb *strings.Builder, p *Paragraph, ctx ViewportCtx) {
 	lines := strings.Split(rendered, "\n")
 	firstLine := true
 	for _, line := range lines {
-		if firstLine {
-			sb.WriteString(prefixStr)
-			firstLine = false
-		} else {
-			sb.WriteString(indent)
+		wrapped := []string{line}
+		if !glamourUsed {
+			// 流式输出或无 Glamour 时手动按终端宽度换行
+			wrapped = wrapLine(line, textWidth)
 		}
-		sb.WriteString(line)
-		sb.WriteString("\n")
+		for _, wl := range wrapped {
+			if firstLine {
+				sb.WriteString(prefixStr)
+				firstLine = false
+			} else {
+				sb.WriteString(indent)
+			}
+			sb.WriteString(wl)
+			sb.WriteString("\n")
+		}
 	}
 }
 
@@ -1453,6 +1235,11 @@ func renderToolPara(sb *strings.Builder, p *Paragraph, ctx ViewportCtx) {
 		}
 	}
 
+	// 流式输出 —— 实时渲染已有输出（stateStreaming + 有 ToolResult 时）
+	if p.State == stateStreaming && p.ToolResult != "" {
+		renderToolStreamOutput(sb, p, textWidth, indentStr, ctx.LC)
+	}
+
 	// 展开态 —— 显示完整输出
 	if p.State == stateExpanded {
 		if p.DiffHunks != nil {
@@ -1474,7 +1261,7 @@ const maxPreviewWrapped = 5
 func renderToolPreview(sb *strings.Builder, p *Paragraph, textWidth int, indent string, lc *Messages) {
 	// ask_user_question 定制渲染：显示可读的问答摘要
 	if p.ToolName == "ask_user_question" && p.ToolResult != "" {
-		preview := formatQuestionPreview(p.ToolResult, indent, lc)
+		preview := formatQuestionPreview(p.ToolResult, textWidth, indent, lc)
 		if preview != "" {
 			sb.WriteString(preview)
 			return
@@ -1563,47 +1350,6 @@ func renderToolPreview(sb *strings.Builder, p *Paragraph, textWidth int, indent 
 			}
 		}
 
-	case "lsp_diagnostic":
-		lines := strings.Split(result, "\n")
-		start := 1
-		if len(lines) > 0 && strings.HasPrefix(lines[0], "诊断结果") {
-			start = 1
-		}
-		for _, line := range lines[start:] {
-			if line == "" {
-				continue
-			}
-			if writeWrappedPreview(line, styleToolPreview, &wrapped) {
-				truncated = true
-				break
-			}
-		}
-	case "lsp_definition", "lsp_references":
-		lines := strings.Split(result, "\n")
-		start := 0
-		for i, line := range lines {
-			if strings.HasPrefix(line, "找到 ") {
-				start = i + 1
-				continue
-			}
-			if i >= start && strings.TrimSpace(line) != "" {
-				if writeWrappedPreview(line, styleToolPreview, &wrapped) {
-					truncated = true
-					break
-				}
-			}
-		}
-	case "lsp_hover":
-		lines := strings.Split(result, "\n")
-		for _, line := range lines {
-			if line == "" {
-				continue
-			}
-			if writeWrappedPreview(line, styleToolPreview, &wrapped) {
-				truncated = true
-				break
-			}
-		}
 	case "web_fetch":
 		body := parseWebFetchBody(result)
 		lines := strings.Split(body, "\n")
@@ -1630,6 +1376,45 @@ func renderToolPreview(sb *strings.Builder, p *Paragraph, textWidth int, indent 
 		default:
 			sb.WriteString(styleToolPreviewHint.Render(lc.ToolTruncated))
 		}
+		sb.WriteString("\n")
+	}
+}
+
+// renderToolStreamOutput 渲染流式工具输出，与 renderThoughtPara 的 fixedLines 反向收集逻辑一致。
+// 从尾部反向采集直到获得 fixedLines 个 wrap 后可见行，不显示截断提示（截断是隐式的）。
+func renderToolStreamOutput(sb *strings.Builder, p *Paragraph, textWidth int, indent string, lc *Messages) {
+	result := strings.TrimRight(p.ToolResult, "\n")
+	if result == "" {
+		return
+	}
+
+	mutedStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#666666"))
+	contentWidth := textWidth - 2 // "│ " 前缀占 2 列
+	if contentWidth < 1 {
+		contentWidth = 1
+	}
+
+	const fixedLines = 5
+
+	rawLines := strings.Split(result, "\n")
+	var visible []string
+	// 从尾部反向收集，直到获得至少 fixedLines 个 wrap 后的可见行
+	for i := len(rawLines) - 1; i >= 0 && len(visible) < fixedLines; i-- {
+		if rawLines[i] == "" {
+			continue
+		}
+		wrapped := wrapLine(rawLines[i], contentWidth)
+		visible = append(wrapped, visible...)
+	}
+	// 超出 fixedLines 时从头部截断
+	if len(visible) > fixedLines {
+		visible = visible[len(visible)-fixedLines:]
+	}
+
+	for _, wl := range visible {
+		sb.WriteString(indent)
+		sb.WriteString(mutedStyle.Render("│ "))
+		sb.WriteString(wl)
 		sb.WriteString("\n")
 	}
 }
@@ -1738,17 +1523,6 @@ func renderToolFullOutput(sb *strings.Builder, p *Paragraph, textWidth int, inde
 			}
 		}
 
-	case "grep", "search_file", "ls":
-
-	case "lsp_diagnostic":
-		renderLSPDiagnosticFull(sb, result, textWidth, indent, lc)
-		return
-	case "lsp_definition", "lsp_references":
-		renderLSPLocationFull(sb, result, textWidth, indent, lc)
-		return
-	case "lsp_hover":
-		renderLSPHoverFull(sb, result, textWidth, indent, lc)
-		return
 	case "web_fetch":
 		renderWebFetchFull(sb, result, textWidth, indent, lc)
 		return

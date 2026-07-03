@@ -260,8 +260,8 @@ func (m *setupModel) buildForm() {
 			Key("locale").
 			Title(fmt.Sprintf(lc.SetupStepLocale, 2, totalSteps)).
 			Options(
-				huh.NewOption("简体中文  (zh-CN)", "zh-CN"),
-				huh.NewOption("English   (en-US)", "en-US"),
+				huh.NewOption(m.state.lc.SetupLocaleZhCNLabel, "zh-CN"),
+				huh.NewOption(m.state.lc.SetupLocaleEnUSLabel, "en-US"),
 			).
 			Value(&localeVal)
 		m.form = huh.NewForm(huh.NewGroup(sel)).

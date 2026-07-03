@@ -31,6 +31,7 @@ import (
 	"image/color"
 	"io"
 	"os"
+	"os/user"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -75,17 +76,23 @@ var defaultSystemPrompt = `You are Waveloom, a coding agent. You help users writ
 
 ## Capabilities
 
-- Query LSP diagnostics, definitions, references, and hover for precise code understanding (use lsp_diagnostic / lsp_definition / lsp_references / lsp_hover).
 - Fetch online documentation, API references, and package registries via web_fetch.
 
 ## How you work
 
-- Read before you write — explore with search_file and grep. Before ANY edit_file call, you MUST call read_file (with line numbers) in the same tool-call batch to confirm the exact content of old_string (indentation, whitespace, punctuation). Never edit from memory — this is a hard constraint.
-- Verify before you claim — run tests/lint/build via shell when applicable, run lsp_diagnostic, check diffs after every change.
+- Read before you write — explore with grep/find using shell. edit_file old_string must match file content exactly (indentation, whitespace, punctuation). Reliable source: a read_file return within the last 2 turns where the file hasn't been edited since. Unreliable: memory, reads from earlier turns, or stale reads after other edits. When uncertain, re-read — a wasted call is cheaper than a no_match loop.
+  - Search codebase: {"command":"grep -rn 'pattern' --include='*.go' .", "working_dir":"/project"}
+  - Find files: {"command":"find . -name '*.go' -not -path '*/.git/*' | head -100"}
+  - List directory: {"command":"ls -la pkg/tool/"}
+- Verify before you claim — run build/lint/test after every change, then check diffs. Do NOT anchor to a fixed tool — infer the right command from the project:
+  - Look for language-specific check tools first: 'go vet', 'cargo check', 'npx tsc --noEmit', 'python3 -m py_compile', etc.
+  - Prefer single-file or single-package scope over full-project build when available (faster feedback).
+  - Fall back to project-level build when no scoped check exists: 'go build ./...', 'cargo build', 'make', 'npm run build', etc.
+  - Non-code files (JSON/YAML/Markdown) → skip build; use a linter if present, otherwise careful manual review.
 - Check before you guess — confirm tool availability in ## Environment before calling any binary.
-- Edit surgically — prefer edit_file over write_file, never touch unrelated code. After every edit_file call, run lsp_diagnostic to verify no new errors before proceeding to the next change.
-- Invoke parallel-safe tools (read_file, search_file, grep, ls, web_fetch, lsp_*) in the same response when independent — the system serializes write_file, edit_file, and shell automatically.
-- Use ls or search_file to explore directories before reading files — never pass a directory path to read_file. Paths without a file extension (e.g., pkg/tool) are likely directories: use ls or search_file first, then pass the actual filename to read_file.
+- Edit surgically — prefer edit_file over write_file, never touch unrelated code. After every edit_file call, verify the change compiles before proceeding to the next change.
+- Invoke parallel-safe tools (read_file, web_fetch) in the same response when independent — the system serializes write_file, edit_file, and shell automatically.
+- Use shell('ls') or shell('find') to explore directories before reading files — never pass a directory path to read_file. Paths without a file extension (e.g., pkg/tool) are likely directories: use shell('ls') first, then pass the actual filename to read_file.
 - For throwaway verification scripts: prefer python, write to /tmp, and clean up after.
   Example: {"command":"python /tmp/check.py && rm /tmp/check.py"}
 
@@ -98,8 +105,8 @@ var defaultSystemPrompt = `You are Waveloom, a coding agent. You help users writ
 
 ## Coding standards
 
+- The first user message in every conversation is the project's AGENTS.md — project-specific rules with the same binding force as this system prompt. Before writing or editing any code, scan AGENTS.md for rules relevant to the current task (build commands, test conventions, commit format, file layout, naming, etc.) and apply them. AGENTS.md and system prompt are cumulative — when they truly conflict, system prompt wins, but only for the specific point of conflict, not the entire file.
 - Follow existing codebase conventions and linter configurations.
-- The user message immediately following this prompt contains the project's AGENTS.md instructions — these are project-specific rules. You MUST follow them. However, the rules in this system prompt are HARD CONSTRAINTS — they are not suggestions, defaults, or fallbacks. When AGENTS.md and system prompt address the same topic, system prompt takes precedence unconditionally. AGENTS.md supplements topics not covered by system prompt.
 - Write clear, self-documenting names. Avoid abbreviations.
 - Keep changes minimal — no unnecessary refactors or rewrites.
 
@@ -115,8 +122,8 @@ var defaultSystemPrompt = `You are Waveloom, a coding agent. You help users writ
 - Fatal (do not retry): permission_denied, security_violation, disk_full.
 - Recoverable (retry once with corrected input): command_failed, command_not_found, command_permission_denied, timeout, file_not_found, invalid_args, no_match, no_results, not_dir, binary_file, multiple_matches.
 - For not_dir: the error message includes a directory listing and may suggest a specific file (Did you mean). Pick a file from the listing or use the suggestion, then retry immediately.
-- For file_not_found: the error message includes CWD and may suggest a similar path (Did you mean). Use the suggested path, or use search_file to locate the correct file.
-- For binary_file: the file is not a readable text file — verify you have the correct filename; use ls to check the directory contents.
+- For file_not_found: the error message includes CWD and may suggest a similar path (Did you mean). Use the suggested path, or use shell('find') to locate the correct file.
+- For binary_file: the file is not a readable text file — verify you have the correct filename; use shell('ls') to check the directory contents.
 - For no_match: the error includes a hint with the closest matching lines and line numbers — use read_file to verify the exact content at those lines, then copy text verbatim (including indentation).
 - For multiple_matches: the error shows each match location with surrounding context and line numbers. Pick one occurrence and include 1-2 unique surrounding lines in your old_string to disambiguate.
 - For no_results: the skill was not found or not applicable — try a different skill name or check available skills.
@@ -137,7 +144,17 @@ const maxToolResultBytes = 100 * 1024 // 100 KB
 
 // buildSystemPrompt 构造完整的系统提示词。
 // CWD 在会话期间固定，不存在 cd 工具。
-func buildSystemPrompt(cwd string) string {
+func buildSystemPrompt(cwd string, loc Locale) string {
+	prompt := defaultSystemPrompt
+	// 根据 locale 替换 Personality 中的语言指令
+	switch loc {
+	case LocaleEnUS:
+		prompt = strings.Replace(prompt,
+			"- Communicate in Chinese when addressing the user; keep English code and terminal output as-is.",
+			"- Communicate in English when addressing the user.", 1)
+	default:
+		// zh-CN / auto → 保持中文指令不变
+	}
 	cwdInfo := fmt.Sprintf(`
 
 ## Workspace
@@ -147,11 +164,11 @@ All file paths are resolved relative to this directory unless a working_dir is s
 
 ### Working Directory Rules
 
-- The workspace directory is fixed for the entire session.
-- Shell commands run in isolated subprocesses — "cd" inside a shell command has NO effect on subsequent commands.
+- The workspace directory is the default base for all operations — not a boundary. You may read, write, and execute in any directory.
+- Shell commands run in isolated subprocesses — "cd" inside a shell command has NO effect on subsequent commands. Use the working_dir parameter to change the execution directory per command.
 - To operate in a different directory, use the working_dir parameter: {"command":"ls", "working_dir":"/tmp"}
 `, cwd)
-	return defaultSystemPrompt + cwdInfo
+	return prompt + cwdInfo
 }
 
 // keyMap 定义所有快捷键绑定。
@@ -376,6 +393,7 @@ type model struct {
 	pickerItems           []pickerItem
 	pickerAllItems        []pickerItem
 	pickerScanGen         int                   // 扫描代数，每次发起异步扫描时递增，用于丢弃过期结果
+	pickerScanCancel      context.CancelFunc    // 取消上一次未完成的扫描
 	pickerLastScannedBase string                // 上次触发磁盘扫描的 filepath.Base(filter)，base 未变则跳过扫描
 	pickerDismissValue    string                // 选择器关闭时的 input 值，防止立即重新触发
 	pickerLastValue       string                // 上次刷新时的 input 值，避免 spinner tick 触发重复扫描
@@ -563,7 +581,7 @@ func newTUIModel(llmClient llm.Client, registry tool.Registry, guard permission.
 	}
 
 	cwd, _ := os.Getwd()
-	cm := ctxpkg.New(buildSystemPrompt(cwd))
+	cm := ctxpkg.New(buildSystemPrompt(cwd, loc))
 	lc := messagesFor(loc)
 
 	ti := textinput.New()
@@ -843,6 +861,10 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case agentloop.ToolCallStart:
 		m.handleToolStart(msg)
 		m.flushTranscript()
+		return m, nil
+
+	case agentloop.ToolCallStream:
+		m.handleToolStream(msg)
 		return m, nil
 
 	case agentloop.ToolCallResult:
@@ -1851,10 +1873,10 @@ func (m *model) handlePickerKey(msg tea.KeyPressMsg) (bool, tea.Cmd) {
 		idx := m.pickerList.Index()
 		if idx >= 0 && idx < len(m.pickerItems) {
 			m.completePickerFilter(idx)
-			// Tab 补全可能进入子目录 → 重新扫描磁盘
-			m.pickerFilter = extractFilterAfterAt(m.input.Value())
-			m.pickerLastScannedBase = filepath.Base(m.pickerFilter)
-			m.scanFiles()
+			// Tab 补全可能进入子目录 → 异步重新扫描磁盘
+			m.pickerFilter = resolveTilde(extractFilterAfterAt(m.input.Value()))
+			m.pickerLastScannedBase = "" // 强制重新扫描
+			m.scanFilesAsync()
 			m.pickerItems = fuzzyFilter(m.pickerFilter, m.pickerAllItems)
 			m.buildPickerList()
 			m.pickerLastValue = m.input.Value()
@@ -2162,7 +2184,7 @@ func extractFilterAfterAt(value string) string {
 
 // updatePickerFilter 根据当前输入重新过滤文件列表，并异步重扫磁盘。
 func (m *model) updatePickerFilter() {
-	m.pickerFilter = extractFilterAfterAt(m.input.Value())
+	m.pickerFilter = resolveTilde(extractFilterAfterAt(m.input.Value()))
 	// 立即用现有 allItems 做内存过滤，提供即时反馈
 	m.pickerItems = fuzzyFilter(m.pickerFilter, m.pickerAllItems)
 	m.buildPickerList()
@@ -2183,16 +2205,30 @@ func (m *model) scanFilesAsync() {
 	}
 	m.pickerLastScannedBase = base
 
+	// 取消上一次未完成的扫描
+	if m.pickerScanCancel != nil {
+		m.pickerScanCancel()
+		m.pickerScanCancel = nil
+	}
+
 	m.pickerScanGen++
 	gen := m.pickerScanGen
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	m.pickerScanCancel = cancel
+
 	go func() {
+		defer cancel()
 		// 150ms 防抖：等待用户停止输入后再扫描
-		time.Sleep(150 * time.Millisecond)
+		select {
+		case <-time.After(150 * time.Millisecond):
+		case <-ctx.Done():
+			return
+		}
 		// 若在此期间有新扫描发起，代数已递增，跳过本次
 		if m.pickerScanGen != gen {
 			return
 		}
-		items := doScanFiles(m.registry, m.cwd, filter)
+		items := doScanFilesWithContext(ctx, m.registry, m.cwd, filter)
 		if m.program != nil {
 			m.program.Send(pickerScanDoneMsg{items: items, gen: gen})
 		}
@@ -2202,7 +2238,7 @@ func (m *model) scanFilesAsync() {
 // activatePicker 首次激活文件选择器，异步扫描磁盘。
 func (m *model) activatePicker() {
 	m.pickerVisible = true
-	m.pickerFilter = extractFilterAfterAt(m.input.Value())
+	m.pickerFilter = resolveTilde(extractFilterAfterAt(m.input.Value()))
 	m.pickerLastValue = m.input.Value()
 
 	// 立即用空列表占位，避免 View() 中 nil list
@@ -2215,10 +2251,21 @@ func (m *model) activatePicker() {
 func (m *model) startPickerScan() tea.Cmd {
 	filter := m.pickerFilter
 	m.pickerLastScannedBase = filepath.Base(filter)
+
+	// 取消上一次未完成的扫描
+	if m.pickerScanCancel != nil {
+		m.pickerScanCancel()
+		m.pickerScanCancel = nil
+	}
+
 	m.pickerScanGen++
 	gen := m.pickerScanGen
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	m.pickerScanCancel = cancel
+
 	return func() tea.Msg {
-		items := doScanFiles(m.registry, m.cwd, filter)
+		defer cancel()
+		items := doScanFilesWithContext(ctx, m.registry, m.cwd, filter)
 		return pickerScanDoneMsg{items: items, gen: gen}
 	}
 }
@@ -2269,39 +2316,67 @@ func (m *model) buildPickerList() {
 	m.pickerDelegate = &delegate
 }
 
-// scanFiles 扫描工作区文件列表，结果存入 m.pickerAllItems（在主 goroutine 调用）。
-func (m *model) scanFiles() {
-	m.pickerAllItems = doScanFiles(m.registry, m.cwd, m.pickerFilter)
+// doScanFilesWithContext 传递 context 用于超时/取消。
+func doScanFilesWithContext(ctx context.Context, registry tool.Registry, cwd, filter string) []pickerItem {
+	filter = resolveTilde(filter)
+
+	if filepath.IsAbs(filter) {
+		return doScanAbsolute(ctx, registry, cwd, filter)
+	}
+	return doScanRelative(ctx, registry, cwd, filter)
 }
 
-// doScanFiles 执行实际的文件扫描（通过 search_file 工具），返回结果。
-func doScanFiles(registry tool.Registry, cwd, filter string) []pickerItem {
-	ctx := context.Background()
+// doScanRelative 相对路径扫描：基于 cwd，深度扫描项目内部，浅层列出父目录兄弟。
+func doScanRelative(ctx context.Context, registry tool.Registry, cwd, filter string) []pickerItem {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
 
-	doSearch := func(pattern string) (files []string) {
+	searchRoot := "."
+	searchDir := cwd
+	if dirPrefix := extractDirPrefix(filter); dirPrefix != "" && dirPrefix != "." {
+		resolved := dirPrefix
+		if !filepath.IsAbs(resolved) {
+			resolved = filepath.Join(cwd, resolved)
+		}
+		resolved = filepath.Clean(resolved)
+		if info, err := os.Stat(resolved); err == nil && info.IsDir() {
+			searchRoot = resolved
+			searchDir = resolved
+		}
+	}
+
+	// 父目录顶层 → 浅层列出兄弟；其他 → 深度扫描
+	maxDepth := 10
+	excludeCWD := false
+	if searchRoot == filepath.Dir(cwd) {
+		maxDepth = 2
+		excludeCWD = true
+	}
+
+	doSearch := func(namePattern string) (files []string) {
+		cmd := fmt.Sprintf("find %s -maxdepth %d -type f", shellQuote(searchRoot), maxDepth)
+		cmd += " -not -path '*/.git/*' -not -path '*/node_modules/*' 2>/dev/null"
+		if excludeCWD {
+			cwdBase := filepath.Base(cwd)
+			cmd += fmt.Sprintf(" -not -path %s", shellQuote(filepath.Join(searchRoot, cwdBase)+"/*"))
+		}
+		if namePattern != "" && namePattern != "*" {
+			cmd += fmt.Sprintf(" -name '%s'", namePattern)
+		}
+		cmd += " | sort"
 		jsonBytes, _ := json.Marshal(map[string]string{
-			"pattern":     pattern,
-			"working_dir": cwd,
+			"command":     cmd,
+			"working_dir": searchDir,
 		})
-		result, err := registry.Execute(ctx, "search_file", jsonBytes)
+		result, err := registry.Execute(ctx, "bash", jsonBytes)
 		if err != nil || result.IsError() {
 			return nil
 		}
-		return parseSearchFileOutput(result.Content)
+		rawFiles := parseFindOutput(result.Content)
+		return relativizePaths(rawFiles, cwd)
 	}
 
-	var files []string
-	if filter != "" {
-		lastComp := filepath.Base(filter)
-		if lastComp != "" && lastComp != "." && lastComp != "/" {
-			files = doSearch("**/" + lastComp + "*")
-		}
-		if len(files) == 0 {
-			files = doSearch("**/*")
-		}
-	} else {
-		files = doSearch("**/*")
-	}
+	files := doSearch("*")
 
 	if len(files) == 0 {
 		return nil
@@ -2341,39 +2416,266 @@ func doScanFiles(registry tool.Registry, cwd, filter string) []pickerItem {
 	if len(items) > 500 {
 		items = items[:500]
 	}
-
 	sortPickerItems(items)
 	return items
 }
 
-// parseSearchFileOutput 解析 search_file 工具的输出为文件路径列表。
-func parseSearchFileOutput(content string) []string {
+// doScanAbsolute 绝对路径扫描：展示绝对路径，深度随导航层级递增。
+func doScanAbsolute(ctx context.Context, registry tool.Registry, cwd, filter string) []pickerItem {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+
+	// 提取目录前缀作为搜索起点
+	dirPrefix := extractDirPrefix(filter)
+	if dirPrefix == "" || dirPrefix == "." {
+		return nil
+	}
+	resolved := dirPrefix
+	if !filepath.IsAbs(resolved) {
+		resolved = filepath.Join(cwd, resolved)
+	}
+	resolved = filepath.Clean(resolved)
+	info, err := os.Stat(resolved)
+	if err != nil || !info.IsDir() {
+		return nil
+	}
+	searchRoot := resolved
+
+	// 深度 = searchRoot 之后的路径层级 + 2
+	// @~/ → depth 2（home 直系 + 一级子内容）
+	// @~/Workbench/waveloom/ → depth 3（项目内容 + 两层子目录）
+	relFilter := strings.TrimPrefix(filter, searchRoot)
+	relFilter = strings.Trim(relFilter, "/")
+	extraLevels := 0
+	if relFilter != "" {
+		extraLevels = len(strings.Split(relFilter, "/"))
+	}
+	maxDepth := extraLevels + 2
+	if maxDepth < 1 {
+		maxDepth = 1
+	}
+	if maxDepth > 10 {
+		maxDepth = 10
+	}
+
+	// 搜索策略：
+	// - 有部分名称（如 Workben）→ -name 'Workben*' 精搜，防截断
+	// - 仅目录前缀（如 ~/）→ 全量扫描，供浏览
+	namePattern := "*"
+	if relFilter != "" {
+		baseName := filepath.Base(relFilter)
+		if baseName != "" && baseName != "." && baseName != "/" {
+			namePattern = baseName + "*"
+		}
+	}
+
+	doSearch := func(typeFilter string) (files []string) {
+		cmd := fmt.Sprintf("find %s -maxdepth %d -type %s -not -path '*/.git/*' -not -path '*/node_modules/*' 2>/dev/null", shellQuote(searchRoot), maxDepth, typeFilter)
+		if namePattern != "*" {
+			cmd += fmt.Sprintf(" -name '%s'", namePattern)
+		}
+		cmd += " | sort"
+		jsonBytes, _ := json.Marshal(map[string]string{
+			"command":     cmd,
+			"working_dir": searchRoot,
+		})
+		result, err := registry.Execute(ctx, "bash", jsonBytes)
+		if err != nil || result.IsError() {
+			return nil
+		}
+		return parseFindOutput(result.Content)
+	}
+
+	dirFiles := doSearch("d")
+	regFiles := doSearch("f")
+
+	if len(dirFiles) == 0 && len(regFiles) == 0 {
+		return nil
+	}
+
+	seenDirs := make(map[string]bool)
+	var items []pickerItem
+
+	// 目录条目（find -type d 已确认类型，无需 os.Stat）
+	for _, entry := range dirFiles {
+		if seenDirs[entry] {
+			continue
+		}
+		seenDirs[entry] = true
+		items = append(items, pickerItem{
+			Path:    entry,
+			IsDir:   true,
+			Display: entry + "/",
+		})
+
+		// 提取父目录链
+		dir := filepath.Dir(entry)
+		for dir != searchRoot && dir != "/" && dir != "" && strings.HasPrefix(dir, searchRoot) {
+			if seenDirs[dir] {
+				break
+			}
+			seenDirs[dir] = true
+			items = append(items, pickerItem{
+				Path:    dir,
+				IsDir:   true,
+				Display: dir + "/",
+			})
+			dir = filepath.Dir(dir)
+		}
+	}
+
+	// 文件条目（find -type f 已确认类型）
+	for _, entry := range regFiles {
+		if isHiddenOrBinary(entry) {
+			continue
+		}
+		items = append(items, pickerItem{
+			Path:    entry,
+			IsDir:   false,
+			Display: entry,
+		})
+
+		// 提取父目录链
+		dir := filepath.Dir(entry)
+		for dir != searchRoot && dir != "/" && dir != "" && strings.HasPrefix(dir, searchRoot) {
+			if seenDirs[dir] {
+				break
+			}
+			if isHiddenOrBinary(dir) {
+				break
+			}
+			seenDirs[dir] = true
+			items = append(items, pickerItem{
+				Path:    dir,
+				IsDir:   true,
+				Display: dir + "/",
+			})
+			dir = filepath.Dir(dir)
+		}
+	}
+
+	if len(items) > 500 {
+		items = items[:500]
+	}
+	sortPickerItems(items)
+	return items
+}
+
+// parseFindOutput 解析 shell 工具返回的 find 命令输出为文件路径列表。
+//
+// shell 工具的输出格式：
+//
+//	Command succeeded (exit=0)  8ms
+//	   stdout:
+//	     /path/to/file1
+//	     /path/to/file2
+//
+// 本函数跳过元数据头，仅提取缩进的文件路径行。
+func parseFindOutput(content string) []string {
 	lines := strings.Split(content, "\n")
 	var files []string
+	inBody := false
+
 	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		if line == "" {
+		// 检测头→体边界："   stdout:" 或 "   stderr/stdout:"
+		if !inBody {
+			if strings.HasPrefix(line, "   stdout:") || strings.HasPrefix(line, "   stderr/stdout:") {
+				inBody = true
+			}
 			continue
 		}
-		// 跳过摘要头、截断警告和空行
-		if strings.HasPrefix(line, "Found ") ||
-			strings.HasPrefix(line, "Results truncated") ||
-			strings.HasPrefix(line, "⚠️") ||
-			strings.HasPrefix(line, "No files") ||
-			strings.HasPrefix(line, "Searched under") {
-			continue
+
+		// 体内部每行缩进 5 空格，剥离后即为实际文件路径
+		if strings.HasPrefix(line, "     ") {
+			file := strings.TrimSpace(line[5:])
+			if file != "" && file != "(empty)" {
+				files = append(files, file)
+			}
 		}
-		files = append(files, line)
 	}
 	return files
 }
 
+// extractDirPrefix 从 filter 中提取可能的外部目录前缀。
+// 若 filter 以 /、~ 或 . 开头，返回其目录部分作为搜索起点。
+// 绝对路径（/）和 ~ 直接使用；相对路径（./、../）基于 cwd 解析。
+func extractDirPrefix(filter string) string {
+	if filter == "" {
+		return ""
+	}
+	if filter[0] == '/' || filter[0] == '~' || filter[0] == '.' {
+		if idx := strings.LastIndex(filter, "/"); idx >= 0 {
+			return filter[:idx+1]
+		}
+		return filter
+	}
+	return ""
+}
+
+// resolveTilde 展开 filter 中的 ~ 和 ~user 前缀为实际 home 目录路径。
+// ~ → 当前用户 home，~user → 指定用户 home。
+func resolveTilde(filter string) string {
+	if !strings.HasPrefix(filter, "~") {
+		return filter
+	}
+	end := strings.Index(filter, "/")
+	tildePart := filter
+	suffix := ""
+	if end >= 0 {
+		tildePart = filter[:end]
+		suffix = filter[end:]
+	}
+
+	var homeDir string
+	if tildePart == "~" {
+		homeDir, _ = os.UserHomeDir()
+	} else {
+		username := tildePart[1:]
+		if u, err := user.Lookup(username); err == nil {
+			homeDir = u.HomeDir
+		}
+	}
+	if homeDir == "" {
+		return filter
+	}
+	return homeDir + suffix
+}
+
+// shellQuote 为 shell 命令安全转义路径参数。
+func shellQuote(path string) string {
+	return "'" + strings.ReplaceAll(path, "'", "'\\''") + "'"
+}
+
+// relativizePaths 将绝对路径或 ./ 前缀路径转换为相对于 cwd 的路径。
+// find 在外部目录搜索时输出绝对路径，需要转回 cwd 相对路径以支持模糊过滤和 @ 引用。
+func relativizePaths(paths []string, cwd string) []string {
+	result := make([]string, 0, len(paths))
+	for _, p := range paths {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
+		}
+		// 转绝对路径
+		abs := p
+		if !filepath.IsAbs(abs) {
+			abs = filepath.Join(cwd, abs)
+		}
+		// 转 cwd 相对路径
+		rel, err := filepath.Rel(cwd, abs)
+		if err != nil {
+			rel = abs
+		}
+		result = append(result, rel)
+	}
+	return result
+}
+
 // isHiddenOrBinary 检查路径是否应被过滤。
 func isHiddenOrBinary(path string) bool {
-	// 检查每个路径段是否以 . 开头（隐藏文件/目录）
+	// 检查每个路径段是否以 . 开头（隐藏文件/目录），排除 . 和 ..（合法路径导航）
 	parts := strings.Split(path, string(filepath.Separator))
 	for _, p := range parts {
-		if strings.HasPrefix(p, ".") {
+		if strings.HasPrefix(p, ".") && p != "." && p != ".." {
 			return true
 		}
 		// 常见巨型目录
@@ -2545,6 +2847,18 @@ func (m *model) handleToolStart(ev agentloop.ToolCallStart) {
 	})
 }
 
+// handleToolStream 处理工具执行中的增量输出流。
+func (m *model) handleToolStream(ev agentloop.ToolCallStream) {
+	for i := len(m.paras) - 1; i >= 0; i-- {
+		p := &m.paras[i]
+		if p.Type == paraTool && p.State == stateStreaming && p.ToolName == ev.ToolCallName {
+			p.ToolResult = truncateToolStreamOutput(p.ToolResult + ev.Chunk)
+			p.renderDirty = true
+			return
+		}
+	}
+}
+
 // handleToolResult 处理工具执行结果。
 func (m *model) handleToolResult(ev agentloop.ToolCallResult) {
 	// 查找匹配的 tool 段落（按 tool name + args 匹配，取最后一个 streaming 的）
@@ -2557,13 +2871,15 @@ func (m *model) handleToolResult(ev agentloop.ToolCallResult) {
 			p.ToolDurMs = ev.DurationMs
 			p.ToolDenied = ev.Denied
 			p.DiffHunks = ev.DiffHunks
-			if ev.IsError() || ev.Denied {
-				p.State = stateError
-			} else if ev.DiffHunks != nil {
-				p.State = stateExpanded // edit_file 直接展开完整 diff 视图
-			} else {
-				p.State = stateDone // 其他工具完成即折叠
-			}
+		if ev.IsError() || ev.Denied {
+			p.State = stateError
+		} else if ev.DiffHunks != nil {
+			p.State = stateExpanded // edit_file 直接展开完整 diff 视图
+		} else if p.ToolName == "ask_user_question" {
+			p.State = stateExpanded // ask_user_question 默认展开显示完整问答
+		} else {
+			p.State = stateDone // 其他工具完成即折叠
+		}
 			p.renderDirty = true
 
 			// 条件 skill 激活：文件操作工具完成后检查路径匹配
@@ -2618,6 +2934,22 @@ func truncateToolResult(result string) string {
 		return result
 	}
 	return result[:maxToolResultBytes] + "\n... (output truncated)"
+}
+
+// maxToolStreamLines 是流式输出在 TUI 中保留的最大行数。
+// 超过此数时从头部丢弃旧行，防止长时间命令撑爆内存。
+const maxToolStreamLines = 2000
+
+// truncateToolStreamOutput 对累积的流式输出做滚动窗口截断。
+func truncateToolStreamOutput(s string) string {
+	lines := strings.Split(s, "\n")
+	if len(lines) <= maxToolStreamLines {
+		return s
+	}
+	// 保留尾部行，用截断标记替换头部
+	head := fmt.Sprintf("... (stream truncated, showing last %d lines)\n", maxToolStreamLines)
+	tail := lines[len(lines)-maxToolStreamLines:]
+	return head + strings.Join(tail, "\n")
 }
 
 // handleLoopDone 处理循环终止。
@@ -3847,16 +4179,13 @@ func (m *model) renderHeader() string {
 	lineCwd := lipgloss.NewStyle().Width(contentWidth).Render(cwdPart)
 	sb.WriteString(lineCwd)
 
-	// 通知 banner：workspace 下方独立一行，仅在有通知时显示
+	// 通知 banner：右对齐，无背景
 	if m.noticeBanner != "" {
 		sb.WriteString("\n")
 		bannerStyle := lipgloss.NewStyle().
 			Foreground(colorAccentGold).
-			Bold(true).
-			Background(colorToolCodeBg).
 			Width(contentWidth).
-			Padding(0, 1).
-			Align(lipgloss.Center)
+			Align(lipgloss.Right)
 		sb.WriteString(bannerStyle.Render(m.noticeBanner))
 	}
 
@@ -4313,7 +4642,9 @@ func (m *model) handleSlashCommand(input string) tea.Cmd {
 		notifKind := notifInfo
 		// 含错误关键词时用 warn 样式
 		if strings.Contains(result.Text, "失败") || strings.Contains(result.Text, "未知") ||
-			strings.Contains(result.Text, "无法") || strings.Contains(result.Text, "error") {
+			strings.Contains(result.Text, "无法") || strings.Contains(result.Text, "error") ||
+			strings.Contains(result.Text, "failed") || strings.Contains(result.Text, "unknown") ||
+			strings.Contains(result.Text, "unable") {
 			notifKind = notifWarn
 		}
 		m.paras = append(m.paras, Paragraph{
@@ -5011,7 +5342,7 @@ func runTUI(llmClient llm.Client, registry tool.Registry, guard permission.Guard
 	m.initTheme() // 根据 themeMode + 终端背景自动检测并应用主题
 
 	if _, err := p.Run(); err != nil {
-		fmt.Fprintf(os.Stderr, "TUI 运行出错: %v\n", err)
+		fmt.Fprintf(os.Stderr, "TUI runtime error: %v\n", err)
 		os.Exit(1)
 	}
 
@@ -5021,8 +5352,8 @@ func runTUI(llmClient llm.Client, registry tool.Registry, guard permission.Guard
 		// 退出时用最终统计更新 recent.json（覆盖启动时写入的初始值）
 		stats := m.cm.Stats()
 		_ = ctxpkg.UpdateRecentSessions(sessionDir, sid, stats.MessageCount)
-		fmt.Fprintf(os.Stderr, "已保存 session: %s\n", sid)
-		fmt.Fprintf(os.Stderr, "  恢复对话: waveloom --resume %s\n", sid)
+		fmt.Fprintf(os.Stderr, m.lc.SessionSaved, sid)
+		fmt.Fprintf(os.Stderr, m.lc.SessionResumeHint, sid)
 	}
 }
 
@@ -5049,7 +5380,7 @@ func (m *model) startUpdate() tea.Cmd {
 
 		execPath, err := os.Executable()
 		if err != nil {
-			m.program.Send(updateDoneMsg{err: fmt.Sprintf("获取当前二进制路径失败: %v", err), durMs: time.Since(startTime).Milliseconds()})
+			m.program.Send(updateDoneMsg{err: fmt.Sprintf("failed to get current binary path: %v", err), durMs: time.Since(startTime).Milliseconds()})
 			return nil
 		}
 
