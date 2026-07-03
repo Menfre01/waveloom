@@ -1,5 +1,22 @@
 # Changelog
 
+## [v0.1.0-alpha.10] — 2026-07-03
+
+### Added
+- **Shell streaming output**: Long-running commands (e.g., `make build`, `npm install`) now stream output line-by-line to the TUI in real time — no more waiting until completion to see progress
+- **Enhanced @ file picker**: supports `../` sibling directories, absolute paths, and `~/` external directory search for cross-project file references
+- **Glob `**` recursive matching**: `matchGlob` in permission rules now supports `**` recursive path matching
+
+### Fixed
+- **Background command pipe leak causing TUI freeze**: `bash -c "command &"` no longer freezes the TUI. Background processes are automatically redirected to temp log files; `ExecuteStreaming` `wg.Wait()` and `executeToolCalls` concurrent tool waits now have timeout protection — three layers of defense ensure the TUI never freezes permanently
+- **Permission security hardening**: added dangerous command interception patterns (privilege escalation, inline execution), expanded safe command whitelist (grep/find/echo/mkdir and build tools), first-token exact match prevents path substring false positives, adjacency matching replaces substring AND matching
+- **edit_file Unicode normalization**: added Unicode normalization and line-number prefix auto-repair fallback, reducing LLM no_match retries caused by invisible character differences
+- **Shell Description optimization**: single-line command hard constraint, removed multi-line continuation tutorial, reducing invalid JSON generation by the LLM
+
+### Refactored
+- **LSP module removed**: eliminated grep/search_file/ls tools, toolset converged from 13 to 9 core tools — all code verification now goes through build tools, reducing complexity
+- **Full i18n**: System Prompt now dynamically switches between Chinese and English based on locale, CLI output fully bilingual
+
 ## [v0.1.0-alpha.9] — 2026-07-02
 
 ### Added
