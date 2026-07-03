@@ -115,7 +115,7 @@ func (t *Shell) Execute(ctx context.Context, p ShellParams) (*ToolResult, error)
 	var stdout, stderr bytes.Buffer
 	useFileFD := outputFile != nil
 	if useFileFD {
-		defer outputFile.Close()
+		defer func() { _ = outputFile.Close() }()
 	} else {
 		cmd.Stdout = &stdout
 		cmd.Stderr = &stderr
@@ -125,7 +125,7 @@ func (t *Shell) Execute(ctx context.Context, p ShellParams) (*ToolResult, error)
 	start := time.Now()
 	if err := cmd.Start(); err != nil {
 		if useFileFD {
-			os.Remove(outputPath)
+			_ = os.Remove(outputPath)
 		}
 		return formatShellError("Command start failed", -1, 0, timeout, err.Error(), true), nil
 	}
@@ -149,9 +149,9 @@ func (t *Shell) Execute(ctx context.Context, p ShellParams) (*ToolResult, error)
 					// 极端情况（如 outputFile.Close() panic）确保 task 不永久卡 running
 					task.DefaultRegistry.Update(taskID, task.TaskFailed, -1)
 				}
-				if useFileFD {
-					outputFile.Close()
-				}
+			if useFileFD {
+				_ = outputFile.Close()
+			}
 			}()
 			err := cmd.Wait()
 			exitCode := 0
@@ -205,7 +205,7 @@ func (t *Shell) Execute(ctx context.Context, p ShellParams) (*ToolResult, error)
 	var output []byte
 	if useFileFD {
 		output, _ = os.ReadFile(outputPath)
-		os.Remove(outputPath)
+		_ = os.Remove(outputPath)
 	} else {
 		output = append(stdout.Bytes(), stderr.Bytes()...)
 	}
@@ -237,10 +237,7 @@ func (t *Shell) ExecuteStreaming(ctx context.Context, p ShellParams, chunkCb fun
 
 	useFileFD := outputFile != nil
 	if useFileFD {
-		defer outputFile.Close()
-	} else {
-		// fallback：cmd.Stdout/Stderr 已指向 bytes.Buffer（在 Execute 中设置）
-		// 对于 ExecuteStreaming，需要在 Start 前连接 pipe
+		defer func() { _ = outputFile.Close() }()
 	}
 
 	// ── 启动命令 ──
@@ -255,7 +252,7 @@ func (t *Shell) ExecuteStreaming(ctx context.Context, p ShellParams, chunkCb fun
 
 	if err := cmd.Start(); err != nil {
 		if useFileFD {
-			os.Remove(outputPath)
+			_ = os.Remove(outputPath)
 		}
 		return formatShellError("Command start failed", -1, 0, timeout, err.Error(), true), nil
 	}
@@ -277,9 +274,9 @@ func (t *Shell) ExecuteStreaming(ctx context.Context, p ShellParams, chunkCb fun
 				if r := recover(); r != nil {
 					task.DefaultRegistry.Update(taskID, task.TaskFailed, -1)
 				}
-				if useFileFD {
-					outputFile.Close()
-				}
+			if useFileFD {
+				_ = outputFile.Close()
+			}
 			}()
 			err := cmd.Wait()
 			exitCode := 0
@@ -343,7 +340,7 @@ func (t *Shell) ExecuteStreaming(ctx context.Context, p ShellParams, chunkCb fun
 	if useFileFD {
 		remaining, _ := os.ReadFile(outputPath)
 		output = remaining
-		os.Remove(outputPath)
+		_ = os.Remove(outputPath)
 	}
 	output = append(output, outputBuf.Bytes()...)
 
@@ -375,8 +372,8 @@ func pollOutputFile(cmd *exec.Cmd, cmdCtx context.Context, done <-chan error, ou
 		if err != nil {
 			return
 		}
-		defer f.Close()
-		f.Seek(lastOffset, io.SeekStart)
+		defer func() { _ = f.Close() }()
+		_, _ = f.Seek(lastOffset, io.SeekStart)
 		data, _ := io.ReadAll(io.LimitReader(f, currentSize.Size()-lastOffset))
 		lastOffset = currentSize.Size()
 		if len(data) > 0 {

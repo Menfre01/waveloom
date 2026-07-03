@@ -790,8 +790,8 @@ func TestPrepareBackgroundCommand_MultiLineRewrite(t *testing.T) {
 	}
 
 	// 命令不应被改写（文件 fd 消除 SIGPIPE，不再需要 subshell 重定向）
-	if strings.Contains(p.Command, "</dev/null") || strings.Contains(p.Command, "2>&1 &") == false {
-		// 多行模式下保持原样，不插入 subshell 重定向
+	if strings.Contains(p.Command, "</dev/null") {
+		t.Errorf("command should not be rewritten with subshell redirects: %s", p.Command)
 	}
 	if !strings.Contains(p.Command, "sleep 12 && curl -s localhost:8787") {
 		t.Errorf("foreground line should not be modified: %s", p.Command)
@@ -882,7 +882,7 @@ func TestShell_BackgroundCommand_LogFileHasOutput(t *testing.T) {
 	}
 
 	// 清理
-	os.Remove(logPath)
+	_ = os.Remove(logPath)
 	task.DefaultRegistry.Remove(result.Meta.BackgroundTaskID)
 }
 
@@ -986,7 +986,7 @@ func TestPollOutputFile_ContextCancel(t *testing.T) {
 	if err != nil {
 		t.Fatalf("OpenFile: %v", err)
 	}
-	defer outputFile.Close()
+	defer func() { _ = outputFile.Close() }()
 	cmd.Stdout = outputFile
 	cmd.Stderr = outputFile
 
@@ -1006,7 +1006,7 @@ func TestPollOutputFile_ContextCancel(t *testing.T) {
 		t.Errorf("expected DeadlineExceeded, got %v", err)
 	}
 	// sleep 进程应该被 killProcessGroup 杀死
-	cmd.Wait()
+	_ = cmd.Wait()
 }
 
 // TestShell_ReadPipesStreaming 覆盖 fallback pipe 模式读取路径。
@@ -1018,7 +1018,9 @@ func TestShell_ReadPipesStreaming(t *testing.T) {
 	cmd := exec.Command("echo", "pipe_hello")
 	stdoutPipe, _ := cmd.StdoutPipe()
 	stderrPipe, _ := cmd.StderrPipe()
-	cmd.Start()
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("cmd.Start() error = %v", err)
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -1050,7 +1052,9 @@ func TestShell_ReadPipesStreaming_Timeout(t *testing.T) {
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	stdoutPipe, _ := cmd.StdoutPipe()
 	stderrPipe, _ := cmd.StderrPipe()
-	cmd.Start()
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("cmd.Start() error = %v", err)
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
