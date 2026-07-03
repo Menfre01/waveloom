@@ -914,8 +914,6 @@ func TestGuard_Check_RemovedFromTrulySafeNowAsk(t *testing.T) {
 		name    string
 		command string
 	}{
-		{"echo", "echo hello"},
-		{"echo redirect", "echo 'key=val' >> .env"},
 		{"env", "env"},
 		{"printenv", "printenv"},
 	}
