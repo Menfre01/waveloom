@@ -1,9 +1,10 @@
 package tool
 
 import (
-	"bufio"
 	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -17,6 +18,8 @@ import (
 	"time"
 
 	"github.com/Menfre01/waveloom/pkg/pathutil"
+	"github.com/Menfre01/waveloom/pkg/shellutil"
+	"github.com/Menfre01/waveloom/pkg/task"
 )
 
 // ---------------------------------------------------------------------------
@@ -24,9 +27,10 @@ import (
 // ---------------------------------------------------------------------------
 
 type ShellParams struct {
-	Command    string `json:"command"`
-	WorkingDir string `json:"working_dir"`
-	TimeoutMs  int    `json:"timeout_ms"`
+	Command         string `json:"command"`
+	WorkingDir      string `json:"working_dir"`
+	TimeoutMs       int    `json:"timeout_ms"`
+	RunInBackground bool   `json:"run_in_background"` // 显式请求后台执行
 }
 
 type Shell struct{}
@@ -39,6 +43,8 @@ func (t *Shell) ConcurrentSafe() bool    { return false }
 func (t *Shell) Description() string {
 	return strings.Join([]string{
 		"Execute a shell command in a subprocess. Configurable timeout (default 120s, max 600s), captures stdout and stderr.",
+		"",
+		"Set run_in_background to true for long-running commands (servers, watchers, daemons). The tool returns immediately with a task ID and log path — use read_file to check progress. Use kill_background_task to stop a running background task.",
 		"",
 		"Unix/macOS uses bash -c (sh fallback), Windows uses cmd /c.",
 		"Command syntax must target the correct platform (Windows does not support ; for multi-command, use &&).",
@@ -98,31 +104,93 @@ func (t *Shell) Execute(ctx context.Context, p ShellParams) (*ToolResult, error)
 		return nil, err
 	}
 
-	// ── 后台命令改写：防止后台进程继承管道导致 reader 永久阻塞 ──
-	bgLogFile := prepareBackgroundCommand(&p)
+	// ── 后台命令检测与预处理 ──
+	bgLogFile, isBackground := prepareBackgroundCommand(&p)
 
-	// ── 共享前置逻辑 ──
-	cmd, cmdCtx, cancel, timeout := t.setupCommand(ctx, &p)
+	// ── 共享前置逻辑（文件 fd 输出） ──
+	cmd, cmdCtx, cancel, timeout, outputFile, outputPath := t.setupCommand(ctx, &p)
 	defer cancel()
 
-	// ── 缓冲区模式：提前捕获 stdout/stderr，确保进程被杀后仍可读取部分输出 ──
+	// 文件创建失败时 fallback 到内存 buffer
 	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
+	useFileFD := outputFile != nil
+	if useFileFD {
+		defer outputFile.Close()
+	} else {
+		cmd.Stdout = &stdout
+		cmd.Stderr = &stderr
+	}
 
-	// ── 启动命令并监听 context 取消 ──
+	// ── 启动命令 ──
 	start := time.Now()
 	if err := cmd.Start(); err != nil {
+		if useFileFD {
+			os.Remove(outputPath)
+		}
 		return formatShellError("Command start failed", -1, 0, timeout, err.Error(), true), nil
 	}
 
+	// ── 后台路径：run_in_background 或单行 & 命令 ──
+	if isBackground {
+		taskID := newTaskID()
+		logPath := outputPath
+		if !useFileFD {
+			logPath = bgLogFile
+		}
+		task.DefaultRegistry.Register(taskID, &task.TaskInfo{
+			ID: taskID, PID: cmd.Process.Pid,
+			Command: p.Command, LogPath: logPath,
+			Status: task.TaskRunning, StartTime: time.Now(),
+		})
+		// 异步等待进程退出后更新状态
+		go func() {
+			defer func() {
+				if r := recover(); r != nil {
+					// 极端情况（如 outputFile.Close() panic）确保 task 不永久卡 running
+					task.DefaultRegistry.Update(taskID, task.TaskFailed, -1)
+				}
+				if useFileFD {
+					outputFile.Close()
+				}
+			}()
+			err := cmd.Wait()
+			exitCode := 0
+			if err != nil {
+				if exitErr, ok := err.(*exec.ExitError); ok {
+					exitCode = exitErr.ExitCode()
+				} else {
+					exitCode = -1
+				}
+			}
+			status := task.TaskCompleted
+			if exitCode != 0 {
+				status = task.TaskFailed
+			}
+			task.DefaultRegistry.Update(taskID, status, exitCode)
+		}()
+		content := fmt.Sprintf("Command started in background.\nTask ID: %s\nLog: %s",
+			taskID, logPath)
+		if bgLogFile != "" {
+			content += fmt.Sprintf("\n[background] log: %s", bgLogFile)
+		}
+		return &ToolResult{
+			Content: content,
+			Meta: ToolMeta{
+				Duration:         time.Since(start),
+				ExitCode:         0,
+				BackgroundTaskID: taskID,
+				LogPath:          logPath,
+			},
+		}, nil
+	}
+
+	// ── 前台路径：等待进程退出 ──
 	done := make(chan error, 1)
 	go func() {
 		done <- cmd.Wait()
 	}()
 
 	var execErr error
-
 	select {
 	case <-cmdCtx.Done():
 		killProcessGroup(cmd)
@@ -132,10 +200,20 @@ func (t *Shell) Execute(ctx context.Context, p ShellParams) (*ToolResult, error)
 	}
 
 	duration := time.Since(start)
-	output := append(stdout.Bytes(), stderr.Bytes()...)
 
-	result, _ := t.formatResult(execErr, cmdCtx, output, duration, timeout)
-	attachBackgroundInfo(&result, bgLogFile)
+	// 读取输出
+	var output []byte
+	if useFileFD {
+		output, _ = os.ReadFile(outputPath)
+		os.Remove(outputPath)
+	} else {
+		output = append(stdout.Bytes(), stderr.Bytes()...)
+	}
+
+	result, _ := t.formatResult(execErr, cmdCtx, output, duration, timeout, outputPath, "")
+	if bgLogFile != "" {
+		result.Content += fmt.Sprintf("\n[background] log: %s", bgLogFile)
+	}
 	return result, nil
 }
 
@@ -143,39 +221,106 @@ func (t *Shell) Execute(ctx context.Context, p ShellParams) (*ToolResult, error)
 func (t *Shell) SupportsStreaming() bool { return true }
 
 // ExecuteStreaming 执行 shell 命令并将增量输出通过 chunkCb 实时推送。
-// 前置逻辑（超时、命令归一化、进程组）与 Execute 共享。
+// 使用文件 polling 替代管道读取：每 500ms 读取输出文件的新增内容，
+// 逐行 push ToolCallStream 到 TUI。后台命令同样支持。
 func (t *Shell) ExecuteStreaming(ctx context.Context, p ShellParams, chunkCb func(string)) (*ToolResult, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 
-	// ── 后台命令改写：防止后台进程继承管道导致 reader 永久阻塞 ──
-	bgLogFile := prepareBackgroundCommand(&p)
+	// ── 后台命令检测与预处理 ──
+	bgLogFile, isBackground := prepareBackgroundCommand(&p)
 
-	// ── 共享前置逻辑 ──
-	cmd, cmdCtx, cancel, timeout := t.setupCommand(ctx, &p)
+	// ── 共享前置逻辑（文件 fd 输出） ──
+	cmd, cmdCtx, cancel, timeout, outputFile, outputPath := t.setupCommand(ctx, &p)
 	defer cancel()
 
-	// ── 管道模式：使用 StdoutPipe + StderrPipe 逐行读取 ──
-	stdoutPipe, err := cmd.StdoutPipe()
-	if err != nil {
-		return formatShellError("Command start failed", -1, 0, timeout, err.Error(), true), nil
-	}
-	stderrPipe, err := cmd.StderrPipe()
-	if err != nil {
-		return formatShellError("Command start failed", -1, 0, timeout, err.Error(), true), nil
+	useFileFD := outputFile != nil
+	if useFileFD {
+		defer outputFile.Close()
+	} else {
+		// fallback：cmd.Stdout/Stderr 已指向 bytes.Buffer（在 Execute 中设置）
+		// 对于 ExecuteStreaming，需要在 Start 前连接 pipe
 	}
 
+	// ── 启动命令 ──
 	start := time.Now()
+
+	// fallback pipe 模式：需在 Start 前获取 pipe
+	var stdoutPipe, stderrPipe io.ReadCloser
+	if !useFileFD {
+		stdoutPipe, _ = cmd.StdoutPipe()
+		stderrPipe, _ = cmd.StderrPipe()
+	}
+
 	if err := cmd.Start(); err != nil {
+		if useFileFD {
+			os.Remove(outputPath)
+		}
 		return formatShellError("Command start failed", -1, 0, timeout, err.Error(), true), nil
 	}
 
-	// 累积完整输出用于最终 ToolResult 格式化
+	// ── 后台路径 ──
+	if isBackground {
+		taskID := newTaskID()
+		logPath := outputPath
+		if !useFileFD {
+			logPath = bgLogFile
+		}
+		task.DefaultRegistry.Register(taskID, &task.TaskInfo{
+			ID: taskID, PID: cmd.Process.Pid,
+			Command: p.Command, LogPath: logPath,
+			Status: task.TaskRunning, StartTime: time.Now(),
+		})
+		go func() {
+			defer func() {
+				if r := recover(); r != nil {
+					task.DefaultRegistry.Update(taskID, task.TaskFailed, -1)
+				}
+				if useFileFD {
+					outputFile.Close()
+				}
+			}()
+			err := cmd.Wait()
+			exitCode := 0
+			if err != nil {
+				if exitErr, ok := err.(*exec.ExitError); ok {
+					exitCode = exitErr.ExitCode()
+				} else {
+					exitCode = -1
+				}
+			}
+			status := task.TaskCompleted
+			if exitCode != 0 {
+				status = task.TaskFailed
+			}
+			task.DefaultRegistry.Update(taskID, status, exitCode)
+		}()
+		content := fmt.Sprintf("Command started in background.\nTask ID: %s\nLog: %s",
+			taskID, logPath)
+		if bgLogFile != "" {
+			content += fmt.Sprintf("\n[background] log: %s", bgLogFile)
+		}
+		return &ToolResult{
+			Content: content,
+			Meta: ToolMeta{
+				Duration:         time.Since(start),
+				ExitCode:         0,
+				BackgroundTaskID: taskID,
+				LogPath:          logPath,
+			},
+		}, nil
+	}
+
+	// ── 前台流式路径：文件 polling ──
+	done := make(chan error, 1)
+	go func() {
+		done <- cmd.Wait()
+	}()
+
 	var outputBuf bytes.Buffer
 	var mu sync.Mutex
 
-	// 合并 stdout + stderr 到一个 chunkCb，用 mutex 保护顺序
 	emitChunk := func(s string) {
 		mu.Lock()
 		chunkCb(s)
@@ -183,25 +328,111 @@ func (t *Shell) ExecuteStreaming(ctx context.Context, p ShellParams, chunkCb fun
 		mu.Unlock()
 	}
 
-	// goroutine 读取 pipe
-	readPipe := func(reader io.Reader) {
-		scanner := bufio.NewScanner(reader)
-		scanner.Buffer(make([]byte, 64*1024), 1024*1024) // 1MB per line max
-		for scanner.Scan() {
-			emitChunk(scanner.Text() + "\n")
+	var execErr error
+	if useFileFD {
+		// 文件 polling 模式：每 500ms 读取增量
+		execErr = pollOutputFile(cmd, cmdCtx, done, outputFile, outputPath, emitChunk)
+	} else {
+		// fallback pipe 模式
+		execErr = readPipesStreaming(cmd, cmdCtx, done, stdoutPipe, stderrPipe, emitChunk)
+	}
+
+	duration := time.Since(start)
+
+	var output []byte
+	if useFileFD {
+		remaining, _ := os.ReadFile(outputPath)
+		output = remaining
+		os.Remove(outputPath)
+	}
+	output = append(output, outputBuf.Bytes()...)
+
+	result, _ := t.formatResult(execErr, cmdCtx, output, duration, timeout, outputPath, "")
+	if bgLogFile != "" {
+		result.Content += fmt.Sprintf("\n[background] log: %s", bgLogFile)
+	}
+	return result, nil
+}
+
+// pollOutputFile 轮询输出文件的新增内容并逐行推送到 emitChunk。
+// 返回命令执行的最终错误（nil 表示正常退出）。
+func pollOutputFile(cmd *exec.Cmd, cmdCtx context.Context, done <-chan error, outputFile *os.File, outputPath string, emitChunk func(string)) error {
+	ticker := time.NewTicker(500 * time.Millisecond)
+	defer ticker.Stop()
+
+	var lastOffset int64
+	var execErr error
+	readRemaining := func() {
+		// 读取自上次偏移量以来的新增内容
+		currentSize, statErr := os.Stat(outputPath)
+		if statErr != nil {
+			return
+		}
+		if currentSize.Size() <= lastOffset {
+			return
+		}
+		f, err := os.Open(outputPath)
+		if err != nil {
+			return
+		}
+		defer f.Close()
+		f.Seek(lastOffset, io.SeekStart)
+		data, _ := io.ReadAll(io.LimitReader(f, currentSize.Size()-lastOffset))
+		lastOffset = currentSize.Size()
+		if len(data) > 0 {
+			for _, line := range strings.Split(string(data), "\n") {
+				if line != "" {
+					emitChunk(line + "\n")
+				}
+			}
 		}
 	}
 
-	var wg sync.WaitGroup
-	wg.Add(2)
-	go func() { defer wg.Done(); readPipe(stdoutPipe) }()
-	go func() { defer wg.Done(); readPipe(stderrPipe) }()
+loop:
+	for {
+		select {
+		case <-ticker.C:
+			readRemaining()
+		case <-cmdCtx.Done():
+			killProcessGroup(cmd)
+			select {
+			case <-done:
+			default:
+			}
+			execErr = cmdCtx.Err()
+			break loop
+		case err := <-done:
+			execErr = err
+			break loop
+		}
+	}
 
-	// 等待命令完成
-	done := make(chan error, 1)
-	go func() {
-		done <- cmd.Wait()
-	}()
+	// 读取剩余输出
+	readRemaining()
+	return execErr
+}
+
+// readPipesStreaming 是 fallback 管道读取模式（文件创建失败时使用）。
+// stdoutPipe 和 stderrPipe 必须在 cmd.Start() 之前通过 cmd.StdoutPipe() / cmd.StderrPipe() 获取。
+func readPipesStreaming(cmd *exec.Cmd, cmdCtx context.Context, done <-chan error, stdoutPipe, stderrPipe io.ReadCloser, emitChunk func(string)) error {
+
+	var wg sync.WaitGroup
+	readPipe := func(reader io.Reader) {
+		defer wg.Done()
+		buf := make([]byte, 4096)
+		for {
+			n, err := reader.Read(buf)
+			if n > 0 {
+				emitChunk(string(buf[:n]))
+			}
+			if err != nil {
+				return
+			}
+		}
+	}
+	wg.Add(2)
+	go readPipe(stdoutPipe)
+	go readPipe(stderrPipe)
 
 	var execErr error
 	select {
@@ -213,32 +444,26 @@ func (t *Shell) ExecuteStreaming(ctx context.Context, p ShellParams, chunkCb fun
 		}
 		execErr = cmdCtx.Err()
 	case execErr = <-done:
-		// REGRESSION: 后台进程（如 bash -c "cmd &"）持有管道写端时，
-		// wg.Wait() 会永久阻塞。加 cmdCtx 超时保护，确保 TUI 永不卡死。
-		pipesDone := make(chan struct{})
-		go func() {
-			wg.Wait()
-			close(pipesDone)
-		}()
-		select {
-		case <-pipesDone:
-		case <-cmdCtx.Done():
-			killProcessGroup(cmd)
-			execErr = cmdCtx.Err()
-		}
 	}
 
-	duration := time.Since(start)
+	pipesDone := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(pipesDone)
+	}()
+	select {
+	case <-pipesDone:
+	case <-cmdCtx.Done():
+	}
 
-	// ── 结果格式化（与 Execute 共享） ──
-	result, _ := t.formatResult(execErr, cmdCtx, outputBuf.Bytes(), duration, timeout)
-	attachBackgroundInfo(&result, bgLogFile)
-	return result, nil
+	return execErr
 }
 
-// setupCommand 构造并配置 exec.Cmd，返回 prepared 命令、context、cancel 和超时值。
+// setupCommand 构造并配置 exec.Cmd，返回 prepared 命令、context、cancel、超时值
+// 以及输出文件句柄。所有 shell 命令的 stdout/stderr 合并写入同一个 O_APPEND 文件，
+// 消除管道 SIGPIPE 问题，并自然支持后台进程跨 turn 存活。
 // Execute 和 ExecuteStreaming 共享此前置逻辑。
-func (t *Shell) setupCommand(ctx context.Context, p *ShellParams) (*exec.Cmd, context.Context, context.CancelFunc, time.Duration) {
+func (t *Shell) setupCommand(ctx context.Context, p *ShellParams) (*exec.Cmd, context.Context, context.CancelFunc, time.Duration, *os.File, string) {
 	timeoutMs := p.TimeoutMs
 	if timeoutMs <= 0 {
 		timeoutMs = DefaultShellTimeoutMs
@@ -263,11 +488,29 @@ func (t *Shell) setupCommand(ctx context.Context, p *ShellParams) (*exec.Cmd, co
 	if runtime.GOOS != "windows" {
 		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	}
-	return cmd, cmdCtx, cancel, timeout
+
+	// 创建临时输出文件（stdout/stderr 合并，O_APPEND 保证原子写入）
+	outputPath := filepath.Join(os.TempDir(), fmt.Sprintf("waveloom-out-%s.log", newTaskID()))
+	outputFile, err := os.OpenFile(outputPath, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o600)
+	if err != nil {
+		// 文件创建失败 → fallback 到内存 buffer（向后兼容）
+		return cmd, cmdCtx, cancel, timeout, nil, ""
+	}
+	cmd.Stdout = outputFile
+	cmd.Stderr = outputFile
+
+	return cmd, cmdCtx, cancel, timeout, outputFile, outputPath
+}
+
+// newTaskID 生成一个短的唯一任务 ID（8 字符 hex）。
+func newTaskID() string {
+	b := make([]byte, 4)
+	_, _ = rand.Read(b)
+	return hex.EncodeToString(b)
 }
 
 // formatResult 基于执行结果格式化 ToolResult。Execute 和 ExecuteStreaming 共享。
-func (t *Shell) formatResult(execErr error, cmdCtx context.Context, output []byte, duration, timeout time.Duration) (*ToolResult, error) {
+func (t *Shell) formatResult(execErr error, cmdCtx context.Context, output []byte, duration, timeout time.Duration, logPath string, bgTaskID string) (*ToolResult, error) {
 	exitCode := -1
 	if execErr == nil {
 		exitCode = 0
@@ -312,8 +555,10 @@ func (t *Shell) formatResult(execErr error, cmdCtx context.Context, output []byt
 	return &ToolResult{
 		Content: content,
 		Meta: ToolMeta{
-			Duration: duration,
-			ExitCode: exitCode,
+			Duration:         duration,
+			ExitCode:         exitCode,
+			LogPath:          logPath,
+			BackgroundTaskID: bgTaskID,
 		},
 		Error: toolErr,
 	}, nil
@@ -496,41 +741,35 @@ func formatDuration(d time.Duration) string {
 
 // ── 后台命令处理 ──
 
-// isBackgroundCommand 检测命令是否以 & 结尾（后台执行标志）。
-// 仅检查尾部 &，不处理命令内部的 &（如 echo foo & echo bar）。
-func isBackgroundCommand(cmd string) bool {
-	trimmed := strings.TrimSpace(cmd)
-	return strings.HasSuffix(trimmed, "&")
-}
-
-// prepareBackgroundCommand 检测后台命令并改写为安全形式。
-// 改写策略：
-//   - 移除尾部 &
-//   - 将后台进程的 stdin 重定向到 /dev/null，stdout/stderr 重定向到临时日志文件
-//   - bash 包装进程快速退出，pipe reader 立即收到 EOF，TUI 不会阻塞
+// prepareBackgroundCommand 检测后台命令并决定执行模式。
 //
-// 返回日志文件路径（空字符串表示非后台命令）。
-func prepareBackgroundCommand(p *ShellParams) string {
-	if !isBackgroundCommand(p.Command) {
-		return ""
+// 文件 fd 输出消除了 SIGPIPE 风险，因此不再需要对命令进行 subshell 重定向改写。
+// 取代策略：
+//   - run_in_background=true → 立即后台（返回 isBackground=true）
+//   - 单行命令以 & 结尾 → 剥离 & 后后台执行（返回 isBackground=true）
+//   - 多行命令含 & → 前台执行（bash 等待前景部分），仅标记 log 提示
+//
+// 返回值：bgLogFile（多行时的提示日志路径），isBackground（是否走后台路径）。
+func prepareBackgroundCommand(p *ShellParams) (bgLogFile string, isBackground bool) {
+	trimmed := strings.TrimSpace(p.Command)
+
+	// 显式参数优先
+	if p.RunInBackground {
+		return "", true
 	}
 
-	// 移除尾部 &（含前后空白）
-	stripped := strings.TrimSpace(p.Command)
-	stripped = strings.TrimSuffix(stripped, "&")
-	stripped = strings.TrimSpace(stripped)
-
-	logFile := filepath.Join(os.TempDir(), fmt.Sprintf("waveloom-bg-%d.log", time.Now().UnixNano()))
-	// 改写：用 subshell 包裹原命令，确保所有级联命令（&& / ; / |）的输出都重定向到日志文件，
-	// 不会泄漏到 Go 管道。bash 包装进程立即退出，pipe reader 收到 EOF。
-	p.Command = fmt.Sprintf("(%s) </dev/null >%s 2>&1 &", stripped, logFile)
-	return logFile
-}
-
-// attachBackgroundInfo 在结果中附加后台进程的日志路径。
-func attachBackgroundInfo(result **ToolResult, logFile string) {
-	if logFile == "" || result == nil || *result == nil {
-		return
+	// 单行命令以 & 结尾 → 剥离 & 后作为后台命令执行
+	if strings.HasSuffix(trimmed, "&") && !strings.Contains(p.Command, "\n") {
+		p.Command = strings.TrimSpace(strings.TrimSuffix(trimmed, "&"))
+		return "", true
 	}
-	(*result).Content += fmt.Sprintf("\n[background] log: %s", logFile)
+
+	// 多行命令含 & → 前景执行，但标记 log 文件路径供 agent 参考
+	if shellutil.IsBackgroundCommand(p.Command) {
+		logFile := filepath.Join(os.TempDir(), fmt.Sprintf("waveloom-bg-%d.log", time.Now().UnixNano()))
+		// 文件 fd 输出已消除 SIGPIPE，不需要 subshell 重定向改写
+		return logFile, false
+	}
+
+	return "", false
 }
