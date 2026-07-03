@@ -72,6 +72,7 @@ func splitPipeSegments(command string) []string {
 var DangerousPatterns = []DangerousCommandPattern{
 	// ── 文件/文件系统销毁 ──
 	{Keywords: []string{"rm", "-rf", "/"}, Label: "rm -rf / (recursive root deletion)"},
+	{Keywords: []string{"rm", "-rf", "~"}, Label: "rm -rf ~ (home directory deletion)"},
 	{Keywords: []string{"rm", "-rf", "*"}, Label: "rm -rf * (recursive wildcard)"},
 	{Keywords: []string{"sudo", "rm"}, Label: "sudo rm (privileged deletion)"},
 	{Keywords: []string{">", "/dev/sd"}, Label: "overwrite block device"},
@@ -109,11 +110,17 @@ var DangerousPatterns = []DangerousCommandPattern{
 	// ── 外部脚本 / 内联执行 ──
 	{Keywords: []string{"python", "-c", "import os"}, Label: "python -c with os import"},
 	{Keywords: []string{"python", "-c", "import subprocess"}, Label: "python -c with subprocess import"},
+	{Keywords: []string{"python3", "-c", "import os"}, Label: "python3 -c with os import"},
+	{Keywords: []string{"python3", "-c", "import subprocess"}, Label: "python3 -c with subprocess import"},
+	{Keywords: []string{"node", "-e"}, Label: "node -e inline execution"},
 	{Keywords: []string{"perl", "-e"}, Label: "perl -e inline execution"},
 	{Keywords: []string{"ruby", "-e"}, Label: "ruby -e inline execution"},
+	{Keywords: []string{"bash", "-c"}, Label: "bash -c inline execution"},
+	{Keywords: []string{"sh", "-c"}, Label: "sh -c inline execution"},
 
 	// ── Shell 内建危险 ──
 	{Keywords: []string{"eval"}, Label: "eval (arbitrary code execution)"},
+	{Keywords: []string{"sudo"}, Label: "sudo (privilege escalation)"},
 	{Keywords: []string{"source", "/dev/"}, Label: "source from /dev"},
 	{Keywords: []string{"exec"}, Label: "exec (replace shell process)"},
 
@@ -139,6 +146,7 @@ var DangerousPatterns = []DangerousCommandPattern{
 
 	// ── SSH / 远程执行 ──
 	{Keywords: []string{"ssh", "root@"}, Label: "ssh to root (remote privileged access)"},
+	{Keywords: []string{"scp"}, Label: "scp (remote file transfer)"},
 
 	// ── Git 破坏性操作 ──
 	{Keywords: []string{"git", "push", "--force"}, Label: "git push --force (force push)"},
