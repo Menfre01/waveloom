@@ -16,6 +16,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/Menfre01/waveloom/pkg/pathutil"
@@ -910,6 +911,12 @@ func (l *Loader) runCommand(command, dir string) string {
 // 优先使用 bash（兼容 skill 脚本中的 bash 专有特性如 pipefail/local），
 // 不可用时回退到 sh。
 func (l *Loader) execShell(command, dir string) string {
+	// ── 后台命令改写：防止后台进程继承管道导致 TUI 卡死 ──
+	bgLogFile := ""
+	if isSkillBackgroundCommand(command) {
+		command, bgLogFile = rewriteSkillBackgroundCommand(command)
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
@@ -917,26 +924,88 @@ func (l *Loader) execShell(command, dir string) string {
 	if _, err := exec.LookPath("bash"); err != nil {
 		shellBin = "sh"
 	}
-	cmd := exec.CommandContext(ctx, shellBin, "-c", command)
+	// 不使用 exec.CommandContext —— 改用显式 Start + Wait + killProcessGroup，
+	// 确保 Setpgid 生效，防止后台子进程逃逸。
+	cmd := exec.Command(shellBin, "-c", command)
 	cmd.Dir = dir
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		if ctx.Err() == context.DeadlineExceeded {
-			return fmt.Sprintf("[command timed out after 30s: %s]", command)
-		}
-		exitCode := -1
-		if exitErr, ok := err.(*exec.ExitError); ok {
-			exitCode = exitErr.ExitCode()
-		}
-		result := string(output)
-		if result == "" {
-			result = err.Error()
-		}
-		return fmt.Sprintf("%s\n[command exited with code %d]", result, exitCode)
+	var stdout, stderr strings.Builder
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	if err := cmd.Start(); err != nil {
+		return fmt.Sprintf("[command start failed: %v]", err)
 	}
 
-	return strings.TrimSpace(string(output))
+	done := make(chan error, 1)
+	go func() {
+		done <- cmd.Wait()
+	}()
+
+	var execErr error
+	select {
+	case <-ctx.Done():
+		// 超时 → 杀整个进程组
+		if cmd.Process != nil {
+			_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		}
+		<-done
+		execErr = ctx.Err()
+	case execErr = <-done:
+	}
+
+	output := stdout.String() + stderr.String()
+
+	if execErr != nil {
+		if ctx.Err() == context.DeadlineExceeded {
+			result := fmt.Sprintf("[command timed out after 30s: %s]", command)
+			if bgLogFile != "" {
+				result += fmt.Sprintf("\n[background] log: %s", bgLogFile)
+			}
+			return result
+		}
+		exitCode := -1
+		if exitErr, ok := execErr.(*exec.ExitError); ok {
+			exitCode = exitErr.ExitCode()
+		}
+		result := output
+		if result == "" {
+			result = execErr.Error()
+		}
+		result = fmt.Sprintf("%s\n[command exited with code %d]", result, exitCode)
+		if bgLogFile != "" {
+			result += fmt.Sprintf("\n[background] log: %s", bgLogFile)
+		}
+		return result
+	}
+
+	result := strings.TrimSpace(output)
+	if bgLogFile != "" {
+		result += fmt.Sprintf("\n[background] log: %s", bgLogFile)
+	}
+	return result
+}
+
+// isSkillBackgroundCommand 检测命令是否以 & 结尾（后台执行标志）。
+func isSkillBackgroundCommand(cmd string) bool {
+	trimmed := strings.TrimSpace(cmd)
+	return strings.HasSuffix(trimmed, "&")
+}
+
+// rewriteSkillBackgroundCommand 将后台命令改写为安全形式。
+// 策略与 pkg/tool/shell.go 中 prepareBackgroundCommand 保持一致：
+//   - 移除尾部 &
+//   - 将后台进程的 stdin 重定向到 /dev/null，stdout/stderr 重定向到临时日志文件
+func rewriteSkillBackgroundCommand(cmd string) (rewritten string, logFile string) {
+	stripped := strings.TrimSpace(cmd)
+	stripped = strings.TrimSuffix(stripped, "&")
+	stripped = strings.TrimSpace(stripped)
+
+	logFile = filepath.Join(os.TempDir(), fmt.Sprintf("waveloom-bg-%d.log", time.Now().UnixNano()))
+	// 用 subshell 包裹，确保所有级联命令的输出都重定向，不泄漏到 Go 管道
+	rewritten = fmt.Sprintf("(%s) </dev/null >%s 2>&1 &", stripped, logFile)
+	return rewritten, logFile
 }
 
 // ---------------------------------------------------------------------------

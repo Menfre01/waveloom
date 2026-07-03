@@ -7,7 +7,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"sync"
@@ -96,6 +98,9 @@ func (t *Shell) Execute(ctx context.Context, p ShellParams) (*ToolResult, error)
 		return nil, err
 	}
 
+	// ── 后台命令改写：防止后台进程继承管道导致 reader 永久阻塞 ──
+	bgLogFile := prepareBackgroundCommand(&p)
+
 	// ── 共享前置逻辑 ──
 	cmd, cmdCtx, cancel, timeout := t.setupCommand(ctx, &p)
 	defer cancel()
@@ -129,7 +134,9 @@ func (t *Shell) Execute(ctx context.Context, p ShellParams) (*ToolResult, error)
 	duration := time.Since(start)
 	output := append(stdout.Bytes(), stderr.Bytes()...)
 
-	return t.formatResult(execErr, cmdCtx, output, duration, timeout)
+	result, _ := t.formatResult(execErr, cmdCtx, output, duration, timeout)
+	attachBackgroundInfo(&result, bgLogFile)
+	return result, nil
 }
 
 // SupportsStreaming 报告 bash 工具支持增量输出推送。
@@ -141,6 +148,9 @@ func (t *Shell) ExecuteStreaming(ctx context.Context, p ShellParams, chunkCb fun
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+
+	// ── 后台命令改写：防止后台进程继承管道导致 reader 永久阻塞 ──
+	bgLogFile := prepareBackgroundCommand(&p)
 
 	// ── 共享前置逻辑 ──
 	cmd, cmdCtx, cancel, timeout := t.setupCommand(ctx, &p)
@@ -197,17 +207,33 @@ func (t *Shell) ExecuteStreaming(ctx context.Context, p ShellParams, chunkCb fun
 	select {
 	case <-cmdCtx.Done():
 		killProcessGroup(cmd)
-		<-done
+		select {
+		case <-done:
+		default:
+		}
 		execErr = cmdCtx.Err()
 	case execErr = <-done:
+		// REGRESSION: 后台进程（如 bash -c "cmd &"）持有管道写端时，
+		// wg.Wait() 会永久阻塞。加 cmdCtx 超时保护，确保 TUI 永不卡死。
+		pipesDone := make(chan struct{})
+		go func() {
+			wg.Wait()
+			close(pipesDone)
+		}()
+		select {
+		case <-pipesDone:
+		case <-cmdCtx.Done():
+			killProcessGroup(cmd)
+			execErr = cmdCtx.Err()
+		}
 	}
 
-	// 等 pipe 读完
-	wg.Wait()
 	duration := time.Since(start)
 
 	// ── 结果格式化（与 Execute 共享） ──
-	return t.formatResult(execErr, cmdCtx, outputBuf.Bytes(), duration, timeout)
+	result, _ := t.formatResult(execErr, cmdCtx, outputBuf.Bytes(), duration, timeout)
+	attachBackgroundInfo(&result, bgLogFile)
+	return result, nil
 }
 
 // setupCommand 构造并配置 exec.Cmd，返回 prepared 命令、context、cancel 和超时值。
@@ -466,4 +492,45 @@ func formatDuration(d time.Duration) string {
 		return fmt.Sprintf("%.0fs", d.Seconds())
 	}
 	return fmt.Sprintf("%.1fmin", d.Minutes())
+}
+
+// ── 后台命令处理 ──
+
+// isBackgroundCommand 检测命令是否以 & 结尾（后台执行标志）。
+// 仅检查尾部 &，不处理命令内部的 &（如 echo foo & echo bar）。
+func isBackgroundCommand(cmd string) bool {
+	trimmed := strings.TrimSpace(cmd)
+	return strings.HasSuffix(trimmed, "&")
+}
+
+// prepareBackgroundCommand 检测后台命令并改写为安全形式。
+// 改写策略：
+//   - 移除尾部 &
+//   - 将后台进程的 stdin 重定向到 /dev/null，stdout/stderr 重定向到临时日志文件
+//   - bash 包装进程快速退出，pipe reader 立即收到 EOF，TUI 不会阻塞
+//
+// 返回日志文件路径（空字符串表示非后台命令）。
+func prepareBackgroundCommand(p *ShellParams) string {
+	if !isBackgroundCommand(p.Command) {
+		return ""
+	}
+
+	// 移除尾部 &（含前后空白）
+	stripped := strings.TrimSpace(p.Command)
+	stripped = strings.TrimSuffix(stripped, "&")
+	stripped = strings.TrimSpace(stripped)
+
+	logFile := filepath.Join(os.TempDir(), fmt.Sprintf("waveloom-bg-%d.log", time.Now().UnixNano()))
+	// 改写：用 subshell 包裹原命令，确保所有级联命令（&& / ; / |）的输出都重定向到日志文件，
+	// 不会泄漏到 Go 管道。bash 包装进程立即退出，pipe reader 收到 EOF。
+	p.Command = fmt.Sprintf("(%s) </dev/null >%s 2>&1 &", stripped, logFile)
+	return logFile
+}
+
+// attachBackgroundInfo 在结果中附加后台进程的日志路径。
+func attachBackgroundInfo(result **ToolResult, logFile string) {
+	if logFile == "" || result == nil || *result == nil {
+		return
+	}
+	(*result).Content += fmt.Sprintf("\n[background] log: %s", logFile)
 }

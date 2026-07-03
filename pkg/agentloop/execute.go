@@ -149,7 +149,27 @@ func (l *Loop) executeToolCalls(ctx context.Context, calls []llm.ToolCall, state
 				resultsCh <- execResult{tc: tc, result: result, err: execErr, start: start}
 			}(tc)
 		}
-		wg.Wait()
+		// REGRESSION: wg.Wait() 无超时保护。每个 goroutine 有 ToolTimeout，
+		// 但若工具忽略 context，TUI 会被阻塞长达 10 分钟。加 ctx.Done() +
+		// 5s 宽限期作为双重保险，确保 TUI 永不卡死。
+		wgDone := make(chan struct{})
+		go func() {
+			wg.Wait()
+			close(wgDone)
+		}()
+		select {
+		case <-wgDone:
+			// 全部工具正常完成
+		case <-ctx.Done():
+			// 用户取消（Esc）或超时。等待 5s 宽限期让工具退出。
+			select {
+			case <-wgDone:
+			case <-time.After(5 * time.Second):
+				// 工具未在宽限期内退出。异步等待避免 goroutine 泄漏，
+				// 继续处理已收集的结果。
+				go func() { <-wgDone }()
+			}
+		}
 		close(resultsCh)
 
 		for er := range resultsCh {
