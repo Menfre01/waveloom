@@ -940,7 +940,7 @@ func (l *Loader) execShell(command, dir string) string {
 	useFileFD := err == nil
 	var stdout, stderr strings.Builder
 	if useFileFD {
-		defer outputFile.Close()
+		defer func() { _ = outputFile.Close() }()
 		cmd.Stdout = outputFile
 		cmd.Stderr = outputFile
 	} else {
@@ -950,7 +950,7 @@ func (l *Loader) execShell(command, dir string) string {
 
 	if err := cmd.Start(); err != nil {
 		if useFileFD {
-			os.Remove(outputPath)
+			_ = os.Remove(outputPath)
 		}
 		return fmt.Sprintf("[command start failed: %v]", err)
 	}
@@ -976,7 +976,7 @@ func (l *Loader) execShell(command, dir string) string {
 	if useFileFD {
 		data, _ := os.ReadFile(outputPath)
 		output = string(data)
-		os.Remove(outputPath)
+		_ = os.Remove(outputPath)
 	} else {
 		output = stdout.String() + stderr.String()
 	}
