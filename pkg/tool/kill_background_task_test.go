@@ -91,7 +91,7 @@ func TestKillBackgroundTask_Kill(t *testing.T) {
 
 	// 模拟真实后台 goroutine：监听进程退出并更新状态
 	go func() {
-		cmd.Wait()
+		_ = cmd.Wait()
 		exitCode := 0
 		if cmd.ProcessState != nil && !cmd.ProcessState.Success() {
 			exitCode = -1
@@ -106,7 +106,7 @@ func TestKillBackgroundTask_Kill(t *testing.T) {
 	kt := &KillBackgroundTask{}
 	result, err := kt.Execute(context.Background(), KillBackgroundTaskParams{TaskID: "kill-me"})
 	if err != nil {
-		syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
 		t.Fatalf("Execute() error = %v", err)
 	}
 	if result.Error != nil {
