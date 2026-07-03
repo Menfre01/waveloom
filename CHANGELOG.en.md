@@ -1,5 +1,13 @@
 # Changelog
 
+## [v0.1.0-alpha.11] — 2026-07-03
+
+### Added
+- **Full background command support**: `ShellParams` now has an explicit `run_in_background` parameter; `&` backward compatibility (single-line `&` → stripped and run in background, multi-line `&` → foreground + log hint); `Execute`/`ExecuteStreaming` share file fd output to eliminate SIGPIPE; `task.Registry` for background task registration, status tracking, and exit code recording; `kill_background_task` SIGKILL process group termination; cross-turn `<background-task>` notification injection; Skill execShell background commands no longer freeze
+
+### Fixed
+- **Permission substring false-positive fix**: 10 dual-keyword inline execution patterns (`sh -c`, `bash -c`, etc.) now have `FirstTokenOnly` enabled, preventing path/flag substring matches from incorrectly flagging RiskHigh; permission test coverage improved to 95%
+
 ## [v0.1.0-alpha.10] — 2026-07-03
 
 ### Added
