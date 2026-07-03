@@ -28,9 +28,9 @@ func (t *EditFile) Name() string            { return "edit_file" }
 func (t *EditFile) Description() string {
 	return strings.Join([]string{
 		"Find-and-replace on an existing file by exact string match.",
-		"old_string must be unique in the file — if ambiguous, include 1-2 surrounding lines as context.",
+		"old_string should match the file content as closely as possible; the system auto-corrects minor differences in whitespace, blank lines, and Unicode punctuation (tabs/spaces, smart quotes, em dashes → ASCII, etc.) when the match is unambiguous.",
 		"Set replace_all=true to replace every occurrence.",
-		"Whitespace and blank-line differences are auto-corrected when the match is unambiguous.",
+		"Include 1-2 surrounding context lines if the match would otherwise be ambiguous.",
 	}, "\n")
 }
 func (t *EditFile) Schema() json.RawMessage { return editFileSchema }
@@ -75,6 +75,18 @@ func (t *EditFile) Execute(ctx context.Context, p EditFileParams) (*ToolResult, 
 	count := strings.Count(original, p.OldString)
 
 	if count == 0 {
+		// Autofix 0：行号前缀 → 自动剥离 + 重新精确匹配
+		if looksLikeLineNumberPrefix(p.OldString) {
+			cleaned := stripLineNumberPrefixes(p.OldString)
+			cleanedCount := strings.Count(original, cleaned)
+			if cleanedCount == 1 || (cleanedCount > 1 && p.ReplaceAll) {
+				cleanedParams := p
+				cleanedParams.OldString = cleaned
+				matchStart := lineForOffset(buildLineStarts(original), strings.Index(original, cleaned))
+				return t.applyAutoFix(ctx, original, cleanedParams, path, matchStart, "line number prefixes")
+			}
+		}
+
 		// 降级1：空白归一化匹配唯一 → 自动修复，减少 LLM 重试轮次
 		if matchStart := findNormalizedMatchPosition(original, p.OldString); matchStart >= 0 {
 			return t.applyAutoFix(ctx, original, p, path, matchStart, "whitespace")
@@ -85,7 +97,12 @@ func (t *EditFile) Execute(ctx context.Context, p EditFileParams) (*ToolResult, 
 			return t.applyAutoFix(ctx, original, p, path, matchStart, "blank lines / whitespace")
 		}
 
-		// 降级3：空白归一化匹配不唯一 → 返回 hint 让 LLM 精确重试
+		// 降级3：Unicode 标点归一化 + 空白归一化匹配唯一 → 自动修复
+		if matchStart := findNormalizedMatchPositionWithUnicode(original, p.OldString); matchStart >= 0 {
+			return t.applyAutoFix(ctx, original, p, path, matchStart, "unicode / whitespace")
+		}
+
+		// 降级4：空白归一化匹配不唯一 → 返回 hint 让 LLM 精确重试
 		if hint := tryNormalizedMatch(original, p.OldString); hint != "" {
 			return toolError(ErrorClassRecoverable, ErrKindNoMatch,
 				fmt.Sprintf("no exact match for old_string in %s\n\n%s\n\n%s",
@@ -441,6 +458,112 @@ func normalizeLine(s string) string {
 	return strings.TrimSpace(buf.String())
 }
 
+// normalizeLineWithUnicode 在 normalizeLine 基础上增加 Unicode 标点 → ASCII 归一化。
+// 将排版级 Unicode 标点（弯引号、破折号、特殊空格等）映射为对应 ASCII 字符。
+func normalizeLineWithUnicode(s string) string {
+	var buf strings.Builder
+	for _, r := range s {
+		if mapped, ok := unicodePunctToASCII[r]; ok {
+			buf.WriteRune(mapped)
+		} else {
+			buf.WriteRune(r)
+		}
+	}
+	return normalizeLine(buf.String())
+}
+
+// unicodePunctToASCII 将常见的 Unicode 排版标点映射为 ASCII 等价物。
+var unicodePunctToASCII = map[rune]rune{
+	// 破折号 → ASCII '-'
+	'\u2010': '-', '\u2011': '-', '\u2012': '-', '\u2013': '-',
+	'\u2014': '-', '\u2015': '-', '\u2212': '-',
+	// 弯双引号 → ASCII '"'
+	'\u201C': '"', '\u201D': '"', '\u201E': '"', '\u201F': '"',
+	// 弯单引号 → ASCII '\''
+	'\u2018': '\'', '\u2019': '\'', '\u201A': '\'', '\u201B': '\'',
+	// 特殊空白 → ASCII ' '（normalizeLine 仍会压缩）
+	'\u00A0': ' ', '\u2002': ' ', '\u2003': ' ', '\u2004': ' ',
+	'\u2005': ' ', '\u2006': ' ', '\u2007': ' ', '\u2008': ' ',
+	'\u2009': ' ', '\u200A': ' ', '\u202F': ' ', '\u205F': ' ',
+	'\u3000': ' ',
+}
+
+// findNormalizedMatchPositionWithUnicode 在 Unicode 归一化 + 空白归一化后查找 oldStr 的唯一匹配位置。
+// 将两边的 Unicode 标点映射为 ASCII、空白压缩后逐行比较。
+// 返回 0-based 起始行号；若未找到或匹配不唯一返回 -1。
+func findNormalizedMatchPositionWithUnicode(original, oldStr string) int {
+	origLines := strings.Split(original, "\n")
+	oldLines := strings.Split(oldStr, "\n")
+
+	if len(oldLines) == 0 {
+		return -1
+	}
+
+	origNormalized := make([]string, len(origLines))
+	for i, line := range origLines {
+		origNormalized[i] = normalizeLineWithUnicode(line)
+	}
+	oldNormalized := make([]string, len(oldLines))
+	for i, line := range oldLines {
+		oldNormalized[i] = normalizeLineWithUnicode(line)
+	}
+
+	matchStart := findLineSequence(origNormalized, oldNormalized)
+	if matchStart < 0 {
+		return -1
+	}
+
+	// 确认唯一性
+	if findLineSequence(origNormalized[matchStart+1:], oldNormalized) >= 0 {
+		return -1
+	}
+
+	return matchStart
+}
+
+// stripLineNumberPrefixes 移除每行开头的 read_file 行号前缀（[N] 或 [N] 后跟空格/制表符）。
+// 返回去除前缀后的文本。
+func stripLineNumberPrefixes(s string) string {
+	lines := strings.Split(s, "\n")
+	for i, line := range lines {
+		trimmed := strings.TrimLeft(line, " \t")
+		if len(trimmed) >= 4 && trimmed[0] == '[' {
+			end := strings.IndexByte(trimmed, ']')
+			if end > 0 && end < 8 {
+				numPart := trimmed[1:end]
+				isNum := true
+				for _, c := range numPart {
+					if c < '0' || c > '9' {
+						isNum = false
+						break
+					}
+				}
+				if isNum {
+					rest := trimmed[end+1:]
+					if len(rest) > 0 && (rest[0] == ' ' || rest[0] == '\t') {
+						rest = rest[1:]
+					}
+					// 保留原始行的前导空白 + 剩余内容
+					leading := ""
+					for _, c := range line {
+						if c == ' ' || c == '\t' {
+							leading += string(c)
+						} else {
+							break
+						}
+					}
+					if len(rest) > 0 {
+						lines[i] = leading + rest
+					} else {
+						lines[i] = leading // 空内容 → 只保留前导空白（通常为空字符串）
+					}
+				}
+			}
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
 // renderSearchHint 当 old_string 未匹配时，在原文中寻找与 target 特征行编辑距离最小的若干行，
 // 连同其上下各 1 行上下文一起返回，帮助 LLM 一眼看出 old_string 与原文的精确差异。
 func renderSearchHint(target, content string) string {
@@ -458,7 +581,8 @@ func renderSearchHint(target, content string) string {
 	// 检测是否误复制了 read_file 的行号前缀 [N] ...
 	if looksLikeLineNumberPrefix(target) {
 		hint := "   Hint: old_string appears to include line number prefixes like [N] from read_file output.\n"
-		hint += "   The actual file does NOT contain these prefixes. Re-read the file and copy the raw content."
+		hint += "   The prefixes were automatically stripped but the cleaned content still did not match.\n"
+		hint += "   Re-read the file with read_file and copy the raw content without line numbers."
 		return hint
 	}
 

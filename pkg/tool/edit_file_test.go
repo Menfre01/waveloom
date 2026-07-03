@@ -1022,3 +1022,244 @@ func TestFormatCharDiffHint_LongPrefixTruncated(t *testing.T) {
 		t.Error("hint should still mark the difference")
 	}
 }
+
+// ── Unicode 归一化降级 ──
+
+// TestEditFileAutoFixUnicode_EmDash 验证 LLM 用 ASCII 破折号替代 em dash 时自动修复。
+func TestEditFileAutoFixUnicode_EmDash(t *testing.T) {
+	dir := t.TempDir()
+	filePath := filepath.Join(dir, "dash.go")
+	// 源文件含 em dash \u2014
+	content := "// local import \u2014 avoids top-level dep\nfunc main() {}\n"
+	if err := os.WriteFile(filePath, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	tool := &EditFile{}
+	// LLM 用 ASCII 破折号 '-'
+	result, err := tool.Execute(context.Background(), EditFileParams{
+		FilePath:  filePath,
+		OldString: "// local import - avoids top-level dep",
+		NewString: "// HELLO",
+	})
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if result.Error != nil {
+		t.Fatalf("Execute() result.Error = %v, want nil (unicode dash should be auto-corrected)", result.Error)
+	}
+
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	if !strings.Contains(string(data), "// HELLO") {
+		t.Errorf("file should contain replacement, got: %s", string(data))
+	}
+	if strings.Contains(string(data), "\u2014") {
+		t.Error("em dash should have been replaced")
+	}
+	if !strings.Contains(result.Content, "unicode") {
+		t.Errorf("Content should mention unicode auto-fix: %s", result.Content)
+	}
+}
+
+// TestEditFileAutoFixUnicode_SmartQuotes 验证 LLM 用 ASCII 直引号替代弯引号时自动修复。
+func TestEditFileAutoFixUnicode_SmartQuotes(t *testing.T) {
+	dir := t.TempDir()
+	filePath := filepath.Join(dir, "quotes.go")
+	// 源文件含弯引号
+	content := "fmt.Println(\u201Chello world\u201D)\n"
+	if err := os.WriteFile(filePath, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	tool := &EditFile{}
+	// LLM 用 ASCII 直引号
+	result, err := tool.Execute(context.Background(), EditFileParams{
+		FilePath:  filePath,
+		OldString: `fmt.Println("hello world")`,
+		NewString: `fmt.Println("hi")`,
+	})
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if result.Error != nil {
+		t.Fatalf("Execute() result.Error = %v, want nil (smart quotes should be auto-corrected)", result.Error)
+	}
+
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	if !strings.Contains(string(data), `fmt.Println("hi")`) {
+		t.Errorf("file should contain replacement, got: %s", string(data))
+	}
+}
+
+// TestEditFileAutoFixUnicode_NBSP 验证不换行空格被归一化为普通空格。
+func TestEditFileAutoFixUnicode_NBSP(t *testing.T) {
+	dir := t.TempDir()
+	filePath := filepath.Join(dir, "nbsp.go")
+	// 缩进含不换行空格 \u00A0
+	content := "func hello() {\n\tfmt\u00A0:=\u00A0\"x\"\n}\n"
+	if err := os.WriteFile(filePath, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	tool := &EditFile{}
+	result, err := tool.Execute(context.Background(), EditFileParams{
+		FilePath:  filePath,
+		OldString: "\tfmt := \"x\"",
+		NewString: "\tfmt := \"y\"",
+	})
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if result.Error != nil {
+		t.Fatalf("Execute() result.Error = %v, want nil (NBSP should be auto-corrected)", result.Error)
+	}
+
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	if !strings.Contains(string(data), `fmt := "y"`) {
+		t.Errorf("file should contain replacement, got: %s", string(data))
+	}
+}
+
+// TestEditFileUnicodeAmbiguous 验证 Unicode 归一化后仍不唯一时返回错误。
+func TestEditFileUnicodeAmbiguous(t *testing.T) {
+	dir := t.TempDir()
+	filePath := filepath.Join(dir, "ambiguous.go")
+	// 两处完全相同的模式（Unicode 归一化后一样）
+	content := "// import \u2014 local\n// import \u2014 local\n"
+	if err := os.WriteFile(filePath, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	tool := &EditFile{}
+	result, err := tool.Execute(context.Background(), EditFileParams{
+		FilePath:  filePath,
+		OldString: "// import - local",
+		NewString: "// new comment",
+	})
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	// 归一化后两处匹配 → 不唯一 → 应返回错误
+	if result.Error == nil {
+		t.Fatal("Error should not be nil for ambiguous unicode match")
+	}
+	if result.Error.Kind != ErrKindNoMatch {
+		t.Errorf("Error.Kind = %q, want %q", result.Error.Kind, ErrKindNoMatch)
+	}
+}
+
+// ── 行号前缀自动修复 ──
+
+// TestEditFileAutoFixLineNumberPrefix 验证行号前缀被自动剥离后匹配成功。
+func TestEditFileAutoFixLineNumberPrefix(t *testing.T) {
+	dir := t.TempDir()
+	filePath := filepath.Join(dir, "code.go")
+	content := "package main\n\nfunc main() {\n\tfmt.Println(\"hello\")\n}\n"
+	if err := os.WriteFile(filePath, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	tool := &EditFile{}
+	// old_string 误带了 read_file 的行号前缀
+	result, err := tool.Execute(context.Background(), EditFileParams{
+		FilePath: filePath,
+		OldString: "[1] package main\n[2] \n[3] func main() {",
+		NewString: "package main\n\nfunc main() {\n\tfmt.Println(\"updated\")",
+	})
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if result.Error != nil {
+		t.Fatalf("Execute() result.Error = %v, want nil (line number prefix should be auto-corrected)\n  Error: %s", result.Error, result.Error.Message)
+	}
+
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	if !strings.Contains(string(data), `fmt.Println("updated")`) {
+		t.Errorf("file should contain replacement, got: %s", string(data))
+	}
+	if !strings.Contains(result.Content, "line number prefixes") {
+		t.Errorf("Content should mention line number prefix auto-fix: %s", result.Content)
+	}
+}
+
+// TestEditFileLineNumberPrefixCleanedNoMatch 验证剥离行号后仍不匹配时返回错误。
+func TestEditFileLineNumberPrefixCleanedNoMatch(t *testing.T) {
+	dir := t.TempDir()
+	filePath := filepath.Join(dir, "code.go")
+	content := "package main\nfunc main() {}\n"
+	if err := os.WriteFile(filePath, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	tool := &EditFile{}
+	// old_string 带行号前缀，但剥离后的内容文件中也不存在
+	result, err := tool.Execute(context.Background(), EditFileParams{
+		FilePath:  filePath,
+		OldString: "[1] package other\n[2] func test() {}",
+		NewString: "replacement",
+	})
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if result.Error == nil {
+		t.Fatal("Error should not be nil when cleaned content also has no match")
+	}
+	if result.Error.Kind != ErrKindNoMatch {
+		t.Errorf("Error.Kind = %q, want %q", result.Error.Kind, ErrKindNoMatch)
+	}
+}
+
+// ── stripLineNumberPrefixes ──
+
+func TestStripLineNumberPrefixes(t *testing.T) {
+	tests := []struct {
+		input, want string
+	}{
+		{"[1] package main", "package main"},
+		{"[1] package main\n[2] import \"fmt\"", "package main\nimport \"fmt\""},
+		{"[123] func hello() {}", "func hello() {}"},
+		{"package main", "package main"},                                    // 无前缀
+		{"[not a number] text", "[not a number] text"},                      // 非数字前缀
+		{"  [1] indented\n  [2] line", "  indented\n  line"},               // 带前导空白
+		{"[1] \tpackage main", "\tpackage main"},                              // 行号后跟制表符，tab 是实际内容
+	}
+	for _, tt := range tests {
+		got := stripLineNumberPrefixes(tt.input)
+		if got != tt.want {
+			t.Errorf("stripLineNumberPrefixes(%q) = %q, want %q", tt.input, got, tt.want)
+		}
+	}
+}
+
+// ── normalizeLineWithUnicode ──
+
+func TestNormalizeLineWithUnicode(t *testing.T) {
+	tests := []struct {
+		input, want string
+	}{
+		{"import \u2014 local", "import - local"},                                  // em dash → -
+		{"\u201Chello\u201D", "\"hello\""},                                         // smart quotes → "
+		{"fmt\u00A0:=\u00A0\"x\"", "fmt := \"x\""},                                // NBSP → space + compress
+		{"hello\u2003world", "hello world"},                                        // em space → space
+		{"normal text", "normal text"},                                             // no change
+		{"\tindented\tline", "indented line"},                                      // tabs → space + compress
+	}
+	for _, tt := range tests {
+		got := normalizeLineWithUnicode(tt.input)
+		if got != tt.want {
+			t.Errorf("normalizeLineWithUnicode(%q) = %q, want %q", tt.input, got, tt.want)
+		}
+	}
+}
