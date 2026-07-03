@@ -31,6 +31,7 @@ import (
 	"image/color"
 	"io"
 	"os"
+	"os/user"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -392,6 +393,7 @@ type model struct {
 	pickerItems           []pickerItem
 	pickerAllItems        []pickerItem
 	pickerScanGen         int                   // 扫描代数，每次发起异步扫描时递增，用于丢弃过期结果
+	pickerScanCancel      context.CancelFunc    // 取消上一次未完成的扫描
 	pickerLastScannedBase string                // 上次触发磁盘扫描的 filepath.Base(filter)，base 未变则跳过扫描
 	pickerDismissValue    string                // 选择器关闭时的 input 值，防止立即重新触发
 	pickerLastValue       string                // 上次刷新时的 input 值，避免 spinner tick 触发重复扫描
@@ -1867,10 +1869,10 @@ func (m *model) handlePickerKey(msg tea.KeyPressMsg) (bool, tea.Cmd) {
 		idx := m.pickerList.Index()
 		if idx >= 0 && idx < len(m.pickerItems) {
 			m.completePickerFilter(idx)
-			// Tab 补全可能进入子目录 → 重新扫描磁盘
-			m.pickerFilter = extractFilterAfterAt(m.input.Value())
-			m.pickerLastScannedBase = filepath.Base(m.pickerFilter)
-			m.scanFiles()
+			// Tab 补全可能进入子目录 → 异步重新扫描磁盘
+			m.pickerFilter = resolveTilde(extractFilterAfterAt(m.input.Value()))
+			m.pickerLastScannedBase = "" // 强制重新扫描
+			m.scanFilesAsync()
 			m.pickerItems = fuzzyFilter(m.pickerFilter, m.pickerAllItems)
 			m.buildPickerList()
 			m.pickerLastValue = m.input.Value()
@@ -2178,7 +2180,7 @@ func extractFilterAfterAt(value string) string {
 
 // updatePickerFilter 根据当前输入重新过滤文件列表，并异步重扫磁盘。
 func (m *model) updatePickerFilter() {
-	m.pickerFilter = extractFilterAfterAt(m.input.Value())
+	m.pickerFilter = resolveTilde(extractFilterAfterAt(m.input.Value()))
 	// 立即用现有 allItems 做内存过滤，提供即时反馈
 	m.pickerItems = fuzzyFilter(m.pickerFilter, m.pickerAllItems)
 	m.buildPickerList()
@@ -2199,16 +2201,30 @@ func (m *model) scanFilesAsync() {
 	}
 	m.pickerLastScannedBase = base
 
+	// 取消上一次未完成的扫描
+	if m.pickerScanCancel != nil {
+		m.pickerScanCancel()
+		m.pickerScanCancel = nil
+	}
+
 	m.pickerScanGen++
 	gen := m.pickerScanGen
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	m.pickerScanCancel = cancel
+
 	go func() {
+		defer cancel()
 		// 150ms 防抖：等待用户停止输入后再扫描
-		time.Sleep(150 * time.Millisecond)
+		select {
+		case <-time.After(150 * time.Millisecond):
+		case <-ctx.Done():
+			return
+		}
 		// 若在此期间有新扫描发起，代数已递增，跳过本次
 		if m.pickerScanGen != gen {
 			return
 		}
-		items := doScanFiles(m.registry, m.cwd, filter)
+		items := doScanFilesWithContext(ctx, m.registry, m.cwd, filter)
 		if m.program != nil {
 			m.program.Send(pickerScanDoneMsg{items: items, gen: gen})
 		}
@@ -2218,7 +2234,7 @@ func (m *model) scanFilesAsync() {
 // activatePicker 首次激活文件选择器，异步扫描磁盘。
 func (m *model) activatePicker() {
 	m.pickerVisible = true
-	m.pickerFilter = extractFilterAfterAt(m.input.Value())
+	m.pickerFilter = resolveTilde(extractFilterAfterAt(m.input.Value()))
 	m.pickerLastValue = m.input.Value()
 
 	// 立即用空列表占位，避免 View() 中 nil list
@@ -2231,10 +2247,21 @@ func (m *model) activatePicker() {
 func (m *model) startPickerScan() tea.Cmd {
 	filter := m.pickerFilter
 	m.pickerLastScannedBase = filepath.Base(filter)
+
+	// 取消上一次未完成的扫描
+	if m.pickerScanCancel != nil {
+		m.pickerScanCancel()
+		m.pickerScanCancel = nil
+	}
+
 	m.pickerScanGen++
 	gen := m.pickerScanGen
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	m.pickerScanCancel = cancel
+
 	return func() tea.Msg {
-		items := doScanFiles(m.registry, m.cwd, filter)
+		defer cancel()
+		items := doScanFilesWithContext(ctx, m.registry, m.cwd, filter)
 		return pickerScanDoneMsg{items: items, gen: gen}
 	}
 }
@@ -2287,19 +2314,35 @@ func (m *model) buildPickerList() {
 
 // scanFiles 扫描工作区文件列表，结果存入 m.pickerAllItems（在主 goroutine 调用）。
 func (m *model) scanFiles() {
-	m.pickerAllItems = doScanFiles(m.registry, m.cwd, m.pickerFilter)
+	m.pickerAllItems = doScanFilesWithContext(context.Background(), m.registry, m.cwd, m.pickerFilter)
+}
+
+// doScanFilesWithContext 对 doScanFiles 的包装，传递 context 用于超时/取消。
+func doScanFilesWithContext(ctx context.Context, registry tool.Registry, cwd, filter string) []pickerItem {
+	filter = resolveTilde(filter)
+
+	if filepath.IsAbs(filter) {
+		return doScanAbsolute(ctx, registry, cwd, filter)
+	}
+	return doScanRelative(ctx, registry, cwd, filter)
 }
 
 // doScanFiles 执行实际的文件扫描（通过 shell find 命令），返回结果。
-// 当 filter 包含 ../ 或绝对路径前缀时，自动切换搜索起点到对应目录。
+// 分两种模式：
+//   - 相对路径（@pkg/、@../、@./）→ 基于 cwd 解析，展示 cwd 相对路径
+//   - 绝对路径（@/Users/...、@~/...）→ 独立逻辑，展示绝对路径
 func doScanFiles(registry tool.Registry, cwd, filter string) []pickerItem {
-	ctx := context.Background()
+	return doScanFilesWithContext(context.Background(), registry, cwd, filter)
+}
 
-	// 解析 filter 中可能的外部目录前缀
+// doScanRelative 相对路径扫描：基于 cwd，深度扫描项目内部，浅层列出父目录兄弟。
+func doScanRelative(ctx context.Context, registry tool.Registry, cwd, filter string) []pickerItem {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+
 	searchRoot := "."
 	searchDir := cwd
 	if dirPrefix := extractDirPrefix(filter); dirPrefix != "" && dirPrefix != "." {
-		// 若是相对路径，基于 cwd 解析
 		resolved := dirPrefix
 		if !filepath.IsAbs(resolved) {
 			resolved = filepath.Join(cwd, resolved)
@@ -2311,8 +2354,21 @@ func doScanFiles(registry tool.Registry, cwd, filter string) []pickerItem {
 		}
 	}
 
+	// 父目录顶层 → 浅层列出兄弟；其他 → 深度扫描
+	maxDepth := 10
+	excludeCWD := false
+	if searchRoot == filepath.Dir(cwd) {
+		maxDepth = 2
+		excludeCWD = true
+	}
+
 	doSearch := func(namePattern string) (files []string) {
-		cmd := fmt.Sprintf("find %s -maxdepth 10 -type f -not -path '*/.git/*' -not -path '*/node_modules/*'", shellQuote(searchRoot))
+		cmd := fmt.Sprintf("find %s -maxdepth %d -type f", shellQuote(searchRoot), maxDepth)
+		cmd += " -not -path '*/.git/*' -not -path '*/node_modules/*' 2>/dev/null"
+		if excludeCWD {
+			cwdBase := filepath.Base(cwd)
+			cmd += fmt.Sprintf(" -not -path %s", shellQuote(filepath.Join(searchRoot, cwdBase)+"/*"))
+		}
 		if namePattern != "" && namePattern != "*" {
 			cmd += fmt.Sprintf(" -name '%s'", namePattern)
 		}
@@ -2325,23 +2381,11 @@ func doScanFiles(registry tool.Registry, cwd, filter string) []pickerItem {
 		if err != nil || result.IsError() {
 			return nil
 		}
-		// 将 find 输出路径转换为相对于 cwd 的路径（模糊过滤 + @ 引用都需要 cwd 相对路径）
 		rawFiles := parseFindOutput(result.Content)
 		return relativizePaths(rawFiles, cwd)
 	}
 
-	var files []string
-	if filter != "" {
-		lastComp := filepath.Base(filter)
-		if lastComp != "" && lastComp != "." && lastComp != "/" {
-			files = doSearch(lastComp + "*")
-		}
-		if len(files) == 0 {
-			files = doSearch("*")
-		}
-	} else {
-		files = doSearch("*")
-	}
+	files := doSearch("*")
 
 	if len(files) == 0 {
 		return nil
@@ -2381,35 +2425,189 @@ func doScanFiles(registry tool.Registry, cwd, filter string) []pickerItem {
 	if len(items) > 500 {
 		items = items[:500]
 	}
-
 	sortPickerItems(items)
 	return items
 }
 
-// parseFindOutput 解析 find 命令的输出为文件路径列表。
+// doScanAbsolute 绝对路径扫描：展示绝对路径，深度随导航层级递增。
+func doScanAbsolute(ctx context.Context, registry tool.Registry, cwd, filter string) []pickerItem {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+
+	// 提取目录前缀作为搜索起点
+	dirPrefix := extractDirPrefix(filter)
+	if dirPrefix == "" || dirPrefix == "." {
+		return nil
+	}
+	resolved := dirPrefix
+	if !filepath.IsAbs(resolved) {
+		resolved = filepath.Join(cwd, resolved)
+	}
+	resolved = filepath.Clean(resolved)
+	info, err := os.Stat(resolved)
+	if err != nil || !info.IsDir() {
+		return nil
+	}
+	searchRoot := resolved
+
+	// 深度 = searchRoot 之后的路径层级 + 2
+	// @~/ → depth 2（home 直系 + 一级子内容）
+	// @~/Workbench/waveloom/ → depth 3（项目内容 + 两层子目录）
+	relFilter := strings.TrimPrefix(filter, searchRoot)
+	relFilter = strings.Trim(relFilter, "/")
+	extraLevels := 0
+	if relFilter != "" {
+		extraLevels = len(strings.Split(relFilter, "/"))
+	}
+	maxDepth := extraLevels + 2
+	if maxDepth < 1 {
+		maxDepth = 1
+	}
+	if maxDepth > 10 {
+		maxDepth = 10
+	}
+
+	// 搜索策略：
+	// - 有部分名称（如 Workben）→ -name 'Workben*' 精搜，防截断
+	// - 仅目录前缀（如 ~/）→ 全量扫描，供浏览
+	namePattern := "*"
+	if relFilter != "" {
+		baseName := filepath.Base(relFilter)
+		if baseName != "" && baseName != "." && baseName != "/" {
+			namePattern = baseName + "*"
+		}
+	}
+
+	doSearch := func(typeFilter string) (files []string) {
+		cmd := fmt.Sprintf("find %s -maxdepth %d -type %s -not -path '*/.git/*' -not -path '*/node_modules/*' 2>/dev/null", shellQuote(searchRoot), maxDepth, typeFilter)
+		if namePattern != "*" {
+			cmd += fmt.Sprintf(" -name '%s'", namePattern)
+		}
+		cmd += " | sort"
+		jsonBytes, _ := json.Marshal(map[string]string{
+			"command":     cmd,
+			"working_dir": searchRoot,
+		})
+		result, err := registry.Execute(ctx, "bash", jsonBytes)
+		if err != nil || result.IsError() {
+			return nil
+		}
+		return parseFindOutput(result.Content)
+	}
+
+	dirFiles := doSearch("d")
+	regFiles := doSearch("f")
+
+	if len(dirFiles) == 0 && len(regFiles) == 0 {
+		return nil
+	}
+
+	seenDirs := make(map[string]bool)
+	var items []pickerItem
+
+	// 目录条目（find -type d 已确认类型，无需 os.Stat）
+	for _, entry := range dirFiles {
+		if seenDirs[entry] {
+			continue
+		}
+		seenDirs[entry] = true
+		items = append(items, pickerItem{
+			Path:    entry,
+			IsDir:   true,
+			Display: entry + "/",
+		})
+
+		// 提取父目录链
+		dir := filepath.Dir(entry)
+		for dir != searchRoot && dir != "/" && dir != "" && strings.HasPrefix(dir, searchRoot) {
+			if seenDirs[dir] {
+				break
+			}
+			seenDirs[dir] = true
+			items = append(items, pickerItem{
+				Path:    dir,
+				IsDir:   true,
+				Display: dir + "/",
+			})
+			dir = filepath.Dir(dir)
+		}
+	}
+
+	// 文件条目（find -type f 已确认类型）
+	for _, entry := range regFiles {
+		if isHiddenOrBinary(entry) {
+			continue
+		}
+		items = append(items, pickerItem{
+			Path:    entry,
+			IsDir:   false,
+			Display: entry,
+		})
+
+		// 提取父目录链
+		dir := filepath.Dir(entry)
+		for dir != searchRoot && dir != "/" && dir != "" && strings.HasPrefix(dir, searchRoot) {
+			if seenDirs[dir] {
+				break
+			}
+			if isHiddenOrBinary(dir) {
+				break
+			}
+			seenDirs[dir] = true
+			items = append(items, pickerItem{
+				Path:    dir,
+				IsDir:   true,
+				Display: dir + "/",
+			})
+			dir = filepath.Dir(dir)
+		}
+	}
+
+	if len(items) > 500 {
+		items = items[:500]
+	}
+	sortPickerItems(items)
+	return items
+}
+
+// parseFindOutput 解析 shell 工具返回的 find 命令输出为文件路径列表。
+//
+// shell 工具的输出格式：
+//
+//	Command succeeded (exit=0)  8ms
+//	   stdout:
+//	     /path/to/file1
+//	     /path/to/file2
+//
+// 本函数跳过元数据头，仅提取缩进的文件路径行。
 func parseFindOutput(content string) []string {
 	lines := strings.Split(content, "\n")
 	var files []string
+	inBody := false
+
 	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		if line == "" {
+		// 检测头→体边界："   stdout:" 或 "   stderr/stdout:"
+		if !inBody {
+			if strings.HasPrefix(line, "   stdout:") || strings.HasPrefix(line, "   stderr/stdout:") {
+				inBody = true
+			}
 			continue
 		}
-		// 跳过摘要头、截断警告和空行
-		if strings.HasPrefix(line, "Found ") ||
-			strings.HasPrefix(line, "Results truncated") ||
-			strings.HasPrefix(line, "⚠️") ||
-			strings.HasPrefix(line, "No files") ||
-			strings.HasPrefix(line, "Searched under") {
-			continue
+
+		// 体内部每行缩进 5 空格，剥离后即为实际文件路径
+		if strings.HasPrefix(line, "     ") {
+			file := strings.TrimSpace(line[5:])
+			if file != "" && file != "(empty)" {
+				files = append(files, file)
+			}
 		}
-		files = append(files, line)
 	}
 	return files
 }
 
 // extractDirPrefix 从 filter 中提取可能的外部目录前缀。
-// 若 filter 以 /, ~, ., .. 开头，返回其目录部分作为搜索起点。
+// 若 filter 以 /、~ 或 . 开头，返回其目录部分作为搜索起点。
+// 绝对路径（/）和 ~ 直接使用；相对路径（./、../）基于 cwd 解析。
 func extractDirPrefix(filter string) string {
 	if filter == "" {
 		return ""
@@ -2421,6 +2619,35 @@ func extractDirPrefix(filter string) string {
 		return filter
 	}
 	return ""
+}
+
+// resolveTilde 展开 filter 中的 ~ 和 ~user 前缀为实际 home 目录路径。
+// ~ → 当前用户 home，~user → 指定用户 home。
+func resolveTilde(filter string) string {
+	if !strings.HasPrefix(filter, "~") {
+		return filter
+	}
+	end := strings.Index(filter, "/")
+	tildePart := filter
+	suffix := ""
+	if end >= 0 {
+		tildePart = filter[:end]
+		suffix = filter[end:]
+	}
+
+	var homeDir string
+	if tildePart == "~" {
+		homeDir, _ = os.UserHomeDir()
+	} else {
+		username := tildePart[1:]
+		if u, err := user.Lookup(username); err == nil {
+			homeDir = u.HomeDir
+		}
+	}
+	if homeDir == "" {
+		return filter
+	}
+	return homeDir + suffix
 }
 
 // shellQuote 为 shell 命令安全转义路径参数。
@@ -2454,10 +2681,10 @@ func relativizePaths(paths []string, cwd string) []string {
 
 // isHiddenOrBinary 检查路径是否应被过滤。
 func isHiddenOrBinary(path string) bool {
-	// 检查每个路径段是否以 . 开头（隐藏文件/目录）
+	// 检查每个路径段是否以 . 开头（隐藏文件/目录），排除 . 和 ..（合法路径导航）
 	parts := strings.Split(path, string(filepath.Separator))
 	for _, p := range parts {
-		if strings.HasPrefix(p, ".") {
+		if strings.HasPrefix(p, ".") && p != "." && p != ".." {
 			return true
 		}
 		// 常见巨型目录
@@ -3931,16 +4158,13 @@ func (m *model) renderHeader() string {
 	lineCwd := lipgloss.NewStyle().Width(contentWidth).Render(cwdPart)
 	sb.WriteString(lineCwd)
 
-	// 通知 banner：workspace 下方独立一行，仅在有通知时显示
+	// 通知 banner：右对齐，无背景
 	if m.noticeBanner != "" {
 		sb.WriteString("\n")
 		bannerStyle := lipgloss.NewStyle().
 			Foreground(colorAccentGold).
-			Bold(true).
-			Background(colorToolCodeBg).
 			Width(contentWidth).
-			Padding(0, 1).
-			Align(lipgloss.Center)
+			Align(lipgloss.Right)
 		sb.WriteString(bannerStyle.Render(m.noticeBanner))
 	}
 

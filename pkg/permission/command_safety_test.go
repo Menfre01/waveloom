@@ -576,3 +576,75 @@ func TestSplitCommandChain_EmptySegments(t *testing.T) {
 		t.Errorf("expected 2 segments after filtering empty, got %d: %v", len(segments), segments)
 	}
 }
+
+// TestRegression_HeredocCatFalsePositive 验证 heredoc 体内的 | sh / | bash
+// 不会被误判为 shell 管道。
+// REGRESSION: 空格归一化 collapse 换行导致 heredoc 体内容被当作 shell 管道匹配。
+func TestRegression_HeredocCatFalsePositive(t *testing.T) {
+	tests := []struct {
+		name    string
+		command string
+		want    CommandRiskLevel
+	}{
+		{
+			name: "heredoc with pipe sh in body",
+			command: "cat > /tmp/test.go << 'EOF'\npackage main\n\n// usage: foo | sh\nfunc main() {}\nEOF",
+			want:    RiskNone,
+		},
+		{
+			name: "heredoc with pipe bash in body",
+			command: "cat > /tmp/test.go << 'EOF'\npackage main\n\n// usage: foo | bash\nfunc main() {}\nEOF",
+			want:    RiskNone,
+		},
+		{
+			name: "heredoc with only sh in body (no pipe)",
+			command: "cat > /tmp/test.sh << 'EOF'\n#!/bin/sh\necho hello\nEOF",
+			want:    RiskNone,
+		},
+		// 真实管道仍然要拦截
+		{
+			name:    "real cat pipe to sh",
+			command: "cat evil.sh | sh",
+			want:    RiskHigh,
+		},
+		{
+			name:    "real cat pipe to bash",
+			command: "cat evil.sh | bash",
+			want:    RiskHigh,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := CommandSafetyCheck(tt.command)
+			if got.Level != tt.want {
+				t.Errorf("CommandSafetyCheck(%q).Level = %s, want %s", tt.command, got.Level, tt.want)
+			}
+		})
+	}
+}
+
+// TestRegression_SourceDevAdjacency 验证水平空格归一化后
+// "source  /dev/stdin"（多空格）仍然能被邻接 keyword 命中。
+func TestRegression_SourceDevAdjacency(t *testing.T) {
+	tests := []struct {
+		name    string
+		command string
+		want    CommandRiskLevel
+	}{
+		{"source dev single space", "source /dev/stdin", RiskHigh},
+		{"source dev multiple spaces", "source   /dev/stdin", RiskHigh},
+		{"source dev with tab", "source\t/dev/stdin", RiskHigh},
+		{"dot dev single space", ". /dev/stdin", RiskHigh},
+		{"dot dev multiple spaces", ".   /dev/stdin", RiskHigh},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := CommandSafetyCheck(tt.command)
+			if got.Level != tt.want {
+				t.Errorf("CommandSafetyCheck(%q).Level = %s, want %s", tt.command, got.Level, tt.want)
+			}
+		})
+	}
+}
