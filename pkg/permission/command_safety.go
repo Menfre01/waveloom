@@ -164,6 +164,10 @@ var trulySafeCommands = map[string]bool{
 	"cat":  true,
 	"head": true,
 	"tail": true,
+	// 搜索工具（纯读取，替代已删除的 grep/search_file/ls 工具）
+	"grep": true,
+	"find": true,
+	"file": true,
 	// 基础信息查询
 	"pwd":      true,
 	"which":    true,
@@ -190,13 +194,21 @@ var trulySafeCommands = map[string]bool{
 // ---------------------------------------------------------------------------
 
 // buildToolCommands 是构建工具和版本控制工具。
-// RiskLow：不会被 Step 3 高危拦截，但仍走 Step 7 默认策略（ASK）。
-// 未来 Plan: 子命令级白名单（如 git status → ALLOW, git push --force → ASK）。
+// RiskLow：不会被 Step 3 高危拦截，但仍走 Step 7 默认策略（normal 模式 ASK，plan 模式 ALLOW）。
 var buildToolCommands = map[string]bool{
-	"git":   true,
-	"go":    true,
-	"cargo": true,
-	"make":  true,
+	"git":    true,
+	"go":     true,
+	"cargo":  true,
+	"rustc":  true,
+	"make":   true,
+	"npm":    true,
+	"npx":    true,
+	"node":   true,
+	"python": true,
+	"python3": true,
+	"pip":    true,
+	"pip3":   true,
+	"docker": true,
 }
 
 // ---------------------------------------------------------------------------
