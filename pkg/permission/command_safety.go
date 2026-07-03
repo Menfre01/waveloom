@@ -2,6 +2,7 @@ package permission
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 
 	"github.com/Menfre01/waveloom/pkg/pathutil"
@@ -34,13 +35,15 @@ func (d *DangerousCommandPattern) Matches(command string) bool {
 	return true
 }
 
-// checkPipe 检查命令中所有管道段后是否跟了危险命令。
+// checkPipe 检查命令的管道下游段是否以危险命令开头。
+// 使用 first-token 精确匹配，而非子串匹配，避免 "grep sh" 中的 "sh" 被误判为 shell 命令。
 func (d *DangerousCommandPattern) checkPipe(command string) bool {
 	segments := splitPipeSegments(command)
-	// 对每个非首段（管道下游），检查是否包含危险命令
+	// 对每个非首段（管道下游），检查首 token 是否为危险命令
 	for i := 1; i < len(segments); i++ {
+		firstToken := extractFirstToken(segments[i])
 		for _, pw := range d.Pipewords {
-			if strings.Contains(strings.TrimSpace(segments[i]), pw) {
+			if firstToken == pw {
 				return true
 			}
 		}
@@ -202,6 +205,13 @@ var trulySafeCommands = map[string]bool{
 	"test": true,
 }
 
+// commandsWithDangerousArgs 是 trulySafeCommands 中某些参数组合有危险的命令。
+// 这些命令仍需要走危险模式检查（如 find -exec rm / find -delete），
+// 不能在 safe-command 快速路径中直接放行。
+var commandsWithDangerousArgs = map[string]bool{
+	"find": true,
+}
+
 // ---------------------------------------------------------------------------
 // buildToolCommands — 构建/版本控制工具，需要子命令级白名单
 // ---------------------------------------------------------------------------
@@ -256,11 +266,25 @@ func CommandSafetyCheck(command string) CommandCheckResult {
 		command = normalized
 	}
 
-	// 0.5 空格归一化：collapse 连续空格/tab/换行为单空格，防止多余空白导致
-	// 邻接 keyword（如 "source /dev/"）漏检。
-	command = strings.Join(strings.Fields(command), " ")
+	// 0.5 水平空格归一化：collapse 连续空格/tab 为单空格（保留换行），
+	// 防止多余空白导致邻接 keyword（如 "source /dev/"）漏检。
+	// 注意：不能 collapse 换行——会破坏 heredoc 边界，导致 heredoc 体内
+	// 的 | sh / | bash 等内容被误判为 shell 管道。
+	command = collapseHorizontalWhitespace(command)
 
-	// 1. 危险模式匹配（最高优先级，先于已知安全命令检查）
+	// 0.6 剥离 heredoc 体：防止 heredoc 体内的 | sh / | bash 等字符串
+	// 被误判为 shell 管道。仅保留 heredoc 起始标记，剔除 body 和结束标记。
+	command = stripHeredocs(command)
+
+	// 1. 单条安全命令快速路径：首 token 在 trulySafeCommands、无危险参数、非链命令，
+	//    直接返回 RiskNone，避免危险模式误伤参数中的关键词（如 echo "reboot"）。
+	//    find 等虽有危险子命令，仍走完整流程（如 find -exec rm）。
+	firstToken := extractFirstToken(command)
+	if trulySafeCommands[firstToken] && !commandsWithDangerousArgs[firstToken] && splitCommandChain(command) == nil {
+		return CommandCheckResult{Level: RiskNone, Message: "safe read-only command: " + firstToken}
+	}
+
+	// 2. 危险模式匹配（最高优先级，先于已知安全命令检查）
 	//    即使首命令在安全列表中，危险模式仍可能命中（如 git + find -exec rm 的组合等）
 	for _, dp := range DangerousPatterns {
 		if dp.Matches(command) {
@@ -272,7 +296,7 @@ func CommandSafetyCheck(command string) CommandCheckResult {
 		}
 	}
 
-	// 2. 命令链分割：对 && / ; / || / 换行 / 管道 连接的每个子命令独立评估
+	// 3. 命令链分割：对 && / ; / || / 换行 / 管道 连接的每个子命令独立评估
 	segments := splitCommandChain(command)
 	if len(segments) > 1 {
 		highestLevel := RiskNone
@@ -294,7 +318,7 @@ func CommandSafetyCheck(command string) CommandCheckResult {
 		return CommandCheckResult{Level: highestLevel, Message: highestMsg}
 	}
 
-	// 3. 单命令评估
+	// 4. 单命令评估
 	return singleCommandRisk(command)
 }
 
@@ -366,6 +390,71 @@ func splitCommandChain(command string) []string {
 		return nil // 无链，单命令
 	}
 	return result
+}
+
+// stripHeredocs 移除命令中的 heredoc 体（<< 和 <<-），防止 heredoc 体内的
+// 字符串被误判为 shell 管道或危险模式。保留 << 起始行但删除 body 和结束标记。
+func stripHeredocs(command string) string {
+	// heredoc 模式：<< 或 <<- 后跟可选空格，然后是定界符（可被引号包围）
+	re := regexp.MustCompile(`<<-?\s*('[^']*'|"[^"]*"|\S+)`)
+	for {
+		loc := re.FindStringIndex(command)
+		if loc == nil {
+			break
+		}
+		// 提取定界符（去引号）
+		delimMatch := re.FindStringSubmatch(command[loc[0]:])
+		if len(delimMatch) < 2 {
+			break
+		}
+		rawDelim := delimMatch[1]
+		// 去引号
+		delim := strings.Trim(rawDelim, "'\"")
+		// 找到定界符后的第一个换行，body 从此开始
+		bodyStart := strings.Index(command[loc[1]:], "\n")
+		if bodyStart < 0 {
+			break
+		}
+		bodyStart += loc[1] + 1 // 跳过换行符
+		// 从 bodyStart 开始，找单独成行的结束定界符
+		rest := command[bodyStart:]
+		// 构建查找模式：行首 + 定界符 + 行尾
+		endPattern := "(?m)^" + regexp.QuoteMeta(delim) + `\s*$`
+		endRe := regexp.MustCompile(endPattern)
+		endLoc := endRe.FindStringIndex(rest)
+		if endLoc == nil {
+			break
+		}
+		endPos := bodyStart + endLoc[1]
+		// 替换：保留 << 起始行，删除 body + 结束定界符
+		command = command[:loc[1]] + command[endPos:]
+	}
+	return command
+}
+
+// collapseHorizontalWhitespace 将连续的水平空白符（空格、tab）折叠为单个空格，
+// 保留换行符不动。这样既修复了 "source  /dev/" 漏检问题，又不会破坏 heredoc 边界。
+func collapseHorizontalWhitespace(s string) string {
+	var b strings.Builder
+	b.Grow(len(s))
+	inSpace := false
+	for _, r := range s {
+		if r == '\n' || r == '\r' {
+			b.WriteRune(r)
+			inSpace = false
+			continue
+		}
+		if r == ' ' || r == '\t' {
+			if !inSpace {
+				b.WriteByte(' ')
+				inSpace = true
+			}
+			continue
+		}
+		b.WriteRune(r)
+		inSpace = false
+	}
+	return b.String()
 }
 
 // extractFirstToken 取命令行第一个 token（空格分隔）。
