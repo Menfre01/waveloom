@@ -15,17 +15,26 @@ import (
 // DangerousCommandPattern 描述一个危险命令的匹配模式。
 // 迁移自 pkg/tool/shell.go 的 dangerousPattern，升级为导出类型。
 type DangerousCommandPattern struct {
-	Keywords  []string // AND 关系，全部匹配才触发
-	Pipewords []string // 可选：匹配管道后的危险命令名
-	Label     string   // 人类可读的描述
+	Keywords      []string // AND 关系，全部匹配才触发
+	Pipewords     []string // 可选：匹配管道后的危险命令名
+	Label         string   // 人类可读的描述
+	FirstTokenOnly bool    // 仅对首 token 做精确匹配，避免路径/参数中的子串误伤
 }
 
 // Matches 检查命令是否匹配此危险模式。
 func (d *DangerousCommandPattern) Matches(command string) bool {
 	// AND 关系：所有 Keywords 必须出现
-	for _, kw := range d.Keywords {
-		if !strings.Contains(command, kw) {
-			return false
+	for i, kw := range d.Keywords {
+		if i == 0 && d.FirstTokenOnly {
+			// 首 keyword 需匹配任一子命令的首 token（精确或 prefix），
+			// 而非全命令的首 token。拆链后逐段检查，防止 "echo && shutdown" 漏检。
+			if !anyFirstTokenMatches(command, kw) {
+				return false
+			}
+		} else {
+			if !strings.Contains(command, kw) {
+				return false
+			}
 		}
 	}
 	// 如果设置了 Pipewords：Keywords 全匹配后，检查管道后是否跟了危险命令
@@ -33,6 +42,34 @@ func (d *DangerousCommandPattern) Matches(command string) bool {
 		return d.checkPipe(command)
 	}
 	return true
+}
+
+// anyFirstTokenMatches 检查命令链中任一子命令的首 token 是否匹配 keyword。
+func anyFirstTokenMatches(command, kw string) bool {
+	segments := splitCommandChain(command)
+	if segments == nil {
+		// 单命令，直接检查首 token
+		return firstTokenMatches(extractFirstToken(command), kw)
+	}
+	for _, seg := range segments {
+		if firstTokenMatches(extractFirstToken(seg), kw) {
+			return true
+		}
+	}
+	return false
+}
+
+// firstTokenMatches 检查首 token 是否等于 keyword，或以 keyword. 开头
+// （匹配子命令变体如 mkfs.ext4）。注意：不匹配 kw-（如 scp-wrapper），
+// iptables-* 子命令由独立的 DangerousPatterns 覆盖。
+func firstTokenMatches(firstToken, kw string) bool {
+	if firstToken == kw {
+		return true
+	}
+	if strings.HasPrefix(firstToken, kw+".") {
+		return true
+	}
+	return false
 }
 
 // checkPipe 检查命令的管道下游段是否以危险命令开头。
@@ -80,27 +117,27 @@ var DangerousPatterns = []DangerousCommandPattern{
 	{Keywords: []string{"sudo", "rm"}, Label: "sudo rm (privileged deletion)"},
 	{Keywords: []string{">", "/dev/sd"}, Label: "overwrite block device"},
 	{Keywords: []string{"dd", "if="}, Label: "dd disk copy"},
-	{Keywords: []string{"mkfs"}, Label: "mkfs (format filesystem)"},
-	{Keywords: []string{"shred"}, Label: "shred (secure file deletion)"},
+	{Keywords: []string{"mkfs"}, Label: "mkfs (format filesystem)", FirstTokenOnly: true},
+	{Keywords: []string{"shred"}, Label: "shred (secure file deletion)", FirstTokenOnly: true},
 
 	// ── 权限 / 所有权修改 ──
 	{Keywords: []string{"chmod", "777"}, Label: "chmod 777 (world-writable)"},
 	{Keywords: []string{"chmod", "u+s"}, Label: "chmod u+s (setuid)"},
 	{Keywords: []string{"chmod", "-R"}, Label: "chmod -R (recursive permission change)"},
-	{Keywords: []string{"chown"}, Label: "chown (ownership change)"},
+	{Keywords: []string{"chown"}, Label: "chown (ownership change)", FirstTokenOnly: true},
 
 	// ── 系统操作 ──
-	{Keywords: []string{"shutdown"}, Label: "shutdown (system shutdown)"},
-	{Keywords: []string{"reboot"}, Label: "reboot (system reboot)"},
-	{Keywords: []string{"halt"}, Label: "halt (system halt)"},
-	{Keywords: []string{"poweroff"}, Label: "poweroff (system power off)"},
-	{Keywords: []string{"mount"}, Label: "mount (filesystem mount)"},
-	{Keywords: []string{"umount"}, Label: "umount (filesystem unmount)"},
+	{Keywords: []string{"shutdown"}, Label: "shutdown (system shutdown)", FirstTokenOnly: true},
+	{Keywords: []string{"reboot"}, Label: "reboot (system reboot)", FirstTokenOnly: true},
+	{Keywords: []string{"halt"}, Label: "halt (system halt)", FirstTokenOnly: true},
+	{Keywords: []string{"poweroff"}, Label: "poweroff (system power off)", FirstTokenOnly: true},
+	{Keywords: []string{"mount"}, Label: "mount (filesystem mount)", FirstTokenOnly: true},
+	{Keywords: []string{"umount"}, Label: "umount (filesystem unmount)", FirstTokenOnly: true},
 
 	// ── 进程终止 ──
 	{Keywords: []string{"kill", "-9"}, Label: "kill -9 (forced process termination)"},
-	{Keywords: []string{"killall"}, Label: "killall (terminate by name)"},
-	{Keywords: []string{"pkill"}, Label: "pkill (terminate by pattern)"},
+	{Keywords: []string{"killall"}, Label: "killall (terminate by name)", FirstTokenOnly: true},
+	{Keywords: []string{"pkill"}, Label: "pkill (terminate by pattern)", FirstTokenOnly: true},
 
 	// ── 网络下载 + 管道执行 ──
 	{Keywords: []string{"curl"}, Pipewords: []string{"sh", "bash", "python", "perl", "ruby"}, Label: "curl piped to interpreter"},
@@ -122,19 +159,21 @@ var DangerousPatterns = []DangerousCommandPattern{
 	{Keywords: []string{"sh", "-c"}, Label: "sh -c inline execution"},
 
 	// ── Shell 内建危险 ──
-	{Keywords: []string{"eval"}, Label: "eval (arbitrary code execution)"},
-	{Keywords: []string{"sudo"}, Label: "sudo (privilege escalation)"},
+	{Keywords: []string{"eval"}, Label: "eval (arbitrary code execution)", FirstTokenOnly: true},
+	{Keywords: []string{"sudo"}, Label: "sudo (privilege escalation)", FirstTokenOnly: true},
 	// source /dev/stdin 等：用单 keyword 强制 source + /dev/ 邻接，
 	// 避免 "claude-source/ 2>/dev/null" 误中（空格归一化后 source 在路径中，/dev/ 在重定向中）。
 	{Keywords: []string{"source /dev/"}, Label: "source from /dev/stdin"},
 	{Keywords: []string{". /dev/"}, Label: ". (source) from /dev/stdin"},
-	{Keywords: []string{"exec"}, Label: "exec (replace shell process)"},
+	{Keywords: []string{"exec"}, Label: "exec (replace shell process)", FirstTokenOnly: true},
 
 	// ── 网络工具 ──
 	{Keywords: []string{"nc", "-e"}, Label: "nc -e (netcat execute)"},
 	{Keywords: []string{"nc", "-l"}, Pipewords: []string{"sh", "bash"}, Label: "nc listener piped to shell"},
-	{Keywords: []string{"iptables"}, Label: "iptables (firewall modification)"},
-	{Keywords: []string{"pfctl"}, Label: "pfctl (macOS firewall modification)"},
+	{Keywords: []string{"iptables"}, Label: "iptables (firewall modification)", FirstTokenOnly: true},
+	{Keywords: []string{"iptables-restore"}, Label: "iptables-restore (firewall rules restore)", FirstTokenOnly: true},
+	{Keywords: []string{"iptables-save"}, Label: "iptables-save (firewall rules save)", FirstTokenOnly: true},
+	{Keywords: []string{"pfctl"}, Label: "pfctl (macOS firewall modification)", FirstTokenOnly: true},
 
 	// ── find -exec / xargs 危险组合 ──
 	{Keywords: []string{"find", "-exec", "chmod"}, Label: "find -exec chmod"},
@@ -146,13 +185,13 @@ var DangerousPatterns = []DangerousCommandPattern{
 
 	// ── 系统配置修改 ──
 	{Keywords: []string{"sysctl", "-w"}, Label: "sysctl -w (kernel parameter write)"},
-	{Keywords: []string{"crontab"}, Label: "crontab (schedule tasks)"},
+	{Keywords: []string{"crontab"}, Label: "crontab (schedule tasks)", FirstTokenOnly: true},
 	{Keywords: []string{"tee", "/etc/"}, Label: "tee to /etc (system config overwrite)"},
 	{Keywords: []string{"tee", "/dev/"}, Label: "tee to /dev (device write)"},
 
 	// ── SSH / 远程执行 ──
 	{Keywords: []string{"ssh", "root@"}, Label: "ssh to root (remote privileged access)"},
-	{Keywords: []string{"scp"}, Label: "scp (remote file transfer)"},
+	{Keywords: []string{"scp"}, Label: "scp (remote file transfer)", FirstTokenOnly: true},
 
 	// ── Git 破坏性操作 ──
 	{Keywords: []string{"git", "push", "--force"}, Label: "git push --force (force push)"},

@@ -2,6 +2,9 @@ package permission
 
 import (
 	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
 	"sync"
 	"testing"
 )
@@ -514,4 +517,82 @@ func TestRuleEngine_DoubleStar_EditFilePathRule(t *testing.T) {
 	if found {
 		t.Error("absolute '**' should NOT match different project")
 	}
+}
+
+// ---------------------------------------------------------------------------
+// REGRESSION: 相对 pattern 匹配绝对 file_path（策略 2.5）
+// ---------------------------------------------------------------------------
+
+// TestMatchContent_RelativePatternAbsoluteTarget 验证相对路径 pattern
+// （如 "pkg/**"）能匹配绝对路径 file_path（如 "/Users/x/project/pkg/tool/foo.go"）。
+// REGRESSION: 用户配置 edit_file(pkg/**) 时，工具传入绝对路径导致不匹配。
+func TestMatchContent_RelativePatternAbsoluteTarget(t *testing.T) {
+	cwd := mustGetwd(t)
+
+	tests := []struct {
+		name    string
+		pattern string
+		target  string // 绝对路径
+		want    bool
+	}{
+		// 相对 pattern + `**` → 应匹配 CWD 下的对应绝对路径
+		{"pkg/** glob", "pkg/**", filepath.Join(cwd, "pkg/tool/foo.go"), true},
+		{"pkg deep nested", "pkg/**", filepath.Join(cwd, "pkg/a/b/c/d.go"), true},
+		{"pkg direct child", "pkg/**", filepath.Join(cwd, "pkg/main.go"), true},
+		{"different dir", "pkg/**", filepath.Join(cwd, "cmd/main.go"), false},
+		{"outside project", "pkg/**", "/tmp/outside.go", false},
+		// 仅文件名 pattern → 应通过策略 4 匹配
+		{"*.go pattern", "*.go", filepath.Join(cwd, "main.go"), true},
+		{"*.md no match", "*.md", filepath.Join(cwd, "main.go"), false},
+		// 深层相对 pattern
+		{"deep relative glob", "pkg/permission/*.go", filepath.Join(cwd, "pkg/permission/guard.go"), true},
+		{"deep relative no match", "pkg/permission/*.go", filepath.Join(cwd, "pkg/tool/shell.go"), false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			input := json.RawMessage(fmt.Sprintf(`{"file_path": "%s"}`, tt.target))
+			got := matchContent("edit_file", tt.pattern, input)
+			if got != tt.want {
+				t.Errorf("matchContent(%q, %q) = %v, want %v", tt.pattern, tt.target, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestRuleEngine_RelativePatternAbsoluteTarget 端到端规则引擎测试：
+// 加载相对 pattern 规则，对绝对 file_path 做 CheckAllow。
+func TestRuleEngine_RelativePatternAbsoluteTarget(t *testing.T) {
+	cwd := mustGetwd(t)
+	re := NewRuleEngine()
+	re.LoadRules([]RuleEntry{
+		{Rule: Rule{Behavior: RuleAllow, ToolName: "edit_file", Pattern: "pkg/**"}, Source: SourceConfig, Scope: ScopeConfig},
+	})
+
+	// 绝对路径应匹配相对 pattern "pkg/**"
+	input := json.RawMessage(fmt.Sprintf(`{"file_path": "%s"}`, filepath.Join(cwd, "pkg/tool/foo.go")))
+	result, found := re.CheckAllow("edit_file", input)
+	if !found {
+		t.Errorf("relative pattern 'pkg/**' should match absolute path '%s/pkg/tool/foo.go'", cwd)
+	}
+	if result.Decision != DecisionAllow {
+		t.Errorf("decision = %s, want %s", result.Decision, DecisionAllow)
+	}
+
+	// 绝对路径不在 pkg/ 下 → 不应匹配
+	input = json.RawMessage(fmt.Sprintf(`{"file_path": "%s"}`, filepath.Join(cwd, "cmd/main.go")))
+	_, found = re.CheckAllow("edit_file", input)
+	if found {
+		t.Error("relative pattern 'pkg/**' should NOT match cmd/main.go")
+	}
+}
+
+// mustGetwd 返回当前工作目录，测试辅助。
+func mustGetwd(t *testing.T) string {
+	t.Helper()
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("os.Getwd() failed: %v", err)
+	}
+	return cwd
 }
