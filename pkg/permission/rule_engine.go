@@ -133,6 +133,71 @@ func (re *RuleEngine) checkRules(rules []RuleEntry, toolName string, input json.
 	return DecisionResult{}, false
 }
 
+// matchGlob 是对 path.Match 的增强，额外支持 ** 递归匹配。
+// ** 匹配零个或多个路径组件（跨越 / 边界）。
+// 不含 ** 的 pattern 直接委托给 path.Match，行为完全兼容。
+func matchGlob(pattern, target string) (bool, error) {
+	if !strings.Contains(pattern, "**") {
+		return path.Match(pattern, target)
+	}
+	patSegs := splitPath(pattern)
+	tgtSegs := splitPath(target)
+	return matchSegments(patSegs, tgtSegs), nil
+}
+
+// splitPath 将路径按 / 分割，保留空段（如绝对路径开头的空字符串）。
+func splitPath(p string) []string {
+	if p == "" {
+		return nil
+	}
+	return strings.Split(p, "/")
+}
+
+// matchSegments 递归匹配 pattern 段与 target 段，** 可跨越零或多个段。
+func matchSegments(pat, tgt []string) bool {
+	// 两方都耗尽 → 匹配成功
+	if len(pat) == 0 && len(tgt) == 0 {
+		return true
+	}
+
+	// pattern 耗尽但 target 还有 → 不匹配
+	if len(pat) == 0 {
+		return false
+	}
+
+	// target 耗尽：剩余 pattern 必须全是 **
+	if len(tgt) == 0 {
+		for _, s := range pat {
+			if s != "**" {
+				return false
+			}
+		}
+		return true
+	}
+
+	seg := pat[0]
+	rest := pat[1:]
+
+	if seg == "**" {
+		// ** 匹配零个组件 → 跳过 **
+		if matchSegments(rest, tgt) {
+			return true
+		}
+		// ** 匹配一个组件 → 消费一个 target 段，保持 **
+		if matchSegments(pat, tgt[1:]) {
+			return true
+		}
+		return false
+	}
+
+	// 普通段：用 path.Match 比对
+	matched, _ := path.Match(seg, tgt[0])
+	if !matched {
+		return false
+	}
+	return matchSegments(rest, tgt[1:])
+}
+
 // matchContent 使用 glob 匹配工具输入内容。
 // shell 工具: pattern 匹配 command 字段
 // 文件工具: pattern 匹配 file_path 字段，路径预先归一化为绝对路径
@@ -216,13 +281,13 @@ func matchContent(toolName, pattern string, input json.RawMessage) bool {
 	}
 
 	// 策略 1: 原始 pattern 匹配原始 target（相对路径 ↔ 相对路径）
-	if matched, _ := path.Match(pattern, originalTarget); matched {
+	if matched, _ := matchGlob(pattern, originalTarget); matched {
 		return true
 	}
 
 	// 策略 2: 原始 pattern 匹配归一化后的绝对 target
 	if target != originalTarget {
-		if matched, _ := path.Match(pattern, target); matched {
+		if matched, _ := matchGlob(pattern, target); matched {
 			return true
 		}
 	}
@@ -238,7 +303,7 @@ func matchContent(toolName, pattern string, input json.RawMessage) bool {
 	}
 
 	// 策略 4: 匹配文件名（适用于 "*.go" 等仅匹配文件名的 pattern）
-	if matched, _ := path.Match(pattern, filepath.Base(target)); matched {
+	if matched, _ := matchGlob(pattern, filepath.Base(target)); matched {
 		return true
 	}
 
