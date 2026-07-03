@@ -2,6 +2,7 @@ package tool
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -1261,5 +1262,247 @@ func TestNormalizeLineWithUnicode(t *testing.T) {
 		if got != tt.want {
 			t.Errorf("normalizeLineWithUnicode(%q) = %q, want %q", tt.input, got, tt.want)
 		}
+	}
+}
+
+// ── applyAutoFix with replace_all ──
+
+func TestEditFileAutoFixReplaceAll(t *testing.T) {
+	dir := t.TempDir()
+	filePath := filepath.Join(dir, "code.go")
+	content := "func hello() {\n    fmt.Println(\"hello\")\n}\nfunc world() {\n    fmt.Println(\"hello\")\n}\n"
+	if err := os.WriteFile(filePath, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	tool := &EditFile{}
+	// 用 tab 缩进（与文件的 4-space 不同），触发空白归一化 + replace_all
+	result, err := tool.Execute(context.Background(), EditFileParams{
+		FilePath:   filePath,
+		OldString:  "\tfmt.Println(\"hello\")",
+		NewString:  "\tfmt.Println(\"hi\")",
+		ReplaceAll: true,
+	})
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if result.Error != nil {
+		t.Fatalf("Execute() result.Error = %v, want nil\n  Error: %s", result.Error, result.Error.Message)
+	}
+
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	// 两处都应被替换
+	if strings.Count(string(data), `fmt.Println("hello")`) != 0 {
+		t.Error("all hello should be replaced")
+	}
+	if strings.Count(string(data), `fmt.Println("hi")`) != 2 {
+		t.Errorf("expected 2 occurrences of hi, got: %s", string(data))
+	}
+}
+
+// ── levenshteinDistance 边界 ──
+
+func TestLevenshteinDistance_EdgeCases(t *testing.T) {
+	// 空序列
+	if d := levenshteinDistance([]rune(""), []rune("abc")); d != 3 {
+		t.Errorf("empty a → b: %d, want 3", d)
+	}
+	if d := levenshteinDistance([]rune("abc"), []rune("")); d != 3 {
+		t.Errorf("a → empty b: %d, want 3", d)
+	}
+	// 超长跳过（>200 runes）
+	long := []rune(strings.Repeat("x", 201))
+	if d := levenshteinDistance(long, []rune("y")); d != -1 {
+		t.Errorf("long a should return -1, got %d", d)
+	}
+	if d := levenshteinDistance([]rune("y"), long); d != -1 {
+		t.Errorf("long b should return -1, got %d", d)
+	}
+	// a < b 交换分支
+	if d := levenshteinDistance([]rune("ab"), []rune("abc")); d != 1 {
+		t.Errorf("ab → abc: %d, want 1", d)
+	}
+}
+
+// ── formatCharDiffHint 边界 ──
+
+func TestFormatCharDiffHint_EdgeCases(t *testing.T) {
+	// 完全相同
+	hint := formatCharDiffHint("hello", "hello")
+	if hint != "" {
+		t.Errorf("identical should return empty, got: %s", hint)
+	}
+	// 末尾差异（长度不同）
+	hint = formatCharDiffHint("hello world", "hello world!")
+	if !strings.Contains(hint, "differs here") {
+		t.Error("should mark difference")
+	}
+}
+
+// ── lookLikeLineNumberPrefix 边界 ──
+
+func TestLooksLikeLineNumberPrefix_EdgeCases(t *testing.T) {
+	// 太短
+	if looksLikeLineNumberPrefix("ab") {
+		t.Error("too short should be false")
+	}
+	// 不以 [ 开头
+	if looksLikeLineNumberPrefix("no bracket here") {
+		t.Error("no bracket should be false")
+	}
+	// [ 但 ] 不在范围内
+	if looksLikeLineNumberPrefix("[12345678] text") {
+		t.Error("bracket index >= 8 should be false")
+	}
+	if looksLikeLineNumberPrefix("[] text") {
+		t.Error("empty bracket should be false")
+	}
+}
+
+// ── pickBestQueryLine 边界 ──
+
+func TestPickBestQueryLine_AllBlank(t *testing.T) {
+	// 所有行都是空白 → 返回第一行
+	got := pickBestQueryLine("   \n\t\n  ")
+	if got != "   " {
+		t.Errorf("all blank should return first line, got %q", got)
+	}
+}
+
+// ── renderSearchHint 边界 ──
+
+func TestRenderSearchHint_Empty(t *testing.T) {
+	if hint := renderSearchHint("", "content"); hint != "" {
+		t.Errorf("empty target: %q", hint)
+	}
+	if hint := renderSearchHint("target", ""); hint != "" {
+		t.Errorf("empty content: %q", hint)
+	}
+}
+
+func TestRenderSearchHint_ShortQuery(t *testing.T) {
+	// query < 4 runes
+	hint := renderSearchHint("ab", "line1\nline2\n")
+	if hint != "" {
+		t.Errorf("short query should return empty: %q", hint)
+	}
+}
+
+// ── buildMultipleMatchError truncation ──
+
+func TestBuildMultipleMatchError_Truncation(t *testing.T) {
+	dir := t.TempDir()
+	filePath := filepath.Join(dir, "many.txt")
+	// 生成 7 个相同行 → 触发截断
+	var lines []string
+	for i := 0; i < 7; i++ {
+		lines = append(lines, "same line")
+	}
+	content := strings.Join(lines, "\n") + "\n"
+	if err := os.WriteFile(filePath, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	tool := &EditFile{}
+	result, err := tool.Execute(context.Background(), EditFileParams{
+		FilePath:  filePath,
+		OldString: "same line",
+		NewString: "new line",
+	})
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if result.Error == nil {
+		t.Fatal("Error should not be nil for 7 matches")
+	}
+	if result.Error.Kind != ErrKindMultipleMatch {
+		t.Errorf("Error.Kind = %q, want %q", result.Error.Kind, ErrKindMultipleMatch)
+	}
+	// 应截断到 5 个 + 提示
+	if !strings.Contains(result.Error.Message, "and 2 more") {
+		t.Errorf("should mention truncated matches: %s", result.Error.Message)
+	}
+}
+
+// ── dirToListing with >50 entries ──
+
+func TestEditFileIsDirectoryLargeListing(t *testing.T) {
+	dir := t.TempDir()
+	// 创建 55 个文件
+	for i := 0; i < 55; i++ {
+		name := fmt.Sprintf("file_%02d.txt", i)
+		if err := os.WriteFile(filepath.Join(dir, name), []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	tool := &EditFile{}
+	result, err := tool.Execute(context.Background(), EditFileParams{
+		FilePath:  dir,
+		OldString: "hello",
+		NewString: "goodbye",
+	})
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if result.Error == nil {
+		t.Fatal("Error should not be nil")
+	}
+	// 应显示 "Showing first 50 of 55"
+	if !strings.Contains(result.Error.Message, "Showing first 50") {
+		t.Errorf("should mention showing first 50: %s", result.Error.Message)
+	}
+	if !strings.Contains(result.Error.Message, "55") {
+		t.Errorf("should mention total 55: %s", result.Error.Message)
+	}
+	if !strings.Contains(result.Error.Message, "and 5 more") {
+		t.Errorf("should mention remaining: %s", result.Error.Message)
+	}
+}
+
+// ── Unicode auto-fix with replace_all ──
+
+func TestEditFileAutoFixUnicodeReplaceAll(t *testing.T) {
+	dir := t.TempDir()
+	filePath := filepath.Join(dir, "dash.go")
+	content := "// import \u2014 local\n// import \u2014 local\n"
+	if err := os.WriteFile(filePath, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	tool := &EditFile{}
+	result, err := tool.Execute(context.Background(), EditFileParams{
+		FilePath:   filePath,
+		OldString:  "// import - local",
+		NewString:  "// new",
+		ReplaceAll: true,
+	})
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if result.Error != nil {
+		t.Fatalf("Execute() result.Error = %v, want nil\n  Error: %s", result.Error, result.Error.Message)
+	}
+
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	if strings.Count(string(data), "// new") != 2 {
+		t.Errorf("both lines should be replaced, got: %s", string(data))
+	}
+}
+
+// ── tryNormalizedMatch hints ──
+
+func TestTryNormalizedMatch_Exact(t *testing.T) {
+	// 精确匹配存在时不应返回 hint（由调用方先 exact match 再 fallback）
+	original := "hello world\n"
+	hint := tryNormalizedMatch(original, "hello world")
+	if hint == "" {
+		t.Error("should return hint for whitespace-normalized match")
 	}
 }
