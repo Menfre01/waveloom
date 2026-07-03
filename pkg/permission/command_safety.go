@@ -121,7 +121,10 @@ var DangerousPatterns = []DangerousCommandPattern{
 	// ── Shell 内建危险 ──
 	{Keywords: []string{"eval"}, Label: "eval (arbitrary code execution)"},
 	{Keywords: []string{"sudo"}, Label: "sudo (privilege escalation)"},
-	{Keywords: []string{"source", "/dev/"}, Label: "source from /dev"},
+	// source /dev/stdin 等：用单 keyword 强制 source + /dev/ 邻接，
+	// 避免 "claude-source/ 2>/dev/null" 误中（空格归一化后 source 在路径中，/dev/ 在重定向中）。
+	{Keywords: []string{"source /dev/"}, Label: "source from /dev/stdin"},
+	{Keywords: []string{". /dev/"}, Label: ". (source) from /dev/stdin"},
 	{Keywords: []string{"exec"}, Label: "exec (replace shell process)"},
 
 	// ── 网络工具 ──
@@ -252,6 +255,10 @@ func CommandSafetyCheck(command string) CommandCheckResult {
 	if normalized != "" {
 		command = normalized
 	}
+
+	// 0.5 空格归一化：collapse 连续空格/tab/换行为单空格，防止多余空白导致
+	// 邻接 keyword（如 "source /dev/"）漏检。
+	command = strings.Join(strings.Fields(command), " ")
 
 	// 1. 危险模式匹配（最高优先级，先于已知安全命令检查）
 	//    即使首命令在安全列表中，危险模式仍可能命中（如 git + find -exec rm 的组合等）
