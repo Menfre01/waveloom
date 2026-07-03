@@ -257,6 +257,9 @@ func registerBuiltinTools(r tool.Registry, skillLoader *skill.Loader) {
 	// Plan mode — enter / exit
 	r.Register(tool.Wrap(&tool.EnterPlanMode{}))
 	r.Register(tool.Wrap(&tool.ExitPlanMode{}))
+
+	// Kill background task
+	r.Register(tool.Wrap(&tool.KillBackgroundTask{}))
 }
 
 // resolveSettingsPaths 返回全局和项目配置文件路径。

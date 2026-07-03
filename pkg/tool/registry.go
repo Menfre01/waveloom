@@ -113,5 +113,6 @@ func NewDefaultRegistry() Registry {
 	r.Register(Wrap(&AskUserQuestion{}))
 	r.Register(Wrap(&EnterPlanMode{}))
 	r.Register(Wrap(&ExitPlanMode{}))
+	r.Register(Wrap(&KillBackgroundTask{}))
 	return r
 }

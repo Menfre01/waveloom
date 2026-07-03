@@ -13,9 +13,11 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/Menfre01/waveloom/pkg/compaction"
 	"github.com/Menfre01/waveloom/pkg/llm"
+	"github.com/Menfre01/waveloom/pkg/task"
 )
 
 // Stats 记录跨轮次的累计统计。
@@ -43,6 +45,9 @@ type ContextManager struct {
 
 	// AGENTS.md 注入标记（防止重复注入）
 	instructionsInjected bool
+
+	// 后台任务上次检查时间（用于跨 turn 通知）
+	lastBackgroundCheck time.Time
 }
 
 // compactorState 是 compactor 内部使用的扩展接口，
@@ -90,11 +95,22 @@ func (cm *ContextManager) Compactor() compaction.Compactor {
 
 // PrepareRun 追加一条 user 消息到历史，返回完整消息切片供 Loop 使用。
 //
+// 在追加用户输入前检查已完成的后台任务并注入通知，
+// 确保 agent 能感知上一 turn 启动的后台命令的执行结果。
+//
 // 返回的切片是内部状态的副本——Loop 对返回值的 append/modify 不影响
 // ContextManager 的内部状态。只有通过 CompleteRun 才能更新内部状态。
 func (cm *ContextManager) PrepareRun(userInput string) []llm.Message {
 	cm.mu.Lock()
 	defer cm.mu.Unlock()
+
+	// ── 注入后台任务完成通知 ──
+	if notification := cm.checkBackgroundTasksLocked(); notification != "" {
+		cm.messages = append(cm.messages, llm.Message{
+			Role:    llm.RoleUser,
+			Content: notification,
+		})
+	}
 
 	cm.messages = append(cm.messages, llm.Message{
 		Role:    llm.RoleUser,
@@ -106,6 +122,45 @@ func (cm *ContextManager) PrepareRun(userInput string) []llm.Message {
 	snapshot := make([]llm.Message, len(cm.messages))
 	copy(snapshot, cm.messages)
 	return snapshot
+}
+
+// checkBackgroundTasksLocked 检查后台任务状态，返回应注入的通知文本。
+// 每轮报告两类信息：
+//   1. 新完成/失败的任务（仅当有状态变更时）
+//   2. 仍在运行的任务（让 LLM 知道有哪些待处理的后台工作）
+// 调用方必须持有 cm.mu 写锁。
+func (cm *ContextManager) checkBackgroundTasksLocked() string {
+	completed := task.DefaultRegistry.CompletedSince(cm.lastBackgroundCheck)
+	running := task.DefaultRegistry.Running()
+	cm.lastBackgroundCheck = time.Now()
+
+	if len(completed) == 0 && len(running) == 0 {
+		return ""
+	}
+
+	var parts []string
+
+	for _, t := range completed {
+		status := "completed"
+		if t.Status == task.TaskFailed {
+			status = fmt.Sprintf("failed (exit code %d)", t.ExitCode)
+		}
+		parts = append(parts, fmt.Sprintf(
+			`<background-task id="%s" command="%s" exit_code="%d" log="%s">%s</background-task>`,
+			t.ID, t.Command, t.ExitCode, t.LogPath, status,
+		))
+	}
+
+	for _, t := range running {
+		elapsed := time.Since(t.StartTime).Round(time.Second)
+		parts = append(parts, fmt.Sprintf(
+			`<background-task id="%s" command="%s" status="running" log="%s" elapsed="%s"/>`,
+			t.ID, t.Command, t.LogPath, elapsed,
+		))
+	}
+
+	return fmt.Sprintf("<background-notifications>\n%s\n</background-notifications>",
+		strings.Join(parts, "\n"))
 }
 
 // CompleteResult 由 CompleteRun 返回，供上层（TUI/runner）获取本轮状态。
@@ -247,9 +302,15 @@ func (cm *ContextManager) compactionData() compaction.CompactionData {
 //
 // 修复详情通过 stderr 输出（静默修复不阻塞恢复流程）。
 func (cm *ContextManager) LoadFromFile(path string) bool {
-	messages, stats, compactionData, _, err := LoadSessionFromFile(path)
+	messages, stats, compactionData, _, tasks, err := LoadSessionFromFile(path)
 	if err != nil || messages == nil {
 		return false
+	}
+
+	// 恢复后台任务注册表
+	for _, t := range tasks {
+		taskInfo := t // copy
+		task.DefaultRegistry.Register(t.ID, &taskInfo)
 	}
 
 	// 反序列化后完整性校验

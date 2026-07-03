@@ -11,6 +11,7 @@ import (
 
 	"github.com/Menfre01/waveloom/pkg/compaction"
 	"github.com/Menfre01/waveloom/pkg/llm"
+	"github.com/Menfre01/waveloom/pkg/task"
 )
 
 // BuildVersion 由 main() 在启动时注入（来自 ldflags 或 fallback）。
@@ -26,6 +27,7 @@ type sessionFile struct {
 	Messages    []llm.Message       `json:"messages"`
 	Stats       sessionStats        `json:"stats"`
 	Compaction  *sessionCompaction  `json:"compaction,omitempty"`
+	Tasks       []task.TaskInfo     `json:"tasks,omitempty"`
 }
 
 // sessionCompaction 是压缩状态的序列化形式。
@@ -93,6 +95,13 @@ func SaveSessionToFile(path string, messages []llm.Message, stats Stats, compDat
 		}
 	}
 
+	// 复制一份避免直接引用 Registry 内部指针
+	list := task.DefaultRegistry.List()
+	sf.Tasks = make([]task.TaskInfo, len(list))
+	for i, t := range list {
+		sf.Tasks[i] = *t
+	}
+
 	data, err := json.MarshalIndent(sf, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshal session: %w", err)
@@ -109,15 +118,15 @@ func SaveSessionToFile(path string, messages []llm.Message, stats Stats, compDat
 	return nil
 }
 
-// LoadSessionFromFile 从指定文件读取并返回消息历史、统计信息、压缩数据和 session ID。
-// 文件不存在返回 nil, nil, nil, "", nil；格式无效返回 error。
-func LoadSessionFromFile(path string) ([]llm.Message, Stats, *compaction.CompactionData, string, error) {
+// LoadSessionFromFile 从指定文件读取并返回消息历史、统计信息、压缩数据、session ID 和后台任务列表。
+// 文件不存在返回 nil, ..., nil, "", nil；格式无效返回 error。
+func LoadSessionFromFile(path string) ([]llm.Message, Stats, *compaction.CompactionData, string, []task.TaskInfo, error) {
 	sf, err := loadSessionFile(path)
 	if err != nil {
-		return nil, Stats{}, nil, "", err
+		return nil, Stats{}, nil, "", nil, err
 	}
 	if sf == nil {
-		return nil, Stats{}, nil, "", nil
+		return nil, Stats{}, nil, "", nil, nil
 	}
 
 	stats := Stats{
@@ -142,7 +151,7 @@ func LoadSessionFromFile(path string) ([]llm.Message, Stats, *compaction.Compact
 		}
 	}
 
-	return sf.Messages, stats, compData, sf.SessionID, nil
+	return sf.Messages, stats, compData, sf.SessionID, sf.Tasks, nil
 }
 
 // loadSessionFile 读取并解析 session 文件。文件不存在返回 nil, nil。
