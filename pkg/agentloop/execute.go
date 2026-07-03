@@ -134,7 +134,18 @@ func (l *Loop) executeToolCalls(ctx context.Context, calls []llm.ToolCall, state
 					execCtx, cancel = context.WithTimeout(ctx, l.config.ToolTimeout)
 					defer cancel()
 				}
-				result, execErr := l.toolRegistry.Execute(execCtx, tc.Name, json.RawMessage(tc.Arguments))
+				var result *tool.ToolResult
+				var execErr error
+				if l.toolRegistry.IsStreamable(tc.Name) {
+					result, execErr = l.toolRegistry.ExecuteStreaming(execCtx, tc.Name, json.RawMessage(tc.Arguments), func(chunk string) {
+						sendEvent(ctx, ch, ToolCallStream{
+							Turn: state.TurnCount, ToolCallID: tc.ID,
+							ToolCallName: tc.Name, Chunk: chunk,
+						})
+					})
+				} else {
+					result, execErr = l.toolRegistry.Execute(execCtx, tc.Name, json.RawMessage(tc.Arguments))
+				}
 				resultsCh <- execResult{tc: tc, result: result, err: execErr, start: start}
 			}(tc)
 		}
@@ -321,7 +332,18 @@ func (l *Loop) executeToolCalls(ctx context.Context, calls []llm.ToolCall, state
 			execCtx, cancel = context.WithTimeout(ctx, l.config.ToolTimeout)
 			defer cancel()
 		}
-		result, execErr := l.toolRegistry.Execute(execCtx, tc.Name, json.RawMessage(tc.Arguments))
+		var result *tool.ToolResult
+		var execErr error
+		if l.toolRegistry.IsStreamable(tc.Name) {
+			result, execErr = l.toolRegistry.ExecuteStreaming(execCtx, tc.Name, json.RawMessage(tc.Arguments), func(chunk string) {
+				sendEvent(ctx, ch, ToolCallStream{
+					Turn: state.TurnCount, ToolCallID: tc.ID,
+					ToolCallName: tc.Name, Chunk: chunk,
+				})
+			})
+		} else {
+			result, execErr = l.toolRegistry.Execute(execCtx, tc.Name, json.RawMessage(tc.Arguments))
+		}
 		if execErr != nil {
 			return nil, ReasonToolFatal, fmt.Errorf("serial tool execution: %w", execErr)
 		}

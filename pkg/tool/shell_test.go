@@ -611,3 +611,87 @@ func TestFormatShellError(t *testing.T) {
 		t.Errorf("Content should contain original error: %s", result.Content)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// ExecuteStreaming 回归测试
+// ---------------------------------------------------------------------------
+
+func TestShell_SupportsStreaming(t *testing.T) {
+	s := &Shell{}
+	if !s.SupportsStreaming() {
+		t.Error("Shell should support streaming")
+	}
+}
+
+func TestShell_ExecuteStreaming_Basic(t *testing.T) {
+	s := &Shell{}
+	ctx := context.Background()
+	var chunks []string
+	result, err := s.ExecuteStreaming(ctx, ShellParams{
+		Command: "echo hello",
+	}, func(chunk string) {
+		chunks = append(chunks, chunk)
+	})
+	if err != nil {
+		t.Fatalf("ExecuteStreaming error: %v", err)
+	}
+	if result == nil {
+		t.Fatal("result is nil")
+	}
+	if len(chunks) == 0 {
+		t.Error("expected at least one chunk")
+	}
+	if !strings.Contains(result.Content, "hello") {
+		t.Errorf("result content should contain 'hello': %s", result.Content)
+	}
+	if result.Error != nil {
+		t.Errorf("unexpected error: %s", result.Error.Message)
+	}
+}
+
+func TestShell_ExecuteStreaming_Error(t *testing.T) {
+	s := &Shell{}
+	ctx := context.Background()
+	var chunks []string
+	result, err := s.ExecuteStreaming(ctx, ShellParams{
+		Command: "exit 1",
+	}, func(chunk string) {
+		chunks = append(chunks, chunk)
+	})
+	if err != nil {
+		t.Fatalf("ExecuteStreaming error: %v", err)
+	}
+	if result == nil {
+		t.Fatal("result is nil")
+	}
+	if result.Error == nil {
+		t.Error("expected error for exit 1")
+	}
+}
+
+func TestShell_ExecuteStreaming_Timeout(t *testing.T) {
+	s := &Shell{}
+	ctx := context.Background()
+	result, err := s.ExecuteStreaming(ctx, ShellParams{
+		Command:   "sleep 10",
+		TimeoutMs: 100,
+	}, func(chunk string) {})
+	if err != nil {
+		t.Fatalf("ExecuteStreaming error: %v", err)
+	}
+	if result.Error == nil || result.Error.Kind != ErrKindTimeout {
+		t.Errorf("expected timeout error, got kind=%s", result.Error.Kind)
+	}
+}
+
+func TestShell_ExecuteStreaming_ContextCancel(t *testing.T) {
+	s := &Shell{}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // 立即取消
+	_, err := s.ExecuteStreaming(ctx, ShellParams{
+		Command: "echo hello",
+	}, func(chunk string) {})
+	if err == nil {
+		t.Error("expected context canceled error")
+	}
+}

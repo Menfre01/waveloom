@@ -1,13 +1,16 @@
 package tool
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os/exec"
 	"runtime"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -93,44 +96,16 @@ func (t *Shell) Execute(ctx context.Context, p ShellParams) (*ToolResult, error)
 		return nil, err
 	}
 
-	// ── Step 1: 超时设置 ──
-	timeoutMs := p.TimeoutMs
-	if timeoutMs <= 0 {
-		timeoutMs = DefaultShellTimeoutMs
-	}
-	if timeoutMs > MaxShellTimeoutMs {
-		timeoutMs = MaxShellTimeoutMs
-	}
-
-	timeout := time.Duration(timeoutMs) * time.Millisecond
-	cmdCtx, cancel := context.WithTimeout(ctx, timeout)
+	// ── 共享前置逻辑 ──
+	cmd, cmdCtx, cancel, timeout := t.setupCommand(ctx, &p)
 	defer cancel()
 
-	// ── Step 2: 归一化命令（剥离 cd 前缀，提取工作目录） ──
-	normalizedCmd, extractedDir := pathutil.NormalizeShellCommand(p.Command)
-	if p.WorkingDir == "" && extractedDir != "" {
-		p.WorkingDir = extractedDir
-	}
-
-	// ── Step 3: 构造命令 ──
-	shellBin, shellArgs := shellInterpreter()
-	args := append(shellArgs, normalizedCmd)
-	cmd := exec.Command(shellBin, args...)
-	if p.WorkingDir != "" {
-		cmd.Dir = p.WorkingDir
-	}
-
-	// 设置进程组，取消时能杀死 bash 及其所有子进程。
-	if runtime.GOOS != "windows" {
-		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	}
-
-	// 提前捕获 stdout/stderr，确保进程被杀后仍可读取部分输出。
+	// ── 缓冲区模式：提前捕获 stdout/stderr，确保进程被杀后仍可读取部分输出 ──
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
-	// ── Step 4: 启动命令并监听 context 取消 ──
+	// ── 启动命令并监听 context 取消 ──
 	start := time.Now()
 	if err := cmd.Start(); err != nil {
 		return formatShellError("Command start failed", -1, 0, timeout, err.Error(), true), nil
@@ -145,20 +120,128 @@ func (t *Shell) Execute(ctx context.Context, p ShellParams) (*ToolResult, error)
 
 	select {
 	case <-cmdCtx.Done():
-		// Context 取消（用户 Esc 或超时）→ 杀进程组
 		killProcessGroup(cmd)
 		<-done
 		execErr = cmdCtx.Err()
 	case execErr = <-done:
-		// 正常完成
 	}
 
 	duration := time.Since(start)
-
-	// 合并输出
 	output := append(stdout.Bytes(), stderr.Bytes()...)
 
-	// ── Step 5: 格式化输出 ──
+	return t.formatResult(execErr, cmdCtx, output, duration, timeout)
+}
+
+// SupportsStreaming 报告 bash 工具支持增量输出推送。
+func (t *Shell) SupportsStreaming() bool { return true }
+
+// ExecuteStreaming 执行 shell 命令并将增量输出通过 chunkCb 实时推送。
+// 前置逻辑（超时、命令归一化、进程组）与 Execute 共享。
+func (t *Shell) ExecuteStreaming(ctx context.Context, p ShellParams, chunkCb func(string)) (*ToolResult, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
+	// ── 共享前置逻辑 ──
+	cmd, cmdCtx, cancel, timeout := t.setupCommand(ctx, &p)
+	defer cancel()
+
+	// ── 管道模式：使用 StdoutPipe + StderrPipe 逐行读取 ──
+	stdoutPipe, err := cmd.StdoutPipe()
+	if err != nil {
+		return formatShellError("Command start failed", -1, 0, timeout, err.Error(), true), nil
+	}
+	stderrPipe, err := cmd.StderrPipe()
+	if err != nil {
+		return formatShellError("Command start failed", -1, 0, timeout, err.Error(), true), nil
+	}
+
+	start := time.Now()
+	if err := cmd.Start(); err != nil {
+		return formatShellError("Command start failed", -1, 0, timeout, err.Error(), true), nil
+	}
+
+	// 累积完整输出用于最终 ToolResult 格式化
+	var outputBuf bytes.Buffer
+	var mu sync.Mutex
+
+	// 合并 stdout + stderr 到一个 chunkCb，用 mutex 保护顺序
+	emitChunk := func(s string) {
+		mu.Lock()
+		chunkCb(s)
+		outputBuf.WriteString(s)
+		mu.Unlock()
+	}
+
+	// goroutine 读取 pipe
+	readPipe := func(reader io.Reader) {
+		scanner := bufio.NewScanner(reader)
+		scanner.Buffer(make([]byte, 64*1024), 1024*1024) // 1MB per line max
+		for scanner.Scan() {
+			emitChunk(scanner.Text() + "\n")
+		}
+	}
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() { defer wg.Done(); readPipe(stdoutPipe) }()
+	go func() { defer wg.Done(); readPipe(stderrPipe) }()
+
+	// 等待命令完成
+	done := make(chan error, 1)
+	go func() {
+		done <- cmd.Wait()
+	}()
+
+	var execErr error
+	select {
+	case <-cmdCtx.Done():
+		killProcessGroup(cmd)
+		<-done
+		execErr = cmdCtx.Err()
+	case execErr = <-done:
+	}
+
+	// 等 pipe 读完
+	wg.Wait()
+	duration := time.Since(start)
+
+	// ── 结果格式化（与 Execute 共享） ──
+	return t.formatResult(execErr, cmdCtx, outputBuf.Bytes(), duration, timeout)
+}
+
+// setupCommand 构造并配置 exec.Cmd，返回 prepared 命令、context、cancel 和超时值。
+// Execute 和 ExecuteStreaming 共享此前置逻辑。
+func (t *Shell) setupCommand(ctx context.Context, p *ShellParams) (*exec.Cmd, context.Context, context.CancelFunc, time.Duration) {
+	timeoutMs := p.TimeoutMs
+	if timeoutMs <= 0 {
+		timeoutMs = DefaultShellTimeoutMs
+	}
+	if timeoutMs > MaxShellTimeoutMs {
+		timeoutMs = MaxShellTimeoutMs
+	}
+	timeout := time.Duration(timeoutMs) * time.Millisecond
+	cmdCtx, cancel := context.WithTimeout(ctx, timeout)
+
+	normalizedCmd, extractedDir := pathutil.NormalizeShellCommand(p.Command)
+	if p.WorkingDir == "" && extractedDir != "" {
+		p.WorkingDir = extractedDir
+	}
+
+	shellBin, shellArgs := shellInterpreter()
+	args := append(shellArgs, normalizedCmd)
+	cmd := exec.Command(shellBin, args...)
+	if p.WorkingDir != "" {
+		cmd.Dir = p.WorkingDir
+	}
+	if runtime.GOOS != "windows" {
+		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	}
+	return cmd, cmdCtx, cancel, timeout
+}
+
+// formatResult 基于执行结果格式化 ToolResult。Execute 和 ExecuteStreaming 共享。
+func (t *Shell) formatResult(execErr error, cmdCtx context.Context, output []byte, duration, timeout time.Duration) (*ToolResult, error) {
 	exitCode := -1
 	if execErr == nil {
 		exitCode = 0
