@@ -1,6 +1,8 @@
 package main
 
 import (
+	"fmt"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -660,4 +662,218 @@ func TestParseQuestionCount_EmptyString(t *testing.T) {
 	if n != 0 {
 		t.Errorf("parseQuestionCount = %d, want 0", n)
 	}
+}
+
+// ---------------------------------------------------------------------------
+// formatQuestionPreview 宽度自适应回归测试
+// ---------------------------------------------------------------------------
+
+func TestFormatQuestionPreview_ShortAnswer(t *testing.T) {
+	// 短答案在一行内完整显示
+	result := `{"questions":[{"question":"Lang?","header":"Language"}],"answers":{"Lang?":"Go"}}`
+	lc := &Messages{ToolQuestionDeclined: "(declined)", ToolTruncated: "···"}
+	preview := formatQuestionPreview(result, 80, "  ", lc)
+	if !strings.Contains(preview, "Language → Go") {
+		t.Errorf("expected 'Language → Go' in preview, got: %s", preview)
+	}
+	// 不应出现截断标记
+	if strings.Contains(preview, "···") {
+		t.Errorf("unexpected truncation for short answer")
+	}
+}
+
+func TestFormatQuestionPreview_LongAnswerWraps(t *testing.T) {
+	// 长答案应在窄宽度下换行
+	result := `{"questions":[{"question":"Details?","header":"Info"}],"answers":{"Details?":"This is a very long answer that should wrap to multiple lines when the terminal is narrow"}}`
+	lc := &Messages{ToolQuestionDeclined: "(declined)", ToolTruncated: "···"}
+	preview := formatQuestionPreview(result, 40, "", lc)
+	// 窄宽度下应产生多行（wrap）
+	lines := strings.Split(strings.TrimRight(preview, "\n"), "\n")
+	if len(lines) < 2 {
+		t.Errorf("expected multiple wrapped lines at width 40, got %d: %s", len(lines), preview)
+	}
+}
+
+func TestFormatQuestionPreview_Truncation(t *testing.T) {
+	// 超长内容在窄宽度下应截断（maxPreviewWrapped=5 行限制）
+	result := `{"questions":[{"question":"A?","header":"A"}],"answers":{"A?":"line1 line2 line3 line4 line5 line6 line7 line8 line9 line10"}}`
+	lc := &Messages{ToolQuestionDeclined: "(declined)", ToolTruncated: "···"}
+	preview := formatQuestionPreview(result, 10, "", lc)
+	if !strings.Contains(preview, "···") {
+		t.Errorf("expected truncation marker for very long answer at narrow width, got: %s", preview)
+	}
+}
+
+func TestFormatQuestionPreview_Declined(t *testing.T) {
+	// 拒绝的答案应显示 declined 占位
+	result := `{"questions":[{"question":"Approve?","header":"Confirm"}]}`
+	lc := &Messages{ToolQuestionDeclined: "(declined)", ToolTruncated: "···"}
+	preview := formatQuestionPreview(result, 80, "", lc)
+	if !strings.Contains(preview, "(declined)") {
+		t.Errorf("expected declined placeholder, got: %s", preview)
+	}
+}
+
+func TestFormatQuestionPreview_MultipleQuestions(t *testing.T) {
+	// 多问题应全部显示（不超出 maxPreviewWrapped 时）
+	result := `{"questions":[
+		{"question":"Lang?","header":"Language"},
+		{"question":"FW?","header":"Framework"}
+	],"answers":{"Lang?":"Go","FW?":"Fiber"}}`
+	lc := &Messages{ToolQuestionDeclined: "(declined)", ToolTruncated: "···"}
+	preview := formatQuestionPreview(result, 80, "  ", lc)
+	if !strings.Contains(preview, "Language → Go") {
+		t.Errorf("missing first answer: %s", preview)
+	}
+	if !strings.Contains(preview, "Framework → Fiber") {
+		t.Errorf("missing second answer: %s", preview)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// truncateToolStreamOutput 回归测试
+// ---------------------------------------------------------------------------
+
+func TestTruncateToolStreamOutput_UnderLimit(t *testing.T) {
+	// 未超过 maxToolStreamLines=2000 时原样返回
+	input := "line1\nline2\nline3\n"
+	got := truncateToolStreamOutput(input)
+	if got != input {
+		t.Errorf("expected unchanged output, got: %q", got)
+	}
+}
+
+func TestTruncateToolStreamOutput_OverLimit(t *testing.T) {
+	// 超过上限时截断头部，保留尾部 2000 行
+	var sb strings.Builder
+	for i := 0; i < 2500; i++ {
+		fmt.Fprintf(&sb, "line %d\n", i)
+	}
+	input := sb.String()
+	got := truncateToolStreamOutput(input)
+	if !strings.Contains(got, "... (stream truncated") {
+		t.Errorf("expected truncation notice in output")
+	}
+	lines := strings.Split(got, "\n")
+	// 2000 行内容 + 1 行 truncation notice，尾部无空行
+	if len(lines) < 2001 {
+		t.Errorf("expected ~2001 lines (1 notice + 2000 content), got %d", len(lines))
+	}
+}
+
+func TestTruncateToolStreamOutput_Empty(t *testing.T) {
+	got := truncateToolStreamOutput("")
+	if got != "" {
+		t.Errorf("expected empty, got: %q", got)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// renderToolStreamOutput 回归测试
+// ---------------------------------------------------------------------------
+
+func TestRenderToolStreamOutput_Basic(t *testing.T) {
+	p := &Paragraph{
+		Type:       paraTool,
+		State:      stateStreaming,
+		ToolName:   "bash",
+		ToolResult: "go build ./...\n",
+	}
+	var sb strings.Builder
+	renderToolStreamOutput(&sb, p, 80, "  ", nil)
+	out := sb.String()
+	// mutedStyle 会包裹 ANSI 颜色序列，用 content 值检测
+	if !strings.Contains(out, "go build") {
+		t.Errorf("expected output line containing 'go build', got: %s", out)
+	}
+	// 验证 │ 前缀存在（ANSI 序列包裹）
+	if !strings.Contains(out, "│") {
+		t.Errorf("expected │ prefix in output, got: %s", out)
+	}
+}
+
+func TestRenderToolStreamOutput_EmptyResult(t *testing.T) {
+	p := &Paragraph{
+		Type:       paraTool,
+		State:      stateStreaming,
+		ToolName:   "bash",
+		ToolResult: "",
+	}
+	var sb strings.Builder
+	renderToolStreamOutput(&sb, p, 80, "  ", nil)
+	if sb.Len() > 0 {
+		t.Errorf("expected empty output, got: %s", sb.String())
+	}
+}
+
+func TestRenderToolStreamOutput_Wrapping(t *testing.T) {
+	// 单条超长行应在窄宽度下换行
+	p := &Paragraph{
+		Type:       paraTool,
+		State:      stateStreaming,
+		ToolName:   "bash",
+		ToolResult: "this is a very long line that should wrap to multiple lines when the terminal width is narrow\n",
+	}
+	var sb strings.Builder
+	renderToolStreamOutput(&sb, p, 20, "", nil)
+	out := sb.String()
+	// 去掉 ANSI 序列后统计 │ 的数量即行数
+	clean := stripANSI(out)
+	lines := strings.Split(strings.TrimRight(clean, "\n"), "\n")
+	if len(lines) < 2 {
+		t.Errorf("expected multiple wrapped lines at width 20, got %d: %s", len(lines), clean)
+	}
+}
+
+func TestRenderToolStreamOutput_FixedLines(t *testing.T) {
+	// 超过 5 行时只显示最后 5 个 visible 行
+	var input strings.Builder
+	for i := 0; i < 20; i++ {
+		fmt.Fprintf(&input, "line %d\n", i)
+	}
+	p := &Paragraph{
+		Type:       paraTool,
+		State:      stateStreaming,
+		ToolName:   "bash",
+		ToolResult: input.String(),
+	}
+	var sb strings.Builder
+	renderToolStreamOutput(&sb, p, 80, "", nil)
+	clean := stripANSI(sb.String())
+	lines := strings.Split(strings.TrimRight(clean, "\n"), "\n")
+	if len(lines) > 5 {
+		t.Errorf("expected at most 5 visible lines, got %d: %s", len(lines), clean)
+	}
+}
+
+func TestRenderToolStreamOutput_SkipsEmptyLines(t *testing.T) {
+	// 尾部空行不应产生空的 │ 行
+	p := &Paragraph{
+		Type:       paraTool,
+		State:      stateStreaming,
+		ToolName:   "bash",
+		ToolResult: "line1\nline2\n\n\n",
+	}
+	var sb strings.Builder
+	renderToolStreamOutput(&sb, p, 80, "", nil)
+	clean := stripANSI(sb.String())
+	// 不应有空内容的 │  行（即 "│ " 后面紧跟 \n，没有任何其他字符）
+	lines := strings.Split(clean, "\n")
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "│" {
+			t.Errorf("found empty │ line in output: %s", clean)
+		}
+	}
+	// 应显示 line1, line2
+	if !strings.Contains(clean, "line1") || !strings.Contains(clean, "line2") {
+		t.Errorf("expected line1 and line2 in output, got: %s", clean)
+	}
+}
+
+// stripANSI 移除 ANSI 转义序列，用于测试中比较纯文本内容。
+var ansiRE = regexp.MustCompile(`\x1b\[[0-9;]*m`)
+
+func stripANSI(s string) string {
+	return ansiRE.ReplaceAllString(s, "")
 }
