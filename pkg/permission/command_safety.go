@@ -155,7 +155,6 @@ var DangerousPatterns = []DangerousCommandPattern{
 // 即使参数变化（如 ls -la / ls -R），命令本身始终安全。
 //
 // 被排除的候选及原因：
-//   - echo: 可生成任意内容，通过 shell 重定向（>）写入任意文件，绕过文件安全检查
 //   - env / printenv: 暴露环境变量中的 API 密钥等敏感信息
 //   - less / more: 交互式 TTY 工具，非 TTY 环境下行为异常且无实用价值
 var trulySafeCommands = map[string]bool{
@@ -168,6 +167,9 @@ var trulySafeCommands = map[string]bool{
 	"grep": true,
 	"find": true,
 	"file": true,
+	// 基础输出与目录操作（echo 重定向风险由 ASK 对话框可见命令来防范）
+	"echo":  true,
+	"mkdir": true,
 	// 基础信息查询
 	"pwd":      true,
 	"which":    true,

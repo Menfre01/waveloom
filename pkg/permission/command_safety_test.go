@@ -84,8 +84,6 @@ func TestCommandSafetyCheck_RemovedFromTrulySafe(t *testing.T) {
 		name    string
 		command string
 	}{
-		{"echo", "echo hello"},
-		{"echo redirect", "echo 'key=val' >> .env"},
 		{"env", "env"},
 		{"printenv", "printenv"},
 		{"less", "less README.md"},
