@@ -612,7 +612,7 @@ func TestCompressUserCodeBlocks_SingleLongLine(t *testing.T) {
 	if !did {
 		t.Fatal("expected compression for fence with single super-long line")
 	}
-	if !strings.Contains(result, "单行截断") {
+	if !strings.Contains(result, "truncated") {
 		t.Fatalf("expected line truncation marker, got: %s", result[:200])
 	}
 	if strings.Contains(result, longLine) {

@@ -235,24 +235,14 @@ type truncationStrategy struct {
 var toolTruncationStrategies = map[string]truncationStrategy{
 	"read_file":      {200, 150, 10, 4000, 30000},
 	"bash":           {60, 20, 30, 2000, 12000},
-	"grep":           {60, 50, 0, 2000, 15000},
 	"web_fetch":      {200, 150, 10, 4000, 30000},
-	"ls":             {100, 80, 10, 2000, 10000},
-	"search_file":    {80, 60, 10, 2000, 10000},
-	"lsp_diagnostic": {60, 40, 10, 2000, 8000},
-	"lsp_references": {60, 40, 10, 2000, 8000},
 }
 
 // truncatableTools Tier 2 中可替换为占位符的工具集合。
 var truncatableTools = map[string]bool{
 	"read_file":      true,
 	"bash": true,
-	"grep":           true,
 	"web_fetch":      true,
-	"ls":             true,
-	"search_file":    true,
-	"lsp_diagnostic": true,
-	"lsp_references": true,
 }
 
 // ---------------------------------------------------------------------------
@@ -419,11 +409,11 @@ func truncateByStrategy(content string, s truncationStrategy) (string, bool) {
 
 		if s.tailLines > 0 {
 			tail := strings.Join(lines[len(lines)-s.tailLines:], "\n")
-			result := fmt.Sprintf("%s\n\n[... 省略 %d 行 — 完整结果已由 Agent 处理]\n\n%s", head, omitted, tail)
+			result := fmt.Sprintf("%s\n\n[... %d lines omitted — full result already processed by Agent]\n\n%s", head, omitted, tail)
 			return result, true
 		}
 
-		result := fmt.Sprintf("%s\n\n[... 省略 %d 行]\n", head, omitted)
+		result := fmt.Sprintf("%s\n\n[... %d lines omitted]\n", head, omitted)
 		return result, true
 	}
 
@@ -434,7 +424,7 @@ func truncateByStrategy(content string, s truncationStrategy) (string, bool) {
 			cutPoint = idx
 		}
 		content = content[:cutPoint] + fmt.Sprintf(
-			"\n[... 内容截断: %d → %d 字符 — 完整结果已由 Agent 处理]",
+			"\n[... content truncated: %d → %d chars — full result already processed by Agent]",
 			len(content), cutPoint,
 		)
 		return content, true
@@ -446,7 +436,7 @@ func truncateByStrategy(content string, s truncationStrategy) (string, bool) {
 		for i, line := range lines {
 			if len(line) > s.maxLineChars {
 				lines[i] = line[:s.maxLineChars] + fmt.Sprintf(
-					"... [行截断: %d → %d 字符]", len(line), s.maxLineChars,
+					"... [line truncated: %d → %d chars]", len(line), s.maxLineChars,
 				)
 				didTruncate = true
 			}
@@ -616,7 +606,7 @@ func compressUserCodeBlocks(content string) (string, bool) {
 			if fenceLines <= 50 {
 				if len(line) > maxCodeLineChars {
 					result.WriteString(line[:maxCodeLineChars])
-					fmt.Fprintf(&result, "... [单行截断: %d → %d 字符]", len(line), maxCodeLineChars)
+					fmt.Fprintf(&result, "... [line truncated: %d → %d chars]", len(line), maxCodeLineChars)
 					result.WriteString("\n")
 					didCompress = true
 				} else {
@@ -931,7 +921,7 @@ func FormatSummaryUserMessage(existingSummaries []string, deltaMessages []llm.Me
 		content := msg.Content
 		// 截断超长内容以控制摘要输入
 		if len(content) > 2000 {
-			content = content[:2000] + "\n... [内容已截断]"
+			content = content[:2000] + "\n... [content truncated]"
 		}
 		fmt.Fprintf(&b, "### [%s]\n\n%s\n\n", role, content)
 	}

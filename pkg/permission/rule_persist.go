@@ -1,6 +1,7 @@
 package permission
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -59,14 +60,14 @@ func PersistRuleToConfig(configPath string, rule Rule) error {
 	}
 
 	// 将修改后的 permissions 序列化回 raw map
-	permsJSON, err := json.Marshal(perms)
+	permsJSON, err := marshalNoEscape(perms)
 	if err != nil {
 		return fmt.Errorf("marshal permissions: %w", err)
 	}
 	raw["permissions"] = permsJSON
 
 	// 序列化整个文件并原子写入
-	out, err := json.MarshalIndent(raw, "", "    ")
+	out, err := marshalIndentNoEscape(raw, "", "    ")
 	if err != nil {
 		return fmt.Errorf("marshal config: %w", err)
 	}
@@ -100,4 +101,39 @@ func containsRule(rules []string, toolName, pattern string) bool {
 		}
 	}
 	return false
+}
+
+// marshalNoEscape 将 v 序列化为 JSON，禁用 HTML 转义（&、<、> 保持原样）。
+// 与 json.Marshal 行为一致：不追加换行。
+func marshalNoEscape(v any) ([]byte, error) {
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(v); err != nil {
+		return nil, err
+	}
+	// Encode 会追加 \n，去掉以保持与 json.Marshal 兼容
+	b := buf.Bytes()
+	if len(b) > 0 && b[len(b)-1] == '\n' {
+		b = b[:len(b)-1]
+	}
+	return b, nil
+}
+
+// marshalIndentNoEscape 同 json.MarshalIndent，但禁用 HTML 转义。
+// 与 json.MarshalIndent 行为一致：不追加换行。
+func marshalIndentNoEscape(v any, prefix, indent string) ([]byte, error) {
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	enc.SetIndent(prefix, indent)
+	if err := enc.Encode(v); err != nil {
+		return nil, err
+	}
+	// Encode 会追加 \n，去掉以保持与 json.MarshalIndent 兼容
+	b := buf.Bytes()
+	if len(b) > 0 && b[len(b)-1] == '\n' {
+		b = b[:len(b)-1]
+	}
+	return b, nil
 }

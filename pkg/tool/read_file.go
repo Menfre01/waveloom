@@ -208,7 +208,7 @@ func (t *ReadFile) fileNotFoundError(path string) *ToolResult {
 
 	// 场景 3：父目录也不存在 → 路径整体错误，不做文件猜测
 	msg += fmt.Sprintf("\nParent directory not found: %s", parentDir)
-	msg += "\nCheck the path with ls or search_file."
+	msg += "\nCheck the path with shell('ls')."
 	return toolError(ErrorClassRecoverable, ErrKindFileNotFound, msg, nil)
 }
 

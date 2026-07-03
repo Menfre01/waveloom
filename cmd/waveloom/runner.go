@@ -15,7 +15,8 @@ import (
 )
 
 // runOneShot 执行单次/管道模式（无 TUI，纯文本输出）。
-func runOneShot(cfg CLIConfig, llmClient llm.Client, registry tool.Registry, guard permission.Guard, expander *reference.Expander, cwd string, verboseLog io.Writer, cm *ctxpkg.ContextManager) {
+func runOneShot(cfg CLIConfig, llmClient llm.Client, registry tool.Registry, guard permission.Guard, expander *reference.Expander, cwd string, verboseLog io.Writer, cm *ctxpkg.ContextManager, loc Locale) {
+	lc := messagesFor(loc)
 	// Context Manager 已管理 system prompt，Loop 无需重复注入
 	loopCfg := agentloop.Config{
 		MaxTurns:      cfg.MaxTurns,
@@ -47,7 +48,7 @@ func runOneShot(cfg CLIConfig, llmClient llm.Client, registry tool.Registry, gua
 	ctx := context.Background()
 	expandedInput, _, expandErr := expander.Expand(ctx, userInput, cwd)
 	if expandErr != nil {
-		fmt.Fprintf(os.Stderr, "Warning: @ 引用展开失败: %v\n", expandErr)
+		fmt.Fprintf(os.Stderr, "Warning: @ reference expansion failed: %v\n", expandErr)
 		expandedInput = userInput
 	}
 
@@ -55,7 +56,7 @@ func runOneShot(cfg CLIConfig, llmClient llm.Client, registry tool.Registry, gua
 	messages := cm.PrepareRun(expandedInput)
 
 	ctx = context.Background()
-	fmt.Fprintf(os.Stderr, "🤖 Waveloom (单次模式) — %s — %s\n\n", cfg.Model, cwd)
+	fmt.Fprintf(os.Stderr, lc.OneShotHeader, cfg.Model, cwd)
 
 	// Drain 事件 channel，取最终 LoopDone 事件 + 累计 token 统计
 	var finalEv agentloop.LoopDone
@@ -78,7 +79,7 @@ func runOneShot(cfg CLIConfig, llmClient llm.Client, registry tool.Registry, gua
 	}
 
 	if finalEv.Err != nil {
-		fmt.Fprintf(os.Stderr, "❌ 错误: %v\n", finalEv.Err)
+		fmt.Fprintf(os.Stderr, lc.OneShotError, finalEv.Err)
 		os.Exit(1)
 	}
 

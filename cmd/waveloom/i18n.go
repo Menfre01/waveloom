@@ -33,16 +33,16 @@ type Messages struct {
 	InputPlanModePlaceholder  string
 
 	// ── System notifications ──────────────────────────────
-	SysCompactionDone     string
-	SysContextHardLimit   string
-	SysSummaryFailed      string
-	SysNewSessionCreated  string
-	SysUnknownCommand     string // 含 %s
-	SysCommandFailed      string // 含 %v
-	SysUpdateFailed       string
-	SysUpdateInstalled    string // 含 %s
-	SysSkillActivated     string // 含 %s
-	SysSkillLoadFailed    string // 含 %s, %s
+	SysCompactionDone    string
+	SysContextHardLimit  string
+	SysSummaryFailed     string
+	SysNewSessionCreated string
+	SysUnknownCommand    string // 含 %s
+	SysCommandFailed     string // 含 %v
+	SysUpdateFailed      string
+	SysUpdateInstalled   string // 含 %s
+	SysSkillActivated    string // 含 %s
+	SysSkillLoadFailed   string // 含 %s, %s
 
 	// ── Loop done ─────────────────────────────────────────
 	LoopCompleted   string // 含 %d, %s, %s, %s
@@ -56,31 +56,27 @@ type Messages struct {
 	UpdateAvailable string // 含 %s
 
 	// ── Thought ───────────────────────────────────────────
-	ThoughtThinking      string
-	ThoughtComplete      string // 含 %d
-	ThoughtExpandHint    string // 含 %d
-	ThoughtCollapseHint  string
+	ThoughtThinking     string
+	ThoughtComplete     string // 含 %d
+	ThoughtExpandHint   string // 含 %d
+	ThoughtCollapseHint string
 
 	// ── Tool ──────────────────────────────────────────────
-	ToolNotFound          string
-	ToolNoInfo            string
-	ToolNoHoverOutput     string
-	ToolNDefinitions      string // 含 %d, %s
-	ToolNReferences       string // 含 %d, %s
-	ToolNQuestions        string // 含 %d
-	ToolNDiagnostics      string // 含 %d, %d, %d, %d, %d, %s
-	ToolQuestionDeclined  string
-	ToolTruncated         string
-	ToolTruncatedLines    string // 含 %d
-	ToolExpandAllHint     string
-	ToolCollapseHint      string
+	ToolNotFound         string
+	ToolNoInfo           string
+	ToolNQuestions       string // 含 %d
+	ToolQuestionDeclined string
+	ToolTruncated        string
+	ToolTruncatedLines   string // 含 %d
+	ToolExpandAllHint    string
+	ToolCollapseHint     string
 
 	// ── Permission overlay ───────────────────────────────
-	PermRequired   string
-	PermReason     string
-	PermAllow      string
-	PermAllowAll   string
-	PermDeny       string
+	PermRequired string
+	PermReason   string
+	PermAllow    string
+	PermAllowAll string
+	PermDeny     string
 
 	// ── Question overlay ─────────────────────────────────
 	QuestionOtherOption string
@@ -136,13 +132,13 @@ type Messages struct {
 	FooterBal   string
 
 	// ── Setup wizard ─────────────────────────────────────
-	SetupTitle         string
-	SetupOverwriteWarn string
-	SetupStepLocale    string
-	SetupStepProvider  string
-	SetupStepAPIKey    string
-	SetupStepModel     string
-	SetupStepTheme     string
+	SetupTitle           string
+	SetupOverwriteWarn   string
+	SetupStepLocale      string
+	SetupStepProvider    string
+	SetupStepAPIKey      string
+	SetupStepModel       string
+	SetupStepTheme       string
 	SetupLocalePrompt    string
 	SetupProviderPrompt  string
 	SetupAPIKeyPrompt    string
@@ -182,6 +178,29 @@ type Messages struct {
 
 	// ── CLI help ──────────────────────────────────────────
 	HelpUsageText string
+
+	// ── CLI stdout (--continue / --resume / ls / oneshot) ──
+	CLINoAPIKeySetupHint    string
+	CLIContinueSession      string // 含 %s
+	CLINoRecentSession      string
+	CLIResumedSession       string // 含 %s
+	CLIDefaultConfigCreated string // 含 %s
+	CLISetupHint            string
+	CLILsNoRecent           string
+	CLILsHeader             string
+	CLILsRestoreHint        string
+
+	// ── One-shot mode ──────────────────────────────────────
+	OneShotHeader string // 含 %s, %s
+	OneShotError  string // 含 %v
+
+	// ── Session save on exit ──────────────────────────────
+	SessionSaved      string // 含 %s
+	SessionResumeHint string // 含 %s
+
+	// ── Setup locale options ──────────────────────────────
+	SetupLocaleZhCNLabel string
+	SetupLocaleEnUSLabel string
 }
 
 // ---------------------------------------------------------------------------
@@ -217,7 +236,7 @@ var zhCN = Messages{
 	LoopToolFatal:   "工具错误（%s, %v）",
 
 	// Update
-	UpdateAvailable: "↑ %s available — 空闲时 Enter 更新  Esc 忽略",
+	UpdateAvailable: "↑ %s  enter 更新 • esc 忽略",
 
 	// Thought
 	ThoughtThinking:     "思考中...",
@@ -228,11 +247,7 @@ var zhCN = Messages{
 	// Tool
 	ToolNotFound:         "(未找到)",
 	ToolNoInfo:           "(无信息)",
-	ToolNoHoverOutput:    "无悬浮信息",
-	ToolNDefinitions:     "(%d 个定义, %s)",
-	ToolNReferences:      "(%d 个引用, %s)",
 	ToolNQuestions:       "(%d 问)",
-	ToolNDiagnostics:     "(%d 条: %dE %dW %dI %dH, %s)",
 	ToolQuestionDeclined: "(declined)",
 	ToolTruncated:        "··· (truncated)",
 	ToolTruncatedLines:   "... (truncated to %d lines)",
@@ -285,8 +300,8 @@ var zhCN = Messages{
 	PlanEnterConfirm: "确认",
 	PlanEnterCancel:  "取消",
 	PlanExitTitle:    "Plan 审批",
-	PlanExitApprove:   "批准",
-	PlanExitReject:    "拒绝，继续修改",
+	PlanExitApprove:  "批准",
+	PlanExitReject:   "拒绝，继续修改",
 
 	// Header
 	HeaderSession: "session: ",
@@ -411,10 +426,32 @@ var zhCN = Messages{
 环境变量:
   LLM_API_KEY             API Key（settings.json 未设置时的回退）
 `,
+
+	// CLI stdout
+	CLINoAPIKeySetupHint:    "\n  请运行 waveloom setup 完成首次配置，或设置 LLM_API_KEY 环境变量。\n",
+	CLIContinueSession:      "继续最近 session: %s\n",
+	CLINoRecentSession:      "没有找到最近的 session，将创建新 session\n",
+	CLIResumedSession:       "已恢复 session: %s\n",
+	CLIDefaultConfigCreated: "📝 已生成默认配置文件: %s\n",
+	CLISetupHint:            "   💡 运行 waveloom setup 完成首次配置，或设置 LLM_API_KEY 环境变量\n",
+	CLILsNoRecent:           "没有找到最近的 session。",
+	CLILsHeader:             "最近 sessions:",
+	CLILsRestoreHint:        "恢复: waveloom --resume <id>  或  waveloom --continue",
+
+	// One-shot mode
+	OneShotHeader: "🤖 Waveloom (单次模式) — %s — %s\n\n",
+	OneShotError:  "❌ 错误: %v\n",
+
+	// Session save
+	SessionSaved:      "已保存 session: %s\n",
+	SessionResumeHint: "  恢复对话: waveloom --resume %s\n",
+
+	// Setup locale options
+	SetupLocaleZhCNLabel: "简体中文  (zh-CN)",
+	SetupLocaleEnUSLabel: "English   (en-US)",
 }
 
 var enUS = Messages{
-	// Input
 	InputPlaceholder:          "Type a message, Enter to send · / commands · @ pick files · Esc to interrupt",
 	InputOtherPlaceholder:     "Type custom answer...",
 	InputAgentRunning:         "Agent running... Esc to interrupt",
@@ -442,7 +479,7 @@ var enUS = Messages{
 	LoopToolFatal:   "Tool error (%s, %v)",
 
 	// Update
-	UpdateAvailable: "↑ %s available — when idle, Enter to update  Esc to dismiss",
+	UpdateAvailable: "↑ %s  enter update • esc dismiss",
 
 	// Thought
 	ThoughtThinking:     "Thinking...",
@@ -453,11 +490,7 @@ var enUS = Messages{
 	// Tool
 	ToolNotFound:         "(not found)",
 	ToolNoInfo:           "(no info)",
-	ToolNoHoverOutput:    "No hover info",
-	ToolNDefinitions:     "(%d definitions, %s)",
-	ToolNReferences:      "(%d references, %s)",
 	ToolNQuestions:       "(%d questions)",
-	ToolNDiagnostics:     "(%d items: %dE %dW %dI %dH, %s)",
 	ToolQuestionDeclined: "(declined)",
 	ToolTruncated:        "··· (truncated)",
 	ToolTruncatedLines:   "... (truncated to %d lines)",
@@ -510,8 +543,8 @@ var enUS = Messages{
 	PlanEnterConfirm: "Confirm",
 	PlanEnterCancel:  "Cancel",
 	PlanExitTitle:    "Plan Approval",
-	PlanExitApprove:   "Approve",
-	PlanExitReject:    "Reject, continue editing",
+	PlanExitApprove:  "Approve",
+	PlanExitReject:   "Reject, continue editing",
 
 	// Header
 	HeaderSession: "session: ",
@@ -635,6 +668,29 @@ Configuration (settings.json):
 Environment variables:
   LLM_API_KEY            API key (fallback when not set in settings.json)
 `,
+
+	// CLI stdout
+	CLINoAPIKeySetupHint:    "\n  Run waveloom setup to complete initial configuration, or set LLM_API_KEY environment variable.\n",
+	CLIContinueSession:      "Continuing most recent session: %s\n",
+	CLINoRecentSession:      "No recent session found, creating new session\n",
+	CLIResumedSession:       "Resumed session: %s\n",
+	CLIDefaultConfigCreated: "Default config created: %s\n",
+	CLISetupHint:            "   💡 Run waveloom setup to complete configuration, or set LLM_API_KEY\n",
+	CLILsNoRecent:           "No recent sessions found.",
+	CLILsHeader:             "Recent sessions:",
+	CLILsRestoreHint:        "Restore: waveloom --resume <id>  or  waveloom --continue",
+
+	// One-shot mode
+	OneShotHeader: "🤖 Waveloom (oneshot) — %s — %s\n\n",
+	OneShotError:  "❌ Error: %v\n",
+
+	// Session save
+	SessionSaved:      "Session saved: %s\n",
+	SessionResumeHint: "  Resume: waveloom --resume %s\n",
+
+	// Setup locale options
+	SetupLocaleZhCNLabel: "简体中文  (zh-CN)",
+	SetupLocaleEnUSLabel: "English   (en-US)",
 }
 
 // ---------------------------------------------------------------------------

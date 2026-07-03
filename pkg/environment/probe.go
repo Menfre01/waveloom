@@ -220,7 +220,7 @@ func FormatEnvironmentSection(results []ProbeResult, osName, shellPath string, t
 
 	b.WriteString("\nThe following tools were detected at startup. Do NOT attempt to run tools\n")
 	b.WriteString("listed under \"Not found\" — use the higher-level built-in tools (read_file,\n")
-	b.WriteString("grep, search_file, ls, etc.) or ask the user to provide the tool path.\n")
+	b.WriteString("write_file, edit_file, etc.) or ask the user to provide the tool path.\n")
 	b.WriteString("If a required tool is missing, suggest the OS-appropriate install command:\n")
 	b.WriteString("  macOS:  brew install <tool>\n")
 	b.WriteString("  Ubuntu: sudo apt install <tool>\n")
