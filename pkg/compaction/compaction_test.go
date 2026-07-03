@@ -126,7 +126,7 @@ func TestTruncateByStrategy_LongContent(t *testing.T) {
 	if !did {
 		t.Fatal("should truncate long content")
 	}
-	if !strings.Contains(result, "省略") {
+	if !strings.Contains(result, "omitted") {
 		t.Fatalf("expected omission marker, got: %s", result)
 	}
 }
@@ -139,7 +139,7 @@ func TestTruncateByStrategy_SingleLongLine(t *testing.T) {
 	if !did {
 		t.Fatal("should truncate single long line")
 	}
-	if !strings.Contains(result, "行截断") {
+	if !strings.Contains(result, "line truncated") {
 		t.Fatalf("expected line truncation marker, got: %s", result[:200])
 	}
 	if len(result) >= len(content) {
@@ -159,7 +159,7 @@ func TestTruncateByStrategy_TotalChars(t *testing.T) {
 	if !did {
 		t.Fatal("should truncate by total chars")
 	}
-	if !strings.Contains(result, "内容截断") {
+	if !strings.Contains(result, "content truncated") {
 		t.Fatalf("expected total truncation marker, got: %s", result)
 	}
 	if len(result) >= len(content) {
@@ -181,7 +181,7 @@ func TestTruncateByStrategy_TotalCharsAtNewline(t *testing.T) {
 		t.Fatal("should truncate")
 	}
 	// 截断点应在换行处
-	truncatedPart := result[:strings.Index(result, "[... 内容截断")]
+	truncatedPart := result[:strings.Index(result, "[... content truncated")]
 	if strings.Count(truncatedPart, "\n") == 0 {
 		t.Fatal("expected truncation at newline boundary")
 	}
@@ -209,8 +209,8 @@ func TestTruncateByStrategy_NoTail(t *testing.T) {
 	if !did {
 		t.Fatal("should truncate")
 	}
-	if strings.Contains(result, "完整结果") {
-		t.Fatal("tail=0 should not include '完整结果' text")
+	if strings.Contains(result, "full result") {
+		t.Fatal("tail=0 should not include 'full result' text")
 	}
 }
 
@@ -230,8 +230,8 @@ func TestTruncateByStrategy_MixedLongAndManyLines(t *testing.T) {
 	if !did {
 		t.Fatal("should truncate")
 	}
-	// 行数截断优先，应包含 "省略" 而非 "行截断"
-	if !strings.Contains(result, "省略") {
+	// 行数截断优先，应包含 "omitted" 而非 "line truncated"
+	if !strings.Contains(result, "omitted") {
 		t.Fatalf("line-count truncation should take priority: %s", result[:300])
 	}
 }
@@ -345,7 +345,7 @@ func TestFormatSummaryUserMessage_Truncation(t *testing.T) {
 	if strings.Contains(result, longContent) {
 		t.Fatal("long content should be truncated")
 	}
-	if !strings.Contains(result, "已截断") {
+	if !strings.Contains(result, "content truncated") {
 		t.Fatal("truncation marker missing")
 	}
 }

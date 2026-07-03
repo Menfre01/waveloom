@@ -7,7 +7,7 @@
 - **语言**：Go 1.25+
 - **LLM**：DeepSeek V4（默认）/ OpenAI，通过 `llm.Client` 接口适配
 - **TUI**：Bubble Tea v2 + Glamour Markdown 渲染 + Lipgloss 样式
-- **LSP**：gopls（Go 语言服务器），支持 diagnostic / definition / references / hover
+- **LSP**：已移除。代码验证统一通过构建工具（go build / npx tsc / cargo build / make）完成。
 - **构建**：`make build` / `make test` / `make run`
 
 ```
@@ -15,11 +15,10 @@ cmd/waveloom/    CLI 入口（main, config, runner, tui）
 pkg/
   agentloop/     Think-Act-Observe 循环（Run → <-chan TurnEvent）
   llm/           LLM Client（DeepSeek + OpenAI 适配、流式、重试）
-  tool/          工具系统（12 个内置工具，TypedTool[P] 泛型接口）
+  tool/          工具系统（内置工具，TypedTool[P] 泛型接口）
   permission/    权限守门人（规则引擎、路径/命令安全）
   context/       跨轮次消息历史（PrepareRun / CompleteRun）
   compaction/    四级水位线上下文压缩（Snip/Prune/Summarize）
-  lsp/           LSP Client
   environment/   工具链探测
   memory/        AGENTS.md 层级加载
   reference/     @ 文件引用展开
@@ -37,16 +36,15 @@ specs/           各组件规格书（修改前先阅读）
 
 | 阶段 | 操作 |
 |------|------|
-| 修改前 | `search_file` / `grep` 定位 → `read_file` 确认行号和内容 → `lsp_diagnostic` 建基线 |
-| 修改后 | `lsp_diagnostic` 查新错误 → `make build` 编译 → `make test`（涉及 `pkg/` 时） |
-| 重构前 | `lsp_references` + `lsp_hover` → 评估影响范围 |
+| 修改前 | shell('find . -name "*.go"') / shell('grep -rn "pattern" .') 定位 → read_file 确认行号和内容 |
+| 修改后 | 构建验证 → make build 编译 → make test（涉及 pkg/ 时） |
+| 重构前 | shell('grep -rn ...') → read_file → 评估影响范围 |
 
 ### 工具调用原则
 
-- **独立只读操作并行**（read_file、grep、search_file、lsp_*），写操作串行
-- **优先专用工具**：能用 read_file/grep/search_file/ls 的场景，禁止用 shell 替代
+- **独立只读操作并行**（read_file），写操作串行
 - **局部修改用 edit_file**，新建或完全覆写才用 write_file
-- **edit_file 铁律**：每次 edit_file 前必须在同一轮工具调用中先 read_file 目标文件（带行号），确认 old_string 精确内容（缩进、空行、标点完全一致），禁止凭记忆编辑。每次 edit_file 后必须 lsp_diagnostic 验证，确认无新错误后才能继续下一处修改。
+- **edit_file 铁律**：old_string 必须精确匹配文件当前内容（缩进、空行、标点完全一致）。可靠来源：2 轮内 read_file 返回且期间无其他编辑。不可靠：记忆、跨多轮的旧 read、期间有编辑的旧 read。不确定时宁可多读一次，浪费一次调用好过 no_match 循环。
 - `no_match` → 不要盲目重试，先 read_file 确认 old_string 精确内容（含缩进），再重试
 - `security_violation` → 致命错误，停止当前路径
 

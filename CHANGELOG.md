@@ -1,5 +1,22 @@
 # Changelog
 
+## [v0.1.0-alpha.10] — 2026-07-03
+
+### 新增功能
+- **Shell 流式输出**：长命令（如 `make build`、`npm install`）输出逐行实时推送到 TUI，无需等待命令结束即可看到执行进度
+- **@ 文件选择器增强**：支持 `../` 兄弟目录、绝对路径和 `~/` 外部目录搜索，跨项目引用文件更便捷
+- **权限规则 glob 增强**：`matchGlob` 支持 `**` 递归路径匹配
+
+### 修复
+- **后台命令管道泄漏导致 TUI 卡死**：`bash -c "command &"` 不再冻结 TUI。后台进程自动重定向到临时日志文件；`ExecuteStreaming` `wg.Wait()` 和 `executeToolCalls` 并发工具等待均增加超时保护，三层防护确保 TUI 任何情况下不永久卡死
+- **权限安全增强**：补充高危命令拦截模式（提权、内联执行），扩大安全命令白名单（grep/find/echo/mkdir 及构建工具），首 token 精确匹配防路径子串误伤，邻接匹配消除 AND 误报
+- **edit_file Unicode 归一化**：增加 Unicode 归一化和行号前缀自动修复降级，减少 LLM 因不可见字符差异导致的 no_match 重试
+- **Shell Description 优化**：单行命令硬约束，移除多行续行教程，减少 LLM 生成无效 JSON 的概率
+
+### 重构
+- **移除 LSP 模块**：精简 grep/search_file/ls 工具，工具集从 13 个收敛至 9 个核心工具，代码验证统一通过构建工具完成，降低复杂度
+- **全面国际化**：System Prompt 根据 locale 动态切换中英文，CLI 输出全面双语化
+
 ## [v0.1.0-alpha.9] — 2026-07-02
 
 ### 新增功能

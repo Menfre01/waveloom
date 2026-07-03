@@ -47,6 +47,22 @@ type ToolCallStart struct {
 func (ToolCallStart) turnEvent() {}
 
 // ---------------------------------------------------------------------------
+// ToolCallStream — 工具执行增量输出
+// ---------------------------------------------------------------------------
+
+// ToolCallStream 表示支持流式输出的工具执行中的一次增量文本块。
+// Shell 等长时间运行的工具在执行过程中通过此事件实时推送 stdout/stderr，
+// TUI 将输出逐行追加到对应工具段落，替代空转等待。
+type ToolCallStream struct {
+	Turn         int    // 当前 turn 序号
+	ToolCallID   string // 工具调用唯一 ID
+	ToolCallName string // 工具名
+	Chunk        string // 增量文本
+}
+
+func (ToolCallStream) turnEvent() {}
+
+// ---------------------------------------------------------------------------
 // ToolCallResult — 工具执行结果
 // ---------------------------------------------------------------------------
 

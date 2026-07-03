@@ -16,6 +16,8 @@ type Registry interface {
 	List() []ToolSpec
 	Get(name string) (Tool, bool)
 	Execute(ctx context.Context, name string, input json.RawMessage) (*ToolResult, error)
+	IsStreamable(name string) bool
+	ExecuteStreaming(ctx context.Context, name string, input json.RawMessage, chunkCb func(string)) (*ToolResult, error)
 }
 
 // ---------------------------------------------------------------------------
@@ -71,6 +73,31 @@ func (r *registry) Execute(ctx context.Context, name string, input json.RawMessa
 	return tool.Execute(ctx, input)
 }
 
+// IsStreamable 报告指定工具是否支持增量输出推送。
+func (r *registry) IsStreamable(name string) bool {
+	tool, ok := r.Get(name)
+	if !ok {
+		return false
+	}
+	if st, ok := tool.(StreamableTool); ok {
+		return st.SupportsStreaming()
+	}
+	return false
+}
+
+// ExecuteStreaming 执行支持流式输出的工具，增量输出通过 chunkCb 推送。
+func (r *registry) ExecuteStreaming(ctx context.Context, name string, input json.RawMessage, chunkCb func(string)) (*ToolResult, error) {
+	tool, ok := r.Get(name)
+	if !ok {
+		return nil, fmt.Errorf("tool %q not registered", name)
+	}
+	st, ok := tool.(StreamableTool)
+	if !ok || !st.SupportsStreaming() {
+		return nil, fmt.Errorf("tool %q does not support streaming", name)
+	}
+	return st.ExecuteStreaming(ctx, input, chunkCb)
+}
+
 // ---------------------------------------------------------------------------
 // NewDefaultRegistry — 注册所有内置工具
 // ---------------------------------------------------------------------------
@@ -82,14 +109,7 @@ func NewDefaultRegistry() Registry {
 	r.Register(Wrap(&WriteFile{}))
 	r.Register(Wrap(&EditFile{}))
 	r.Register(Wrap(&Shell{}))
-	r.Register(Wrap(&SearchFile{}))
-	r.Register(Wrap(&Grep{}))
-	r.Register(Wrap(&Ls{}))
 	r.Register(Wrap(&WebFetch{}))
-	r.Register(Wrap(&LSDiagnostic{}))
-	r.Register(Wrap(&LSPDefinition{}))
-	r.Register(Wrap(&LSPReferences{}))
-	r.Register(Wrap(&LSPHover{}))
 	r.Register(Wrap(&AskUserQuestion{}))
 	r.Register(Wrap(&EnterPlanMode{}))
 	r.Register(Wrap(&ExitPlanMode{}))

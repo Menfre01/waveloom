@@ -3,6 +3,7 @@ package tool
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -138,9 +139,8 @@ func TestNewDefaultRegistry(t *testing.T) {
 
 	expectedTools := []string{
 		"read_file", "write_file", "edit_file",
-		"bash", "search_file", "grep", "ls",
+		"bash",
 		"web_fetch",
-		"lsp_diagnostic", "lsp_definition", "lsp_references", "lsp_hover",
 		"ask_user_question",
 		"enter_plan_mode", "exit_plan_mode",
 	}
@@ -156,5 +156,59 @@ func TestNewDefaultRegistry(t *testing.T) {
 		if !ok {
 			t.Errorf("Get(%q) not found", name)
 		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Registry streaming 回归测试
+// ---------------------------------------------------------------------------
+
+func TestRegistry_IsStreamable_Shell(t *testing.T) {
+	r := NewRegistry()
+	r.Register(Wrap(&Shell{}))
+	if !r.IsStreamable("bash") {
+		t.Error("bash should be streamable")
+	}
+}
+
+func TestRegistry_IsStreamable_NonStreamable(t *testing.T) {
+	r := NewRegistry()
+	r.Register(Wrap(&ReadFile{}))
+	if r.IsStreamable("read_file") {
+		t.Error("read_file should not be streamable")
+	}
+}
+
+func TestRegistry_IsStreamable_Unknown(t *testing.T) {
+	r := NewRegistry()
+	if r.IsStreamable("nonexistent") {
+		t.Error("unknown tool should not be streamable")
+	}
+}
+
+func TestRegistry_ExecuteStreaming(t *testing.T) {
+	r := NewRegistry()
+	r.Register(Wrap(&Shell{}))
+	var chunks []string
+	result, err := r.ExecuteStreaming(context.Background(), "bash", json.RawMessage(`{"command":"echo streaming-test"}`), func(chunk string) {
+		chunks = append(chunks, chunk)
+	})
+	if err != nil {
+		t.Fatalf("ExecuteStreaming error: %v", err)
+	}
+	if len(chunks) == 0 {
+		t.Error("expected at least one chunk")
+	}
+	if !strings.Contains(result.Content, "streaming-test") {
+		t.Errorf("result should contain 'streaming-test': %s", result.Content)
+	}
+}
+
+func TestRegistry_ExecuteStreaming_NotStreamable(t *testing.T) {
+	r := NewRegistry()
+	r.Register(Wrap(&ReadFile{}))
+	_, err := r.ExecuteStreaming(context.Background(), "read_file", json.RawMessage(`{"file_path":"test"}`), func(chunk string) {})
+	if err == nil {
+		t.Error("expected error for non-streamable tool")
 	}
 }

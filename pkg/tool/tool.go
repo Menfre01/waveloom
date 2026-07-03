@@ -43,6 +43,24 @@ type UserInteractionTool interface {
 }
 
 // ---------------------------------------------------------------------------
+// TypedStreamableTool[P] — 可选的流式工具接口
+// ---------------------------------------------------------------------------
+
+// TypedStreamableTool 由支持增量输出推送的工具实现。
+// Wrap() 自动检测并桥接到 ErasedTool，json.Unmarshal 集中处理。
+type TypedStreamableTool[P any] interface {
+	SupportsStreaming() bool
+	ExecuteStreaming(ctx context.Context, params P, chunkCb func(string)) (*ToolResult, error)
+}
+
+// StreamableTool 是类型擦除后的流式工具接口。
+// Loop 在执行前通过 type assertion 检测此接口，决定走 streaming 路径还是普通 Execute。
+type StreamableTool interface {
+	SupportsStreaming() bool
+	ExecuteStreaming(ctx context.Context, raw json.RawMessage, chunkCb func(string)) (*ToolResult, error)
+}
+
+// ---------------------------------------------------------------------------
 // ErasedTool + Wrap — 类型擦除
 // ---------------------------------------------------------------------------
 
@@ -55,6 +73,10 @@ type ErasedTool struct {
 	concurrentSafe          bool
 	requiresUserInteraction bool
 	execute                 func(ctx context.Context, raw json.RawMessage) (*ToolResult, error)
+
+	// streaming 支持（可选，由 Wrap 自动检测 TypedStreamableTool[P]）
+	supportsStreaming bool
+	executeStreaming  func(ctx context.Context, raw json.RawMessage, chunkCb func(string)) (*ToolResult, error)
 }
 
 func (e *ErasedTool) Name() string            { return e.name }
@@ -66,6 +88,14 @@ func (e *ErasedTool) Execute(ctx context.Context, raw json.RawMessage) (*ToolRes
 	return e.execute(ctx, raw)
 }
 
+// SupportsStreaming 报告该工具是否支持增量输出推送。
+func (e *ErasedTool) SupportsStreaming() bool { return e.supportsStreaming }
+
+// ExecuteStreaming 执行工具并将增量输出通过 chunkCb 推送。
+func (e *ErasedTool) ExecuteStreaming(ctx context.Context, raw json.RawMessage, chunkCb func(string)) (*ToolResult, error) {
+	return e.executeStreaming(ctx, raw, chunkCb)
+}
+
 // Wrap 将 TypedTool[P] 包装为 Tool。
 // 这是唯一的 json.Unmarshal 调用的位置 — 所有工具实现者不再需要手写反序列化。
 func Wrap[P any](t TypedTool[P]) *ErasedTool {
@@ -73,7 +103,7 @@ func Wrap[P any](t TypedTool[P]) *ErasedTool {
 	if uit, ok := any(t).(UserInteractionTool); ok {
 		requiresUI = uit.RequiresUserInteraction()
 	}
-	return &ErasedTool{
+	et := &ErasedTool{
 		name:                    t.Name(),
 		desc:                    t.Description(),
 		schema:                  t.Schema(),
@@ -94,6 +124,27 @@ func Wrap[P any](t TypedTool[P]) *ErasedTool {
 			return t.Execute(ctx, p)
 		},
 	}
+
+	// 自动检测 TypedStreamableTool[P]，桥接 json.Unmarshal
+	if st, ok := any(t).(TypedStreamableTool[P]); ok && st.SupportsStreaming() {
+		et.supportsStreaming = true
+		et.executeStreaming = func(ctx context.Context, raw json.RawMessage, chunkCb func(string)) (*ToolResult, error) {
+			var p P
+			if err := json.Unmarshal(raw, &p); err != nil {
+				return &ToolResult{
+					Error: &ToolError{
+						Class:   ErrorClassRecoverable,
+						Kind:    ErrKindInvalidArgs,
+						Message: fmt.Sprintf("invalid params for %s: %v", t.Name(), err),
+						Cause:   err,
+					},
+				}, nil
+			}
+			return st.ExecuteStreaming(ctx, p, chunkCb)
+		}
+	}
+
+	return et
 }
 
 // ---------------------------------------------------------------------------

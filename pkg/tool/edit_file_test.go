@@ -2,6 +2,7 @@ package tool
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -1020,5 +1021,488 @@ func TestFormatCharDiffHint_LongPrefixTruncated(t *testing.T) {
 	}
 	if !strings.Contains(hint, "differs here") {
 		t.Error("hint should still mark the difference")
+	}
+}
+
+// ── Unicode 归一化降级 ──
+
+// TestEditFileAutoFixUnicode_EmDash 验证 LLM 用 ASCII 破折号替代 em dash 时自动修复。
+func TestEditFileAutoFixUnicode_EmDash(t *testing.T) {
+	dir := t.TempDir()
+	filePath := filepath.Join(dir, "dash.go")
+	// 源文件含 em dash \u2014
+	content := "// local import \u2014 avoids top-level dep\nfunc main() {}\n"
+	if err := os.WriteFile(filePath, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	tool := &EditFile{}
+	// LLM 用 ASCII 破折号 '-'
+	result, err := tool.Execute(context.Background(), EditFileParams{
+		FilePath:  filePath,
+		OldString: "// local import - avoids top-level dep",
+		NewString: "// HELLO",
+	})
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if result.Error != nil {
+		t.Fatalf("Execute() result.Error = %v, want nil (unicode dash should be auto-corrected)", result.Error)
+	}
+
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	if !strings.Contains(string(data), "// HELLO") {
+		t.Errorf("file should contain replacement, got: %s", string(data))
+	}
+	if strings.Contains(string(data), "\u2014") {
+		t.Error("em dash should have been replaced")
+	}
+	if !strings.Contains(result.Content, "unicode") {
+		t.Errorf("Content should mention unicode auto-fix: %s", result.Content)
+	}
+}
+
+// TestEditFileAutoFixUnicode_SmartQuotes 验证 LLM 用 ASCII 直引号替代弯引号时自动修复。
+func TestEditFileAutoFixUnicode_SmartQuotes(t *testing.T) {
+	dir := t.TempDir()
+	filePath := filepath.Join(dir, "quotes.go")
+	// 源文件含弯引号
+	content := "fmt.Println(\u201Chello world\u201D)\n"
+	if err := os.WriteFile(filePath, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	tool := &EditFile{}
+	// LLM 用 ASCII 直引号
+	result, err := tool.Execute(context.Background(), EditFileParams{
+		FilePath:  filePath,
+		OldString: `fmt.Println("hello world")`,
+		NewString: `fmt.Println("hi")`,
+	})
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if result.Error != nil {
+		t.Fatalf("Execute() result.Error = %v, want nil (smart quotes should be auto-corrected)", result.Error)
+	}
+
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	if !strings.Contains(string(data), `fmt.Println("hi")`) {
+		t.Errorf("file should contain replacement, got: %s", string(data))
+	}
+}
+
+// TestEditFileAutoFixUnicode_NBSP 验证不换行空格被归一化为普通空格。
+func TestEditFileAutoFixUnicode_NBSP(t *testing.T) {
+	dir := t.TempDir()
+	filePath := filepath.Join(dir, "nbsp.go")
+	// 缩进含不换行空格 \u00A0
+	content := "func hello() {\n\tfmt\u00A0:=\u00A0\"x\"\n}\n"
+	if err := os.WriteFile(filePath, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	tool := &EditFile{}
+	result, err := tool.Execute(context.Background(), EditFileParams{
+		FilePath:  filePath,
+		OldString: "\tfmt := \"x\"",
+		NewString: "\tfmt := \"y\"",
+	})
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if result.Error != nil {
+		t.Fatalf("Execute() result.Error = %v, want nil (NBSP should be auto-corrected)", result.Error)
+	}
+
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	if !strings.Contains(string(data), `fmt := "y"`) {
+		t.Errorf("file should contain replacement, got: %s", string(data))
+	}
+}
+
+// TestEditFileUnicodeAmbiguous 验证 Unicode 归一化后仍不唯一时返回错误。
+func TestEditFileUnicodeAmbiguous(t *testing.T) {
+	dir := t.TempDir()
+	filePath := filepath.Join(dir, "ambiguous.go")
+	// 两处完全相同的模式（Unicode 归一化后一样）
+	content := "// import \u2014 local\n// import \u2014 local\n"
+	if err := os.WriteFile(filePath, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	tool := &EditFile{}
+	result, err := tool.Execute(context.Background(), EditFileParams{
+		FilePath:  filePath,
+		OldString: "// import - local",
+		NewString: "// new comment",
+	})
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	// 归一化后两处匹配 → 不唯一 → 应返回错误
+	if result.Error == nil {
+		t.Fatal("Error should not be nil for ambiguous unicode match")
+	}
+	if result.Error.Kind != ErrKindNoMatch {
+		t.Errorf("Error.Kind = %q, want %q", result.Error.Kind, ErrKindNoMatch)
+	}
+}
+
+// ── 行号前缀自动修复 ──
+
+// TestEditFileAutoFixLineNumberPrefix 验证行号前缀被自动剥离后匹配成功。
+func TestEditFileAutoFixLineNumberPrefix(t *testing.T) {
+	dir := t.TempDir()
+	filePath := filepath.Join(dir, "code.go")
+	content := "package main\n\nfunc main() {\n\tfmt.Println(\"hello\")\n}\n"
+	if err := os.WriteFile(filePath, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	tool := &EditFile{}
+	// old_string 误带了 read_file 的行号前缀
+	result, err := tool.Execute(context.Background(), EditFileParams{
+		FilePath: filePath,
+		OldString: "[1] package main\n[2] \n[3] func main() {",
+		NewString: "package main\n\nfunc main() {\n\tfmt.Println(\"updated\")",
+	})
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if result.Error != nil {
+		t.Fatalf("Execute() result.Error = %v, want nil (line number prefix should be auto-corrected)\n  Error: %s", result.Error, result.Error.Message)
+	}
+
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	if !strings.Contains(string(data), `fmt.Println("updated")`) {
+		t.Errorf("file should contain replacement, got: %s", string(data))
+	}
+	if !strings.Contains(result.Content, "line number prefixes") {
+		t.Errorf("Content should mention line number prefix auto-fix: %s", result.Content)
+	}
+}
+
+// TestEditFileLineNumberPrefixCleanedNoMatch 验证剥离行号后仍不匹配时返回错误。
+func TestEditFileLineNumberPrefixCleanedNoMatch(t *testing.T) {
+	dir := t.TempDir()
+	filePath := filepath.Join(dir, "code.go")
+	content := "package main\nfunc main() {}\n"
+	if err := os.WriteFile(filePath, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	tool := &EditFile{}
+	// old_string 带行号前缀，但剥离后的内容文件中也不存在
+	result, err := tool.Execute(context.Background(), EditFileParams{
+		FilePath:  filePath,
+		OldString: "[1] package other\n[2] func test() {}",
+		NewString: "replacement",
+	})
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if result.Error == nil {
+		t.Fatal("Error should not be nil when cleaned content also has no match")
+	}
+	if result.Error.Kind != ErrKindNoMatch {
+		t.Errorf("Error.Kind = %q, want %q", result.Error.Kind, ErrKindNoMatch)
+	}
+}
+
+// ── stripLineNumberPrefixes ──
+
+func TestStripLineNumberPrefixes(t *testing.T) {
+	tests := []struct {
+		input, want string
+	}{
+		{"[1] package main", "package main"},
+		{"[1] package main\n[2] import \"fmt\"", "package main\nimport \"fmt\""},
+		{"[123] func hello() {}", "func hello() {}"},
+		{"package main", "package main"},                                    // 无前缀
+		{"[not a number] text", "[not a number] text"},                      // 非数字前缀
+		{"  [1] indented\n  [2] line", "  indented\n  line"},               // 带前导空白
+		{"[1] \tpackage main", "\tpackage main"},                              // 行号后跟制表符，tab 是实际内容
+	}
+	for _, tt := range tests {
+		got := stripLineNumberPrefixes(tt.input)
+		if got != tt.want {
+			t.Errorf("stripLineNumberPrefixes(%q) = %q, want %q", tt.input, got, tt.want)
+		}
+	}
+}
+
+// ── normalizeLineWithUnicode ──
+
+func TestNormalizeLineWithUnicode(t *testing.T) {
+	tests := []struct {
+		input, want string
+	}{
+		{"import \u2014 local", "import - local"},                                  // em dash → -
+		{"\u201Chello\u201D", "\"hello\""},                                         // smart quotes → "
+		{"fmt\u00A0:=\u00A0\"x\"", "fmt := \"x\""},                                // NBSP → space + compress
+		{"hello\u2003world", "hello world"},                                        // em space → space
+		{"normal text", "normal text"},                                             // no change
+		{"\tindented\tline", "indented line"},                                      // tabs → space + compress
+	}
+	for _, tt := range tests {
+		got := normalizeLineWithUnicode(tt.input)
+		if got != tt.want {
+			t.Errorf("normalizeLineWithUnicode(%q) = %q, want %q", tt.input, got, tt.want)
+		}
+	}
+}
+
+// ── applyAutoFix with replace_all ──
+
+func TestEditFileAutoFixReplaceAll(t *testing.T) {
+	dir := t.TempDir()
+	filePath := filepath.Join(dir, "code.go")
+	content := "func hello() {\n    fmt.Println(\"hello\")\n}\nfunc world() {\n    fmt.Println(\"hello\")\n}\n"
+	if err := os.WriteFile(filePath, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	tool := &EditFile{}
+	// 用 tab 缩进（与文件的 4-space 不同），触发空白归一化 + replace_all
+	result, err := tool.Execute(context.Background(), EditFileParams{
+		FilePath:   filePath,
+		OldString:  "\tfmt.Println(\"hello\")",
+		NewString:  "\tfmt.Println(\"hi\")",
+		ReplaceAll: true,
+	})
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if result.Error != nil {
+		t.Fatalf("Execute() result.Error = %v, want nil\n  Error: %s", result.Error, result.Error.Message)
+	}
+
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	// 两处都应被替换
+	if strings.Count(string(data), `fmt.Println("hello")`) != 0 {
+		t.Error("all hello should be replaced")
+	}
+	if strings.Count(string(data), `fmt.Println("hi")`) != 2 {
+		t.Errorf("expected 2 occurrences of hi, got: %s", string(data))
+	}
+}
+
+// ── levenshteinDistance 边界 ──
+
+func TestLevenshteinDistance_EdgeCases(t *testing.T) {
+	// 空序列
+	if d := levenshteinDistance([]rune(""), []rune("abc")); d != 3 {
+		t.Errorf("empty a → b: %d, want 3", d)
+	}
+	if d := levenshteinDistance([]rune("abc"), []rune("")); d != 3 {
+		t.Errorf("a → empty b: %d, want 3", d)
+	}
+	// 超长跳过（>200 runes）
+	long := []rune(strings.Repeat("x", 201))
+	if d := levenshteinDistance(long, []rune("y")); d != -1 {
+		t.Errorf("long a should return -1, got %d", d)
+	}
+	if d := levenshteinDistance([]rune("y"), long); d != -1 {
+		t.Errorf("long b should return -1, got %d", d)
+	}
+	// a < b 交换分支
+	if d := levenshteinDistance([]rune("ab"), []rune("abc")); d != 1 {
+		t.Errorf("ab → abc: %d, want 1", d)
+	}
+}
+
+// ── formatCharDiffHint 边界 ──
+
+func TestFormatCharDiffHint_EdgeCases(t *testing.T) {
+	// 完全相同
+	hint := formatCharDiffHint("hello", "hello")
+	if hint != "" {
+		t.Errorf("identical should return empty, got: %s", hint)
+	}
+	// 末尾差异（长度不同）
+	hint = formatCharDiffHint("hello world", "hello world!")
+	if !strings.Contains(hint, "differs here") {
+		t.Error("should mark difference")
+	}
+}
+
+// ── lookLikeLineNumberPrefix 边界 ──
+
+func TestLooksLikeLineNumberPrefix_EdgeCases(t *testing.T) {
+	// 太短
+	if looksLikeLineNumberPrefix("ab") {
+		t.Error("too short should be false")
+	}
+	// 不以 [ 开头
+	if looksLikeLineNumberPrefix("no bracket here") {
+		t.Error("no bracket should be false")
+	}
+	// [ 但 ] 不在范围内
+	if looksLikeLineNumberPrefix("[12345678] text") {
+		t.Error("bracket index >= 8 should be false")
+	}
+	if looksLikeLineNumberPrefix("[] text") {
+		t.Error("empty bracket should be false")
+	}
+}
+
+// ── pickBestQueryLine 边界 ──
+
+func TestPickBestQueryLine_AllBlank(t *testing.T) {
+	// 所有行都是空白 → 返回第一行
+	got := pickBestQueryLine("   \n\t\n  ")
+	if got != "   " {
+		t.Errorf("all blank should return first line, got %q", got)
+	}
+}
+
+// ── renderSearchHint 边界 ──
+
+func TestRenderSearchHint_Empty(t *testing.T) {
+	if hint := renderSearchHint("", "content"); hint != "" {
+		t.Errorf("empty target: %q", hint)
+	}
+	if hint := renderSearchHint("target", ""); hint != "" {
+		t.Errorf("empty content: %q", hint)
+	}
+}
+
+func TestRenderSearchHint_ShortQuery(t *testing.T) {
+	// query < 4 runes
+	hint := renderSearchHint("ab", "line1\nline2\n")
+	if hint != "" {
+		t.Errorf("short query should return empty: %q", hint)
+	}
+}
+
+// ── buildMultipleMatchError truncation ──
+
+func TestBuildMultipleMatchError_Truncation(t *testing.T) {
+	dir := t.TempDir()
+	filePath := filepath.Join(dir, "many.txt")
+	// 生成 7 个相同行 → 触发截断
+	var lines []string
+	for i := 0; i < 7; i++ {
+		lines = append(lines, "same line")
+	}
+	content := strings.Join(lines, "\n") + "\n"
+	if err := os.WriteFile(filePath, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	tool := &EditFile{}
+	result, err := tool.Execute(context.Background(), EditFileParams{
+		FilePath:  filePath,
+		OldString: "same line",
+		NewString: "new line",
+	})
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if result.Error == nil {
+		t.Fatal("Error should not be nil for 7 matches")
+	}
+	if result.Error.Kind != ErrKindMultipleMatch {
+		t.Errorf("Error.Kind = %q, want %q", result.Error.Kind, ErrKindMultipleMatch)
+	}
+	// 应截断到 5 个 + 提示
+	if !strings.Contains(result.Error.Message, "and 2 more") {
+		t.Errorf("should mention truncated matches: %s", result.Error.Message)
+	}
+}
+
+// ── dirToListing with >50 entries ──
+
+func TestEditFileIsDirectoryLargeListing(t *testing.T) {
+	dir := t.TempDir()
+	// 创建 55 个文件
+	for i := 0; i < 55; i++ {
+		name := fmt.Sprintf("file_%02d.txt", i)
+		if err := os.WriteFile(filepath.Join(dir, name), []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	tool := &EditFile{}
+	result, err := tool.Execute(context.Background(), EditFileParams{
+		FilePath:  dir,
+		OldString: "hello",
+		NewString: "goodbye",
+	})
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if result.Error == nil {
+		t.Fatal("Error should not be nil")
+	}
+	// 应显示 "Showing first 50 of 55"
+	if !strings.Contains(result.Error.Message, "Showing first 50") {
+		t.Errorf("should mention showing first 50: %s", result.Error.Message)
+	}
+	if !strings.Contains(result.Error.Message, "55") {
+		t.Errorf("should mention total 55: %s", result.Error.Message)
+	}
+	if !strings.Contains(result.Error.Message, "and 5 more") {
+		t.Errorf("should mention remaining: %s", result.Error.Message)
+	}
+}
+
+// ── Unicode auto-fix with replace_all ──
+
+func TestEditFileAutoFixUnicodeReplaceAll(t *testing.T) {
+	dir := t.TempDir()
+	filePath := filepath.Join(dir, "dash.go")
+	content := "// import \u2014 local\n// import \u2014 local\n"
+	if err := os.WriteFile(filePath, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	tool := &EditFile{}
+	result, err := tool.Execute(context.Background(), EditFileParams{
+		FilePath:   filePath,
+		OldString:  "// import - local",
+		NewString:  "// new",
+		ReplaceAll: true,
+	})
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if result.Error != nil {
+		t.Fatalf("Execute() result.Error = %v, want nil\n  Error: %s", result.Error, result.Error.Message)
+	}
+
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	if strings.Count(string(data), "// new") != 2 {
+		t.Errorf("both lines should be replaced, got: %s", string(data))
+	}
+}
+
+// ── tryNormalizedMatch hints ──
+
+func TestTryNormalizedMatch_Exact(t *testing.T) {
+	// 精确匹配存在时不应返回 hint（由调用方先 exact match 再 fallback）
+	original := "hello world\n"
+	hint := tryNormalizedMatch(original, "hello world")
+	if hint == "" {
+		t.Error("should return hint for whitespace-normalized match")
 	}
 }

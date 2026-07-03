@@ -1,6 +1,5 @@
 # Waveloom Demo
-# 展示 Thought 面板 → 工具调用 → 流式输出 的完整交互流程
-# 交互模型：Tab / Shift+Tab 聚焦可交互段落，Enter 展开/折叠
+# 展示 Thought 面板 → 工具调用 → 流式输出 → 手动/对话式 Plan Mode 的完整交互流程
 
 Output assets/demo.gif
 
@@ -13,7 +12,7 @@ Set Framerate 12
 Set PlaybackSpeed 1
 
 # 启动交互模式
-Type "waveloom"
+Type "./bin/waveloom"
 Enter
 
 # 等待 TUI 启动
@@ -26,19 +25,6 @@ Enter
 # 等待 thought + 回答流式输出
 Sleep 25s
 
-# Tab 聚焦 thought → Enter 展开 thought 面板，展示 reasoning 内容
-Tab
-Enter
-Sleep 2s
-
-# Enter 折叠 thought
-Enter
-Sleep 1s
-
-# Escape 退出聚焦模式，回到输入框
-Escape
-Sleep 500ms
-
 # ── 第二问：触发 shell 工具调用 ──
 Type "用 shell 执行 head -80 pkg/llm/client.go，展示 NewClient 实现"
 Enter
@@ -50,23 +36,32 @@ Enter
 # 等待工具调用 + 流式输出
 Sleep 30s
 
-# Tab 逐段移至 shell 输出 → Enter 展开工具输出面板
-# （具体 Tab 次数取决于中段可交互段落数，按需调整）
-Tab
-Tab
-Enter
-Sleep 2s
-
-# Enter 折叠工具输出
-Enter
+# ── 手动进入 Plan Mode（Shift+Tab）──
+Shift+Tab
 Sleep 1s
 
-# Escape 退出聚焦模式
-Escape
-Sleep 500ms
+# 在 Plan 模式输入框中随便输入点什么（可选），演示 plan placeholder
+# 然后 Shift+Tab 退出 Plan 模式
+Shift+Tab
+Sleep 1s
 
-# ── 第三问：收尾 ──
-Type "一句话总结 waveloom 相比其他 coding agent 最大的不同点"
+# ── 第三问：对话触发 Plan Mode 先规划后执行 ──
+Type "帮我规划并为 README.md 底部添加一个「Star History」章节，引用 star-history.com 的图表链接"
+Enter
+
+# 等待 LLM 进入 Plan Mode（弹出确认 Overlay），确认进入
+Sleep 5s
+Enter
+
+# 等待 LLM 写入 plan 并提交审批，弹出审批 Overlay，批准
+Sleep 15s
+Enter
+
+# 等待 LLM 在 Normal 模式执行 plan 内容（edit_file README.md）
+Sleep 25s
+
+# ── 第四问：收尾 ──
+Type "一句话总结 Plan Mode 给开发流程带来的最大变化"
 Enter
 
 Sleep 15s
