@@ -2,6 +2,7 @@ package permission
 
 import (
 	"encoding/json"
+	"os"
 	"path"
 	"path/filepath"
 	"strings"
@@ -289,6 +290,19 @@ func matchContent(toolName, pattern string, input json.RawMessage) bool {
 	if target != originalTarget {
 		if matched, _ := matchGlob(pattern, target); matched {
 			return true
+		}
+	}
+
+	// 策略 2.5: 若 pattern 是相对路径（不以 / 开头），将绝对 target 转为
+	// 相对 CWD 的路径后再匹配，使得 "pkg/**" 能匹配
+	// "/Users/x/project/pkg/tool/foo.go"。
+	if !filepath.IsAbs(pattern) && target != "" {
+		if cwd, err := os.Getwd(); err == nil {
+			if relPath, err := filepath.Rel(cwd, target); err == nil {
+				if matched, _ := matchGlob(pattern, relPath); matched {
+					return true
+				}
+			}
 		}
 	}
 
