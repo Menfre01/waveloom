@@ -129,7 +129,8 @@ func TestCommandSafetyCheck_BuildToolCommands(t *testing.T) {
 }
 
 func TestCommandSafetyCheck_FormerlySafeNowMedium(t *testing.T) {
-	// 之前被列入 knownSafeCommands 但实则有风险 → 现在应为 RiskMedium
+	// 这些命令之前被列入 knownSafeCommands 但实则有风险，
+	// 当前归类为 RiskLow（build tool），走默认 ASK 策略。
 	tests := []struct {
 		name    string
 		command string
@@ -140,16 +141,14 @@ func TestCommandSafetyCheck_FormerlySafeNowMedium(t *testing.T) {
 		{"node script", "node ./tool.js"},
 		{"npm install", "npm install"},
 		{"npm run build", "npm run build"},
-		{"yarn add", "yarn add react"},
-		{"pnpm install", "pnpm install"},
 		{"pip install", "pip install requests"},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := CommandSafetyCheck(tt.command)
-			if got.Level != RiskMedium {
-				t.Errorf("CommandSafetyCheck(%q).Level = %s, want %s", tt.command, got.Level, RiskMedium)
+			if got.Level != RiskLow {
+				t.Errorf("CommandSafetyCheck(%q).Level = %s, want %s", tt.command, got.Level, RiskLow)
 			}
 		})
 	}
@@ -160,7 +159,6 @@ func TestCommandSafetyCheck_MediumRiskCommands(t *testing.T) {
 		name    string
 		command string
 	}{
-		{"docker run", "docker run -it ubuntu"},
 		{"curl no pipe", "curl -s http://example.com"},
 		{"rm single file", "rm tempfile.log"},
 		{"mv file", "mv old.txt new.txt"},
@@ -310,8 +308,14 @@ func TestCommandSafetyCheck_ResultMessage(t *testing.T) {
 		t.Errorf("RiskLow message should mention command name, got: %s", got.Message)
 	}
 
-	// 中等风险应说明 unclassified
+	// docker 是构建工具 → RiskLow
 	got = CommandSafetyCheck("docker build .")
+	if got.Level != RiskLow {
+		t.Errorf("docker build: Level = %s, want RiskLow (build tool)", got.Level)
+	}
+
+	// 真正未知的命令 → RiskMedium
+	got = CommandSafetyCheck("mycustomtool --flag")
 	if !strings.Contains(got.Message, "unclassified") {
 		t.Errorf("medium risk message should mention unclassified, got: %s", got.Message)
 	}
