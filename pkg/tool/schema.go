@@ -90,6 +90,11 @@ var shellSchema = json.RawMessage(`{
     "timeout_ms": {
       "type": "integer",
       "description": "Timeout in milliseconds (default: 120000, max: 600000)"
+    },
+    "run_in_background": {
+      "type": "boolean",
+      "description": "Set to true to run this command in the background. The tool returns immediately with a task ID and log path. Use read_file to check progress. The next turn will receive a completion notification.",
+      "default": false
     }
   },
   "required": ["command"]
@@ -112,4 +117,15 @@ var webFetchSchema = json.RawMessage(`{
     }
   },
   "required": ["url"]
+}`)
+
+var killBackgroundTaskSchema = json.RawMessage(`{
+  "type": "object",
+  "properties": {
+    "task_id": {
+      "type": "string",
+      "description": "The task ID of the background command to kill. Obtained from the bash tool response or background-task notifications."
+    }
+  },
+  "required": ["task_id"]
 }`)

@@ -229,6 +229,11 @@ type ToolMeta struct {
 	LineCount int           // 输出行数
 	ByteCount int           // 输出字节数
 
+	// BackgroundTaskID 后台任务 ID（非空表示命令在后台执行）。
+	BackgroundTaskID string
+	// LogPath 输出日志路径（文件 fd 模式下的输出文件路径）。
+	LogPath string
+
 	// DiffHunks 为 edit_file / write_file 等工具提供的结构化 diff，供 TUI 渲染带行号的统一 diff 视图。
 	// nil 表示不适用（非编辑类工具或发生错误）。
 	DiffHunks []DiffHunk

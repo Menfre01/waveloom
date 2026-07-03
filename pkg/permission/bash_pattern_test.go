@@ -54,6 +54,10 @@ func TestMatchBashPattern_Prefix(t *testing.T) {
 	if !MatchBashPattern("~/.claude/skills/gstack-update-check", "gstack*") {
 		t.Error(`"gstack*" should match via prefix + contains fallback`)
 	}
+	// 无空格 pattern（如 "gstack*"）：HasPrefix 直接命中
+	if !MatchBashPattern("gstack-something", "gstack*") {
+		t.Error(`"gstack*" should match "gstack-something" (HasPrefix)`)
+	}
 }
 
 func TestMatchBashPattern_Suffix(t *testing.T) {

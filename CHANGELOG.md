@@ -1,5 +1,13 @@
 # Changelog
 
+## [v0.1.0-alpha.11] — 2026-07-03
+
+### 新增功能
+- **后台命令完整支持**：`ShellParams` 增加 `run_in_background` 显式参数；`&` 向后兼容（单行 `&` → 剥离后后台执行，多行 `&` → 前景 + log 提示）；`Execute`/`ExecuteStreaming` 共享文件 fd 输出消除 SIGPIPE；`task.Registry` 后台任务注册、状态追踪、退出码记录；`kill_background_task` SIGKILL 进程组终止；跨 turn 注入 `<background-task>` 通知；Skill execShell 后台命令不卡死
+
+### 修复
+- **权限子串误伤修复**：`sh -c`/`bash -c` 等 10 条双 keyword 内联执行模式添加 `FirstTokenOnly`，防止路径/flag 子串命中导致误判 RiskHigh；权限测试覆盖率提升至 95%
+
 ## [v0.1.0-alpha.10] — 2026-07-03
 
 ### 新增功能
