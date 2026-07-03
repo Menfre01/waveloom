@@ -2312,12 +2312,7 @@ func (m *model) buildPickerList() {
 	m.pickerDelegate = &delegate
 }
 
-// scanFiles 扫描工作区文件列表，结果存入 m.pickerAllItems（在主 goroutine 调用）。
-func (m *model) scanFiles() {
-	m.pickerAllItems = doScanFilesWithContext(context.Background(), m.registry, m.cwd, m.pickerFilter)
-}
-
-// doScanFilesWithContext 对 doScanFiles 的包装，传递 context 用于超时/取消。
+// doScanFilesWithContext 传递 context 用于超时/取消。
 func doScanFilesWithContext(ctx context.Context, registry tool.Registry, cwd, filter string) []pickerItem {
 	filter = resolveTilde(filter)
 
@@ -2325,14 +2320,6 @@ func doScanFilesWithContext(ctx context.Context, registry tool.Registry, cwd, fi
 		return doScanAbsolute(ctx, registry, cwd, filter)
 	}
 	return doScanRelative(ctx, registry, cwd, filter)
-}
-
-// doScanFiles 执行实际的文件扫描（通过 shell find 命令），返回结果。
-// 分两种模式：
-//   - 相对路径（@pkg/、@../、@./）→ 基于 cwd 解析，展示 cwd 相对路径
-//   - 绝对路径（@/Users/...、@~/...）→ 独立逻辑，展示绝对路径
-func doScanFiles(registry tool.Registry, cwd, filter string) []pickerItem {
-	return doScanFilesWithContext(context.Background(), registry, cwd, filter)
 }
 
 // doScanRelative 相对路径扫描：基于 cwd，深度扫描项目内部，浅层列出父目录兄弟。
