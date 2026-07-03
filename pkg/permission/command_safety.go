@@ -152,11 +152,11 @@ var DangerousPatterns = []DangerousCommandPattern{
 	{Keywords: []string{"python", "-c", "import subprocess"}, Label: "python -c with subprocess import"},
 	{Keywords: []string{"python3", "-c", "import os"}, Label: "python3 -c with os import"},
 	{Keywords: []string{"python3", "-c", "import subprocess"}, Label: "python3 -c with subprocess import"},
-	{Keywords: []string{"node", "-e"}, Label: "node -e inline execution"},
-	{Keywords: []string{"perl", "-e"}, Label: "perl -e inline execution"},
-	{Keywords: []string{"ruby", "-e"}, Label: "ruby -e inline execution"},
-	{Keywords: []string{"bash", "-c"}, Label: "bash -c inline execution"},
-	{Keywords: []string{"sh", "-c"}, Label: "sh -c inline execution"},
+	{Keywords: []string{"node", "-e"}, Label: "node -e inline execution", FirstTokenOnly: true},
+	{Keywords: []string{"perl", "-e"}, Label: "perl -e inline execution", FirstTokenOnly: true},
+	{Keywords: []string{"ruby", "-e"}, Label: "ruby -e inline execution", FirstTokenOnly: true},
+	{Keywords: []string{"bash", "-c"}, Label: "bash -c inline execution", FirstTokenOnly: true},
+	{Keywords: []string{"sh", "-c"}, Label: "sh -c inline execution", FirstTokenOnly: true},
 
 	// ── Shell 内建危险 ──
 	{Keywords: []string{"eval"}, Label: "eval (arbitrary code execution)", FirstTokenOnly: true},
@@ -168,8 +168,8 @@ var DangerousPatterns = []DangerousCommandPattern{
 	{Keywords: []string{"exec"}, Label: "exec (replace shell process)", FirstTokenOnly: true},
 
 	// ── 网络工具 ──
-	{Keywords: []string{"nc", "-e"}, Label: "nc -e (netcat execute)"},
-	{Keywords: []string{"nc", "-l"}, Pipewords: []string{"sh", "bash"}, Label: "nc listener piped to shell"},
+	{Keywords: []string{"nc", "-e"}, Label: "nc -e (netcat execute)", FirstTokenOnly: true},
+	{Keywords: []string{"nc", "-l"}, Pipewords: []string{"sh", "bash"}, Label: "nc listener piped to shell", FirstTokenOnly: true},
 	{Keywords: []string{"iptables"}, Label: "iptables (firewall modification)", FirstTokenOnly: true},
 	{Keywords: []string{"iptables-restore"}, Label: "iptables-restore (firewall rules restore)", FirstTokenOnly: true},
 	{Keywords: []string{"iptables-save"}, Label: "iptables-save (firewall rules save)", FirstTokenOnly: true},
@@ -179,18 +179,18 @@ var DangerousPatterns = []DangerousCommandPattern{
 	{Keywords: []string{"find", "-exec", "chmod"}, Label: "find -exec chmod"},
 	{Keywords: []string{"find", "-exec", "rm"}, Label: "find -exec rm"},
 	{Keywords: []string{"find", "-delete"}, Label: "find -delete"},
-	{Keywords: []string{"xargs", "rm"}, Label: "xargs rm"},
-	{Keywords: []string{"xargs", "sh"}, Label: "xargs sh"},
-	{Keywords: []string{"xargs", "bash"}, Label: "xargs bash"},
+	{Keywords: []string{"xargs", "rm"}, Label: "xargs rm", FirstTokenOnly: true},
+	{Keywords: []string{"xargs", "sh"}, Label: "xargs sh", FirstTokenOnly: true},
+	{Keywords: []string{"xargs", "bash"}, Label: "xargs bash", FirstTokenOnly: true},
 
 	// ── 系统配置修改 ──
 	{Keywords: []string{"sysctl", "-w"}, Label: "sysctl -w (kernel parameter write)"},
 	{Keywords: []string{"crontab"}, Label: "crontab (schedule tasks)", FirstTokenOnly: true},
-	{Keywords: []string{"tee", "/etc/"}, Label: "tee to /etc (system config overwrite)"},
-	{Keywords: []string{"tee", "/dev/"}, Label: "tee to /dev (device write)"},
+	{Keywords: []string{"tee", "/etc/"}, Label: "tee to /etc (system config overwrite)", FirstTokenOnly: true},
+	{Keywords: []string{"tee", "/dev/"}, Label: "tee to /dev (device write)", FirstTokenOnly: true},
 
 	// ── SSH / 远程执行 ──
-	{Keywords: []string{"ssh", "root@"}, Label: "ssh to root (remote privileged access)"},
+	{Keywords: []string{"ssh", "root@"}, Label: "ssh to root (remote privileged access)", FirstTokenOnly: true},
 	{Keywords: []string{"scp"}, Label: "scp (remote file transfer)", FirstTokenOnly: true},
 
 	// ── Git 破坏性操作 ──
@@ -341,11 +341,7 @@ func CommandSafetyCheck(command string) CommandCheckResult {
 		highestLevel := RiskNone
 		var highestMsg string
 		for _, seg := range segments {
-			seg = strings.TrimSpace(seg)
-			if seg == "" {
-				continue
-			}
-			segResult := singleCommandRisk(seg)
+		segResult := singleCommandRisk(strings.TrimSpace(seg))
 			if riskOrder(segResult.Level) > riskOrder(highestLevel) {
 				highestLevel = segResult.Level
 				highestMsg = segResult.Message
