@@ -33,16 +33,16 @@ type Messages struct {
 	InputPlanModePlaceholder  string
 
 	// ── System notifications ──────────────────────────────
-	SysCompactionDone     string
-	SysContextHardLimit   string
-	SysSummaryFailed      string
-	SysNewSessionCreated  string
-	SysUnknownCommand     string // 含 %s
-	SysCommandFailed      string // 含 %v
-	SysUpdateFailed       string
-	SysUpdateInstalled    string // 含 %s
-	SysSkillActivated     string // 含 %s
-	SysSkillLoadFailed    string // 含 %s, %s
+	SysCompactionDone    string
+	SysContextHardLimit  string
+	SysSummaryFailed     string
+	SysNewSessionCreated string
+	SysUnknownCommand    string // 含 %s
+	SysCommandFailed     string // 含 %v
+	SysUpdateFailed      string
+	SysUpdateInstalled   string // 含 %s
+	SysSkillActivated    string // 含 %s
+	SysSkillLoadFailed   string // 含 %s, %s
 
 	// ── Loop done ─────────────────────────────────────────
 	LoopCompleted   string // 含 %d, %s, %s, %s
@@ -56,27 +56,27 @@ type Messages struct {
 	UpdateAvailable string // 含 %s
 
 	// ── Thought ───────────────────────────────────────────
-	ThoughtThinking      string
-	ThoughtComplete      string // 含 %d
-	ThoughtExpandHint    string // 含 %d
-	ThoughtCollapseHint  string
+	ThoughtThinking     string
+	ThoughtComplete     string // 含 %d
+	ThoughtExpandHint   string // 含 %d
+	ThoughtCollapseHint string
 
 	// ── Tool ──────────────────────────────────────────────
-	ToolNotFound      string
-	ToolNoInfo        string
-	ToolNQuestions    string // 含 %d
-	ToolQuestionDeclined  string
-	ToolTruncated         string
-	ToolTruncatedLines    string // 含 %d
-	ToolExpandAllHint     string
-	ToolCollapseHint      string
+	ToolNotFound         string
+	ToolNoInfo           string
+	ToolNQuestions       string // 含 %d
+	ToolQuestionDeclined string
+	ToolTruncated        string
+	ToolTruncatedLines   string // 含 %d
+	ToolExpandAllHint    string
+	ToolCollapseHint     string
 
 	// ── Permission overlay ───────────────────────────────
-	PermRequired   string
-	PermReason     string
-	PermAllow      string
-	PermAllowAll   string
-	PermDeny       string
+	PermRequired string
+	PermReason   string
+	PermAllow    string
+	PermAllowAll string
+	PermDeny     string
 
 	// ── Question overlay ─────────────────────────────────
 	QuestionOtherOption string
@@ -132,13 +132,13 @@ type Messages struct {
 	FooterBal   string
 
 	// ── Setup wizard ─────────────────────────────────────
-	SetupTitle         string
-	SetupOverwriteWarn string
-	SetupStepLocale    string
-	SetupStepProvider  string
-	SetupStepAPIKey    string
-	SetupStepModel     string
-	SetupStepTheme     string
+	SetupTitle           string
+	SetupOverwriteWarn   string
+	SetupStepLocale      string
+	SetupStepProvider    string
+	SetupStepAPIKey      string
+	SetupStepModel       string
+	SetupStepTheme       string
 	SetupLocalePrompt    string
 	SetupProviderPrompt  string
 	SetupAPIKeyPrompt    string
@@ -236,7 +236,7 @@ var zhCN = Messages{
 	LoopToolFatal:   "工具错误（%s, %v）",
 
 	// Update
-	UpdateAvailable: "↑ %s available — 空闲时 Enter 更新  Esc 忽略",
+	UpdateAvailable: "↑ %s  enter 更新 • esc 忽略",
 
 	// Thought
 	ThoughtThinking:     "思考中...",
@@ -300,8 +300,8 @@ var zhCN = Messages{
 	PlanEnterConfirm: "确认",
 	PlanEnterCancel:  "取消",
 	PlanExitTitle:    "Plan 审批",
-	PlanExitApprove:   "批准",
-	PlanExitReject:    "拒绝，继续修改",
+	PlanExitApprove:  "批准",
+	PlanExitReject:   "拒绝，继续修改",
 
 	// Header
 	HeaderSession: "session: ",
@@ -479,7 +479,7 @@ var enUS = Messages{
 	LoopToolFatal:   "Tool error (%s, %v)",
 
 	// Update
-	UpdateAvailable: "↑ %s available — when idle, Enter to update  Esc to dismiss",
+	UpdateAvailable: "↑ %s  enter update • esc dismiss",
 
 	// Thought
 	ThoughtThinking:     "Thinking...",
@@ -543,8 +543,8 @@ var enUS = Messages{
 	PlanEnterConfirm: "Confirm",
 	PlanEnterCancel:  "Cancel",
 	PlanExitTitle:    "Plan Approval",
-	PlanExitApprove:   "Approve",
-	PlanExitReject:    "Reject, continue editing",
+	PlanExitApprove:  "Approve",
+	PlanExitReject:   "Reject, continue editing",
 
 	// Header
 	HeaderSession: "session: ",
