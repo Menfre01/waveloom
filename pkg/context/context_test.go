@@ -2,11 +2,14 @@ package context
 
 import (
 	"os"
+	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/Menfre01/waveloom/pkg/compaction"
 	"github.com/Menfre01/waveloom/pkg/llm"
+	"github.com/Menfre01/waveloom/pkg/task"
 )
 
 func TestNew_WithSystemPrompt(t *testing.T) {
@@ -671,5 +674,55 @@ func TestCompleteRun_AutoSave(t *testing.T) {
 
 	if _, err := os.Stat(path); os.IsNotExist(err) {
 		t.Fatal("session file not auto-saved on CompleteRun")
+	}
+}
+
+func TestPrepareRun_BackgroundNotification(t *testing.T) {
+	task.DefaultRegistry.Reset()
+	defer task.DefaultRegistry.Reset()
+
+	now := time.Now()
+	task.DefaultRegistry.Register("completed-1", &task.TaskInfo{
+		ID: "completed-1", PID: 1, Command: "make build",
+		LogPath: "/tmp/bg.log", Status: task.TaskCompleted,
+		StartTime: now, CompletedTime: now.Add(10*time.Millisecond), ExitCode: 0,
+	})
+	task.DefaultRegistry.Register("running-1", &task.TaskInfo{
+		ID: "running-1", PID: 2, Command: "npx wrangler dev",
+		LogPath: "/tmp/running.log", Status: task.TaskRunning,
+		StartTime: now, ExitCode: -1,
+	})
+
+	cm := New("system")
+	cm.PrepareRun("first turn") // 设置 lastBackgroundCheck
+
+	// 注册新完成的任务
+	task.DefaultRegistry.Register("completed-2", &task.TaskInfo{
+		ID: "completed-2", PID: 3, Command: "sleep 1",
+		LogPath: "/tmp/sleep.log", Status: task.TaskCompleted,
+		StartTime: time.Now(), CompletedTime: time.Now(), ExitCode: 0,
+	})
+
+	msgs := cm.PrepareRun("second turn")
+
+	// system + 首次 user + notification user + 第二次 user
+	if len(msgs) < 3 {
+		t.Fatalf("expected at least 3 messages, got %d", len(msgs))
+	}
+
+	notifMsg := msgs[len(msgs)-2]
+	if notifMsg.Role != llm.RoleUser {
+		t.Errorf("notification should be user role, got %s", notifMsg.Role)
+	}
+	// 应包含刚完成的任务
+	if !strings.Contains(notifMsg.Content, "completed-2") {
+		t.Errorf("notification should mention completed-2: %s", notifMsg.Content)
+	}
+	// 应包含正在运行的任务
+	if !strings.Contains(notifMsg.Content, "running-1") {
+		t.Errorf("notification should mention running running-1: %s", notifMsg.Content)
+	}
+	if !strings.Contains(notifMsg.Content, `status="running"`) {
+		t.Errorf("notification should have running status: %s", notifMsg.Content)
 	}
 }

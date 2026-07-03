@@ -143,6 +143,7 @@ func TestNewDefaultRegistry(t *testing.T) {
 		"web_fetch",
 		"ask_user_question",
 		"enter_plan_mode", "exit_plan_mode",
+		"kill_background_task",
 	}
 	if len(specs) != len(expectedTools) {
 		t.Fatalf("List() length = %d, want %d", len(specs), len(expectedTools))

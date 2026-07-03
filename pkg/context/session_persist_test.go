@@ -5,9 +5,11 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Menfre01/waveloom/pkg/compaction"
 	"github.com/Menfre01/waveloom/pkg/llm"
+	"github.com/Menfre01/waveloom/pkg/task"
 )
 
 // ---------------------------------------------------------------------------
@@ -38,7 +40,7 @@ func TestSaveAndLoad_RoundTrip(t *testing.T) {
 		t.Fatalf("SaveSessionToFile: %v", err)
 	}
 
-	loaded, loadedStats, compData, sid, err := LoadSessionFromFile(path)
+	loaded, loadedStats, compData, sid, _, err := LoadSessionFromFile(path)
 	if err != nil {
 		t.Fatalf("LoadSessionFromFile: %v", err)
 	}
@@ -87,7 +89,7 @@ func TestSaveAndLoad_RoundTripWithToolCalls(t *testing.T) {
 		t.Fatalf("SaveSessionToFile: %v", err)
 	}
 
-	loaded, _, _, _, err := LoadSessionFromFile(path)
+	loaded, _, _, _, _, err := LoadSessionFromFile(path)
 	if err != nil {
 		t.Fatalf("LoadSessionFromFile: %v", err)
 	}
@@ -170,7 +172,7 @@ func TestSaveAndLoad_WithCompaction(t *testing.T) {
 		t.Fatalf("SaveSessionToFile: %v", err)
 	}
 
-	_, loadedStats, loadedComp, _, err := LoadSessionFromFile(path)
+	_, loadedStats, loadedComp, _, _, err := LoadSessionFromFile(path)
 	if err != nil {
 		t.Fatalf("LoadSessionFromFile: %v", err)
 	}
@@ -206,7 +208,7 @@ func TestSave_UpdateExisting(t *testing.T) {
 	}
 
 	// 读取 session ID
-	_, _, _, sid1, _ := LoadSessionFromFile(path)
+	_, _, _, sid1, _, _ := LoadSessionFromFile(path)
 
 	// 第二次保存（模拟 Append 新的 turn）
 	messages = append(messages, llm.Message{Role: llm.RoleAssistant, Content: "response"})
@@ -217,7 +219,7 @@ func TestSave_UpdateExisting(t *testing.T) {
 		t.Fatalf("second save: %v", err)
 	}
 
-	loaded, loadedStats, _, sid2, _ := LoadSessionFromFile(path)
+	loaded, loadedStats, _, sid2, _, _ := LoadSessionFromFile(path)
 	if len(loaded) != 2 {
 		t.Fatalf("expected 2 messages, got %d", len(loaded))
 	}
@@ -267,15 +269,64 @@ func TestLoadSessionFile_EmptyFile(t *testing.T) {
 }
 
 func TestLoadSessionFromFile_NotFound(t *testing.T) {
-	msgs, stats, comp, sid, err := LoadSessionFromFile("/nonexistent/path.json")
+	msgs, stats, comp, sid, tasks, err := LoadSessionFromFile("/nonexistent/path.json")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if msgs != nil || comp != nil || sid != "" {
+	if msgs != nil || comp != nil || sid != "" || tasks != nil {
 		t.Error("expected nil/empty for nonexistent file")
 	}
 	if stats.TotalTurns != 0 {
 		t.Error("expected zero stats for nonexistent file")
+	}
+}
+
+func TestSessionPersist_WithTasks(t *testing.T) {
+	task.DefaultRegistry.Reset()
+	defer task.DefaultRegistry.Reset()
+
+	now := time.Now()
+	task.DefaultRegistry.Register("t1", &task.TaskInfo{
+		ID: "t1", PID: 1, Command: "cmd1", Status: task.TaskRunning,
+		StartTime: now,
+	})
+	task.DefaultRegistry.Register("t2", &task.TaskInfo{
+		ID: "t2", PID: 2, Command: "cmd2", Status: task.TaskCompleted,
+		StartTime: now, CompletedTime: now, ExitCode: 0,
+	})
+
+	path := filepath.Join(t.TempDir(), "test-session.json")
+
+	msgs := []llm.Message{
+		{Role: llm.RoleSystem, Content: "test"},
+	}
+	if err := SaveSessionToFile(path, msgs, Stats{TotalTurns: 1}, nil); err != nil {
+		t.Fatalf("SaveSessionToFile: %v", err)
+	}
+
+	loaded, loadedStats, _, _, loadedTasks, err := LoadSessionFromFile(path)
+	if err != nil {
+		t.Fatalf("LoadSessionFromFile: %v", err)
+	}
+	if len(loaded) != 1 {
+		t.Errorf("expected 1 message, got %d", len(loaded))
+	}
+	if loadedStats.TotalTurns != 1 {
+		t.Errorf("TotalTurns = %d, want 1", loadedStats.TotalTurns)
+	}
+	if len(loadedTasks) != 2 {
+		t.Fatalf("expected 2 tasks, got %d", len(loadedTasks))
+	}
+
+	found := map[string]bool{}
+	for _, ti := range loadedTasks {
+		found[ti.ID] = true
+		if ti.ID == "t2" && ti.Status != task.TaskCompleted {
+			t.Errorf("t2 status: %s, want completed", ti.Status)
+		}
+	}
+	if !found["t1"] || !found["t2"] {
+		t.Errorf("missing tasks in loaded data: %v", found)
 	}
 }
 

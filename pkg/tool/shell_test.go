@@ -3,12 +3,17 @@ package tool
 import (
 	"context"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
 	"github.com/Menfre01/waveloom/pkg/pathutil"
+	"github.com/Menfre01/waveloom/pkg/shellutil"
+	"github.com/Menfre01/waveloom/pkg/task"
 )
 
 func TestShellInterpreter(t *testing.T) {
@@ -706,6 +711,7 @@ func TestIsBackgroundCommand(t *testing.T) {
 		cmd  string
 		want bool
 	}{
+		// 单行 —— 整体 &
 		{"echo hello &", true},
 		{"echo hello & ", true},
 		{"echo hello 2>&1 &", true},
@@ -715,9 +721,17 @@ func TestIsBackgroundCommand(t *testing.T) {
 		{"echo hello && echo world", false},
 		{"", false},
 		{"&", true},
+		// 多行 —— 某一行以 & 结尾
+		{"npx wrangler dev --port 8787 2>&1 &\nsleep 12", true},
+		{"echo hello\nsleep 100 &", true},
+		{"echo hello &\necho world &", true},
+		// 多行 —— 无 &
+		{"echo hello\necho world", false},
+		// 多行 —— & 不在行尾
+		{"echo foo & echo bar\necho baz", false},
 	}
 	for _, tt := range tests {
-		got := isBackgroundCommand(tt.cmd)
+		got := shellutil.IsBackgroundCommand(tt.cmd)
 		if got != tt.want {
 			t.Errorf("isBackgroundCommand(%q) = %v, want %v", tt.cmd, got, tt.want)
 		}
@@ -726,46 +740,66 @@ func TestIsBackgroundCommand(t *testing.T) {
 
 func TestPrepareBackgroundCommand_Rewrites(t *testing.T) {
 	p := &ShellParams{Command: "npx wrangler dev --port 8794 2>&1 &"}
-	logFile := prepareBackgroundCommand(p)
+	bgLogFile, isBackground := prepareBackgroundCommand(p)
 
-	if logFile == "" {
-		t.Fatal("expected non-empty log file path")
+	if !isBackground {
+		t.Fatal("expected isBackground=true for single-line & command")
 	}
-	if !strings.HasPrefix(logFile, os.TempDir()) {
-		t.Errorf("log file should be in temp dir, got %s", logFile)
-	}
-	if !strings.Contains(logFile, "waveloom-bg-") {
-		t.Errorf("log file should contain 'waveloom-bg-', got %s", logFile)
+	if bgLogFile != "" {
+		t.Errorf("expected empty log file for single-line & command, got %s", bgLogFile)
 	}
 
-	// 改写后的命令不应以 & 结尾（最后的 & 是重写时新加的，前面不应有两个 &&）
-	if strings.Contains(p.Command, "2>&1 & </dev/null") || strings.HasSuffix(p.Command, "&&") {
-		t.Errorf("rewritten command looks malformed: %s", p.Command)
+	// 改写后的命令应剥离尾部 &（2>&1 中的 & 不是后台操作符，应保留）
+	if strings.HasSuffix(strings.TrimSpace(p.Command), "&") {
+		t.Errorf("rewritten command should not end with &: %s", p.Command)
 	}
-	// 改写后的命令应包含重定向
-	if !strings.Contains(p.Command, "</dev/null") {
-		t.Errorf("rewritten command should redirect stdin: %s", p.Command)
-	}
-	if !strings.Contains(p.Command, logFile) {
-		t.Errorf("rewritten command should redirect to log file %s: %s", logFile, p.Command)
+	if strings.Contains(p.Command, "</dev/null") || strings.Contains(p.Command, ">/tmp") {
+		t.Errorf("rewritten command should NOT contain subshell redirects (file fd handles this): %s", p.Command)
 	}
 }
 
 func TestPrepareBackgroundCommand_NonBackground(t *testing.T) {
 	p := &ShellParams{Command: "echo hello"}
-	logFile := prepareBackgroundCommand(p)
+	bgLogFile, isBackground := prepareBackgroundCommand(p)
 
-	if logFile != "" {
-		t.Errorf("non-background command should return empty log file, got %s", logFile)
+	if isBackground {
+		t.Errorf("non-background command should not be flagged as background")
+	}
+	if bgLogFile != "" {
+		t.Errorf("non-background command should return empty log file, got %s", bgLogFile)
 	}
 	if p.Command != "echo hello" {
 		t.Errorf("non-background command should not be modified, got %s", p.Command)
 	}
 }
 
+func TestPrepareBackgroundCommand_MultiLineRewrite(t *testing.T) {
+	// REGRESSION: 多行命令中某一行以 & 结尾时，文件 fd 输出已消除 SIGPIPE，
+	// 不再需要 subshell 重定向改写。命令保持原样，仅返回日志提示路径。
+	p := &ShellParams{Command: "npx wrangler dev --port 8787 2>&1 &\nsleep 12 && curl -s localhost:8787"}
+	bgLogFile, isBackground := prepareBackgroundCommand(p)
+
+	if isBackground {
+		t.Fatal("multi-line & command should NOT be flagged as background (foreground parts exist)")
+	}
+	if bgLogFile == "" {
+		t.Fatal("expected non-empty log file path for multi-line bg command")
+	}
+	if !strings.Contains(bgLogFile, "waveloom-bg-") {
+		t.Errorf("log file should contain 'waveloom-bg-', got %s", bgLogFile)
+	}
+
+	// 命令不应被改写（文件 fd 消除 SIGPIPE，不再需要 subshell 重定向）
+	if strings.Contains(p.Command, "</dev/null") {
+		t.Errorf("command should not be rewritten with subshell redirects: %s", p.Command)
+	}
+	if !strings.Contains(p.Command, "sleep 12 && curl -s localhost:8787") {
+		t.Errorf("foreground line should not be modified: %s", p.Command)
+	}
+}
+
 // TestShell_BackgroundCommand_DoesNotHang 回归测试：验证后台命令不会卡死。
-// 启动一个长时间运行的后台进程（sleep 100 &），确保 Execute 在超时前返回
-// 而不是阻塞在 pipe reader 上。
+// 单行 & 命令现在走后台路径，立即返回 taskId + logPath。
 func TestShell_BackgroundCommand_DoesNotHang(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("background & is Unix shell syntax")
@@ -785,12 +819,12 @@ func TestShell_BackgroundCommand_DoesNotHang(t *testing.T) {
 		})
 	}()
 
-	// 命令应快速返回（bash 立即退出），不应等到 5s 超时。
+	// 后台命令应立即返回（不等待进程退出）
 	select {
 	case <-done:
 		// OK — 快速返回
 	case <-time.After(3 * time.Second):
-		t.Fatal("background command did not return within 3s — pipe reader likely blocked")
+		t.Fatal("background command did not return within 3s")
 	}
 
 	if execErr != nil {
@@ -799,17 +833,19 @@ func TestShell_BackgroundCommand_DoesNotHang(t *testing.T) {
 	if result == nil {
 		t.Fatal("result is nil")
 	}
-	// 后台命令重写后 bash 退出码应为 0
-	if result.Meta.ExitCode != 0 {
-		t.Errorf("expected exit code 0 for rewritten background command, got %d", result.Meta.ExitCode)
+	if result.Meta.BackgroundTaskID == "" {
+		t.Errorf("expected non-empty BackgroundTaskID for background command")
 	}
-	// 结果应包含日志路径
-	if !strings.Contains(result.Content, "[background] log:") {
-		t.Errorf("result should contain [background] log path: %s", result.Content)
+	if !strings.Contains(result.Content, "Command started in background") {
+		t.Errorf("result should indicate background start: %s", result.Content)
+	}
+	// 清理：杀掉后台 sleep 进程
+	if result.Meta.BackgroundTaskID != "" {
+		task.DefaultRegistry.Remove(result.Meta.BackgroundTaskID)
 	}
 }
 
-// TestShell_BackgroundCommand_LogFileHasOutput 验证后台进程的输出被重定向到日志文件。
+// TestShell_BackgroundCommand_LogFileHasOutput 验证后台进程的输出写入日志文件。
 func TestShell_BackgroundCommand_LogFileHasOutput(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("background & is Unix shell syntax")
@@ -827,31 +863,27 @@ func TestShell_BackgroundCommand_LogFileHasOutput(t *testing.T) {
 		t.Fatal("result is nil")
 	}
 
-	// 从结果中提取日志路径
-	content := result.Content
-	if !strings.Contains(content, "[background] log:") {
-		t.Fatalf("result should contain log path: %s", content)
+	if result.Meta.BackgroundTaskID == "" {
+		t.Fatal("expected non-empty BackgroundTaskID")
+	}
+	logPath := result.Meta.LogPath
+	if logPath == "" {
+		t.Fatal("expected non-empty LogPath")
 	}
 
-	// 解析日志路径
-	prefix := "[background] log: "
-	idx := strings.Index(content, prefix)
-	logPath := strings.TrimSpace(content[idx+len(prefix):])
-	// Remove trailing newlines / extra content
-	if nl := strings.Index(logPath, "\n"); nl > 0 {
-		logPath = logPath[:nl]
-	}
-
-	// 给后台进程一点时间写入
+	// 等待 echo 完成后检查日志文件
 	time.Sleep(500 * time.Millisecond)
-
-	data, readErr := os.ReadFile(logPath)
-	if readErr != nil {
-		t.Fatalf("failed to read log file %s: %v", logPath, readErr)
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("cannot read log file %s: %v", logPath, err)
 	}
 	if !strings.Contains(string(data), "background_hello") {
 		t.Errorf("log file should contain 'background_hello', got: %s", string(data))
 	}
+
+	// 清理
+	_ = os.Remove(logPath)
+	task.DefaultRegistry.Remove(result.Meta.BackgroundTaskID)
 }
 
 // TestShell_ExecuteStreaming_BackgroundCommand_DoesNotHang 回归测试：
@@ -888,19 +920,23 @@ func TestShell_ExecuteStreaming_BackgroundCommand_DoesNotHang(t *testing.T) {
 	if result == nil {
 		t.Fatal("result is nil")
 	}
-	if result.Meta.ExitCode != 0 {
-		t.Errorf("expected exit code 0, got %d", result.Meta.ExitCode)
+	if result.Meta.BackgroundTaskID == "" {
+		t.Errorf("expected non-empty BackgroundTaskID")
+	}
+	if !strings.Contains(result.Content, "Command started in background") {
+		t.Errorf("result should indicate background start: %s", result.Content)
+	}
+	// 清理
+	if result.Meta.BackgroundTaskID != "" {
+		task.DefaultRegistry.Remove(result.Meta.BackgroundTaskID)
 	}
 }
 
-// TestShell_ExecuteStreaming_PipeWaitTimeout 回归测试：
-// 验证即使 pipe reader 阻塞，wg.Wait() 也有超时保护。
-// 模拟场景：bash 已退出但后台子进程仍持有管道写端（未被 rewriteBackgroundCommand 处理的情况）。
-// 通过用一个持续写入的进程 + & + 不重定向来逼近此场景。
-// 实际上重写逻辑已处理此问题，本测试验证双重保护（rewrite + wg.Wait 超时）。
+// TestShell_ExecuteStreaming_PipeWaitTimeout 验证流式输出在超时时正确处理。
+// 文件 fd 模式下，超时杀进程后仍能读取部分输出。
 func TestShell_ExecuteStreaming_PipeWaitTimeout(t *testing.T) {
 	if runtime.GOOS == "windows" {
-		t.Skip("Unix pipe semantics")
+		t.Skip("Unix process group semantics")
 	}
 
 	s := &Shell{}
@@ -909,10 +945,6 @@ func TestShell_ExecuteStreaming_PipeWaitTimeout(t *testing.T) {
 	var result *ToolResult
 	var execErr error
 
-	// 使用一个命令：bash 退出后子进程仍持有管道（无 & 重写的情况）
-	// 构造: (sleep 10 &) — sleep 继承管道但不输出，bash 退出但管道不关
-	// 因为 inner command 不带 &，不会被 isBackgroundCommand 检测到，因此走原始路径。
-	// 但 wg.Wait() 超时保护应确保不卡死。
 	go func() {
 		defer close(done)
 		result, execErr = s.ExecuteStreaming(ctx, ShellParams{
@@ -925,7 +957,7 @@ func TestShell_ExecuteStreaming_PipeWaitTimeout(t *testing.T) {
 	case <-done:
 		// OK
 	case <-time.After(3 * time.Second):
-		t.Fatal("ExecuteStreaming with pipe-holding command did not return within 3s")
+		t.Fatal("ExecuteStreaming did not return within 3s")
 	}
 
 	if execErr != nil {
@@ -934,8 +966,185 @@ func TestShell_ExecuteStreaming_PipeWaitTimeout(t *testing.T) {
 	if result == nil {
 		t.Fatal("result is nil")
 	}
-	// Should be a timeout
 	if result.Error == nil || result.Error.Kind != ErrKindTimeout {
-		t.Errorf("expected timeout error, got kind=%s msg=%s", result.Error.Kind, result.Error.Message)
+		t.Errorf("expected timeout error, got kind=%s", result.Error.Kind)
+	}
+}
+
+// TestPollOutputFile_ContextCancel 覆盖 pollOutputFile 中 context 取消分支，
+// 即 select 中 cmdCtx.Done() 在 done 之前触发的路径。
+func TestPollOutputFile_ContextCancel(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix process group semantics")
+	}
+
+	cmd := exec.Command("sleep", "100")
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+
+	outputPath := filepath.Join(t.TempDir(), "poll-cancel.log")
+	outputFile, err := os.OpenFile(outputPath, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o600)
+	if err != nil {
+		t.Fatalf("OpenFile: %v", err)
+	}
+	defer func() { _ = outputFile.Close() }()
+	cmd.Stdout = outputFile
+	cmd.Stderr = outputFile
+
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	// 使用极短超时确保 cmdCtx.Done() 在进程退出前触发
+	cmdCtx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+
+	err = pollOutputFile(cmd, cmdCtx, done, outputFile, outputPath, func(s string) {})
+	if err != context.DeadlineExceeded {
+		t.Errorf("expected DeadlineExceeded, got %v", err)
+	}
+	// sleep 进程应该被 killProcessGroup 杀死
+	_ = cmd.Wait()
+}
+
+// TestShell_ReadPipesStreaming 覆盖 fallback pipe 模式读取路径。
+func TestShell_ReadPipesStreaming(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix pipe semantics")
+	}
+
+	cmd := exec.Command("echo", "pipe_hello")
+	stdoutPipe, _ := cmd.StdoutPipe()
+	stderrPipe, _ := cmd.StderrPipe()
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("cmd.Start() error = %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+
+	var chunks []string
+	emitChunk := func(s string) { chunks = append(chunks, s) }
+
+	err := readPipesStreaming(cmd, ctx, done, stdoutPipe, stderrPipe, emitChunk)
+	if err != nil {
+		t.Fatalf("readPipesStreaming error = %v", err)
+	}
+
+	joined := strings.Join(chunks, "")
+	if !strings.Contains(joined, "pipe_hello") {
+		t.Errorf("expected 'pipe_hello' in output, got: %q", joined)
+	}
+}
+
+// TestShell_ReadPipesStreaming_Timeout 覆盖 pipe 模式超时 kill 路径。
+func TestShell_ReadPipesStreaming_Timeout(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix process group semantics")
+	}
+
+	cmd := exec.Command("sleep", "100")
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	stdoutPipe, _ := cmd.StdoutPipe()
+	stderrPipe, _ := cmd.StderrPipe()
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("cmd.Start() error = %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+
+	err := readPipesStreaming(cmd, ctx, done, stdoutPipe, stderrPipe, func(s string) {})
+	if err == nil {
+		t.Fatal("expected timeout error, got nil")
+	}
+	if err != context.DeadlineExceeded {
+		t.Errorf("expected DeadlineExceeded, got %v", err)
+	}
+}
+
+// TestShell_NewTaskID 覆盖任务 ID 生成。
+func TestShell_NewTaskID(t *testing.T) {
+	id1 := newTaskID()
+	id2 := newTaskID()
+	if len(id1) != 8 {
+		t.Errorf("expected 8-char hex ID, got %q (len=%d)", id1, len(id1))
+	}
+	if id1 == id2 {
+		t.Errorf("two IDs should differ: %q == %q", id1, id2)
+	}
+}
+
+// TestShell_FormatShellResult_Empty 覆盖 formatShellResult 空输出分支。
+func TestShell_FormatShellResult_Empty(t *testing.T) {
+	r := formatShellResult("done", 0, 0, 0, "   \n", false)
+	if !strings.Contains(r, "(empty)") {
+		t.Errorf("expected (empty) for whitespace-only output: %q", r)
+	}
+}
+
+// TestShell_Execute_RunInBackground 覆盖 run_in_background 显式参数路径。
+func TestShell_Execute_RunInBackground(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("background execution is Unix-specific")
+	}
+
+	s := &Shell{}
+	result, err := s.Execute(context.Background(), ShellParams{
+		Command:         "sleep 100",
+		RunInBackground: true,
+		TimeoutMs:       5000,
+	})
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if result == nil {
+		t.Fatal("result is nil")
+	}
+	if result.Meta.BackgroundTaskID == "" {
+		t.Errorf("expected non-empty BackgroundTaskID")
+	}
+	if !strings.Contains(result.Content, "Command started in background") {
+		t.Errorf("result should indicate background start: %s", result.Content)
+	}
+	if result.Meta.BackgroundTaskID != "" {
+		task.DefaultRegistry.Remove(result.Meta.BackgroundTaskID)
+	}
+}
+
+// TestShell_ExecuteStreaming_RunInBackground 覆盖 ExecuteStreaming run_in_background。
+func TestShell_ExecuteStreaming_RunInBackground(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("background execution is Unix-specific")
+	}
+
+	s := &Shell{}
+	result, err := s.ExecuteStreaming(context.Background(), ShellParams{
+		Command:         "sleep 100",
+		RunInBackground: true,
+		TimeoutMs:       5000,
+	}, func(chunk string) {})
+	if err != nil {
+		t.Fatalf("ExecuteStreaming() error = %v", err)
+	}
+	if result == nil {
+		t.Fatal("result is nil")
+	}
+	if result.Meta.BackgroundTaskID == "" {
+		t.Errorf("expected non-empty BackgroundTaskID")
+	}
+	if !strings.Contains(result.Content, "Command started in background") {
+		t.Errorf("result should indicate background start: %s", result.Content)
+	}
+	if result.Meta.BackgroundTaskID != "" {
+		task.DefaultRegistry.Remove(result.Meta.BackgroundTaskID)
 	}
 }
