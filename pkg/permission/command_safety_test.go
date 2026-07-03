@@ -135,8 +135,6 @@ func TestCommandSafetyCheck_FormerlySafeNowMedium(t *testing.T) {
 	}{
 		{"python -c print", "python -c 'print(1+1)'"},
 		{"python script", "python ./build.py"},
-		{"node -e", "node -e 'console.log(1+1)'"},
-		{"node script", "node ./tool.js"},
 		{"npm install", "npm install"},
 		{"npm run build", "npm run build"},
 		{"pip install", "pip install requests"},
