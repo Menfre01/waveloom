@@ -238,68 +238,87 @@ func parseQuestionResult(resultJSON string) (map[string]string, []string) {
 }
 
 // formatQuestionPreview 将问答结果渲染为可读预览行（折叠态）。
-func formatQuestionPreview(resultJSON string, indent string, lc *Messages) string {
+func formatQuestionPreview(resultJSON string, textWidth int, indent string, lc *Messages) string {
 	answers, order := parseQuestionResult(resultJSON)
 	if len(order) == 0 {
 		return ""
 	}
 	// 与其他工具预览的 "│ " 前缀保持一致，使用灰色
 	mutedStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#666666"))
+	contentWidth := textWidth - 2 // "│ " 前缀占 2 列
+	if contentWidth < 1 {
+		contentWidth = 1
+	}
 	var sb strings.Builder
+	wrapped := 0
+	truncated := false
 	for _, header := range order {
 		answer := answers[header]
 		if answer == "" {
 			answer = lc.ToolQuestionDeclined
 		}
+		line := header + " → " + answer
+		for _, wl := range wrapLine(line, contentWidth) {
+			if wrapped >= maxPreviewWrapped {
+				truncated = true
+				break
+			}
+			sb.WriteString(indent)
+			sb.WriteString(mutedStyle.Render("│ "))
+			sb.WriteString(wl)
+			sb.WriteString("\n")
+			wrapped++
+		}
+		if truncated {
+			break
+		}
+	}
+	if truncated {
 		sb.WriteString(indent)
-		sb.WriteString(mutedStyle.Render("│ "))
-		sb.WriteString(header)
-		sb.WriteString(" → ")
-		sb.WriteString(answer)
+		sb.WriteString(styleToolPreviewHint.Render(lc.ToolTruncated))
 		sb.WriteString("\n")
 	}
 	return sb.String()
 }
 
-// formatQuestionExpanded 将问答结果渲染为展开态（含完整问题文本）。
+// formatQuestionExpanded 将问答结果渲染为展开态，与 shell output 对齐（│ header → answer）。
 func formatQuestionExpanded(resultJSON string, indent string, textWidth int, lc *Messages) string {
-	var data struct {
-		Questions []struct {
-			Question string `json:"question"`
-			Header   string `json:"header"`
-			Options  []struct {
-				Label       string `json:"label"`
-				Description string `json:"description"`
-			} `json:"options"`
-		} `json:"questions"`
-		Answers map[string]string `json:"answers"`
-	}
-	if err := json.Unmarshal([]byte(resultJSON), &data); err != nil || len(data.Questions) == 0 {
-		// 回退到普通文本渲染
+	answers, order := parseQuestionResult(resultJSON)
+	if len(order) == 0 {
 		return ""
 	}
-	selStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#00d700"))
 	mutedStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#666666"))
-	headerStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#5A56E0")).Bold(true)
+	contentWidth := textWidth - 2 // "│ " 前缀占 2 列
+	if contentWidth < 1 {
+		contentWidth = 1
+	}
 	var sb strings.Builder
-	for _, q := range data.Questions {
-		answer := data.Answers[q.Question]
-		sb.WriteString(indent)
-		sb.WriteString(headerStyle.Render("▲ " + q.Header))
-		sb.WriteString("\n")
-		sb.WriteString(indent)
-		sb.WriteString("  " + q.Question)
-		sb.WriteString("\n")
-		if answer != "" {
-			sb.WriteString(indent)
-			sb.WriteString(selStyle.Render("  ▸ "))
-			sb.WriteString(answer)
-			sb.WriteString("\n")
-		} else {
-			sb.WriteString(indent)
-			sb.WriteString(mutedStyle.Render("  ▸ " + lc.ToolQuestionDeclined))
-			sb.WriteString("\n")
+	wrapped := 0
+	truncated := false
+	for _, header := range order {
+		answer := answers[header]
+		if answer == "" {
+			answer = lc.ToolQuestionDeclined
 		}
+		line := header + " → " + answer
+		for _, wl := range wrapLine(line, contentWidth) {
+			if wrapped >= maxExpandedWrapped {
+				truncated = true
+				break
+			}
+			sb.WriteString(indent)
+			sb.WriteString(mutedStyle.Render("│ "))
+			sb.WriteString(wl)
+			sb.WriteString("\n")
+			wrapped++
+		}
+		if truncated {
+			break
+		}
+	}
+	if truncated {
+		sb.WriteString(indent)
+		sb.WriteString(styleToolPreviewHint.Render(fmt.Sprintf(lc.ToolTruncatedLines, maxExpandedWrapped)))
 		sb.WriteString("\n")
 	}
 	return sb.String()
@@ -773,6 +792,10 @@ func renderAssistantPara(sb *strings.Builder, p *Paragraph, ctx ViewportCtx) {
 	}
 	prefixWidth := lipgloss.Width(prefixStr)
 	indent := strings.Repeat(" ", prefixWidth)
+	textWidth := ctx.Width - prefixWidth
+	if textWidth < 1 {
+		textWidth = 1
+	}
 
 	if p.Text == "" {
 		sb.WriteString(prefixStr)
@@ -783,14 +806,17 @@ func renderAssistantPara(sb *strings.Builder, p *Paragraph, ctx ViewportCtx) {
 	// 流式输出中跳过 Glamour（markdown 结构不完整，渲染无意义且极慢）；
 	// 仅在 done 时使用 Glamour，并缓存结果避免重复渲染。
 	rendered := p.Text
+	glamourUsed := false
 	if !streaming && ctx.Glamour != nil {
 		if p.renderedCache != "" && p.cacheWidth == ctx.Width {
 			rendered = p.renderedCache
+			glamourUsed = true
 		} else {
 			if out, err := ctx.Glamour.Render(p.Text); err == nil {
 				rendered = out
 				p.renderedCache = out
 				p.cacheWidth = ctx.Width
+				glamourUsed = true
 			}
 		}
 	}
@@ -805,14 +831,21 @@ func renderAssistantPara(sb *strings.Builder, p *Paragraph, ctx ViewportCtx) {
 	lines := strings.Split(rendered, "\n")
 	firstLine := true
 	for _, line := range lines {
-		if firstLine {
-			sb.WriteString(prefixStr)
-			firstLine = false
-		} else {
-			sb.WriteString(indent)
+		wrapped := []string{line}
+		if !glamourUsed {
+			// 流式输出或无 Glamour 时手动按终端宽度换行
+			wrapped = wrapLine(line, textWidth)
 		}
-		sb.WriteString(line)
-		sb.WriteString("\n")
+		for _, wl := range wrapped {
+			if firstLine {
+				sb.WriteString(prefixStr)
+				firstLine = false
+			} else {
+				sb.WriteString(indent)
+			}
+			sb.WriteString(wl)
+			sb.WriteString("\n")
+		}
 	}
 }
 
@@ -1202,6 +1235,11 @@ func renderToolPara(sb *strings.Builder, p *Paragraph, ctx ViewportCtx) {
 		}
 	}
 
+	// 流式输出 —— 实时渲染已有输出（stateStreaming + 有 ToolResult 时）
+	if p.State == stateStreaming && p.ToolResult != "" {
+		renderToolStreamOutput(sb, p, textWidth, indentStr, ctx.LC)
+	}
+
 	// 展开态 —— 显示完整输出
 	if p.State == stateExpanded {
 		if p.DiffHunks != nil {
@@ -1223,7 +1261,7 @@ const maxPreviewWrapped = 5
 func renderToolPreview(sb *strings.Builder, p *Paragraph, textWidth int, indent string, lc *Messages) {
 	// ask_user_question 定制渲染：显示可读的问答摘要
 	if p.ToolName == "ask_user_question" && p.ToolResult != "" {
-		preview := formatQuestionPreview(p.ToolResult, indent, lc)
+		preview := formatQuestionPreview(p.ToolResult, textWidth, indent, lc)
 		if preview != "" {
 			sb.WriteString(preview)
 			return
@@ -1338,6 +1376,45 @@ func renderToolPreview(sb *strings.Builder, p *Paragraph, textWidth int, indent 
 		default:
 			sb.WriteString(styleToolPreviewHint.Render(lc.ToolTruncated))
 		}
+		sb.WriteString("\n")
+	}
+}
+
+// renderToolStreamOutput 渲染流式工具输出，与 renderThoughtPara 的 fixedLines 反向收集逻辑一致。
+// 从尾部反向采集直到获得 fixedLines 个 wrap 后可见行，不显示截断提示（截断是隐式的）。
+func renderToolStreamOutput(sb *strings.Builder, p *Paragraph, textWidth int, indent string, lc *Messages) {
+	result := strings.TrimRight(p.ToolResult, "\n")
+	if result == "" {
+		return
+	}
+
+	mutedStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#666666"))
+	contentWidth := textWidth - 2 // "│ " 前缀占 2 列
+	if contentWidth < 1 {
+		contentWidth = 1
+	}
+
+	const fixedLines = 5
+
+	rawLines := strings.Split(result, "\n")
+	var visible []string
+	// 从尾部反向收集，直到获得至少 fixedLines 个 wrap 后的可见行
+	for i := len(rawLines) - 1; i >= 0 && len(visible) < fixedLines; i-- {
+		if rawLines[i] == "" {
+			continue
+		}
+		wrapped := wrapLine(rawLines[i], contentWidth)
+		visible = append(wrapped, visible...)
+	}
+	// 超出 fixedLines 时从头部截断
+	if len(visible) > fixedLines {
+		visible = visible[len(visible)-fixedLines:]
+	}
+
+	for _, wl := range visible {
+		sb.WriteString(indent)
+		sb.WriteString(mutedStyle.Render("│ "))
+		sb.WriteString(wl)
 		sb.WriteString("\n")
 	}
 }
