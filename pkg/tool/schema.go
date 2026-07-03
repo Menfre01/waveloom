@@ -57,7 +57,7 @@ var editFileSchema = json.RawMessage(`{
     },
     "old_string": {
       "type": "string",
-      "description": "Text to replace — must match original exactly (indentation, whitespace, punctuation). Must be unique in the file; if ambiguous, include more surrounding context lines."
+      "description": "Text to replace — should match the file content as closely as possible. Minor differences in whitespace, blank lines, and Unicode punctuation (tabs/spaces, smart quotes, em dashes → ASCII, etc.) are auto-corrected when the match is unambiguous. If ambiguous, include more surrounding context lines."
     },
     "new_string": {
       "type": "string",
