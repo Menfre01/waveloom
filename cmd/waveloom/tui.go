@@ -863,6 +863,10 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.flushTranscript()
 		return m, nil
 
+	case agentloop.ToolCallStream:
+		m.handleToolStream(msg)
+		return m, nil
+
 	case agentloop.ToolCallResult:
 		m.handleToolResult(msg)
 		m.flushTranscript()
@@ -2843,6 +2847,18 @@ func (m *model) handleToolStart(ev agentloop.ToolCallStart) {
 	})
 }
 
+// handleToolStream 处理工具执行中的增量输出流。
+func (m *model) handleToolStream(ev agentloop.ToolCallStream) {
+	for i := len(m.paras) - 1; i >= 0; i-- {
+		p := &m.paras[i]
+		if p.Type == paraTool && p.State == stateStreaming && p.ToolName == ev.ToolCallName {
+			p.ToolResult = truncateToolStreamOutput(p.ToolResult + ev.Chunk)
+			p.renderDirty = true
+			return
+		}
+	}
+}
+
 // handleToolResult 处理工具执行结果。
 func (m *model) handleToolResult(ev agentloop.ToolCallResult) {
 	// 查找匹配的 tool 段落（按 tool name + args 匹配，取最后一个 streaming 的）
@@ -2855,13 +2871,15 @@ func (m *model) handleToolResult(ev agentloop.ToolCallResult) {
 			p.ToolDurMs = ev.DurationMs
 			p.ToolDenied = ev.Denied
 			p.DiffHunks = ev.DiffHunks
-			if ev.IsError() || ev.Denied {
-				p.State = stateError
-			} else if ev.DiffHunks != nil {
-				p.State = stateExpanded // edit_file 直接展开完整 diff 视图
-			} else {
-				p.State = stateDone // 其他工具完成即折叠
-			}
+		if ev.IsError() || ev.Denied {
+			p.State = stateError
+		} else if ev.DiffHunks != nil {
+			p.State = stateExpanded // edit_file 直接展开完整 diff 视图
+		} else if p.ToolName == "ask_user_question" {
+			p.State = stateExpanded // ask_user_question 默认展开显示完整问答
+		} else {
+			p.State = stateDone // 其他工具完成即折叠
+		}
 			p.renderDirty = true
 
 			// 条件 skill 激活：文件操作工具完成后检查路径匹配
@@ -2916,6 +2934,22 @@ func truncateToolResult(result string) string {
 		return result
 	}
 	return result[:maxToolResultBytes] + "\n... (output truncated)"
+}
+
+// maxToolStreamLines 是流式输出在 TUI 中保留的最大行数。
+// 超过此数时从头部丢弃旧行，防止长时间命令撑爆内存。
+const maxToolStreamLines = 2000
+
+// truncateToolStreamOutput 对累积的流式输出做滚动窗口截断。
+func truncateToolStreamOutput(s string) string {
+	lines := strings.Split(s, "\n")
+	if len(lines) <= maxToolStreamLines {
+		return s
+	}
+	// 保留尾部行，用截断标记替换头部
+	head := fmt.Sprintf("... (stream truncated, showing last %d lines)\n", maxToolStreamLines)
+	tail := lines[len(lines)-maxToolStreamLines:]
+	return head + strings.Join(tail, "\n")
 }
 
 // handleLoopDone 处理循环终止。
