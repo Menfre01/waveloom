@@ -389,3 +389,129 @@ func TestMatchContent_RemoveRuleFrom_OtherScope(t *testing.T) {
 		t.Errorf("removing rule with different scope should not affect other: got %d rules, want 1", len(all))
 	}
 }
+
+// ---------------------------------------------------------------------------
+// ** — 递归 glob 匹配
+// ---------------------------------------------------------------------------
+
+func TestMatchGlob_DoubleStar_Recursive(t *testing.T) {
+	tests := []struct {
+		name    string
+		pattern string
+		target  string
+		want    bool
+	}{
+		// ** 在末尾：匹配目录下所有文件和子目录
+		{"dir all files", "src/**", "src/main.go", true},
+		{"dir nested file", "src/**", "src/sub/pkg/util.go", true},
+		{"dir itself", "src/**", "src", true},
+		{"dir with trailing slash", "src/**", "src/", true},
+		{"wrong dir", "src/**", "pkg/main.go", false},
+		{"parent dir no match", "src/**", "srcraft/main.go", false},
+
+		// ** 在开头：匹配任意深度的文件
+		{"any depth file", "**/main.go", "main.go", true},
+		{"one level deep", "**/main.go", "cmd/main.go", true},
+		{"deep nested", "**/main.go", "a/b/c/main.go", true},
+		{"wrong filename", "**/main.go", "a/b/c/notmain.go", false},
+
+		// ** 在中间：匹配任意中间路径
+		{"mid double star", "src/**/test", "src/test", true},
+		{"mid with one level", "src/**/test", "src/pkg/test", true},
+		{"mid with deep path", "src/**/test", "src/a/b/c/test", true},
+		{"mid no match", "src/**/test", "src/pkg/notest", false},
+
+		// ** 匹配零个组件
+		{"zero component match", "src/**/file.go", "src/file.go", true},
+		{"zero component mid", "a/**/b/**/c", "a/b/c", true},
+
+		// ** 与普通 glob 组合
+		{"glob with double star", "src/**/*.go", "src/main.go", true},
+		{"glob nested", "src/**/*.go", "src/sub/pkg/util.go", true},
+		{"glob no match extension", "src/**/*.go", "src/readme.md", false},
+
+		// 多个 **
+		{"multiple double stars", "src/**/test/**/*_test.go", "src/pkg/test/integration/foo_test.go", true},
+		{"multiple no match", "src/**/test/**/*_test.go", "src/pkg/bench/foo_bench.go", false},
+
+		// 仅 **
+		{"only double star", "**", "anything/at/all.go", true},
+		{"only double star empty", "**", "", true},
+
+		// 绝对路径与 **
+		{"absolute with double star", "/usr/local/**", "/usr/local/bin/foo", true},
+		{"absolute no match", "/usr/local/**", "/usr/remote/bin/foo", false},
+
+		// 兼容：不含 ** 的 pattern 行为不变
+		{"no double star - exact", "src/main.go", "src/main.go", true},
+		{"no double star - wildcard", "src/*.go", "src/main.go", true},
+		{"no double star - single char", "src/?.go", "src/a.go", true},
+		{"no double star - char class", "src/[a-z].go", "src/x.go", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := matchGlob(tt.pattern, tt.target)
+			if err != nil {
+				t.Fatalf("matchGlob(%q, %q) error: %v", tt.pattern, tt.target, err)
+			}
+			if got != tt.want {
+				t.Errorf("matchGlob(%q, %q) = %v, want %v", tt.pattern, tt.target, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestRuleEngine_DoubleStar_PathRule(t *testing.T) {
+	re := NewRuleEngine()
+	re.LoadRules([]RuleEntry{
+		{Rule: Rule{Behavior: RuleAllow, ToolName: "write_file", Pattern: "src/**"}, Source: SourceConfig, Scope: ScopeConfig},
+	})
+
+	// 直接子文件
+	input := json.RawMessage(`{"file_path": "src/main.go"}`)
+	result, found := re.CheckAllow("write_file", input)
+	if !found {
+		t.Error("'src/**' should match 'src/main.go'")
+	}
+	if result.Decision != DecisionAllow {
+		t.Errorf("decision = %s, want %s", result.Decision, DecisionAllow)
+	}
+
+	// 深层嵌套
+	input = json.RawMessage(`{"file_path": "src/a/b/c/deep.go"}`)
+	_, found = re.CheckAllow("write_file", input)
+	if !found {
+		t.Error("'src/**' should match 'src/a/b/c/deep.go'")
+	}
+
+	// 不匹配的目录
+	input = json.RawMessage(`{"file_path": "pkg/main.go"}`)
+	_, found = re.CheckAllow("write_file", input)
+	if found {
+		t.Error("'src/**' should NOT match 'pkg/main.go'")
+	}
+}
+
+func TestRuleEngine_DoubleStar_EditFilePathRule(t *testing.T) {
+	re := NewRuleEngine()
+	re.LoadRules([]RuleEntry{
+		{Rule: Rule{Behavior: RuleAllow, ToolName: "edit_file", Pattern: "/Users/menfre/Workbench/waveloom/**"}, Source: SourceConfig, Scope: ScopeConfig},
+	})
+
+	// 匹配项目下的任意文件
+	input := json.RawMessage(`{"file_path": "/Users/menfre/Workbench/waveloom/cmd/waveloom/tui.go"}`)
+	result, found := re.CheckAllow("edit_file", input)
+	if !found {
+		t.Error("absolute '**' should match file at any depth")
+	}
+	if result.Decision != DecisionAllow {
+		t.Errorf("decision = %s, want %s", result.Decision, DecisionAllow)
+	}
+
+	// 不匹配项目外的文件
+	input = json.RawMessage(`{"file_path": "/Users/menfre/OtherProject/main.go"}`)
+	_, found = re.CheckAllow("edit_file", input)
+	if found {
+		t.Error("absolute '**' should NOT match different project")
+	}
+}
