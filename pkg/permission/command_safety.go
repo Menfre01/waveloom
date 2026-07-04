@@ -176,8 +176,8 @@ var DangerousPatterns = []DangerousCommandPattern{
 	{Keywords: []string{"pfctl"}, Label: "pfctl (macOS firewall modification)", FirstTokenOnly: true},
 
 	// ── find -exec / xargs 危险组合 ──
-	{Keywords: []string{"find", "-exec", "chmod"}, Label: "find -exec chmod"},
-	{Keywords: []string{"find", "-exec", "rm"}, Label: "find -exec rm"},
+	{Keywords: []string{"find", "-exec chmod"}, Label: "find -exec chmod"},
+	{Keywords: []string{"find", "-exec rm"}, Label: "find -exec rm"},
 	{Keywords: []string{"find", "-delete"}, Label: "find -delete"},
 	{Keywords: []string{"xargs", "rm"}, Label: "xargs rm", FirstTokenOnly: true},
 	{Keywords: []string{"xargs", "sh"}, Label: "xargs sh", FirstTokenOnly: true},
