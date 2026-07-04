@@ -1716,6 +1716,7 @@ func TestMatchAnyPath_BaseMatch(t *testing.T) {
 }
 
 func TestMatchAnyPath_SuffixMatch(t *testing.T) {
+	skipOnWindows(t)
 	// pattern "src/**" matches any suffix starting with "src/"
 	if !matchAnyPath([]string{"deeply/nested/src/foo"}, []string{"src/**"}) {
 		t.Error("suffix prefix match should work for src/foo")
@@ -1932,6 +1933,7 @@ func TestRunCommand_GuardAsk_Denied(t *testing.T) {
 }
 
 func TestRunCommand_GuardAllow_Executes(t *testing.T) {
+	skipOnWindows(t)
 	dir := tmpDir(t)
 	g := &testGuard{decision: permission.DecisionAllow}
 	l := newTestLoaderWithGuard(dir, dir, g)
@@ -1942,6 +1944,7 @@ func TestRunCommand_GuardAllow_Executes(t *testing.T) {
 }
 
 func TestRunCommand_NoGuard_Executes(t *testing.T) {
+	skipOnWindows(t)
 	dir := tmpDir(t)
 	l := newTestLoader(dir, dir)
 	output := l.runCommand("echo no-guard", dir)
@@ -1951,6 +1954,7 @@ func TestRunCommand_NoGuard_Executes(t *testing.T) {
 }
 
 func TestRunCommand_WhitelistBypassGuard(t *testing.T) {
+	skipOnWindows(t)
 	dir := tmpDir(t)
 	// 白名单命令即使 Guard Deny 也应放行（通过 SetSkillBashWhitelist 注册）
 	g := &testGuard{decision: permission.DecisionDeny, reason: "blocked"}
@@ -1964,6 +1968,7 @@ func TestRunCommand_WhitelistBypassGuard(t *testing.T) {
 }
 
 func TestRunCommand_GuardNil_Executes(t *testing.T) {
+	skipOnWindows(t)
 	dir := tmpDir(t)
 	// nil guard 应直接执行
 	l := NewLoader(dir, dir, "s", "medium", nil)
