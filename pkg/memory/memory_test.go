@@ -367,10 +367,14 @@ func TestLoad_UnreadableDir_IsSkipped(t *testing.T) {
 }
 
 func TestDirChain(t *testing.T) {
-	root := "/a"
-	leaf := "/a/b/c"
+	root := filepath.FromSlash("/a")
+	leaf := filepath.FromSlash("/a/b/c")
 	chain := dirChain(root, leaf)
-	expected := []string{"/a", "/a/b", "/a/b/c"}
+	expected := []string{
+		filepath.FromSlash("/a"),
+		filepath.FromSlash("/a/b"),
+		filepath.FromSlash("/a/b/c"),
+	}
 	if len(chain) != len(expected) {
 		t.Fatalf("expected %d dirs, got %d: %v", len(expected), len(chain), chain)
 	}

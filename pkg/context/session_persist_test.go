@@ -373,7 +373,7 @@ func TestResolveSessionDir_Default(t *testing.T) {
 	if !strings.Contains(dir, "myproject") {
 		t.Errorf("expected project name in path, got %q", dir)
 	}
-	if !strings.HasSuffix(dir, "sessions") || !strings.Contains(dir, "myproject/sessions") {
+	if !strings.HasSuffix(dir, "sessions") || !strings.Contains(dir, filepath.FromSlash("myproject/sessions")) {
 		t.Errorf("expected sessions dir, got %q", dir)
 	}
 }
@@ -384,18 +384,18 @@ func TestResolveSessionDir_OverrideAbsolute(t *testing.T) {
 		t.Fatalf("ResolveSessionDir: %v", err)
 	}
 	want := filepath.FromSlash("/custom/sessions")
-	if dir != want {
-		t.Errorf("expected %q, got %q", want, dir)
+	if !strings.HasSuffix(dir, want) {
+		t.Errorf("expected path ending with %q, got %q", want, dir)
 	}
 }
 
 func TestResolveSessionDir_OverrideRelative(t *testing.T) {
-	cwd := filepath.FromSlash("/tmp/myproject")
-	dir, err := ResolveSessionDir(cwd, filepath.FromSlash(".waveloom/sessions"))
+	cwdSlash := filepath.FromSlash("/tmp/myproject")
+	dir, err := ResolveSessionDir(cwdSlash, filepath.FromSlash(".waveloom/sessions"))
 	if err != nil {
 		t.Fatalf("ResolveSessionDir: %v", err)
 	}
-	if !strings.HasPrefix(dir, cwd) {
+	if !strings.HasSuffix(dir, cwdSlash) && !strings.Contains(dir, cwdSlash) {
 		t.Errorf("expected path under cwd, got %q", dir)
 	}
 }

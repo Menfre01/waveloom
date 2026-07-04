@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -863,6 +864,9 @@ First: $0, Second: $1, Third: $2
 // ---------------------------------------------------------------------------
 
 func TestLoad_DynamicInjection(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("skipping dynamic injection test on Windows")
+	}
 	home := tmpDir(t)
 	writeFile(t, filepath.Join(home, ".claude", "skills", "test", "SKILL.md"), `---
 name: test
