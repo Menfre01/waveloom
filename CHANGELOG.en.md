@@ -1,5 +1,12 @@
 # Changelog
 
+## [v0.1.0-alpha.13] — 2026-07-04
+
+### Fixed
+- **@ parent directory search missing current project**: `doScanRelative` now prepends CWD directory item to avoid 500-item truncation loss; also fixes `../waveloom/` prefix being lost when resolving back to CWD, which broke subsequent child file search
+- **@ / / picker sorting optimization**: Prefix and substring groups now sorted by match position (leftmost first); non-contiguous matches fall to the end; `/` command picker uses same strategy
+- **Expander `ls` pseudo-tool cleanup**: File and directory references now use unified `read_file` permission check, removing dependency on deleted `ls` tool
+
 ## [v0.1.0-alpha.12] — 2026-07-04
 
 ### Added
