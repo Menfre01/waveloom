@@ -181,7 +181,7 @@ const (
 type ToolRiskClass string
 
 const (
-	RiskClassRead    ToolRiskClass = "read"    // 只读：read_file, grep, search_file, ls
+	RiskClassRead    ToolRiskClass = "read"    // 只读：read_file, web_fetch
 	RiskClassWrite   ToolRiskClass = "write"   // 写入：write_file, edit_file
 	RiskClassExecute ToolRiskClass = "execute" // 执行：shell
 	RiskClassSafe    ToolRiskClass = "safe"    // 安全自管理：kill_background_task 等内部工具，默认放行
