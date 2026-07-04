@@ -48,3 +48,21 @@ jobs:
           go-version: "1.25"
       - name: Cross-compile all targets
         run: make release
+
+  windows-build:
+    name: Build (Windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v6
+        with:
+          go-version: "1.25"
+      - name: Build
+        run: go build -o bin/waveloom.exe ./cmd/waveloom/
+      - name: Test
+        run: go test ./... -timeout 120s
+      - name: Integration Test
+        run: go test -tags=integration ./... -timeout 300s
+        continue-on-error: true
+      - name: Lint (go vet)
+        run: go vet ./...

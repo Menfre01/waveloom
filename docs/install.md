@@ -50,6 +50,20 @@ mkdir -p ~/.local/bin && curl -fsSL https://github.com/Menfre01/waveloom/release
 mkdir -p ~/.local/bin && curl -fsSL https://github.com/Menfre01/waveloom/releases/latest/download/waveloom_linux_arm64.tar.gz | tar -xz -C ~/.local/bin waveloom
 ```
 
+**Windows**
+
+需要 [Git for Windows](https://git-scm.com/downloads/win)。打开 PowerShell 运行：
+
+```powershell
+powershell -c "irm https://raw.githubusercontent.com/Menfre01/waveloom/main/install.ps1 | iex"
+```
+
+> 安装到 `%USERPROFILE%\.local\bin`。若该路径不在 PATH 中，执行：
+> ```powershell
+> [Environment]::SetEnvironmentVariable("PATH", $env:PATH + ";$env:USERPROFILE\.local\bin", "User")
+> ```
+> 然后重启终端。
+
 > macOS 首次运行若提示"无法验证开发者"，执行：
 > ```sh
 > xattr -d com.apple.quarantine ~/.local/bin/waveloom
@@ -57,7 +71,7 @@ mkdir -p ~/.local/bin && curl -fsSL https://github.com/Menfre01/waveloom/release
 
 ## 从源码构建
 
-前置条件：**Go 1.25+**。
+前置条件：**Go 1.25+**。Windows 用户还需 `make`（Git for Windows 不自带，可通过 `choco install make` 安装，或直接用 `go build` 替代）。
 
 ```sh
 git clone https://github.com/Menfre01/waveloom.git

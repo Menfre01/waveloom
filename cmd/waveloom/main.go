@@ -17,6 +17,7 @@ import (
 	"github.com/Menfre01/waveloom/pkg/memory"
 	"github.com/Menfre01/waveloom/pkg/permission"
 	"github.com/Menfre01/waveloom/pkg/reference"
+	"github.com/Menfre01/waveloom/pkg/shellutil"
 	"github.com/Menfre01/waveloom/pkg/skill"
 	"github.com/Menfre01/waveloom/pkg/tool"
 )
@@ -395,12 +396,8 @@ func formatEnvironmentSection(results []environment.ProbeResult, cwd, globalPath
 
 	// 报告 shell 工具实际使用的解释器，非用户登录 shell。
 	// 这对 LLM 编写命令语法至关重要（sh ≠ zsh ≠ cmd）。
-	var shellInfo string
-	if runtime.GOOS == "windows" {
-		shellInfo = "cmd /c"
-	} else {
-		shellInfo = "sh -c"
-	}
+	shellBin, _ := shellutil.ShellInterpreter()
+	shellInfo := shellBin + " -c"
 
 	return environment.FormatEnvironmentSection(results, osName, shellInfo, overrides)
 }

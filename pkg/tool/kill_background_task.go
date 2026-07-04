@@ -7,7 +7,6 @@ import (
 	"os"
 	"runtime"
 	"strings"
-	"syscall"
 
 	"github.com/Menfre01/waveloom/pkg/task"
 )
@@ -83,8 +82,7 @@ func (t *KillBackgroundTask) Execute(ctx context.Context, p KillBackgroundTaskPa
 		}
 		_ = proc.Kill()
 	} else {
-		// 负 PID → 杀整个进程组（Setpgid 确保 PGID == PID）
-		_ = syscall.Kill(-pid, syscall.SIGKILL)
+		KillProcessGroupByPID(pid)
 	}
 
 	return &ToolResult{

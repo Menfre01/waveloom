@@ -105,7 +105,7 @@ func isPiped() bool {
 
 // readStdin 读取 stdin 全部内容。
 func readStdin() (string, error) {
-	data, err := os.ReadFile("/dev/stdin")
+	data, err := io.ReadAll(os.Stdin)
 	if err != nil {
 		return "", err
 	}
