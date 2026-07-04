@@ -1,6 +1,6 @@
 # Changelog
 
-## [v0.1.0-alpha.12] — $(date +%Y-%m-%d)
+## [v0.1.0-alpha.12] — 2026-07-04
 
 ### Added
 - **Multi-line input**: Input area upgraded from single-line textinput to multi-line textarea, fixed at 2 lines height with automatic word wrapping; first line shows `›` prefix, subsequent lines use aligned indentation; native terminal real cursor replaces ANSI virtual cursor; layout dynamically calculates input height to prevent HUD挤压
