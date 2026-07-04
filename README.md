@@ -21,7 +21,7 @@
 
 **A terminal Code Agent purpose-built for DeepSeek prefix caching.** Feels like Claude Code — your existing Skills work out of the box. DeepSeek charges up to 120× more for cache misses than hits. Waveloom keeps the System Prompt and message prefix stable at the architecture level, so the longest common prefix stays cache-hot.
 
-**curl one-liner (recommended)**
+**curl one-liner (macOS / Linux)**
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/Menfre01/waveloom/main/install.sh | sh
@@ -34,7 +34,13 @@ brew trust menfre01/tap
 brew install Menfre01/tap/waveloom
 ```
 
-> Supports macOS / Linux, AMD64 & ARM64. Installs to `~/.local/bin`, no sudo needed.
+> Supports macOS / Linux / Windows, AMD64 & ARM64. Installs to `~/.local/bin`, no sudo needed.
+
+**Windows** requires [Git for Windows](https://git-scm.com/downloads/win). Open PowerShell and run:
+
+```powershell
+powershell -c "irm https://raw.githubusercontent.com/Menfre01/waveloom/main/install.ps1 | iex"
+```
 
 Then configure your key and start:
 

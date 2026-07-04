@@ -111,10 +111,11 @@ func (l *Loader) Load() (text string, warnings []string, err error) {
 
 // dirChain 返回从 root 到 leaf（含两端）的目录链。
 func dirChain(root, leaf string) []string {
+	root = filepath.Clean(root)
 	var chain []string
 	for dir := leaf; ; dir = filepath.Dir(dir) {
 		chain = append([]string{dir}, chain...)
-		if dir == root {
+		if filepath.Clean(dir) == root {
 			break
 		}
 	}

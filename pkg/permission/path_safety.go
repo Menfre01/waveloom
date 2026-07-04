@@ -3,6 +3,7 @@ package permission
 import (
 	"fmt"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/Menfre01/waveloom/pkg/pathutil"
@@ -81,6 +82,11 @@ var dangerousDirPrefixes = []string{
 	filepath.Join(string(filepath.Separator), "usr", "sbin") + string(filepath.Separator),
 	filepath.Join(string(filepath.Separator), "Library") + string(filepath.Separator),
 	filepath.Join(string(filepath.Separator), "root") + string(filepath.Separator),
+	// Windows 系统目录（Unix 上永不匹配，无影响）
+	filepath.Join(string(filepath.Separator), "Windows", "System32") + string(filepath.Separator),
+	filepath.Join(string(filepath.Separator), "Windows", "SysWOW64") + string(filepath.Separator),
+	filepath.Join(string(filepath.Separator), "Program Files") + string(filepath.Separator),
+	filepath.Join(string(filepath.Separator), "Program Files (x86)") + string(filepath.Separator),
 }
 
 // dangerousFilePrefixes 是危险文件路径前缀。
@@ -131,8 +137,15 @@ func PathSafetyCheck(path string, workingDirs []string) PathCheckResult {
 	}
 
 	// 2. 危险目录检查（无论是否在工作目录内）
+	// Windows 上需先剥离盘符（如 C:），否则 prefix 匹配会因盘符前缀而漏检。
+	checkPath := evalPath
+	if runtime.GOOS == "windows" {
+		if vol := filepath.VolumeName(evalPath); vol != "" {
+			checkPath = evalPath[len(vol):]
+		}
+	}
 	for _, prefix := range dangerousDirPrefixes {
-		if strings.HasPrefix(evalPath, prefix) {
+		if strings.HasPrefix(checkPath, prefix) {
 			return PathCheckResult{
 				Level:          PathDangerous,
 				Message:        "dangerous system path: " + prefix,
@@ -143,7 +156,7 @@ func PathSafetyCheck(path string, workingDirs []string) PathCheckResult {
 
 	// 3. 危险文件前缀检查
 	for _, prefix := range dangerousFilePrefixes {
-		if strings.HasPrefix(evalPath, prefix) || strings.Contains(evalPath, prefix) {
+		if strings.HasPrefix(checkPath, prefix) || strings.Contains(checkPath, prefix) {
 			return PathCheckResult{
 				Level:          PathDangerous,
 				Message:        "dangerous path: .ssh directory",

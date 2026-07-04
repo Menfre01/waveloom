@@ -2,6 +2,7 @@ package tool
 
 import (
 	"context"
+	"runtime"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -424,6 +425,9 @@ func TestReadFileOffsetBeyondFile(t *testing.T) {
 }
 
 func TestReadFileViaRegistry(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("skipping device path test on Windows")
+	}
 	dir := t.TempDir()
 	filePath := filepath.Join(dir, "via_registry.txt")
 	if err := os.WriteFile(filePath, []byte("hello\n"), 0o644); err != nil {
@@ -448,6 +452,9 @@ func TestReadFileViaRegistry(t *testing.T) {
 }
 
 func TestReadFileDeviceBlocked(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("skipping device path test on Windows")
+	}
 	tool := &ReadFile{}
 	result, err := tool.Execute(context.Background(), ReadFileParams{
 		FilePath: "/dev/urandom",

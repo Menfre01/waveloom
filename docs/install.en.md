@@ -50,6 +50,20 @@ mkdir -p ~/.local/bin && curl -fsSL https://github.com/Menfre01/waveloom/release
 mkdir -p ~/.local/bin && curl -fsSL https://github.com/Menfre01/waveloom/releases/latest/download/waveloom_linux_arm64.tar.gz | tar -xz -C ~/.local/bin waveloom
 ```
 
+**Windows**
+
+Requires [Git for Windows](https://git-scm.com/downloads/win). Open PowerShell and run:
+
+```powershell
+powershell -c "irm https://raw.githubusercontent.com/Menfre01/waveloom/main/install.ps1 | iex"
+```
+
+> Installs to `%USERPROFILE%\.local\bin`. If the directory isn't in PATH, run:
+> ```powershell
+> [Environment]::SetEnvironmentVariable("PATH", $env:PATH + ";$env:USERPROFILE\.local\bin", "User")
+> ```
+> then restart the terminal.
+
 > macOS Gatekeeper? Allow it with:
 > ```sh
 > xattr -d com.apple.quarantine ~/.local/bin/waveloom
@@ -57,7 +71,7 @@ mkdir -p ~/.local/bin && curl -fsSL https://github.com/Menfre01/waveloom/release
 
 ## Build from Source
 
-Prerequisites: **Go 1.25+**.
+Prerequisites: **Go 1.25+**. Windows users also need `make` (not bundled with Git for Windows — install via `choco install make`, or use `go build` directly).
 
 ```sh
 git clone https://github.com/Menfre01/waveloom.git

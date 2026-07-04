@@ -328,7 +328,7 @@ func formatRefBlock(r ResolvedRef, cwd string) string {
 	}
 }
 
-// relativePath 返回相对于 cwd 的路径，若不可相对化则返回原路径。
+// relativePath 返回相对于 cwd 的路径（Unix 风格），若不可相对化则返回原路径。
 func relativePath(absPath string, cwd string) string {
 	rel, err := filepath.Rel(cwd, absPath)
 	if err != nil {
@@ -336,7 +336,7 @@ func relativePath(absPath string, cwd string) string {
 	}
 	// Prefer relative path when it's cleaner
 	if !strings.HasPrefix(rel, "..") {
-		return rel
+		return filepath.ToSlash(rel)
 	}
 	return absPath
 }

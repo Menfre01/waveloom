@@ -2,6 +2,12 @@
 
 Thank you for contributing!
 
+## Prerequisites
+
+- **Go 1.25+**
+- **Windows users**: [Git for Windows](https://git-scm.com/downloads/win) is required (Waveloom uses Git Bash for shell command execution) plus `make` (not bundled with Git for Windows — install via `choco install make` or use `go build` / `go test` directly)
+- **macOS users**: Xcode Command Line Tools (`xcode-select --install`)
+
 ## Quick Start
 
 ```sh
