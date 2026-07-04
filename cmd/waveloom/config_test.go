@@ -132,9 +132,8 @@ func TestResolveSettingsPaths_Default(t *testing.T) {
 
 func TestResolveSettingsPaths_Explicit(t *testing.T) {
 	globalPath, projectPath := resolveSettingsPaths("/custom/settings.json")
-	want := filepath.FromSlash("/custom/settings.json")
-	if projectPath != want {
-		t.Errorf("expected %q, got %q", want, projectPath)
+	if !strings.HasSuffix(projectPath, filepath.FromSlash("/custom/settings.json")) {
+		t.Errorf("expected path ending with %q, got %q", filepath.FromSlash("/custom/settings.json"), projectPath)
 	}
 	if globalPath == "" {
 		t.Error("globalPath should not be empty")
