@@ -1932,28 +1932,31 @@ func TestRunCommand_GuardAsk_Denied(t *testing.T) {
 }
 
 func TestRunCommand_GuardAllow_Executes(t *testing.T) {
+	dir := tmpDir(t)
 	g := &testGuard{decision: permission.DecisionAllow}
-	l := newTestLoaderWithGuard("/tmp", "/tmp", g)
-	output := l.runCommand("echo success", "/tmp")
+	l := newTestLoaderWithGuard(dir, dir, g)
+	output := l.runCommand("echo success", dir)
 	if !strings.Contains(output, "success") {
 		t.Errorf("expected command output, got: %q", output)
 	}
 }
 
 func TestRunCommand_NoGuard_Executes(t *testing.T) {
-	l := newTestLoader("/tmp", "/tmp")
-	output := l.runCommand("echo no-guard", "/tmp")
+	dir := tmpDir(t)
+	l := newTestLoader(dir, dir)
+	output := l.runCommand("echo no-guard", dir)
 	if !strings.Contains(output, "no-guard") {
 		t.Errorf("expected command output without guard, got: %q", output)
 	}
 }
 
 func TestRunCommand_WhitelistBypassGuard(t *testing.T) {
+	dir := tmpDir(t)
 	// 白名单命令即使 Guard Deny 也应放行（通过 SetSkillBashWhitelist 注册）
 	g := &testGuard{decision: permission.DecisionDeny, reason: "blocked"}
-	l := newTestLoaderWithGuard("/tmp", "/tmp", g)
+	l := newTestLoaderWithGuard(dir, dir, g)
 	l.setGuardSkillWhitelist([]string{"echo *"})
-	output := l.runCommand("echo whitelisted", "/tmp")
+	output := l.runCommand("echo whitelisted", dir)
 	l.clearGuardSkillWhitelist()
 	if !strings.Contains(output, "whitelisted") {
 		t.Errorf("whitelisted command should bypass guard, got: %q", output)
@@ -1961,9 +1964,10 @@ func TestRunCommand_WhitelistBypassGuard(t *testing.T) {
 }
 
 func TestRunCommand_GuardNil_Executes(t *testing.T) {
+	dir := tmpDir(t)
 	// nil guard 应直接执行
-	l := NewLoader("/tmp", "/tmp", "s", "medium", nil)
-	output := l.runCommand("echo nil-guard", "/tmp")
+	l := NewLoader(dir, dir, "s", "medium", nil)
+	output := l.runCommand("echo nil-guard", dir)
 	if !strings.Contains(output, "nil-guard") {
 		t.Errorf("expected output with nil guard, got: %q", output)
 	}
