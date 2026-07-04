@@ -79,6 +79,7 @@ type ToolCallResult struct {
 	ErrorKind    string // 失败时的错误分类（如 file_not_found）
 	DurationMs   int64  // 执行耗时（毫秒）
 	Denied       bool   // 工具因权限检查被拒（未实际执行）
+	Fatal        bool   // 错误是否致命（ErrorClassFatal），TUI 据此区分红/金色样式
 
 	// DiffHunks 为 edit_file 等工具提供的结构化 diff，供 TUI 渲染带行号的统一 diff 视图。
 	// nil 表示不适用。

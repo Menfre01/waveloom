@@ -319,15 +319,20 @@ func (i modelPickerItem) FilterValue() string { return i.modelID }
 // commandPickerItem 是 slash 命令选择器列表项。
 type commandPickerItem struct {
 	name        string
+	aliases     []string
 	description string
 	args        string // 参数占位符，如 "model"；无参数时为空
 }
 
 func (i commandPickerItem) Title() string {
+	label := i.name
 	if i.args != "" {
-		return "/" + i.name + " [" + i.args + "] " + i.description
+		label = i.name + " [" + i.args + "]"
 	}
-	return "/" + i.name + " " + i.description
+	if len(i.aliases) > 0 {
+		label += " / " + strings.Join(i.aliases, " / ")
+	}
+	return "/" + label + " " + i.description
 }
 func (i commandPickerItem) Description() string { return "" }
 func (i commandPickerItem) FilterValue() string { return i.name }
@@ -1998,6 +2003,13 @@ func (m *model) updateCommandPickerFilter() {
 	for _, cmd := range m.commandPickerItems {
 		if filter == "" || strings.Contains(strings.ToLower(cmd.Name), filter) {
 			filtered = append(filtered, cmd)
+			continue
+		}
+		for _, alias := range cmd.Aliases {
+			if strings.Contains(strings.ToLower(alias), filter) {
+				filtered = append(filtered, cmd)
+				break
+			}
 		}
 	}
 
@@ -2008,7 +2020,7 @@ func (m *model) updateCommandPickerFilter() {
 func (m *model) buildCommandPickerList(items []slashcommand.CommandInfo) {
 	listItems := make([]list.Item, len(items))
 	for i, cmd := range items {
-		listItems[i] = commandPickerItem{name: cmd.Name, description: cmd.Description, args: cmd.Args}
+		listItems[i] = commandPickerItem{name: cmd.Name, aliases: cmd.Aliases, description: cmd.Description, args: cmd.Args}
 	}
 
 	height := len(listItems)
@@ -2869,6 +2881,7 @@ func (m *model) handleToolResult(ev agentloop.ToolCallResult) {
 			p.ToolErrorKind = ev.ErrorKind
 			p.ToolDurMs = ev.DurationMs
 			p.ToolDenied = ev.Denied
+			p.ToolFatal = ev.Fatal
 			p.DiffHunks = ev.DiffHunks
 		if ev.IsError() || ev.Denied {
 			p.State = stateError
@@ -4668,6 +4681,15 @@ func (m *model) handleSlashCommand(input string) tea.Cmd {
 			m.hudLatMs = 0
 			m.lastPromptTokens = 0
 			m.focusIndex = -1
+			// 重新注册技能命令，确保技能列表刷新
+			if m.skillLoader != nil {
+				homeDir, _ := os.UserHomeDir()
+				skillLoader := skill.NewLoader(m.cwd, homeDir, "", "medium", m.guard)
+				m.skillLoader = skillLoader
+				creator := &tuiSessionCreator{m: m}
+				lister := &tuiModelLister{client: m.llmClient}
+				m.slashRegistry = newSlashRegistry(creator, m.settingsStore, lister, m.hudModel, skillLoader, m.registry, m.slashMessages)
+			}
 			m.paras = append(m.paras, Paragraph{
 				Type:      paraSystem,
 				State:     stateDone,
