@@ -20,6 +20,10 @@ No API Key detected. Run `waveloom setup` to complete first-time configuration, 
 
 Run `xattr -d com.apple.quarantine ~/.local/bin/waveloom` to remove the quarantine attribute.
 
+**Q: "Git for Windows is required" error on Windows?**
+
+Waveloom requires Git Bash for a Unix-compatible shell environment. Download and install Git for Windows from [git-scm.com](https://git-scm.com/downloads/win) (default options are fine). If already installed in a non-standard location, set the `WAVELOOM_GIT_BASH_PATH` environment variable pointing to `bash.exe`.
+
 **Q: How can I verify prefix caching is working?**
 
 The TUI footer status bar shows the cache hit rate. You can also check `.waveloom/waveloom.log` (requires `--verbose`) for `cache_hit_tokens` info.

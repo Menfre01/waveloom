@@ -28,8 +28,12 @@ func TestBuildDownloadURL_Format(t *testing.T) {
 	if !strings.Contains(url, runtime.GOARCH) {
 		t.Errorf("URL should contain GOARCH %q: %s", runtime.GOARCH, url)
 	}
-	if !strings.HasSuffix(url, ".tar.gz") {
-		t.Errorf("URL should end with .tar.gz: %s", url)
+	wantSuffix := ".tar.gz"
+	if runtime.GOOS == "windows" {
+		wantSuffix = ".zip"
+	}
+	if !strings.HasSuffix(url, wantSuffix) {
+		t.Errorf("URL should end with %s: %s", wantSuffix, url)
 	}
 	if !strings.Contains(url, "github.com/Menfre01/waveloom") {
 		t.Errorf("URL should contain repo path: %s", url)

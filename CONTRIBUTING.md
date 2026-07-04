@@ -2,6 +2,12 @@
 
 感谢你的贡献！
 
+## 前置条件
+
+- **Go 1.25+**
+- **Windows 用户**：需要 [Git for Windows](https://git-scm.com/downloads/win)（Waveloom 通过 Git Bash 执行 shell 命令）和 `make`（Git for Windows 不自带，可通过 `choco install make` 安装或直接用 `go build` / `go test` 替代）
+- **macOS 用户**：Xcode Command Line Tools（`xcode-select --install`）
+
 ## 快速开始
 
 ```sh

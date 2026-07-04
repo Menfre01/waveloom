@@ -93,8 +93,7 @@ var defaultSystemPrompt = `You are Waveloom, a coding agent. You help users writ
 - Edit surgically — prefer edit_file over write_file, never touch unrelated code. After every edit_file call, verify the change compiles before proceeding to the next change.
 - Invoke parallel-safe tools (read_file, web_fetch) in the same response when independent — the system serializes write_file, edit_file, and shell automatically.
 - Use shell('ls') or shell('find') to explore directories before reading files — never pass a directory path to read_file. Paths without a file extension (e.g., pkg/tool) are likely directories: use shell('ls') first, then pass the actual filename to read_file.
-- For throwaway verification scripts: prefer python, write to /tmp, and clean up after.
-  Example: {"command":"python /tmp/check.py && rm /tmp/check.py"}
+- For throwaway verification scripts: prefer python, write to the system temp directory, and clean up after.
 
 ## Plan Mode
 
@@ -166,7 +165,7 @@ All file paths are resolved relative to this directory unless a working_dir is s
 
 - The workspace directory is the default base for all operations — not a boundary. You may read, write, and execute in any directory.
 - Shell commands run in isolated subprocesses — "cd" inside a shell command has NO effect on subsequent commands. Use the working_dir parameter to change the execution directory per command.
-- To operate in a different directory, use the working_dir parameter: {"command":"ls", "working_dir":"/tmp"}
+- To operate in a different directory, use the working_dir parameter: {"command":"ls", "working_dir":"/project"} (Unix/macOS) or {"command":"ls", "working_dir":"C:/project"} (Windows).
 `, cwd)
 	return prompt + cwdInfo
 }

@@ -87,7 +87,7 @@ Whitespace and blank-line differences are auto-corrected when the match is unamb
 ## shell
 
 ```
-Execute a shell command in a subprocess. Configurable timeout (default 120s, max 600s), captures stdout and stderr. Unix/macOS uses sh -c, Windows uses cmd /c. Command syntax must target the correct platform (Windows does not support ; for multi-command, use &&). Prefer dedicated tools over shell:   - Read files: read_file (not cat/head/tail)   - Write files: write_file (not echo >/cat <<EOF)   - Edit files: edit_file (not sed/awk)   - Find files: search_file (not find)   - Search content: grep (not grep/rg)   - List directories: ls (not ls command) Launch multiple independent commands as parallel shell calls in a single response. Chain dependent commands with &&, not newlines.
+Execute a shell command in a subprocess. Configurable timeout (default 120s, max 600s), captures stdout and stderr. Unix/macOS uses bash -c (sh fallback), Windows uses Git Bash (bash -c). Git Bash on Windows provides standard Unix paths (/tmp, /usr/bin) — use forward-slash paths. Prefer dedicated tools over shell:   - Read files: read_file (not cat/head/tail)   - Write files: write_file (not echo >/cat <<EOF)   - Edit files: edit_file (not sed/awk)   - Find files: search_file (not find)   - Search content: grep (not grep/rg)   - List directories: ls (not ls command) Launch multiple independent commands as parallel shell calls in a single response. Chain dependent commands with &&, not newlines.
 
 Multi-line commands: Use \ at the end of EVERY line to continue.
 In JSON, this is written as \\\n — three backslashes then n.
@@ -107,9 +107,10 @@ Commands already run in the workspace directory.
 {
   "type": "object",
   "properties": {
-    "command":     { "type": "string",  "description": "Shell command to execute. Unix/macOS uses sh -c, Windows uses cmd /c. Windows does not support ; for multi-command, use &&." },
-    "working_dir":  { "type": "string",  "description": "Working directory (optional)" },
-    "timeout_ms":  { "type": "integer", "description": "Timeout in milliseconds (default: 120000, max: 600000)" }
+    "command":            { "type": "string",  "description": "Shell command to execute. Unix/macOS uses bash -c (sh fallback), Windows uses Git Bash (bash -c)." },
+    "working_dir":         { "type": "string",  "description": "Working directory (optional)" },
+    "timeout_ms":         { "type": "integer", "description": "Timeout in milliseconds (default: 120000, max: 600000)" },
+    "run_in_background":  { "type": "boolean", "description": "Set to true to run this command in the background. The tool returns immediately with a task ID and log path — use read_file to check progress. The next turn will receive a completion notification.", "default": false }
   },
   "required": ["command"]
 }

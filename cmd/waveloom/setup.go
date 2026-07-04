@@ -19,12 +19,13 @@ import (
 // ---------------------------------------------------------------------------
 
 type setupState struct {
-	theme  string
-	locale string
-	prov   string
-	model  string
-	apiKey string
-	lc     *Messages
+	theme      string
+	locale     string
+	prov       string
+	model      string
+	apiKey     string
+	configPath string
+	lc         *Messages
 }
 
 // ---------------------------------------------------------------------------
@@ -397,6 +398,7 @@ func (m *setupModel) saveAndFinish() {
 		return
 	}
 	configPath := filepath.Join(homeDir, ".waveloom", "settings.json")
+	m.state.configPath = configPath
 	_ = os.MkdirAll(filepath.Dir(configPath), 0o755)
 
 	baseURL := "https://api.deepseek.com"
@@ -464,7 +466,7 @@ func runSetup(loc Locale) {
 	}
 	lc := m.state.lc
 	fmt.Printf("\n  %s\n\n", lc.SetupDoneTitle)
-	fmt.Printf("  %s\n", lc.SetupDoneConfigSaved)
+	fmt.Printf("  %s\n", fmt.Sprintf(lc.SetupDoneConfigSaved, m.state.configPath))
 	fmt.Printf("  Language:  %s\n", m.state.locale)
 	fmt.Printf("  Theme:     %s\n", m.state.theme)
 	fmt.Printf("  Provider:  %s\n", m.state.prov)
