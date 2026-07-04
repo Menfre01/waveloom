@@ -176,9 +176,9 @@ var DangerousPatterns = []DangerousCommandPattern{
 	{Keywords: []string{"pfctl"}, Label: "pfctl (macOS firewall modification)", FirstTokenOnly: true},
 
 	// ── find -exec / xargs 危险组合 ──
-	{Keywords: []string{"find", "-exec chmod"}, Label: "find -exec chmod"},
-	{Keywords: []string{"find", "-exec rm"}, Label: "find -exec rm"},
-	{Keywords: []string{"find", "-delete"}, Label: "find -delete"},
+	{Keywords: []string{"find", "-exec chmod"}, Label: "find -exec chmod", FirstTokenOnly: true},
+	{Keywords: []string{"find", "-exec rm"}, Label: "find -exec rm", FirstTokenOnly: true},
+	{Keywords: []string{"find", "-delete"}, Label: "find -delete", FirstTokenOnly: true},
 	{Keywords: []string{"xargs", "rm"}, Label: "xargs rm", FirstTokenOnly: true},
 	{Keywords: []string{"xargs", "sh"}, Label: "xargs sh", FirstTokenOnly: true},
 	{Keywords: []string{"xargs", "bash"}, Label: "xargs bash", FirstTokenOnly: true},
@@ -332,8 +332,14 @@ func CommandSafetyCheck(command string) CommandCheckResult {
 
 	// 2. 危险模式匹配（最高优先级，先于已知安全命令检查）
 	//    即使首命令在安全列表中，危险模式仍可能命中（如 git + find -exec rm 的组合等）
+	//
+	//    引号防护：AND 全量匹配后（dp.Matches），额外检查至少一个「非首 keyword」
+	//    出现在引号外。避免 commit message、grep 搜索模式等引号内参数值误伤。
+	//    首 keyword（通常是命令名）即使自然在引号外，flags/paths 等后续 keywords
+	//    全部在引号内时也不拦截——因为它们只是参数值里的文字，非真实命令。
+	unquoted := extractUnquotedContent(command)
 	for _, dp := range DangerousPatterns {
-		if dp.Matches(command) {
+		if dp.Matches(command) && hasNonFirstKeywordOutsideQuotes(dp.Keywords, unquoted) {
 			return CommandCheckResult{
 				Level:   RiskHigh,
 				Pattern: dp.Label,
@@ -497,6 +503,56 @@ func collapseHorizontalWhitespace(s string) string {
 		inSpace = false
 	}
 	return b.String()
+}
+
+// ---------------------------------------------------------------------------
+// extractUnquotedContent / hasNonFirstKeywordOutsideQuotes — 引号感知匹配辅助
+// ---------------------------------------------------------------------------
+
+// extractUnquotedContent 返回命令中所有引号外的字符序列。
+// 保留引号定界符但剔除定界符之间的内容，用于判断 keyword 是否在命令
+// token 中（而非引号内参数值里）。
+// 注意：不处理转义引号，对于 LLM 生成的命令已足够。
+func extractUnquotedContent(command string) string {
+	var b strings.Builder
+	b.Grow(len(command))
+	inSingle := false
+	inDouble := false
+	for i := 0; i < len(command); i++ {
+		ch := command[i]
+		if ch == '\'' && !inDouble {
+			inSingle = !inSingle
+		} else if ch == '"' && !inSingle {
+			inDouble = !inDouble
+		} else if !inSingle && !inDouble {
+			b.WriteByte(ch)
+		}
+		// 引号内字符全部跳过
+	}
+	return b.String()
+}
+
+// hasNonFirstKeywordOutsideQuotes 检查至少一个「非首 keyword」出现在 unquoted 中。
+// 对于单 keyword 模式，检查首 keyword 本身是否在引号外。
+//
+// 设计意图：首 keyword 通常是命令名（如 git、chmod、rm），自然在引号外；
+// 真正携带危险语义的是后续 keywords（如 --force、777、-rf /）。
+// 如果所有非首 keywords 都在引号内，说明是参数值中的文字，而非真实命令。
+func hasNonFirstKeywordOutsideQuotes(keywords []string, unquoted string) bool {
+	if len(keywords) == 0 {
+		return false
+	}
+	if len(keywords) == 1 {
+		// 单 keyword 模式：检查 keyword 本身是否在引号外
+		return strings.Contains(unquoted, keywords[0])
+	}
+	// 多 keyword 模式：跳过首 keyword，检查后续 keywords
+	for _, kw := range keywords[1:] {
+		if strings.Contains(unquoted, kw) {
+			return true
+		}
+	}
+	return false
 }
 
 // extractFirstToken 取命令行第一个 token（空格分隔）。
