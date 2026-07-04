@@ -3,6 +3,7 @@ package skill
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -50,6 +51,9 @@ func TestSkillWhitelistPersistsAfterLoad(t *testing.T) {
 // TestSkillWhitelistFullPathMatch 验证核心场景：
 // pattern "gstack-update-check *" 匹配完整脚本路径，Load 时及 Load 后均放行。
 func TestSkillWhitelistFullPathMatch(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("skipping gstack integration test on Windows")
+	}
 	home := tmpDir(t)
 
 	// 创建模拟脚本
