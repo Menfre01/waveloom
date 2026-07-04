@@ -4593,9 +4593,6 @@ func (m *model) syncThemeComponents() {
 	inputStyles.Blurred.Prompt = lipgloss.NewStyle().Foreground(colorUser).Bold(true)
 	inputStyles.Focused.Placeholder = lipgloss.NewStyle().Foreground(colorMuted)
 	inputStyles.Blurred.Placeholder = lipgloss.NewStyle().Foreground(colorMuted)
-	// CursorLine 用于 placeholder 换行后的第二行起，需与 Placeholder 颜色一致
-	inputStyles.Focused.CursorLine = lipgloss.NewStyle().Foreground(colorMuted)
-	inputStyles.Blurred.CursorLine = lipgloss.NewStyle().Foreground(colorMuted)
 	inputStyles.Cursor.Blink = true
 	m.input.SetStyles(inputStyles)
 
