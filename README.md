@@ -21,17 +21,17 @@
 
 **A terminal Code Agent purpose-built for DeepSeek prefix caching.** Feels like Claude Code — your existing Skills work out of the box. DeepSeek charges up to 120× more for cache misses than hits. Waveloom keeps the System Prompt and message prefix stable at the architecture level, so the longest common prefix stays cache-hot.
 
-**Homebrew (recommended)**
+**curl one-liner (recommended)**
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/Menfre01/waveloom/main/install.sh | sh
+```
+
+**Homebrew**
 
 ```sh
 brew trust menfre01/tap
 brew install Menfre01/tap/waveloom
-```
-
-**curl one-liner**
-
-```sh
-curl -fsSL https://raw.githubusercontent.com/Menfre01/waveloom/main/install.sh | sh
 ```
 
 > Supports macOS / Linux, AMD64 & ARM64. Installs to `~/.local/bin`, no sudo needed.
