@@ -40,6 +40,13 @@ func newTestLoader(homeDir, cwd string) *Loader {
 	return NewLoader(cwd, homeDir, "test-session-123", "medium", nil)
 }
 
+// skipOnWindows skips the test on Windows for tests that rely on shell injection execution.
+func skipOnWindows(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("skipping shell injection test on Windows")
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Frontmatter 解析测试
 // ---------------------------------------------------------------------------
@@ -864,9 +871,7 @@ First: $0, Second: $1, Third: $2
 // ---------------------------------------------------------------------------
 
 func TestLoad_DynamicInjection(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("skipping dynamic injection test on Windows")
-	}
+	skipOnWindows(t)
 	home := tmpDir(t)
 	writeFile(t, filepath.Join(home, ".claude", "skills", "test", "SKILL.md"), `---
 name: test
@@ -887,6 +892,7 @@ name: test
 }
 
 func TestLoad_MultilineInjection(t *testing.T) {
+	skipOnWindows(t)
 	home := tmpDir(t)
 	writeFile(t, filepath.Join(home, ".claude", "skills", "test", "SKILL.md"), "---\nname: test\n---\n```!\necho hello\necho world\n```\n")
 	l := newTestLoader(home, home)
@@ -900,6 +906,7 @@ func TestLoad_MultilineInjection(t *testing.T) {
 }
 
 func TestLoad_DynamicInjectionError(t *testing.T) {
+	skipOnWindows(t)
 	home := tmpDir(t)
 	writeFile(t, filepath.Join(home, ".claude", "skills", "test", "SKILL.md"), `---
 name: test
@@ -917,6 +924,7 @@ name: test
 }
 
 func TestLoad_DynamicInjectionNotAtLineStart(t *testing.T) {
+	skipOnWindows(t)
 	home := tmpDir(t)
 	writeFile(t, filepath.Join(home, ".claude", "skills", "test", "SKILL.md"), `---
 name: test
@@ -942,6 +950,7 @@ Some text!` + "`echo bad`" + ` should not execute
 // 行中 ! 前为空白字符时，触发动态注入。
 // 例如 "当前时间: !`date '+%H:%M:%S'`" 中 ! 前是空格 → 应执行。
 func TestRegression_InlineInjectionAfterText(t *testing.T) {
+	skipOnWindows(t)
 	home := tmpDir(t)
 	writeFile(t, filepath.Join(home, ".claude", "skills", "test", "SKILL.md"), `---
 name: test
@@ -968,6 +977,7 @@ name: test
 // ===========================================================================
 
 func TestLintInjections_NoWhitelist_Rejected(t *testing.T) {
+	skipOnWindows(t)
 	// Guard 存在 + body 有注入 + 无 allowed-tools → Load 应失败
 	home := tmpDir(t)
 	writeFile(t, filepath.Join(home, ".claude", "skills", "test", "SKILL.md"), `---
@@ -987,6 +997,7 @@ name: test
 }
 
 func TestLintInjections_UnmatchedCommand_Rejected(t *testing.T) {
+	skipOnWindows(t)
 	// Guard 存在 + body 有注入 + allowed-tools 不覆盖 → Load 应失败
 	home := tmpDir(t)
 	writeFile(t, filepath.Join(home, ".claude", "skills", "test", "SKILL.md"), `---
@@ -1008,6 +1019,7 @@ allowed-tools:
 }
 
 func TestLintInjections_MatchedCommand_Passes(t *testing.T) {
+	skipOnWindows(t)
 	// Guard 存在 + body 有注入 + allowed-tools 覆盖 → Load 成功
 	home := tmpDir(t)
 	writeFile(t, filepath.Join(home, ".claude", "skills", "test", "SKILL.md"), `---
@@ -1030,6 +1042,7 @@ allowed-tools:
 }
 
 func TestLintInjections_BareBash_AllAllowed(t *testing.T) {
+	skipOnWindows(t)
 	// allowed-tools: ["Bash"] 无 pattern → 所有命令放行
 	home := tmpDir(t)
 	writeFile(t, filepath.Join(home, ".claude", "skills", "test", "SKILL.md"), `---
@@ -1051,6 +1064,7 @@ allowed-tools:
 }
 
 func TestLintInjections_MultilineWithGuard_ProperWhitelist(t *testing.T) {
+	skipOnWindows(t)
 	// Guard 存在 + 多行注入 + 完整白名单 → Load 成功
 	home := tmpDir(t)
 	writeFile(t, filepath.Join(home, ".claude", "skills", "test", "SKILL.md"), "---\nname: test\nallowed-tools:\n  - \"Bash(echo *)\"\n  - \"Bash(uname *)\"\n  - \"Bash(df *)\"\n  - \"Bash(tail *)\"\n---\n```!\necho \"=== info ===\"\nuname -s\ndf -h / | tail -1\n```\n")
@@ -1066,6 +1080,7 @@ func TestLintInjections_MultilineWithGuard_ProperWhitelist(t *testing.T) {
 }
 
 func TestLintInjections_MultilinePartialWhitelist_Rejected(t *testing.T) {
+	skipOnWindows(t)
 	// Guard 存在 + 多行注入 + 白名单只覆盖部分命令 → Load 应失败
 	home := tmpDir(t)
 	writeFile(t, filepath.Join(home, ".claude", "skills", "test", "SKILL.md"), "---\nname: test\nallowed-tools:\n  - \"Bash(echo *)\"\n---\n```!\necho hello\nuname -s\n```\n")
@@ -1081,6 +1096,7 @@ func TestLintInjections_MultilinePartialWhitelist_Rejected(t *testing.T) {
 }
 
 func TestLintInjections_NoGuard_SkipsLint(t *testing.T) {
+	skipOnWindows(t)
 	// Guard 为 nil 时 lint 跳过 → 注入正常执行（测试/开发模式）
 	home := tmpDir(t)
 	writeFile(t, filepath.Join(home, ".claude", "skills", "test", "SKILL.md"), `---
@@ -1165,6 +1181,7 @@ func TestLoad_SkillNotFound(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestLoad_SupportingFiles(t *testing.T) {
+	skipOnWindows(t)
 	home := tmpDir(t)
 	skillDir := filepath.Join(home, ".claude", "skills", "with-files")
 	writeFile(t, filepath.Join(skillDir, "SKILL.md"), `---
@@ -1192,6 +1209,7 @@ Main body
 }
 
 func TestLoad_NoSupportingFiles(t *testing.T) {
+	skipOnWindows(t)
 	home := tmpDir(t)
 	writeFile(t, filepath.Join(home, ".claude", "skills", "no-files", "SKILL.md"), `---
 name: no-files

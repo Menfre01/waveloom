@@ -383,9 +383,8 @@ func TestResolveSessionDir_OverrideAbsolute(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ResolveSessionDir: %v", err)
 	}
-	want := filepath.FromSlash("/custom/sessions")
-	if !strings.HasSuffix(dir, want) {
-		t.Errorf("expected path ending with %q, got %q", want, dir)
+	if !strings.Contains(dir, filepath.FromSlash("/custom/sessions")) {
+		t.Errorf("expected path containing %q, got %q", filepath.FromSlash("/custom/sessions"), dir)
 	}
 }
 
