@@ -1997,21 +1997,76 @@ func (m *model) updateCommandPickerFilter() {
 	m.commandPickerFilter = extractFilterAfterSlash(m.input.Value())
 
 	filter := strings.ToLower(m.commandPickerFilter)
-	var filtered []slashcommand.CommandInfo
+	if filter == "" {
+		m.buildCommandPickerList(m.commandPickerItems)
+		return
+	}
+
+	// 为每个命令计算最佳匹配：prefix 优先，然后按匹配位置（越左越优先）+ 字母序
+	var matches []cmdMatch
 	for _, cmd := range m.commandPickerItems {
-		if filter == "" || strings.Contains(strings.ToLower(cmd.Name), filter) {
-			filtered = append(filtered, cmd)
-			continue
-		}
-		for _, alias := range cmd.Aliases {
-			if strings.Contains(strings.ToLower(alias), filter) {
-				filtered = append(filtered, cmd)
-				break
-			}
+		match := bestCommandMatch(filter, cmd)
+		if match.position >= 0 {
+			matches = append(matches, match)
 		}
 	}
 
+	sort.Slice(matches, func(i, j int) bool {
+		if matches[i].isPrefix != matches[j].isPrefix {
+			return matches[i].isPrefix
+		}
+		if matches[i].position != matches[j].position {
+			return matches[i].position < matches[j].position
+		}
+		return matches[i].cmd.Name < matches[j].cmd.Name
+	})
+
+	filtered := make([]slashcommand.CommandInfo, len(matches))
+	for i, m := range matches {
+		filtered[i] = m.cmd
+	}
+
 	m.buildCommandPickerList(filtered)
+}
+
+// cmdMatch 是命令匹配的中间结果。
+type cmdMatch struct {
+	cmd      slashcommand.CommandInfo
+	isPrefix bool
+	position int
+}
+
+// bestCommandMatch 计算命令与 filter 的最佳匹配。
+// position = -1 表示不匹配。
+func bestCommandMatch(filter string, cmd slashcommand.CommandInfo) cmdMatch {
+	m := cmdMatch{cmd: cmd, position: -1}
+
+	check := func(s string) {
+		sl := strings.ToLower(s)
+		idx := strings.Index(sl, filter)
+		if idx < 0 {
+			return
+		}
+		isPrefix := idx == 0 && strings.HasPrefix(sl, filter)
+		better := false
+		if m.position < 0 {
+			better = true
+		} else if isPrefix && !m.isPrefix {
+			better = true
+		} else if isPrefix == m.isPrefix && idx < m.position {
+			better = true
+		}
+		if better {
+			m.isPrefix = isPrefix
+			m.position = idx
+		}
+	}
+
+	check(cmd.Name)
+	for _, alias := range cmd.Aliases {
+		check(alias)
+	}
+	return m
 }
 
 // buildCommandPickerList 从 CommandInfo 列表构建 bubbles/list 组件。
@@ -2342,7 +2397,8 @@ func doScanRelative(ctx context.Context, registry tool.Registry, cwd, filter str
 
 	searchRoot := "."
 	searchDir := cwd
-	if dirPrefix := extractDirPrefix(filter); dirPrefix != "" && dirPrefix != "." {
+	dirPrefix := extractDirPrefix(filter)
+	if dirPrefix != "" && dirPrefix != "." {
 		resolved := dirPrefix
 		if !filepath.IsAbs(resolved) {
 			resolved = filepath.Join(cwd, resolved)
@@ -2387,10 +2443,6 @@ func doScanRelative(ctx context.Context, registry tool.Registry, cwd, filter str
 
 	files := doSearch("*")
 
-	if len(files) == 0 {
-		return nil
-	}
-
 	seenDirs := make(map[string]bool)
 	var items []pickerItem
 
@@ -2420,6 +2472,41 @@ func doScanRelative(ctx context.Context, registry tool.Registry, cwd, filter str
 			})
 			dir = filepath.Dir(dir)
 		}
+	}
+
+	// 父目录扫描时 CWD 内文件被 excludeCWD 排除，
+	// 但 CWD 目录本身应作为候选项，支持 @../wav 模糊匹配 ../waveloom/
+	// 插入到 items 开头，避免被 500 条截断丢弃
+	if excludeCWD {
+		cwdRel, _ := filepath.Rel(searchRoot, cwd)
+		if cwdRel != "." && cwdRel != "" {
+			cwdDisplay := filepath.Join("..", cwdRel) + "/"
+			if !isHiddenOrBinary(cwdDisplay) {
+				items = append([]pickerItem{{
+					Path:    filepath.Join("..", cwdRel),
+					IsDir:   true,
+					Display: cwdDisplay,
+				}}, items...)
+			}
+		}
+	}
+
+	// 当 dirPrefix 经由 .. 解析回 CWD 时（如 ../waveloom/ → CWD），
+	// 显示路径需加上 dirPrefix 前缀，与 filter 保持一致，
+	// 否则 filter("../waveloom/A") 无法匹配 display("AGENTS.md")。
+	if searchRoot == cwd && dirPrefix != "" && dirPrefix != "." {
+		prefix := dirPrefix
+		if !strings.HasSuffix(prefix, "/") {
+			prefix += "/"
+		}
+		for i := range items {
+			items[i].Path = prefix + items[i].Path
+			items[i].Display = prefix + items[i].Display
+		}
+	}
+
+	if len(items) == 0 {
+		return nil
 	}
 
 	if len(items) > 500 {
@@ -2728,6 +2815,7 @@ func fuzzyFilter(filter string, items []pickerItem) []pickerItem {
 	filter = strings.ToLower(filter)
 
 	// 分类：按分量前缀匹配、子串匹配、其他
+	// 每组内按匹配位置升序（越左越优先），位置相同按字母序
 	var prefix, substr, other []pickerItem
 	for _, item := range items {
 		display := strings.ToLower(item.Display)
@@ -2740,6 +2828,9 @@ func fuzzyFilter(filter string, items []pickerItem) []pickerItem {
 			other = append(other, item)
 		}
 	}
+
+	sortByMatchPos(filter, prefix)
+	sortByMatchPos(filter, substr)
 
 	result := append(prefix, substr...)
 	result = append(result, other...)
@@ -2772,6 +2863,29 @@ func pathPrefixMatch(filter, display string) bool {
 		}
 	}
 	return true
+}
+
+// sortByMatchPos 按 filter 在 Display 中的首次出现位置升序排列，
+// 位置越靠左越优先；无法作为连续子串匹配的（Index 返回 -1）排在最后；
+// 位置相同时按 Display 字母序。
+func sortByMatchPos(filter string, items []pickerItem) {
+	sort.Slice(items, func(i, j int) bool {
+		di := strings.ToLower(items[i].Display)
+		dj := strings.ToLower(items[j].Display)
+		pi := strings.Index(di, filter)
+		pj := strings.Index(dj, filter)
+		// -1 排在所有有效位置之后
+		if pi < 0 {
+			pi = 1 << 30
+		}
+		if pj < 0 {
+			pj = 1 << 30
+		}
+		if pi != pj {
+			return pi < pj
+		}
+		return di < dj
+	})
 }
 
 // ---------------------------------------------------------------------------

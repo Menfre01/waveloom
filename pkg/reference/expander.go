@@ -76,19 +76,12 @@ func (e *Expander) expandRefs(ctx context.Context, refs []Ref, cwd string) ([]Re
 			break
 		}
 
-		// Permission check — 使用对应的工具名以匹配权限规则
-		var toolName string
-		var params json.RawMessage
-		switch ref.Kind {
-		case KindFile:
-			toolName = "read_file"
-			params = json.RawMessage(fmt.Sprintf(`{"file_path": "%s"}`, ref.Path))
-		case KindFolder:
-			toolName = "ls"
-			params = json.RawMessage(fmt.Sprintf(`{"path": "%s", "depth": 2}`, ref.Path))
-		default:
+		// Permission check — 文件和目录统一走 read_file 权限检查
+		if ref.Kind != KindFile && ref.Kind != KindFolder {
 			continue
 		}
+		toolName := "read_file"
+		params := json.RawMessage(fmt.Sprintf(`{"file_path": "%s"}`, ref.Path))
 
 		decision := e.guard.Check(ctx, toolName, params)
 		if decision.Decision == permission.DecisionDeny || decision.Decision == permission.DecisionAsk {
