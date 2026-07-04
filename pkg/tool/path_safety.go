@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 )
 
@@ -57,9 +58,32 @@ var blockedDevicePaths = map[string]bool{
 	"/dev/stderr":  true,
 }
 
+func init() {
+	if runtime.GOOS == "windows" {
+		blockedDevicePaths[`\\.\NUL`] = true
+		blockedDevicePaths[`\\.\CON`] = true
+		blockedDevicePaths[`\\.\CONIN$`] = true
+		blockedDevicePaths[`\\.\CONOUT$`] = true
+		blockedDevicePaths[`\\.\PhysicalDrive0`] = true
+		blockedDevicePaths[`\\.\PhysicalDrive1`] = true
+		blockedDevicePaths["NUL"] = true
+		blockedDevicePaths["CON"] = true
+		blockedDevicePaths["PRN"] = true
+		blockedDevicePaths["AUX"] = true
+	}
+}
+
 // IsBlockedDevicePath 检查路径是否为阻塞设备文件。
 func IsBlockedDevicePath(path string) bool {
 	if blockedDevicePaths[path] {
+		return true
+	}
+	// Windows 保留文件名（大小写不敏感，仅取 basename 比较）
+	if runtime.GOOS == "windows" && isWindowsReservedName(filepath.Base(path)) {
+		return true
+	}
+	// Windows \\.\ 前缀设备路径
+	if runtime.GOOS == "windows" && strings.HasPrefix(path, `\\.\`) {
 		return true
 	}
 	// Linux: /proc/self/fd/0,1,2 是 stdio 别名
@@ -70,6 +94,28 @@ func IsBlockedDevicePath(path string) bool {
 		return true
 	}
 	return false
+}
+
+// windowsReservedNames 是 Windows 保留文件名（大小写不敏感）。
+// 这些文件名在任何目录下都是设备，不可作为普通文件读取。
+var windowsReservedNames = map[string]bool{
+	"nul":  true,
+	"con":  true,
+	"prn":  true,
+	"aux":  true,
+	"com1": true,
+	"com2": true,
+	"com3": true,
+	"com4": true,
+	"lpt1": true,
+	"lpt2": true,
+	"lpt3": true,
+}
+
+func isWindowsReservedName(base string) bool {
+	// 去掉扩展名再比较（如 "nul.txt" 在 Windows 上也是 NUL 设备）
+	name := strings.TrimSuffix(strings.ToLower(base), filepath.Ext(base))
+	return windowsReservedNames[name]
 }
 
 // ---------------------------------------------------------------------------

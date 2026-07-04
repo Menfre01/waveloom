@@ -197,6 +197,10 @@ var DangerousPatterns = []DangerousCommandPattern{
 	{Keywords: []string{"git", "push", "--force"}, Label: "git push --force (force push)"},
 	{Keywords: []string{"git", "reset", "--hard"}, Label: "git reset --hard (discard all changes)"},
 	{Keywords: []string{"git", "clean", "-fdx"}, Label: "git clean -fdx (remove untracked files)"},
+	// ── Windows 系统工具 ──
+	{Keywords: []string{"diskpart"}, Label: "diskpart (disk partition tool)", FirstTokenOnly: true},
+	{Keywords: []string{"format"}, Label: "format (disk format)", FirstTokenOnly: true},
+	{Keywords: []string{"reg", "delete"}, Label: "reg delete (registry deletion)"},
 }
 
 // ---------------------------------------------------------------------------
@@ -242,6 +246,9 @@ var trulySafeCommands = map[string]bool{
 	"diff": true,
 	// 条件判断（无副作用，仅返回退出码）
 	"test": true,
+	// Windows 等价命令（Unix 上不存在或同样安全）
+	"dir":  true,
+	"type": true,
 }
 
 // commandsWithDangerousArgs 是 trulySafeCommands 中某些参数组合有危险的命令。

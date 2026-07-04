@@ -131,7 +131,7 @@ All file paths are resolved relative to this directory unless a working_dir is s
 
 - The workspace directory is the default base for all operations — not a boundary. You may read, write, and execute in any directory.
 - Shell commands run in isolated subprocesses — "cd" inside a shell command has NO effect on subsequent commands. Use the working_dir parameter to change the execution directory per command.
-- To operate in a different directory, use the working_dir parameter: {"command":"ls", "working_dir":"/tmp"}
+- To operate in a different directory, use the working_dir parameter: {"command":"ls", "working_dir":"/project"} (Unix/macOS) or {"command":"ls", "working_dir":"C:/project"} (Windows).
 - Never prefix commands with "cd <path> &&" — this breaks permission pattern matching and is unnecessary.
 ```
 
