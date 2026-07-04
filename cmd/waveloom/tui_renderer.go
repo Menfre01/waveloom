@@ -1857,6 +1857,25 @@ func collapseBlankLines(s string) string {
 	return s
 }
 
+// findFirstPromptPos 在可能含 ANSI 转义序列的字符串中查找第一个 "  "（2 空格）的位置。
+// 返回下标（不含前导 ANSI），找不到返回 -1。
+func findFirstPromptPos(s string) int {
+	runes := []rune(s)
+	i := 0
+	for i < len(runes) {
+		if runes[i] == 0x1b {
+			skip := skipAnsiSequence(runes[i:])
+			i += skip
+			continue
+		}
+		if runes[i] == ' ' && i+1 < len(runes) && runes[i+1] == ' ' {
+			return i
+		}
+		i++
+	}
+	return -1
+}
+
 // ---------------------------------------------------------------------------
 // 格式辅助函数
 // ---------------------------------------------------------------------------

@@ -42,6 +42,7 @@ import (
 	"charm.land/bubbles/v2/list"
 	"charm.land/bubbles/v2/progress"
 	"charm.land/bubbles/v2/spinner"
+	"charm.land/bubbles/v2/textarea"
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/glamour/v2"
@@ -460,9 +461,7 @@ type model struct {
 	spThought      spinner.Model  // thought 流式前缀动画
 	spTool         spinner.Model  // tool 执行中前缀动画
 	ctxProgress    progress.Model // ctx 窗口进度条（bubbles progress 组件）
-	input          textinput.Model
-	inputVisStart  int    // 输入框水平滚动起始偏移，镜像 textinput 内部 offset，仅当光标移出可视区时更新
-	inputLastValue string // 上一次同步时的输入值，变更时强制重置 inputVisStart
+	input          textarea.Model
 
 	otherInput          textinput.Model // Other 自定义输入框
 	otherInputVisStart  int             // otherInput 水平滚动起始偏移
@@ -588,14 +587,19 @@ func newTUIModel(llmClient llm.Client, registry tool.Registry, guard permission.
 	cm := ctxpkg.New(buildSystemPrompt(cwd, loc))
 	lc := messagesFor(loc)
 
-	ti := textinput.New()
-	ti.Prompt = "› "
+	ti := textarea.New()
 	ti.Placeholder = lc.InputPlaceholder
 	ti.CharLimit = 2048
+	ti.ShowLineNumbers = false
+	ti.MaxHeight = 2
+	ti.EndOfBufferCharacter = ' '
+	ti.SetPromptFunc(2, func(_ textarea.PromptInfo) string {
+		return "  "
+	})
+	ti.SetHeight(2)
+	ti.SetWidth(0)
 	ti.SetVirtualCursor(false) // real cursor 避免 virtual cursor 反色 ANSI 泄漏
-	styles := ti.Styles()
-	styles.Cursor.Blink = true
-	ti.SetStyles(styles)
+	ti.Focus()
 
 	// Other 自定义输入框（与主输入框同款 real cursor 模式）
 	otherTi := textinput.New()
@@ -719,7 +723,7 @@ func (m *model) wireLoop() {
 func (m *model) Init() tea.Cmd {
 	return tea.Batch(
 		m.input.Focus(),
-		textinput.Blink,
+		textarea.Blink,
 		m.spinner.Tick,
 		m.spAsst.Tick,
 		m.spThought.Tick,
@@ -796,7 +800,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = msg.Height
 		contentWidth := max(msg.Width-4, 20)
 
-		m.input.SetWidth(contentWidth - 4)
+		m.input.SetWidth(contentWidth)
 
 		// 重建 Glamour renderer 以适配新宽度
 		if m.glamourRenderer != nil {
@@ -1053,12 +1057,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				return r
 			}, msg.Content)
-			current := m.input.Value()
-			pos := m.input.Position()
-			newValue := current[:pos] + insert + current[pos:]
-			m.input.SetValue(newValue)
-			m.input.SetCursor(pos + len(insert))
-			m.syncInputVisibleStart()
+			m.input.InsertString(insert)
 		}
 		return m, nil
 	}
@@ -1066,10 +1065,9 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// 子组件更新（仅在无覆盖层时传递）
 	switch m.overlay {
 	case overlayNone:
-		var cmd tea.Cmd
-		m.input, cmd = m.input.Update(msg)
-		cmds = append(cmds, cmd)
-		m.syncInputVisibleStart()
+		var taCmd tea.Cmd
+		m.input, taCmd = m.input.Update(msg)
+		cmds = append(cmds, taCmd)
 	case overlayPermission:
 		// 权限面板活跃时，将按键传给 list 组件（↑↓ 导航）
 		var cmd tea.Cmd
@@ -3726,63 +3724,6 @@ func (m *model) scrollToBottom() {
 // 视图
 // ---------------------------------------------------------------------------
 
-// syncInputVisibleStart 镜像 textinput 内部 handleOverflow 的 sticky offset 逻辑：
-// 仅当光标移出当前可视窗口时才调整 inputVisStart，否则保持不变。
-// 这确保光标在溢出文本中自由左右移动，而不是被粘滞在右边界。
-func (m *model) syncInputVisibleStart() {
-	value := m.input.Value()
-	pos := m.input.Position()
-	w := m.input.Width()
-	runes := []rune(value)
-	m.inputLastValue = value
-
-	// 内容未溢出 → 起点始终为 0
-	totalWidth := 0
-	for _, r := range runes {
-		totalWidth += lipgloss.Width(string(r))
-	}
-	if w <= 0 || totalWidth <= w {
-		m.inputVisStart = 0
-		return
-	}
-
-	// 钳位 inputVisStart（可能在外部 SetValue / Reset 后变成非法值）
-	if m.inputVisStart < 0 || m.inputVisStart > len(runes) {
-		m.inputVisStart = 0
-	}
-	// 如果光标在 inputVisStart 左侧，直接跟进
-	if pos < m.inputVisStart {
-		m.inputVisStart = pos
-	}
-
-	// 计算当前 inputVisStart 对应的可视终点（不含该位置字符）
-	visEnd := m.inputVisStart
-	visWidth := 0
-	for visEnd < len(runes) {
-		cw := lipgloss.Width(string(runes[visEnd]))
-		if visWidth+cw > w {
-			break
-		}
-		visWidth += cw
-		visEnd++
-	}
-
-	if pos >= visEnd {
-		// 光标移到可视区右侧或超出 → 反向扫描确定新起点
-		m.inputVisStart = pos
-		visWidth = 0
-		for m.inputVisStart > 0 {
-			cw := lipgloss.Width(string(runes[m.inputVisStart-1]))
-			if visWidth+cw > w {
-				break
-			}
-			visWidth += cw
-			m.inputVisStart--
-		}
-	}
-	// 光标在可视区内 → inputVisStart 保持不变
-}
-
 // syncOtherInputVisibleStart 与 syncInputVisibleStart 对称，用于 otherInput。
 func (m *model) syncOtherInputVisibleStart() {
 	value := m.otherInput.Value()
@@ -3926,9 +3867,21 @@ func (m *model) View() tea.View {
 	footer := m.renderFooter()
 	footerHeight := lipgloss.Height(footer) // 2 行（Line 1 + Line 2）
 
+	// 先渲染输入框，获取实际高度（textarea 可能多行）
+	separator := m.renderInputSeparator(contentWidth)
+	rawView := m.input.View()
+	// 将第一行开头的缩进空格替换为 › 前缀（area prompt 统一用缩进空格，
+	// 但视觉上希望第一行显示 ›，后续行保持缩进对齐）。
+	// 替换策略：查找第一个不由 ANSI 序列开头的 "  " 位置。
+	if idx := findFirstPromptPos(rawView); idx >= 0 {
+		rawView = rawView[:idx] + "› " + rawView[idx+2:]
+	}
+	inputView := lipgloss.NewStyle().Width(contentWidth).Render(rawView)
+	inputHeight := lipgloss.Height(inputView)
+
 	// 固定底部元素（在 styleApp 内）：
-	// separator(1) + input(1) + 空行(1) + footer(footerHeight)
-	fixedBottomHeight := 1 + 1 + 1 + footerHeight
+	// separator(1) + input(inputHeight) + footer(footerHeight)
+	fixedBottomHeight := 1 + inputHeight + footerHeight
 
 	// styleApp 顶部 padding 1 行，底部 0；内区可用高度 = m.height - 1
 	innerHeight := m.height - 1
@@ -3969,9 +3922,6 @@ func (m *model) View() tea.View {
 	}
 
 	// 5. 构建 parts：header + body(刚好 bodyHeight 行) + overlays + 固定底部
-	separator := m.renderInputSeparator(contentWidth)
-	inputView := lipgloss.NewStyle().Width(contentWidth).Render(m.input.View())
-
 	parts := []string{header, ""}
 	parts = append(parts, visibleLines...)
 
@@ -3990,7 +3940,7 @@ func (m *model) View() tea.View {
 	if commandPickerContent != "" {
 		parts = append(parts, commandPickerContent)
 	}
-	parts = append(parts, separator, inputView, "", footer)
+	parts = append(parts, separator, inputView, footer)
 
 	mainBody := lipgloss.JoinVertical(lipgloss.Left, parts...)
 	mainContent := styleApp.Render(mainBody)
@@ -4002,38 +3952,12 @@ func (m *model) View() tea.View {
 	// real cursor 模式：定位输入光标
 	if m.overlay == overlayNone {
 		if cur := m.input.Cursor(); cur != nil {
-			value := m.input.Value()
-			pos := m.input.Position()
-			runes := []rune(value)
-
-			// 钳位 inputVisStart：可能因 handleKeyPress 提前 return 而未调用 syncInputVisibleStart，
-			// 导致 inputVisStart 越界。此处不简单归零（归零会让溢出文本的光标 X 计算包含全部
-			// 前导字符宽度，导致光标跳到最右边），而是以当前位置为基准重新计算。
-			if m.inputVisStart < 0 || m.inputVisStart > len(runes) || m.inputVisStart > pos {
-				m.syncInputVisibleStart()
-				// sync 后仍需防御：极端情况下 pos 可能越界（如组件未初始化完成），
-				// 或 inputVisStart 尚未被修正到 ≤ pos。
-				if pos > len(runes) {
-					pos = len(runes)
-				}
-				if m.inputVisStart < 0 {
-					m.inputVisStart = 0
-				}
-				if m.inputVisStart > pos {
-					m.inputVisStart = pos
-				}
-			}
-
-			visibleBeforeCursor := string(runes[m.inputVisStart:pos])
-			cursorX := lipgloss.Width(m.input.Prompt) + lipgloss.Width(visibleBeforeCursor)
-			cur.X = cursorX + 2 // styleApp 左 padding
+			// 布局：styleApp top(1) + header + 空行 + body + overlays + picker + separator(1)
+			cur.Y += 1 + headerHeight + bodyHeight + overlayLines + pickerLines + commandPickerLines + 1
+			cur.X += 2 // styleApp 左 padding
 			if cur.X > m.width-2 {
 				cur.X = m.width - 2
 			}
-			// 在 alt screen 下，header + body + overlays + separator 之后是 input 行
-			// input 行在终端中的 Y 坐标（0-based）：
-			//   styleApp top(1) + headerHeight + bodyHeight + overlayLines + pickerLines + commandPickerLines + separator(1)
-			cur.Y = 1 + headerHeight + bodyHeight + overlayLines + pickerLines + commandPickerLines + 1
 			if cur.Y >= m.height {
 				cur.Y = m.height - 1
 			}
