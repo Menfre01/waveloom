@@ -149,6 +149,9 @@ func makeTarGz(t *testing.T, files map[string][]byte) []byte {
 }
 
 func TestExtractWaveloom_Success(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("skipping permission test on Windows")
+	}
 	expected := []byte("#!/bin/sh\necho fake waveloom\n")
 	tgz := makeTarGz(t, map[string][]byte{
 		"waveloom": expected,
@@ -344,6 +347,9 @@ func TestDownloadWithProgress_ContextCancel(t *testing.T) {
 // TestRegression_SelfUpdateBackupCleaned 确保安装成功后 .old 备份被清理，
 // 且 chmod 失败时备份同样被清理。
 func TestRegression_SelfUpdateBackupCleaned(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("skipping permission test on Windows")
+	}
 	// 构造 tar.gz 包含一个新的 "waveloom" 二进制
 	newBinaryContent := []byte("#!/bin/sh\necho new version\n")
 	tgz := makeTarGz(t, map[string][]byte{
@@ -400,6 +406,9 @@ func TestRegression_SelfUpdateBackupCleaned(t *testing.T) {
 // 通过让 currentPath 指向一个只读目录，使得 rename 后 copyFile 目标无法写入，
 // 触发回滚路径，验证旧二进制完好无损。
 func TestRegression_SelfUpdateRollbackOnCopyFailure(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("skipping permission test on Windows")
+	}
 	newBinaryContent := []byte("new binary")
 	tgz := makeTarGz(t, map[string][]byte{
 		"waveloom": newBinaryContent,
