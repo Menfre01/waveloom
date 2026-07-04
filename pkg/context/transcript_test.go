@@ -70,8 +70,8 @@ func TestTranscriptMaxLines(t *testing.T) {
 }
 
 func TestTranscriptPath(t *testing.T) {
-	p := TranscriptPath("/tmp/sessions", "abc-123")
-	expected := "/tmp/sessions/abc-123.jsonl"
+	p := TranscriptPath(filepath.FromSlash("/tmp/sessions"), "abc-123")
+	expected := filepath.FromSlash("/tmp/sessions/abc-123.jsonl")
 	if p != expected {
 		t.Errorf("TranscriptPath = %q, want %q", p, expected)
 	}
@@ -163,9 +163,10 @@ func TestContinueSessionID(t *testing.T) {
 }
 
 func TestRecentPath(t *testing.T) {
-	p := RecentPath("/tmp/sessions")
-	if p != "/tmp/sessions/recent.json" {
-		t.Errorf("RecentPath = %q, want %q", p, "/tmp/sessions/recent.json")
+	p := RecentPath(filepath.FromSlash("/tmp/sessions"))
+	want := filepath.FromSlash("/tmp/sessions/recent.json")
+	if p != want {
+		t.Errorf("RecentPath = %q, want %q", p, want)
 	}
 }
 

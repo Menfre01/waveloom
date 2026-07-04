@@ -306,7 +306,7 @@ func removeAtRefs(userInput string) string {
 
 // formatRefBlock 将一个 ResolvedRef 格式化为 @@ 围栏块。
 func formatRefBlock(r ResolvedRef, cwd string) string {
-	relPath := relativePath(r.Path, cwd)
+	relPath := filepath.ToSlash(relativePath(r.Path, cwd))
 
 	if r.Error != "" {
 		return fmt.Sprintf("@@ %s  [not found]\n@@", r.Raw)

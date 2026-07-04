@@ -2,6 +2,7 @@ package context
 
 import (
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -684,23 +685,24 @@ func TestPrepareRun_BackgroundNotification(t *testing.T) {
 	now := time.Now()
 	task.DefaultRegistry.Register("completed-1", &task.TaskInfo{
 		ID: "completed-1", PID: 1, Command: "make build",
-		LogPath: "/tmp/bg.log", Status: task.TaskCompleted,
+		LogPath: filepath.FromSlash("/tmp/bg.log"), Status: task.TaskCompleted,
 		StartTime: now, CompletedTime: now.Add(10*time.Millisecond), ExitCode: 0,
 	})
 	task.DefaultRegistry.Register("running-1", &task.TaskInfo{
 		ID: "running-1", PID: 2, Command: "npx wrangler dev",
-		LogPath: "/tmp/running.log", Status: task.TaskRunning,
+		LogPath: filepath.FromSlash("/tmp/running.log"), Status: task.TaskRunning,
 		StartTime: now, ExitCode: -1,
 	})
 
 	cm := New("system")
 	cm.PrepareRun("first turn") // 设置 lastBackgroundCheck
 
-	// 注册新完成的任务
+	// 注册新完成的任务，使用足够晚的时间确保不被 lastBackgroundCheck 过滤
+	checkTime := time.Now()
 	task.DefaultRegistry.Register("completed-2", &task.TaskInfo{
 		ID: "completed-2", PID: 3, Command: "sleep 1",
-		LogPath: "/tmp/sleep.log", Status: task.TaskCompleted,
-		StartTime: time.Now(), CompletedTime: time.Now(), ExitCode: 0,
+		LogPath: filepath.FromSlash("/tmp/sleep.log"), Status: task.TaskCompleted,
+		StartTime: checkTime, CompletedTime: checkTime.Add(time.Millisecond), ExitCode: 0,
 	})
 
 	msgs := cm.PrepareRun("second turn")
