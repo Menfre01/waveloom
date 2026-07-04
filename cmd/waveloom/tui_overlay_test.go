@@ -8,6 +8,7 @@ import (
 	"charm.land/bubbles/v2/textinput"
 
 	"github.com/Menfre01/waveloom/pkg/permission"
+	"github.com/Menfre01/waveloom/pkg/slashcommand"
 )
 
 // ---------------------------------------------------------------------------
@@ -568,6 +569,205 @@ func TestFuzzyFilter_SubstringFallback(t *testing.T) {
 	result := fuzzyFilter("waveloom", items)
 	if len(result) < 1 || result[0].Path != "cmd/waveloom/main.go" {
 		t.Errorf("expected substring match, got %v", result)
+	}
+}
+
+// TestFuzzyFilter_SortByMatchPosPrefix 验证 prefix 组内按匹配位置升序排列，
+// 位置越靠左越优先。
+func TestFuzzyFilter_SortByMatchPosPrefix(t *testing.T) {
+	items := []pickerItem{
+		{Path: "a/cmd/main.go", Display: "a/cmd/main.go"},
+		{Path: "cmd/main.go", Display: "cmd/main.go"},
+		{Path: "pkg/cmd.go", Display: "pkg/cmd.go"},
+	}
+	// pathPrefixMatch("cmd", "cmd/main.go") = true, strings.Index = 0
+	// pathPrefixMatch("cmd", "a/cmd/main.go") = false (component "cmd" not prefix of "a")
+	// strings.Contains("pkg/cmd.go", "cmd") = true (substr group)
+	result := fuzzyFilter("cmd", items)
+	if len(result) < 2 {
+		t.Fatalf("expected at least 2 results, got %d", len(result))
+	}
+	// prefix group first: "cmd/main.go" (pos 0) → alphabetical within prefix
+	// substr group: "pkg/cmd.go" (pos 4)
+	if result[0].Path != "cmd/main.go" {
+		t.Errorf("expected cmd/main.go first (prefix + pos 0), got %s", result[0].Path)
+	}
+}
+
+// TestFuzzyFilter_SortByMatchPosSubstr 验证 substr 组内按匹配位置升序排列。
+func TestFuzzyFilter_SortByMatchPosSubstr(t *testing.T) {
+	items := []pickerItem{
+		{Path: "x/loom/z.go", Display: "x/loom/z.go"},
+		{Path: "x/loom.go", Display: "x/loom.go"},
+	}
+	// Neither matches pathPrefixMatch("loom", ...): "loom" prefix "x" = false
+	// Both match substr: "x/loom.go" at pos 2, "x/loom/z.go" at pos 2
+	// Same position → alphabetical: "x/loom.go" < "x/loom/z.go"
+	result := fuzzyFilter("loom", items)
+	if len(result) < 2 {
+		t.Fatalf("expected 2 results, got %d", len(result))
+	}
+	if result[0].Path != "x/loom.go" {
+		t.Errorf("expected x/loom.go first (same pos, alphabetical), got %s", result[0].Path)
+	}
+}
+
+// TestFuzzyFilter_NonContiguousPrefixAfterContiguous 验证 pathPrefixMatch 命中
+// 但非连续子串（strings.Index=-1）的项排在连续子串之后。
+func TestFuzzyFilter_NonContiguousPrefixAfterContiguous(t *testing.T) {
+	items := []pickerItem{
+		{Path: "cmdtools/watcher.go", Display: "cmdtools/watcher.go"},
+		{Path: "cmd/waveloom/main.go", Display: "cmd/waveloom/main.go"},
+	}
+	// pathPrefixMatch("cmd/wa", "cmd/waveloom/main.go"): "cmd"✓ "wa"✓ → prefix, Index=0
+	// pathPrefixMatch("cmd/wa", "cmdtools/watcher.go"): "cmd"✓ "wa"✓ → prefix, Index=-1
+	result := fuzzyFilter("cmd/wa", items)
+	if len(result) < 2 {
+		t.Fatalf("expected 2 results, got %d", len(result))
+	}
+	if result[0].Path != "cmd/waveloom/main.go" {
+		t.Errorf("expected contiguous match first, got %s", result[0].Path)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// sortByMatchPos
+// ---------------------------------------------------------------------------
+
+func TestSortByMatchPos_ValidPositions(t *testing.T) {
+	items := []pickerItem{
+		{Display: "zzz"},
+		{Display: "aaa"},
+	}
+	filter := "z"
+	sortByMatchPos(filter, items)
+	// "zzz": Index("zzz", "z") = 0
+	// "aaa": Index("aaa", "z") = -1 → 1<<30
+	if items[0].Display != "zzz" {
+		t.Errorf("expected zzz first (pos 0), got %s", items[0].Display)
+	}
+	if items[1].Display != "aaa" {
+		t.Errorf("expected aaa second (pos sentinel), got %s", items[1].Display)
+	}
+}
+
+func TestSortByMatchPos_SamePositionAlphabetical(t *testing.T) {
+	items := []pickerItem{
+		{Display: "zb.go"},
+		{Display: "za.go"},
+	}
+	filter := "z"
+	sortByMatchPos(filter, items)
+	// Both have Index=0, tiebreaker alphabetical
+	if items[0].Display != "za.go" {
+		t.Errorf("expected za.go first (alphabetical), got %s", items[0].Display)
+	}
+}
+
+func TestSortByMatchPos_MixedSentinel(t *testing.T) {
+	items := []pickerItem{
+		{Display: "no-match"},
+		{Display: "match-z-here"},
+		{Display: "also-no-match"},
+	}
+	filter := "z"
+	sortByMatchPos(filter, items)
+	// "match-z-here": Index=6
+	// "no-match": -1 → sentinel
+	// "also-no-match": -1 → sentinel
+	if items[0].Display != "match-z-here" {
+		t.Errorf("expected match-z-here first (pos 6), got %s", items[0].Display)
+	}
+	// sentinels stay in original order relative to each other (stable sort),
+	// then alphabetical tiebreaker should sort them
+	if items[1].Display != "also-no-match" {
+		t.Errorf("expected also-no-match second (alphabetical), got %s", items[1].Display)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// pathPrefixMatch — 补充边缘场景
+// ---------------------------------------------------------------------------
+
+func TestPathPrefixMatch_NonPrefixComponent(t *testing.T) {
+	// "cmd" prefix "cmdtools" → true, "wa" prefix "watcher" → true
+	// But the display is "cmdtools/watcher.go", filter "cmd/wa"
+	// This IS a valid pathPrefixMatch (each component is a prefix),
+	// but NOT a contiguous substring
+	if !pathPrefixMatch("cmd/wa", "cmdtools/watcher.go") {
+		t.Error("expected cmd/wa to match cmdtools/watcher.go via component prefix")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// bestCommandMatch
+// ---------------------------------------------------------------------------
+
+func TestBestCommandMatch_PrefixName(t *testing.T) {
+	cmd := slashcommand.CommandInfo{Name: "plan-ceo-review"}
+	m := bestCommandMatch("plan", cmd)
+	if m.position != 0 || !m.isPrefix {
+		t.Errorf("expected prefix match at pos 0, got pos=%d isPrefix=%v", m.position, m.isPrefix)
+	}
+}
+
+func TestBestCommandMatch_SubstringName(t *testing.T) {
+	cmd := slashcommand.CommandInfo{Name: "design-review"}
+	m := bestCommandMatch("review", cmd)
+	if m.position < 0 {
+		t.Error("expected substring match in name")
+	}
+	if m.isPrefix {
+		t.Error("expected substring not prefix for 'review' in 'design-review'")
+	}
+}
+
+func TestBestCommandMatch_AliasPrefix(t *testing.T) {
+	cmd := slashcommand.CommandInfo{Name: "ship", Aliases: []string{"land-and-deploy"}}
+	m := bestCommandMatch("land", cmd)
+	if m.position < 0 || !m.isPrefix {
+		t.Errorf("expected prefix match via alias, got pos=%d isPrefix=%v", m.position, m.isPrefix)
+	}
+}
+
+func TestBestCommandMatch_AliasSubstring(t *testing.T) {
+	cmd := slashcommand.CommandInfo{Name: "ship", Aliases: []string{"land-and-deploy"}}
+	m := bestCommandMatch("deploy", cmd)
+	if m.position < 0 {
+		t.Error("expected substring match via alias")
+	}
+}
+
+func TestBestCommandMatch_PrefixWinsOverSubstring(t *testing.T) {
+	// name contains filter as substring, alias has it as prefix → alias (prefix) wins
+	cmd := slashcommand.CommandInfo{
+		Name:    "waveloom-demo",
+		Aliases: []string{"demo"},
+	}
+	m := bestCommandMatch("demo", cmd)
+	if m.position != 0 || !m.isPrefix {
+		t.Errorf("expected alias prefix at pos 0, got pos=%d isPrefix=%v", m.position, m.isPrefix)
+	}
+}
+
+func TestBestCommandMatch_LeftmostWins(t *testing.T) {
+	cmd := slashcommand.CommandInfo{
+		Name:    "x-review-y",
+		Aliases: []string{"z-review"},
+	}
+	// "review" in name at pos 2, in alias at pos 2 — same position
+	// alphabetical tiebreaker doesn't matter here, just checking position
+	m := bestCommandMatch("review", cmd)
+	if m.position != 2 {
+		t.Errorf("expected match at pos 2, got %d", m.position)
+	}
+}
+
+func TestBestCommandMatch_NoMatch(t *testing.T) {
+	cmd := slashcommand.CommandInfo{Name: "ship", Aliases: []string{"deploy"}}
+	m := bestCommandMatch("xyz", cmd)
+	if m.position >= 0 {
+		t.Error("expected no match")
 	}
 }
 
