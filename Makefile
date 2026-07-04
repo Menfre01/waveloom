@@ -43,7 +43,9 @@ release:
 			GOOS=$$GOOS GOARCH=$$GOARCH CGO_ENABLED=0 \
 				go build -ldflags "$(LDFLAGS)" -o $(DIST_DIR)/$(BINARY) $(MODULE); \
 			if [ "$$GOOS" = "windows" ]; then \
+				mv $(DIST_DIR)/$(BINARY) $(DIST_DIR)/$(BINARY).exe; \
 				cd $(DIST_DIR) && zip $(BINARY)_$${GOOS}_$${GOARCH}.zip $(BINARY).exe && rm $(BINARY).exe; \
+				cd $(CURDIR); \
 			else \
 				tar -czf $(DIST_DIR)/$(BINARY)_$${GOOS}_$${GOARCH}.tar.gz \
 					-C $(DIST_DIR) $(BINARY); \
