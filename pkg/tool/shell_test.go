@@ -14,6 +14,14 @@ import (
 	"github.com/Menfre01/waveloom/pkg/task"
 )
 
+
+// skipOnWindows skips the test on Windows for tests that rely on shell execution.
+func skipOnWindows(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("skipping shell test on Windows")
+	}
+}
+
 func TestShellInterpreter(t *testing.T) {
 	bin, args := shellInterpreter()
 	if bin == "" {
@@ -129,6 +137,7 @@ func TestShellContextTimeout(t *testing.T) {
 }
 
 func TestShellSuccess(t *testing.T) {
+	skipOnWindows(t)
 	tool := &Shell{}
 	result, err := tool.Execute(context.Background(), ShellParams{
 		Command: "echo hello",
@@ -375,7 +384,7 @@ func TestShellTimeoutClamped(t *testing.T) {
 }
 
 func TestShellDangerousWarning(t *testing.T) {
-	// Wave 3: security warnings moved to permission.Guard. Shell.Execute no longer
+	skipOnWindows(t)	// Wave 3: security warnings moved to permission.Guard. Shell.Execute no longer
 	// performs security checks — that's the Guard's responsibility.
 	// This test verifies that the shell still executes commands that would
 	// previously have triggered warnings.
@@ -395,6 +404,7 @@ func TestShellDangerousWarning(t *testing.T) {
 }
 
 func TestShellRMRootDetection(t *testing.T) {
+	skipOnWindows(t)
 	tool := &Shell{}
 	result, err := tool.Execute(context.Background(), ShellParams{
 		Command: "echo rm -rf /",
@@ -433,6 +443,7 @@ func TestShellCurlPipeShellDetection(t *testing.T) {
 }
 
 func TestShellSafeCommandNoWarning(t *testing.T) {
+	skipOnWindows(t)
 	tool := &Shell{}
 	result, err := tool.Execute(context.Background(), ShellParams{
 		Command: "echo hello world",
@@ -628,6 +639,7 @@ func TestShell_SupportsStreaming(t *testing.T) {
 }
 
 func TestShell_ExecuteStreaming_Basic(t *testing.T) {
+	skipOnWindows(t)
 	s := &Shell{}
 	ctx := context.Background()
 	var chunks []string

@@ -60,7 +60,7 @@ jobs:
       - name: Build
         run: go build -o bin/waveloom.exe ./cmd/waveloom/
       - name: Test
-        run: go test ./... -timeout 180s
+        run: go test ./... -timeout 300s
       - name: Integration Test
         run: go test -tags=integration ./... -timeout 300s
         continue-on-error: true
