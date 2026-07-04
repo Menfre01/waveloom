@@ -68,6 +68,7 @@ type Paragraph struct {
 	ToolErrorKind string // 错误分类（如 timeout、command_failed 等）
 	ToolDurMs     int64  // 执行耗时（毫秒）
 	ToolDenied    bool   // 权限被拒
+	ToolFatal     bool   // 错误是否致命，TUI 据此区分红（fatal）/金（recoverable）样式
 	DiffHunks  []tool.DiffHunk // edit_file 结构化 diff（nil = 不适用或纯文本回退）
 
 	// Thought 专用字段
@@ -833,8 +834,12 @@ func renderAssistantPara(sb *strings.Builder, p *Paragraph, ctx ViewportCtx) {
 	for _, line := range lines {
 		wrapped := []string{line}
 		if !glamourUsed {
-			// 流式输出或无 Glamour 时手动按终端宽度换行
-			wrapped = wrapLine(line, textWidth)
+			// 流式输出中用稳定截断（避免 word-wrap 断点漂移导致抖动）
+			if streaming {
+				wrapped = wrapLineStable(line, textWidth)
+			} else {
+				wrapped = wrapLine(line, textWidth)
+			}
 		}
 		for _, wl := range wrapped {
 			if firstLine {
@@ -877,7 +882,7 @@ func renderThoughtPara(sb *strings.Builder, p *Paragraph, ctx ViewportCtx) {
 		var visible []string
 		// 从尾部反向收集，直到获得至少 fixedLines 个换行行
 		for i := len(rawLines) - 1; i >= 0 && len(visible) < fixedLines; i-- {
-			wrapped := wrapLine(rawLines[i], textWidth)
+			wrapped := wrapLineStable(rawLines[i], textWidth)
 			// 反向插入：从后往前处理的原始行，其换行结果需要放在已收集行之前
 			visible = append(wrapped, visible...)
 		}
@@ -1002,6 +1007,49 @@ func renderThoughtPara(sb *strings.Builder, p *Paragraph, ctx ViewportCtx) {
 }
 
 
+
+// wrapLineStable 按列宽硬截断，不做 word-wrap 优化。
+// 流式输出中使用，保证换行位置仅由字符位置决定，不因后续词增长而漂移。
+func wrapLineStable(line string, maxWidth int) []string {
+	if maxWidth <= 0 {
+		return []string{""}
+	}
+	runes := []rune(line)
+	var result []string
+	for len(runes) > 0 {
+		w := 0
+		cut := 0
+		ansiHeadLen := skipAnsiSequence(runes)
+		cut = ansiHeadLen
+		for i := ansiHeadLen; i < len(runes); {
+			r := runes[i]
+			if r == 0x1b && i+1 < len(runes) && runes[i+1] == '[' {
+				skipLen := skipAnsiSequence(runes[i:])
+				i += skipLen
+				continue
+			}
+			rw := 1
+			if r >= 128 {
+				rw = lipgloss.Width(string(r))
+			}
+			if w+rw > maxWidth {
+				break
+			}
+			w += rw
+			cut = i + 1
+			i++
+		}
+		if cut == 0 {
+			cut = 1
+		}
+		result = append(result, string(runes[:cut]))
+		runes = runes[cut:]
+	}
+	if len(result) == 0 {
+		result = append(result, "")
+	}
+	return result
+}
 
 // wrapLine 按 maxWidth 列宽对单行文本智能换行，优先在空格处断行。
 // 能正确处理 ANSI 转义序列（\x1b[...m），将其视为 0 宽度且不在中间撕裂。
@@ -1183,7 +1231,7 @@ func renderToolPara(sb *strings.Builder, p *Paragraph, ctx ViewportCtx) {
 		toolState = stateError
 	}
 
-	prefix := toolPrefix(ctx.Tool, toolState)
+	prefix := toolPrefix(ctx.Tool, toolState, p.ToolFatal)
 	if ctx.Focused {
 		prefix = styleFocusIndicator.Render(prefix)
 	}
@@ -1198,10 +1246,14 @@ func renderToolPara(sb *strings.Builder, p *Paragraph, ctx ViewportCtx) {
 	// 摘要行：仅首行有 prefixStr，后续内容行用 indentStr 对齐
 	sb.WriteString(prefixStr)
 
-	// tool 名颜色：成功绿色，失败红色
+	// tool 名颜色：成功绿色，recoverable 错误金色，fatal 错误红色
 	toolNameStyle := styleToolPrefixDone
 	if toolState == stateError {
-		toolNameStyle = styleToolPrefixErr
+		if p.ToolFatal {
+			toolNameStyle = styleToolPrefixErr
+		} else {
+			toolNameStyle = styleToolPrefixWarn
+		}
 	}
 
 	// 构造摘要行并做宽度自适应截断
@@ -1303,11 +1355,15 @@ func renderToolPreview(sb *strings.Builder, p *Paragraph, textWidth int, indent 
 	truncated := false
 
 	// ── 错误统一预览：所有工具的错误信息（ToolResult 为空、ToolError 非空）
-	//    均以红色样式渲染，与 shell stderr 输出对齐。
+	//    fatal 错误以红色样式渲染，recoverable 错误以金色样式渲染。
 	if isErrorOnly {
+		errStyle := styleToolPrefixErr
+		if !p.ToolFatal {
+			errStyle = styleToolPrefixWarn
+		}
 		lines := strings.Split(result, "\n")
 		for _, line := range lines {
-			if writeWrappedPreview(line, styleToolPrefixErr, &wrapped) {
+			if writeWrappedPreview(line, errStyle, &wrapped) {
 				truncated = true
 				break
 			}
@@ -1339,7 +1395,11 @@ func renderToolPreview(sb *strings.Builder, p *Paragraph, textWidth int, indent 
 	case "bash", "skill":
 		lineStyle := styleToolPreview
 		if p.ToolError != "" {
-			lineStyle = styleToolPrefixErr
+			if p.ToolFatal {
+				lineStyle = styleToolPrefixErr
+			} else {
+				lineStyle = styleToolPrefixWarn
+			}
 		}
 		lines := strings.Split(result, "\n")
 		for _, line := range lines {
@@ -1403,7 +1463,7 @@ func renderToolStreamOutput(sb *strings.Builder, p *Paragraph, textWidth int, in
 		if rawLines[i] == "" {
 			continue
 		}
-		wrapped := wrapLine(rawLines[i], contentWidth)
+		wrapped := wrapLineStable(rawLines[i], contentWidth)
 		visible = append(wrapped, visible...)
 	}
 	// 超出 fixedLines 时从头部截断
@@ -1795,6 +1855,25 @@ func collapseBlankLines(s string) string {
 		s = strings.ReplaceAll(s, "\n\n\n", "\n\n")
 	}
 	return s
+}
+
+// findFirstPromptPos 在可能含 ANSI 转义序列的字符串中查找第一个 "  "（2 空格）的位置。
+// 返回下标（不含前导 ANSI），找不到返回 -1。
+func findFirstPromptPos(s string) int {
+	runes := []rune(s)
+	i := 0
+	for i < len(runes) {
+		if runes[i] == 0x1b {
+			skip := skipAnsiSequence(runes[i:])
+			i += skip
+			continue
+		}
+		if runes[i] == ' ' && i+1 < len(runes) && runes[i+1] == ' ' {
+			return i
+		}
+		i++
+	}
+	return -1
 }
 
 // ---------------------------------------------------------------------------

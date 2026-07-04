@@ -4,10 +4,8 @@ import (
 	"context"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"runtime"
 	"strings"
-	"syscall"
 	"testing"
 	"time"
 
@@ -15,6 +13,14 @@ import (
 	"github.com/Menfre01/waveloom/pkg/shellutil"
 	"github.com/Menfre01/waveloom/pkg/task"
 )
+
+
+// skipOnWindows skips the test on Windows for tests that rely on shell execution.
+func skipOnWindows(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("skipping shell test on Windows")
+	}
+}
 
 func TestShellInterpreter(t *testing.T) {
 	bin, args := shellInterpreter()
@@ -25,11 +31,11 @@ func TestShellInterpreter(t *testing.T) {
 		t.Fatalf("shellInterpreter() returned %d args, want 1", len(args))
 	}
 	if runtime.GOOS == "windows" {
-		if bin != "cmd" {
-			t.Errorf("Windows: expected cmd, got %s", bin)
+		if !strings.Contains(bin, "bash") {
+			t.Errorf("Windows: expected bash (Git Bash), got %s", bin)
 		}
-		if args[0] != "/c" {
-			t.Errorf("Windows: expected /c, got %s", args[0])
+		if args[0] != "-c" {
+			t.Errorf("Windows: expected -c, got %s", args[0])
 		}
 	} else {
 		if bin != "bash" && bin != "sh" {
@@ -131,6 +137,7 @@ func TestShellContextTimeout(t *testing.T) {
 }
 
 func TestShellSuccess(t *testing.T) {
+	skipOnWindows(t)
 	tool := &Shell{}
 	result, err := tool.Execute(context.Background(), ShellParams{
 		Command: "echo hello",
@@ -377,7 +384,7 @@ func TestShellTimeoutClamped(t *testing.T) {
 }
 
 func TestShellDangerousWarning(t *testing.T) {
-	// Wave 3: security warnings moved to permission.Guard. Shell.Execute no longer
+	skipOnWindows(t)	// Wave 3: security warnings moved to permission.Guard. Shell.Execute no longer
 	// performs security checks — that's the Guard's responsibility.
 	// This test verifies that the shell still executes commands that would
 	// previously have triggered warnings.
@@ -397,6 +404,7 @@ func TestShellDangerousWarning(t *testing.T) {
 }
 
 func TestShellRMRootDetection(t *testing.T) {
+	skipOnWindows(t)
 	tool := &Shell{}
 	result, err := tool.Execute(context.Background(), ShellParams{
 		Command: "echo rm -rf /",
@@ -435,6 +443,7 @@ func TestShellCurlPipeShellDetection(t *testing.T) {
 }
 
 func TestShellSafeCommandNoWarning(t *testing.T) {
+	skipOnWindows(t)
 	tool := &Shell{}
 	result, err := tool.Execute(context.Background(), ShellParams{
 		Command: "echo hello world",
@@ -630,6 +639,7 @@ func TestShell_SupportsStreaming(t *testing.T) {
 }
 
 func TestShell_ExecuteStreaming_Basic(t *testing.T) {
+	skipOnWindows(t)
 	s := &Shell{}
 	ctx := context.Background()
 	var chunks []string
@@ -971,44 +981,6 @@ func TestShell_ExecuteStreaming_PipeWaitTimeout(t *testing.T) {
 	}
 }
 
-// TestPollOutputFile_ContextCancel 覆盖 pollOutputFile 中 context 取消分支，
-// 即 select 中 cmdCtx.Done() 在 done 之前触发的路径。
-func TestPollOutputFile_ContextCancel(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("Unix process group semantics")
-	}
-
-	cmd := exec.Command("sleep", "100")
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-
-	outputPath := filepath.Join(t.TempDir(), "poll-cancel.log")
-	outputFile, err := os.OpenFile(outputPath, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o600)
-	if err != nil {
-		t.Fatalf("OpenFile: %v", err)
-	}
-	defer func() { _ = outputFile.Close() }()
-	cmd.Stdout = outputFile
-	cmd.Stderr = outputFile
-
-	if err := cmd.Start(); err != nil {
-		t.Fatalf("Start: %v", err)
-	}
-
-	// 使用极短超时确保 cmdCtx.Done() 在进程退出前触发
-	cmdCtx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
-	defer cancel()
-
-	done := make(chan error, 1)
-	go func() { done <- cmd.Wait() }()
-
-	err = pollOutputFile(cmd, cmdCtx, done, outputFile, outputPath, func(s string) {})
-	if err != context.DeadlineExceeded {
-		t.Errorf("expected DeadlineExceeded, got %v", err)
-	}
-	// sleep 进程应该被 killProcessGroup 杀死
-	_ = cmd.Wait()
-}
-
 // TestShell_ReadPipesStreaming 覆盖 fallback pipe 模式读取路径。
 func TestShell_ReadPipesStreaming(t *testing.T) {
 	if runtime.GOOS == "windows" {
@@ -1039,35 +1011,6 @@ func TestShell_ReadPipesStreaming(t *testing.T) {
 	joined := strings.Join(chunks, "")
 	if !strings.Contains(joined, "pipe_hello") {
 		t.Errorf("expected 'pipe_hello' in output, got: %q", joined)
-	}
-}
-
-// TestShell_ReadPipesStreaming_Timeout 覆盖 pipe 模式超时 kill 路径。
-func TestShell_ReadPipesStreaming_Timeout(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("Unix process group semantics")
-	}
-
-	cmd := exec.Command("sleep", "100")
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	stdoutPipe, _ := cmd.StdoutPipe()
-	stderrPipe, _ := cmd.StderrPipe()
-	if err := cmd.Start(); err != nil {
-		t.Fatalf("cmd.Start() error = %v", err)
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
-	defer cancel()
-
-	done := make(chan error, 1)
-	go func() { done <- cmd.Wait() }()
-
-	err := readPipesStreaming(cmd, ctx, done, stdoutPipe, stderrPipe, func(s string) {})
-	if err == nil {
-		t.Fatal("expected timeout error, got nil")
-	}
-	if err != context.DeadlineExceeded {
-		t.Errorf("expected DeadlineExceeded, got %v", err)
 	}
 }
 

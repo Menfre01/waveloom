@@ -1,0 +1,29 @@
+# Ensure consistent LF line endings across all platforms.
+# This is critical for edit_file tool's exact string matching.
+* text=auto eol=lf
+
+# Explicit declarations for source and config files
+*.go       text eol=lf
+*.md       text eol=lf
+*.json     text eol=lf
+*.yml      text eol=lf
+*.yaml     text eol=lf
+*.sh       text eol=lf
+*.ps1      text eol=lf
+Makefile   text eol=lf
+
+# Binary files — leave unchanged
+*.png      binary
+*.gif      binary
+*.jpg      binary
+*.jpeg     binary
+*.ico      binary
+*.webp     binary
+*.svg      binary
+*.tar.gz   binary
+*.zip      binary
+*.ttf      binary
+*.otf      binary
+*.woff     binary
+*.woff2    binary
+*.eot      binary

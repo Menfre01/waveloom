@@ -707,6 +707,45 @@ func TestRegression_FirstTokenOnlyNoFalsePositive(t *testing.T) {
 	}
 }
 
+// ---------------------------------------------------------------------------
+// REGRESSION: find -exec rm/chmod — 多 keyword 子串误伤
+// ---------------------------------------------------------------------------
+
+// TestRegression_FindExecRmChmodFalsePositive 验证 find -exec grep 中
+// 的 grep 搜索模式含 "rm"/"chmod" 时不误杀。
+// 根因：{Keywords: []string{"find", "-exec", "rm"}} 用 strings.Contains 做 AND 匹配，
+// 不关心 -exec 后跟的是 rm 还是其他命令，导致 grep 搜索串中的 "rm" 子串触发拦截。
+// 修复：合并为 "-exec rm" / "-exec chmod"，强制 adjacency。
+func TestRegression_FindExecRmChmodFalsePositive(t *testing.T) {
+	tests := []struct {
+		name    string
+		command string
+		want    CommandRiskLevel
+	}{
+		// 误杀场景：grep 搜索模式含危险命令首字母组合
+		{"find -exec grep rm", `find . -name "*.go" -exec grep -rn "rm" {} \;`, RiskNone},
+		{"find -exec grep chmod", `find . -type f -exec grep -l "chmod" {} \;`, RiskNone},
+		{"find -exec grep rm -r", `find . -maxdepth 1 -exec grep -r "rm" . \;`, RiskNone},
+		// 真正的危险 find -exec 仍然拦截
+		{"find -exec rm log files", `find /tmp -name "*.log" -exec rm -f {} \;`, RiskHigh},
+		{"find -exec rm with +", `find /tmp -type f -exec rm {} +`, RiskHigh},
+		{"find -exec chmod 777", `find /tmp -exec chmod 777 {} \;`, RiskHigh},
+		{"find -exec chmod -R", `find /tmp -type d -exec chmod -R 755 {} \;`, RiskHigh},
+		// find -delete 不受影响
+		{"find -delete tmp", `find . -name "*.tmp" -delete`, RiskHigh},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := CommandSafetyCheck(tt.command)
+			if got.Level != tt.want {
+				t.Errorf("CommandSafetyCheck(%q).Level = %s, want %s (pattern: %s)",
+					tt.command, got.Level, tt.want, got.Pattern)
+			}
+		})
+	}
+}
+
 // TestFirstTokenMatches 验证首 token 匹配逻辑。
 func TestFirstTokenMatches(t *testing.T) {
 	tests := []struct {

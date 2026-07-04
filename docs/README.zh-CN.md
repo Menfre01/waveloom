@@ -34,7 +34,13 @@ brew trust menfre01/tap
 brew install Menfre01/tap/waveloom
 ```
 
-> 支持 macOS / Linux，AMD64 & ARM64。安装到 `~/.local/bin`，无需 sudo。
+> 支持 macOS / Linux / Windows，AMD64 & ARM64。安装到 `~/.local/bin`，无需 sudo。
+
+**Windows** 需要安装 [Git for Windows](https://git-scm.com/downloads/win)。打开 PowerShell 运行：
+
+```powershell
+powershell -c "irm https://raw.githubusercontent.com/Menfre01/waveloom/main/install.ps1 | iex"
+```
 
 安装后配置 Key 即可开始：
 

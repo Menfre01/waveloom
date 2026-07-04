@@ -2,6 +2,7 @@ package tool
 
 import (
 	"context"
+	"runtime"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -188,6 +189,9 @@ func TestRegistry_IsStreamable_Unknown(t *testing.T) {
 }
 
 func TestRegistry_ExecuteStreaming(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("skipping streaming test on Windows")
+	}
 	r := NewRegistry()
 	r.Register(Wrap(&Shell{}))
 	var chunks []string

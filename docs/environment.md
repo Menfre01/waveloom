@@ -10,6 +10,8 @@
 
 Agent 启动时会自动探测当前环境可用的编译器、运行时和构建工具（`go`、`python3`、`node`、`rustc`、`gcc`、`java` 等 19 项），并将结果注入 System Prompt 的 `## Environment` 节，告知模型当前可用命令。
 
+> **Windows 用户**：Waveloom 依赖 [Git for Windows](https://git-scm.com/downloads/win) 提供的 `bash.exe` 执行 Shell 命令。安装 Git for Windows 后，Waveloom 会自动探测 `bash.exe` 路径（支持 `WAVELOOM_GIT_BASH_PATH` 环境变量覆盖）。
+
 ## tools 覆盖
 
 如果某个工具安装了但不在 PATH 中，或想强制使用特定版本，可在 `settings.json` 中配置 `environment.tools`：

@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"charm.land/bubbles/v2/textarea"
 	"charm.land/bubbles/v2/textinput"
 
 	"github.com/Menfre01/waveloom/pkg/permission"
@@ -575,7 +576,7 @@ func TestFuzzyFilter_SubstringFallback(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func newTestModelForQuestion() *model {
-	ti := textinput.New()
+	ti := textarea.New()
 	ti.Prompt = "> "
 
 	otherTi := textinput.New()

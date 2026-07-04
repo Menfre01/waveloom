@@ -1,5 +1,17 @@
 # Changelog
 
+## [v0.1.0-alpha.12] — 2026-07-04
+
+### 新增功能
+- **多行输入框**：输入框从单行改为多行 textarea，固定 2 行高度，内容超出自动折行；第一行显示 `›` 前缀，后续行缩进对齐；终端原生 real cursor 替代 ANSI 虚拟光标；布局动态计算行数，避免 HUD 被挤压
+- **Windows 平台支持**：完整支持 Git Bash 集成与 Windows 平台工具链
+- **RiskClassSafe 安全分级**：`kill_background_task` 默认放行，减少不必要权限确认
+
+### 修复
+- **流式输出换行抖动**：新增 `wrapLineStable` 硬截断替代 word-wrap，流式期间换行位置由列号唯一决定，不随文字增长漂移；覆盖 assistant/thought/tool 三条流式路径
+- **错误颜色区分**：Recoverable 错误显示金色、Fatal 错误显示红色，原全部显示红色
+- **/clear 别名搜索与技能刷新**：命令选择器支持别名模糊搜索；Session reset 后重新注册技能命令
+
 ## [v0.1.0-alpha.11] — 2026-07-03
 
 ### 新增功能

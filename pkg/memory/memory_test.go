@@ -3,6 +3,7 @@ package memory
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -295,6 +296,9 @@ func TestLoad_InvalidUtf8(t *testing.T) {
 }
 
 func TestLoad_ReadError(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("skipping permission test on Windows")
+	}
 	dir := t.TempDir()
 	f := filepath.Join(dir, "AGENTS.md")
 	if err := os.WriteFile(f, []byte("content"), 0o000); err != nil {
@@ -363,10 +367,14 @@ func TestLoad_UnreadableDir_IsSkipped(t *testing.T) {
 }
 
 func TestDirChain(t *testing.T) {
-	root := "/a"
-	leaf := "/a/b/c"
+	root := filepath.FromSlash("/a")
+	leaf := filepath.FromSlash("/a/b/c")
 	chain := dirChain(root, leaf)
-	expected := []string{"/a", "/a/b", "/a/b/c"}
+	expected := []string{
+		filepath.FromSlash("/a"),
+		filepath.FromSlash("/a/b"),
+		filepath.FromSlash("/a/b/c"),
+	}
 	if len(chain) != len(expected) {
 		t.Fatalf("expected %d dirs, got %d: %v", len(expected), len(chain), chain)
 	}
