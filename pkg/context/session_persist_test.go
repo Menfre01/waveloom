@@ -379,21 +379,23 @@ func TestResolveSessionDir_Default(t *testing.T) {
 }
 
 func TestResolveSessionDir_OverrideAbsolute(t *testing.T) {
-	dir, err := ResolveSessionDir("/tmp/cwd", "/custom/sessions")
+	dir, err := ResolveSessionDir(filepath.FromSlash("/tmp/cwd"), filepath.FromSlash("/custom/sessions"))
 	if err != nil {
 		t.Fatalf("ResolveSessionDir: %v", err)
 	}
-	if dir != "/custom/sessions" {
-		t.Errorf("expected /custom/sessions, got %q", dir)
+	want := filepath.FromSlash("/custom/sessions")
+	if dir != want {
+		t.Errorf("expected %q, got %q", want, dir)
 	}
 }
 
 func TestResolveSessionDir_OverrideRelative(t *testing.T) {
-	dir, err := ResolveSessionDir("/tmp/myproject", ".waveloom/sessions")
+	cwd := filepath.FromSlash("/tmp/myproject")
+	dir, err := ResolveSessionDir(cwd, filepath.FromSlash(".waveloom/sessions"))
 	if err != nil {
 		t.Fatalf("ResolveSessionDir: %v", err)
 	}
-	if !strings.HasPrefix(dir, "/tmp/myproject") {
+	if !strings.HasPrefix(dir, cwd) {
 		t.Errorf("expected path under cwd, got %q", dir)
 	}
 }

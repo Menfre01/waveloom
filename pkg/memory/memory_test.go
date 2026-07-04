@@ -3,6 +3,7 @@ package memory
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -295,6 +296,9 @@ func TestLoad_InvalidUtf8(t *testing.T) {
 }
 
 func TestLoad_ReadError(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("skipping permission test on Windows")
+	}
 	dir := t.TempDir()
 	f := filepath.Join(dir, "AGENTS.md")
 	if err := os.WriteFile(f, []byte("content"), 0o000); err != nil {
