@@ -136,6 +136,7 @@ func NewGuard(opts ...GuardOption) *GuardImpl {
 	g.toolRiskClass["write_file"] = RiskClassWrite
 	g.toolRiskClass["edit_file"] = RiskClassWrite
 	g.toolRiskClass["bash"] = RiskClassExecute
+	g.toolRiskClass["kill_background_task"] = RiskClassSafe
 
 	// 内置白名单：无需权限检查，直接放行
 	g.builtinAllow = map[string]bool{
@@ -405,6 +406,12 @@ func (g *GuardImpl) defaultDecision(toolName string) DecisionResult {
 			Decision: DecisionAsk,
 			Reason:   ReasonDefault,
 			Message:  fmt.Sprintf("tool %q requires confirmation", toolName),
+		}
+	case RiskClassSafe:
+		return DecisionResult{
+			Decision: DecisionAllow,
+			Reason:   ReasonDefault,
+			Message:  "safe internal tool: default allow",
 		}
 	default:
 		// 未知工具默认 ask
