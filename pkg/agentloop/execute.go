@@ -85,6 +85,7 @@ func (l *Loop) executeToolCalls(ctx context.Context, calls []llm.ToolCall, state
 				Error:        r.Error.Message,
 				ErrorKind:    r.Error.Kind,
 				Denied:       true,
+				Fatal:        true,
 				DiffHunks:    r.Meta.DiffHunks,
 			}) {
 				return nil, ReasonAborted, ctx.Err()
@@ -227,6 +228,7 @@ func (l *Loop) executeToolCalls(ctx context.Context, calls []llm.ToolCall, state
 		if r.IsError() {
 			ev.Error = r.Error.Message
 			ev.ErrorKind = r.Error.Kind
+			ev.Fatal = r.Error.Class == tool.ErrorClassFatal
 		}
 		if !sendEvent(ctx, ch, ev) {
 			return nil, ReasonAborted, ctx.Err()
@@ -262,6 +264,7 @@ func (l *Loop) executeToolCalls(ctx context.Context, calls []llm.ToolCall, state
 					if result.IsError() {
 						ev.Error = result.Error.Message
 						ev.ErrorKind = result.Error.Kind
+						ev.Fatal = result.Error.Class == tool.ErrorClassFatal
 					} else {
 						ev.Result = result.Content
 					}
@@ -286,6 +289,7 @@ func (l *Loop) executeToolCalls(ctx context.Context, calls []llm.ToolCall, state
 					if result.IsError() {
 						ev.Error = result.Error.Message
 						ev.ErrorKind = result.Error.Kind
+						ev.Fatal = result.Error.Class == tool.ErrorClassFatal
 					} else {
 						ev.Result = result.Content
 					}
@@ -310,6 +314,7 @@ func (l *Loop) executeToolCalls(ctx context.Context, calls []llm.ToolCall, state
 				if result.IsError() {
 					ev.Error = result.Error.Message
 					ev.ErrorKind = result.Error.Kind
+					ev.Fatal = result.Error.Class == tool.ErrorClassFatal
 				} else {
 					ev.Result = result.Content
 				}
@@ -334,6 +339,7 @@ func (l *Loop) executeToolCalls(ctx context.Context, calls []llm.ToolCall, state
 				Error:        r.Error.Message,
 				ErrorKind:    r.Error.Kind,
 				Denied:       true,
+				Fatal:        true,
 				DiffHunks:    r.Meta.DiffHunks,
 			}) {
 				return nil, ReasonAborted, ctx.Err()
@@ -389,6 +395,7 @@ func (l *Loop) executeToolCalls(ctx context.Context, calls []llm.ToolCall, state
 		if result.IsError() {
 			ev.Error = result.Error.Message
 			ev.ErrorKind = result.Error.Kind
+			ev.Fatal = result.Error.Class == tool.ErrorClassFatal
 		}
 		if !sendEvent(ctx, ch, ev) {
 			return nil, ReasonAborted, ctx.Err()
