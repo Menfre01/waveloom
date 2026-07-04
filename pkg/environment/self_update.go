@@ -6,6 +6,7 @@ package environment
 
 import (
 	"archive/tar"
+	"archive/zip"
 	"compress/gzip"
 	"context"
 	"fmt"
@@ -14,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 )
 
 // SelfUpdatePhase 表示自更新流程的阶段。
@@ -30,11 +32,16 @@ const (
 // phase 是当前阶段；pct 是 0-100 的百分比（仅 download 阶段有意义）；detail 是人类可读的描述。
 type SelfUpdateProgress func(phase SelfUpdatePhase, pct int, detail string)
 
-// BuildDownloadURL 返回当前平台对应的 GitHub Release tar.gz 下载地址。
+// BuildDownloadURL 返回当前平台对应的 GitHub Release 下载地址。
+// Windows 使用 .zip，其他平台使用 .tar.gz。
 func BuildDownloadURL() string {
+	ext := "tar.gz"
+	if runtime.GOOS == "windows" {
+		ext = "zip"
+	}
 	return fmt.Sprintf(
-		"https://github.com/Menfre01/waveloom/releases/latest/download/waveloom_%s_%s.tar.gz",
-		runtime.GOOS, runtime.GOARCH,
+		"https://github.com/Menfre01/waveloom/releases/latest/download/waveloom_%s_%s.%s",
+		runtime.GOOS, runtime.GOARCH, ext,
 	)
 }
 
@@ -57,8 +64,13 @@ func SelfUpdate(ctx context.Context, currentPath, downloadURL string, progress S
 	}
 	defer func() { _ = os.RemoveAll(tmpDir) }()
 
-	tarballPath := filepath.Join(tmpDir, "waveloom.tar.gz")
-	if err := downloadWithProgress(ctx, downloadURL, tarballPath, func(downloaded, total int64, pct int) {
+	isZip := strings.HasSuffix(downloadURL, ".zip")
+	archiveExt := ".tar.gz"
+	if isZip {
+		archiveExt = ".zip"
+	}
+	archivePath := filepath.Join(tmpDir, "waveloom"+archiveExt)
+	if err := downloadWithProgress(ctx, downloadURL, archivePath, func(downloaded, total int64, pct int) {
 		mbDown := float64(downloaded) / (1024 * 1024)
 		mbTotal := float64(total) / (1024 * 1024)
 		report(PhaseDownload, pct, fmt.Sprintf("  %.1f MB / %.1f MB (%d%%)", mbDown, mbTotal, pct))
@@ -69,7 +81,12 @@ func SelfUpdate(ctx context.Context, currentPath, downloadURL string, progress S
 	// Phase 2: 解压
 	report(PhaseExtract, 100, "Extracting ...")
 
-	newBinary, err := extractWaveloom(tarballPath, tmpDir)
+	var newBinary string
+	if isZip {
+		newBinary, err = extractWaveloomZip(archivePath, tmpDir)
+	} else {
+		newBinary, err = extractWaveloom(archivePath, tmpDir)
+	}
 	if err != nil {
 		return fmt.Errorf("解压失败: %w", err)
 	}
@@ -203,6 +220,44 @@ func extractWaveloom(tarballPath, tmpDir string) (string, error) {
 	}
 
 	return "", fmt.Errorf("waveloom binary not found in tarball")
+}
+
+// extractWaveloomZip 从 .zip 中提取 waveloom 二进制（Windows 上为 waveloom.exe）。
+func extractWaveloomZip(zipPath, tmpDir string) (string, error) {
+	r, err := zip.OpenReader(zipPath)
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = r.Close() }()
+
+	binName := "waveloom"
+	if runtime.GOOS == "windows" {
+		binName = "waveloom.exe"
+	}
+
+	for _, f := range r.File {
+		if f.Name == binName {
+			rc, err := f.Open()
+			if err != nil {
+				return "", err
+			}
+			defer func() { _ = rc.Close() }()
+
+			outPath := filepath.Join(tmpDir, binName)
+			out, err := os.Create(outPath)
+			if err != nil {
+				return "", err
+			}
+			defer func() { _ = out.Close() }()
+
+			if _, err := io.Copy(out, rc); err != nil {
+				return "", err
+			}
+			return outPath, nil
+		}
+	}
+
+	return "", fmt.Errorf("waveloom binary not found in zip")
 }
 
 // copyFile 复制文件内容及权限。

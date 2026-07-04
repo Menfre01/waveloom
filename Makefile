@@ -5,7 +5,7 @@ VERSION ?= $(shell git describe --tags --dirty --always 2>/dev/null || echo dev)
 LDFLAGS = -s -w -X main.Version=$(VERSION) -X github.com/Menfre01/waveloom/pkg/context.BuildVersion=$(VERSION)
 
 # Release matrix
-GOOSES = linux darwin
+GOOSES = linux darwin windows
 GOARCHES = amd64 arm64
 DIST_DIR = dist
 
@@ -42,12 +42,18 @@ release:
 			echo "→ Building $$GOOS/$$GOARCH ..."; \
 			GOOS=$$GOOS GOARCH=$$GOARCH CGO_ENABLED=0 \
 				go build -ldflags "$(LDFLAGS)" -o $(DIST_DIR)/$(BINARY) $(MODULE); \
-			tar -czf $(DIST_DIR)/$(BINARY)_$${GOOS}_$${GOARCH}.tar.gz \
-				-C $(DIST_DIR) $(BINARY); \
-			rm $(DIST_DIR)/$(BINARY); \
+			if [ "$$GOOS" = "windows" ]; then \
+				mv $(DIST_DIR)/$(BINARY) $(DIST_DIR)/$(BINARY).exe; \
+				cd $(DIST_DIR) && zip $(BINARY)_$${GOOS}_$${GOARCH}.zip $(BINARY).exe && rm $(BINARY).exe; \
+				cd $(CURDIR); \
+			else \
+				tar -czf $(DIST_DIR)/$(BINARY)_$${GOOS}_$${GOARCH}.tar.gz \
+					-C $(DIST_DIR) $(BINARY); \
+				rm $(DIST_DIR)/$(BINARY); \
+			fi; \
 		done; \
 	done
-	@cd $(DIST_DIR) && shasum -a 256 *.tar.gz > checksums.txt
+	@cd $(DIST_DIR) && shasum -a 256 *.tar.gz *.zip > checksums.txt
 	@echo "Done → $(DIST_DIR)/"
 
 .PHONY: homebrew-formula

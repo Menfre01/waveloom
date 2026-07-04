@@ -13,10 +13,10 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/Menfre01/waveloom/pkg/pathutil"
@@ -926,13 +926,11 @@ func (l *Loader) execShell(command, dir string) string {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	shellBin := "bash"
-	if _, err := exec.LookPath("bash"); err != nil {
-		shellBin = "sh"
-	}
-	cmd := exec.Command(shellBin, "-c", command)
+	shellBin, shellArgs := shellutil.ShellInterpreter()
+	args := append(shellArgs, command)
+	cmd := exec.Command(shellBin, args...)
 	cmd.Dir = dir
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	setSysProcAttrSkill(cmd)
 
 	// 创建输出文件（O_APPEND，合并 stdout/stderr）
 	outputPath := filepath.Join(os.TempDir(), fmt.Sprintf("waveloom-skill-%d.log", time.Now().UnixNano()))
@@ -964,7 +962,11 @@ func (l *Loader) execShell(command, dir string) string {
 	select {
 	case <-ctx.Done():
 		if cmd.Process != nil {
-			_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+			if runtime.GOOS == "windows" {
+				_ = cmd.Process.Kill()
+			} else {
+				killProcessGroupSkill(cmd.Process.Pid)
+			}
 		}
 		<-done
 		execErr = ctx.Err()

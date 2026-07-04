@@ -20,6 +20,10 @@
 
 执行 `xattr -d com.apple.quarantine ~/.local/bin/waveloom` 移除隔离标记。
 
+**Q: Windows 上运行 waveloom 提示需要 Git for Windows？**
+
+Waveloom 依赖 Git Bash 提供 Unix 兼容的 shell 环境。请从 [git-scm.com](https://git-scm.com/downloads/win) 下载安装 Git for Windows（安装时选择默认选项即可）。若已安装在非标准路径，设置 `WAVELOOM_GIT_BASH_PATH` 环境变量指向 `bash.exe`。
+
 **Q: 如何确认前缀缓存正在生效？**
 
 TUI 底部状态栏显示缓存命中率。也可查看 `.waveloom/waveloom.log`（需启用 `--verbose`）中的 `cache_hit_tokens` 信息。

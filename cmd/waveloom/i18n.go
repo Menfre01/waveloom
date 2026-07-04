@@ -220,7 +220,7 @@ var zhCN = Messages{
 	SysContextHardLimit:  "上下文已满（98%）。/reset 重建。",
 	SysSummaryFailed:     "摘要连续失败。/reset 重建。",
 	SysNewSessionCreated: "新 session 已创建。",
-	SysUnknownCommand:    "未知命令: %s。输入 /help 查看可用命令。",
+	SysUnknownCommand:    "未知命令: %s。输入框输入 / 查看可用命令。",
 	SysCommandFailed:     "命令执行失败: %v",
 	SysUpdateFailed:      "更新失败。你可以重新打开 waveloom 后重试，或手动运行 install.sh。",
 	SysUpdateInstalled:   "✓ %s 已安装，重启后生效。",
@@ -329,7 +329,7 @@ var zhCN = Messages{
 	SetupModelPrompt:     "输入模型名 [默认: %s]: ",
 	SetupThemePrompt:     "请输入数字 (1-3) [默认: 1]: ",
 	SetupDoneTitle:       "设置完成！",
-	SetupDoneConfigSaved: "配置已保存到 ~/.waveloom/settings.json",
+	SetupDoneConfigSaved: "配置已保存到 %s",
 	SetupDoneReady:       "现在可以运行 waveloom 进入交互模式了。",
 	SetupConfirmTitle:    "确认配置",
 	SetupConfirmPrompt:   "确认以上配置？",
@@ -366,6 +366,8 @@ var zhCN = Messages{
   Tab / Shift+Tab 段落间导航，Enter 展开 / 折叠
   Esc（双击）      清空输入框
   exit            退出程序
+
+  可用命令：在输入框输入 / 即可弹出命令列表。
 
   —— 以下任意时刻生效 ——
   Ctrl+G          循环切换主题（dark → light → auto）
@@ -572,7 +574,7 @@ var enUS = Messages{
 	SetupModelPrompt:     "Enter model name [default: %s]: ",
 	SetupThemePrompt:     "Enter number (1-3) [default: 1]: ",
 	SetupDoneTitle:       "Setup Complete!",
-	SetupDoneConfigSaved: "Config saved to ~/.waveloom/settings.json",
+	SetupDoneConfigSaved: "Config saved to %s",
 	SetupDoneReady:       "You can now run waveloom to start the interactive mode.",
 	SetupConfirmTitle:    "Confirm Settings",
 	SetupConfirmPrompt:   "Confirm the settings above?",
@@ -609,6 +611,8 @@ var enUS = Messages{
   Tab / Shift+Tab Navigate between paragraphs, Enter expand / collapse
   Esc (double)    Clear input
   exit            Exit program
+
+  Available commands: type / in the input to see the command list.
 
   —— Anytime ——
   Ctrl+G          Cycle theme (dark → light → auto)

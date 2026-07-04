@@ -1,5 +1,17 @@
 # Changelog
 
+## [v0.1.0-alpha.12] — 2026-07-04
+
+### Added
+- **Multi-line input**: Input area upgraded from single-line textinput to multi-line textarea, fixed at 2 lines height with automatic word wrapping; first line shows `›` prefix, subsequent lines use aligned indentation; native terminal real cursor replaces ANSI virtual cursor; layout dynamically calculates input height to prevent HUD挤压
+- **Windows platform support**: Full Git Bash integration and Windows toolchain support
+- **RiskClassSafe security grading**: `kill_background_task` now defaults to ALLOW, reducing unnecessary permission prompts
+
+### Fixed
+- **Streaming output jitter**: Added `wrapLineStable` hard-break wrapping replacing word-wrap during streaming; line break positions are determined solely by column index, unaffected by growing content; covers all three streaming paths (assistant/thought/tool)
+- **Error color distinction**: Recoverable errors now show in gold, Fatal errors in red (previously all red)
+- **/clear alias search & skill refresh**: Command picker now supports fuzzy alias search; slash registry rebuilt on session reset to refresh skill command list
+
 ## [v0.1.0-alpha.11] — 2026-07-03
 
 ### Added

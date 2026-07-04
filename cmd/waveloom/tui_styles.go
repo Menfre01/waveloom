@@ -154,6 +154,7 @@ var (
 	styleThoughtContent    lipgloss.Style
 	styleThoughtExpandHint lipgloss.Style
 	styleToolPrefixDone    lipgloss.Style
+	styleToolPrefixWarn    lipgloss.Style
 	styleToolPrefixErr     lipgloss.Style
 	styleHeader            lipgloss.Style
 	styleHeaderAccent      lipgloss.Style
@@ -227,6 +228,7 @@ func applyTheme(p palette) {
 	styleThoughtContent = lipgloss.NewStyle().Foreground(colorMuted).Italic(true)
 	styleThoughtExpandHint = lipgloss.NewStyle().Foreground(colorGray).Italic(true)
 	styleToolPrefixDone = lipgloss.NewStyle().Foreground(colorOK).Bold(true)
+	styleToolPrefixWarn = lipgloss.NewStyle().Foreground(colorAccentGold).Bold(true)
 	styleToolPrefixErr = lipgloss.NewStyle().Foreground(colorErr).Bold(true)
 
 	// 布局样式
@@ -373,14 +375,18 @@ func thoughtPrefix(sp spinner.Model, streaming bool) string {
 }
 
 // toolPrefix 返回 tool 前缀。执行中使用 spinner 动画，完成/失败为静态 `•`。
-func toolPrefix(sp spinner.Model, state paraStateEnum) string {
+// fatal 为 true 时使用红色，false 时使用金色（recoverable 错误）。
+func toolPrefix(sp spinner.Model, state paraStateEnum, fatal bool) string {
 	switch state {
 	case stateStreaming:
 		return sp.View()
 	case stateDone:
 		return styleToolPrefixDone.Render("•")
 	case stateError:
-		return styleToolPrefixErr.Render("•")
+		if fatal {
+			return styleToolPrefixErr.Render("•")
+		}
+		return styleToolPrefixWarn.Render("•")
 	default:
 		return styleToolPrefixDone.Render("•")
 	}

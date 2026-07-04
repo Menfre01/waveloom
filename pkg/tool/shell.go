@@ -14,7 +14,6 @@ import (
 	"runtime"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/Menfre01/waveloom/pkg/pathutil"
@@ -46,8 +45,7 @@ func (t *Shell) Description() string {
 		"",
 		"Set run_in_background to true for long-running commands (servers, watchers, daemons). The tool returns immediately with a task ID and log path — use read_file to check progress. Use kill_background_task to stop a running background task.",
 		"",
-		"Unix/macOS uses bash -c (sh fallback), Windows uses cmd /c.",
-		"Command syntax must target the correct platform (Windows does not support ; for multi-command, use &&).",
+		"Unix/macOS uses bash -c (sh fallback), Windows uses Git Bash (bash -c).",
 		"",
 		"Prefer dedicated tools over shell:",
 		"  - Read files: read_file (not cat/head/tail)",
@@ -63,12 +61,13 @@ func (t *Shell) Description() string {
 		"Commands already run in the workspace directory.",
 		"To operate in a different directory, use the working_dir parameter.",
 		"",
-		"For throwaway verification scripts: prefer python, write to /tmp, and clean up after.",
-		`Example: {"command":"python /tmp/check.py && rm /tmp/check.py"}`,
+		"For throwaway verification scripts: prefer python, write to a temp file, and clean up after.",
+		"  Git Bash on Windows provides standard Unix paths (/tmp, /usr/bin). Use forward-slash paths.",
 		"",
 		"Examples:",
-		`  {"command":"make build"}                                     — runs in workspace`,
-		`  {"command":"ls", "working_dir":"/tmp"}                       — runs in /tmp, clean`,
+		`  {"command":"python /tmp/check.py && rm /tmp/check.py"}  — Unix/macOS or Windows (Git Bash)`,
+		`  {"command":"make build"}                                 — runs in workspace`,
+		`  {"command":"ls", "working_dir":"/tmp"}                   — runs in /tmp, clean`,
 	}, "\n")
 }
 
@@ -81,19 +80,10 @@ const (
 
 // ── shellInterpreter ──
 
-// shellInterpreter 根据当前 OS 返回用于执行 Shell 命令的解释器和参数。
-//
-// Unix/macOS: bash -c（优先 bash 兼容脚本中的 pipefail / local 等特性；
-//             bash 不可用时回退到 sh）
-// Windows:    cmd /c（始终可用，无需额外安装）
+// shellInterpreter 返回当前平台的 shell 解释器及其参数。
+// 委托到 shellutil.ShellInterpreter，结果在首次调用时缓存。
 func shellInterpreter() (binary string, args []string) {
-	if runtime.GOOS == "windows" {
-		return "cmd", []string{"/c"}
-	}
-	if _, err := exec.LookPath("bash"); err == nil {
-		return "bash", []string{"-c"}
-	}
-	return "sh", []string{"-c"}
+	return shellutil.ShellInterpreter()
 }
 
 // ── Execute ──
@@ -482,9 +472,7 @@ func (t *Shell) setupCommand(ctx context.Context, p *ShellParams) (*exec.Cmd, co
 	if p.WorkingDir != "" {
 		cmd.Dir = p.WorkingDir
 	}
-	if runtime.GOOS != "windows" {
-		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	}
+	SetSysProcAttr(cmd)
 
 	// 创建临时输出文件（stdout/stderr 合并，O_APPEND 保证原子写入）
 	outputPath := filepath.Join(os.TempDir(), fmt.Sprintf("waveloom-out-%s.log", newTaskID()))
@@ -572,13 +560,7 @@ func killProcessGroup(cmd *exec.Cmd) {
 		_ = cmd.Process.Kill()
 		return
 	}
-	// 负 PID → 杀整个进程组
-	pgid := cmd.Process.Pid
-	if cmd.SysProcAttr != nil && cmd.SysProcAttr.Setpgid {
-		_ = syscall.Kill(-pgid, syscall.SIGKILL)
-	} else {
-		_ = cmd.Process.Kill()
-	}
+	KillProcessGroup(cmd)
 }
 
 // formatShellError 构造命令执行前的错误结果（如启动失败）。
