@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -892,9 +894,20 @@ func TestHandleToolStream_NoMatch(t *testing.T) {
 // relativizePaths
 // ---------------------------------------------------------------------------
 
+// platformAbsPath 返回跨平台兼容的假绝对路径（仅路径运算，不访问文件系统）。
+// Windows: C:\<parts>; Unix: /<parts>。
+func platformAbsPath(t *testing.T, parts ...string) string {
+	t.Helper()
+	joined := filepath.Join(parts...)
+	if runtime.GOOS == "windows" {
+		return "C:" + string(filepath.Separator) + joined
+	}
+	return string(filepath.Separator) + joined
+}
+
 func TestRelativizePaths_NormalRelative(t *testing.T) {
-	cwd := "/home/user/project"
-	paths := []string{"main.go", "cmd/waveloom/tui.go"}
+	cwd := platformAbsPath(t, "home", "user", "project")
+	paths := []string{"main.go", filepath.Join("cmd", "waveloom", "tui.go")}
 	result := relativizePaths(paths, cwd)
 	if len(result) != 2 {
 		t.Fatalf("expected 2, got %d", len(result))
@@ -902,15 +915,18 @@ func TestRelativizePaths_NormalRelative(t *testing.T) {
 	if result[0] != "main.go" {
 		t.Errorf("expected main.go, got %q", result[0])
 	}
-	if result[1] != "cmd/waveloom/tui.go" {
-		t.Errorf("expected cmd/waveloom/tui.go, got %q", result[1])
+	if result[1] != filepath.Join("cmd", "waveloom", "tui.go") {
+		t.Errorf("expected %q, got %q", filepath.Join("cmd", "waveloom", "tui.go"), result[1])
 	}
 }
 
 func TestRelativizePaths_Absolute(t *testing.T) {
-	cwd := "/home/user/project"
-	// 同卷绝对路径 → 转为 cwd 相对路径；不同卷绝对路径 → 保持绝对路径
-	paths := []string{"/home/user/project/main.go", "/home/user/other/lib.rs"}
+	cwd := platformAbsPath(t, "home", "user", "project")
+	// 同卷绝对路径 → 转为 cwd 相对路径；兄弟目录绝对路径 → ../ 相对路径
+	paths := []string{
+		filepath.Join(cwd, "main.go"),
+		platformAbsPath(t, "home", "user", "other", "lib.rs"),
+	}
 	result := relativizePaths(paths, cwd)
 	if len(result) != 2 {
 		t.Fatalf("expected 2, got %d", len(result))
@@ -918,8 +934,8 @@ func TestRelativizePaths_Absolute(t *testing.T) {
 	if result[0] != "main.go" {
 		t.Errorf("expected main.go, got %q", result[0])
 	}
-	if result[1] != "../other/lib.rs" {
-		t.Errorf("expected ../other/lib.rs, got %q", result[1])
+	if result[1] != filepath.Join("..", "other", "lib.rs") {
+		t.Errorf("expected %q, got %q", filepath.Join("..", "other", "lib.rs"), result[1])
 	}
 }
 
@@ -927,25 +943,26 @@ func TestRelativizePaths_Absolute(t *testing.T) {
 // walkFn 返回的 ../ 前缀路径能正确保留并转为 cwd 相对路径。
 // 根因：修复前 walkFn 以 absRoot 为基准做 Rel，产生不含 ../ 的错误路径。
 func TestRegression_RelativizePathsParentDir(t *testing.T) {
-	cwd := "/home/user/project"
-	// 模拟 WalkDir 从父目录 /home/user 扫描发现的文件，
+	cwd := platformAbsPath(t, "home", "user", "project")
+	// 模拟 WalkDir 从父目录扫描发现的文件，
 	// walkFn 修复后以 cwd 为基准做 Rel，路径正确携带 ../ 前缀。
 	paths := []string{
-		"../sibling/file.go",
-		"../claude-code/main.go",
-		"../../other/src/lib.rs",
+		filepath.Join("..", "sibling", "file.go"),
+		filepath.Join("..", "claude-code", "main.go"),
+		filepath.Join("..", "..", "other", "src", "lib.rs"),
 	}
 	result := relativizePaths(paths, cwd)
 	if len(result) != 3 {
 		t.Fatalf("expected 3, got %d", len(result))
 	}
-	if result[0] != "../sibling/file.go" {
-		t.Errorf("expected ../sibling/file.go, got %q", result[0])
+	expect := []string{
+		filepath.Join("..", "sibling", "file.go"),
+		filepath.Join("..", "claude-code", "main.go"),
+		filepath.Join("..", "..", "other", "src", "lib.rs"),
 	}
-	if result[1] != "../claude-code/main.go" {
-		t.Errorf("expected ../claude-code/main.go, got %q", result[1])
-	}
-	if result[2] != "../../other/src/lib.rs" {
-		t.Errorf("expected ../../other/src/lib.rs, got %q", result[2])
+	for i, exp := range expect {
+		if result[i] != exp {
+			t.Errorf("result[%d]: expected %q, got %q", i, exp, result[i])
+		}
 	}
 }
