@@ -2528,8 +2528,8 @@ func doScanRelative(ctx context.Context, registry tool.Registry, cwd, filter str
 						return nil
 					}
 				}
-				// 转为相对路径
-				rel, err := filepath.Rel(absRoot, path)
+				// 转为相对路径（相对于 CWD，确保 ../ 等前缀在 relativizePaths 中正确处理）
+				rel, err := filepath.Rel(cwd, path)
 				if err != nil {
 					rel = path
 				}
