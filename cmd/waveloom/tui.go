@@ -127,7 +127,17 @@ var defaultSystemPrompt = `You are Waveloom, a coding agent. You help users writ
 - For no_match: the error includes a hint with the closest matching lines and line numbers — use read_file to verify the exact content at those lines, then copy text verbatim (including indentation).
 - For multiple_matches: the error shows each match location with surrounding context and line numbers. Pick one occurrence and include 1-2 unique surrounding lines in your old_string to disambiguate.
 - For no_results: the skill was not found or not applicable — try a different skill name or check available skills.
-- Stop and ask for guidance when errors keep repeating — the loop enforces a hard limit.`
+
+## Backoff & loop protection
+
+- The loop tracks consecutive turns where ALL tool calls fail with the same (tool, error_kind) pair and NO tool succeeds. For example: bash + command_not_found, read_file + file_not_found.
+- Changing the tool OR changing the error kind resets the counter — the loop recognizes this as a strategy pivot and does not penalize it.
+- Any successful tool call resets the counter entirely.
+- At 3 consecutive failures with the same (tool, kind), you receive a [system] warning. At 5, a stronger warning. At 8, the loop terminates to prevent infinite retries.
+- **You should change your approach before the warning appears.** After any tool fails twice with the same error:
+  - Try a different tool to achieve the same goal.
+  - Try the same tool with substantially different arguments (different path, different command, different pattern).
+  - If neither works, stop and ask the user for guidance.`
 
 // ---------------------------------------------------------------------------
 // 自定义消息类型
