@@ -29,6 +29,10 @@ specs/           各组件规格书（修改前先阅读）
 
 - 遵循 Go 社区惯例（Effective Go，标准库 project layout），不过度设计，命名清晰避免缩写
 - 错误统一处理，不外泄堆栈到客户端；查询 API 优先用 `go doc`
+- **跨平台兼容**：所有代码必须同时兼容 Windows / Linux / Darwin 三平台：
+  - 文件系统操作优先使用 `filepath.WalkDir`、`os.ReadDir` 等标准库，禁止直接调用外部命令（如 `find`、`ls`、`dir`）
+  - 路径拼接必须使用 `filepath.Join`，分隔符使用 `filepath.Separator`，禁止硬编码 `/` 或 `\`
+  - 外部 API 调用前确认第三方包是否声明了跨平台支持，必要时用 `runtime.GOOS` 条件编译
 
 ## Agent 操作规范
 

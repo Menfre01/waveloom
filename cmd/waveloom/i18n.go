@@ -87,6 +87,10 @@ type Messages struct {
 	PickerSelectLocale string
 	PickerThemeAuto    string
 
+	// ── File picker ──────────────────────────────────────
+	PickerScanning  string
+	PickerNoResults string
+
 	// ── Key bindings ─────────────────────────────────────
 	KeyNav         string
 	KeyConfirm     string
@@ -269,6 +273,8 @@ var zhCN = Messages{
 	PickerSelectModel:  "▲ 选择模型",
 	PickerSelectLocale: "▲ 选择界面语言",
 	PickerThemeAuto:    "Auto（自动检测终端背景色）",
+	PickerScanning:     "正在扫描文件...",
+	PickerNoResults:    "无匹配文件",
 
 	// Key bindings
 	KeyNav:         "导航",
@@ -514,6 +520,8 @@ var enUS = Messages{
 	PickerSelectModel:  "▲ Select Model",
 	PickerSelectLocale: "▲ Select Language",
 	PickerThemeAuto:    "Auto (detect terminal background)",
+	PickerScanning:     "Scanning files...",
+	PickerNoResults:    "No files found",
 
 	// Key bindings
 	KeyNav:         "Navigate",

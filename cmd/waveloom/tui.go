@@ -127,7 +127,17 @@ var defaultSystemPrompt = `You are Waveloom, a coding agent. You help users writ
 - For no_match: the error includes a hint with the closest matching lines and line numbers — use read_file to verify the exact content at those lines, then copy text verbatim (including indentation).
 - For multiple_matches: the error shows each match location with surrounding context and line numbers. Pick one occurrence and include 1-2 unique surrounding lines in your old_string to disambiguate.
 - For no_results: the skill was not found or not applicable — try a different skill name or check available skills.
-- Stop and ask for guidance when errors keep repeating — the loop enforces a hard limit.`
+
+## Backoff & loop protection
+
+- The loop tracks consecutive turns where ALL tool calls fail with the same (tool, error_kind) pair and NO tool succeeds. For example: bash + command_not_found, read_file + file_not_found.
+- Changing the tool OR changing the error kind resets the counter — the loop recognizes this as a strategy pivot and does not penalize it.
+- Any successful tool call resets the counter entirely.
+- At 3 consecutive failures with the same (tool, kind), you receive a [system] warning. At 5, a stronger warning. At 8, the loop terminates to prevent infinite retries.
+- **You should change your approach before the warning appears.** After any tool fails twice with the same error:
+  - Try a different tool to achieve the same goal.
+  - Try the same tool with substantially different arguments (different path, different command, different pattern).
+  - If neither works, stop and ask the user for guidance.`
 
 // ---------------------------------------------------------------------------
 // 自定义消息类型
@@ -402,6 +412,7 @@ type model struct {
 	pickerLastScannedBase string                // 上次触发磁盘扫描的 filepath.Base(filter)，base 未变则跳过扫描
 	pickerDismissValue    string                // 选择器关闭时的 input 值，防止立即重新触发
 	pickerLastValue       string                // 上次刷新时的 input 值，避免 spinner tick 触发重复扫描
+	pickerScanning        bool                  // 是否正在异步扫描中（用于显示加载状态）
 	pickerList            list.Model            // 文件列表组件（bubbles/list）
 	pickerDelegate        *list.DefaultDelegate // 文件选择器 delegate 指针，主题切换时更新样式
 
@@ -1041,6 +1052,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.gen != m.pickerScanGen {
 			return m, nil
 		}
+		m.pickerScanning = false
 		m.pickerAllItems = msg.items
 		m.pickerItems = fuzzyFilter(m.pickerFilter, m.pickerAllItems)
 		m.buildPickerList()
@@ -1894,6 +1906,7 @@ func (m *model) handlePickerKey(msg tea.KeyPressMsg) (bool, tea.Cmd) {
 // closePicker 关闭文件选择器。
 func (m *model) closePicker() {
 	m.pickerVisible = false
+	m.pickerScanning = false
 	m.pickerDismissValue = m.input.Value()
 	m.pickerLastValue = ""
 	m.pickerLastScannedBase = ""
@@ -1942,8 +1955,30 @@ func (m *model) commitPickerSelection(idx int) {
 
 // renderPickerDropdown 渲染文件选择器下拉列表。
 func (m *model) renderPickerDropdown(contentWidth int) string {
+	// REGRESSION: 空 items 时返回 "" → 下拉面板完全不可见，用户在大目录中输入 @ 后
+	// 看到的是"没反应"，实际上扫描异步进行中但无任何视觉反馈。
+	// 修复：扫描中显示 spinner，无结果显示空状态，均不返回空字符串。
+	// 不可单测：依赖 TUI 模型状态 + lipgloss 样式 + spinner 组件。
+	// 扫描中 → 显示加载状态
+	if m.pickerScanning && len(m.pickerItems) == 0 {
+		spinner := m.spinner.View()
+		boxStyle := lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(colorHeaderAccent).
+			Padding(0, 1).
+			Width(contentWidth)
+		return boxStyle.Render(spinner + " " + m.msg().PickerScanning)
+	}
+
+	// 扫描完成但无结果 → 显示空状态
 	if len(m.pickerItems) == 0 {
-		return ""
+		emptyStyle := lipgloss.NewStyle().Foreground(colorGray)
+		boxStyle := lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(colorHeaderAccent).
+			Padding(0, 1).
+			Width(contentWidth)
+		return boxStyle.Render(emptyStyle.Render(m.msg().PickerNoResults))
 	}
 
 	// 同步 list 宽度
@@ -2275,6 +2310,7 @@ func (m *model) scanFilesAsync() {
 		m.pickerScanCancel = nil
 	}
 
+	m.pickerScanning = true
 	m.pickerScanGen++
 	gen := m.pickerScanGen
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -2304,6 +2340,7 @@ func (m *model) activatePicker() {
 	m.pickerVisible = true
 	m.pickerFilter = resolveTilde(extractFilterAfterAt(m.input.Value()))
 	m.pickerLastValue = m.input.Value()
+	m.pickerScanning = true
 
 	// 立即用空列表占位，避免 View() 中 nil list
 	m.pickerItems = nil
@@ -2410,8 +2447,9 @@ func doScanRelative(ctx context.Context, registry tool.Registry, cwd, filter str
 		}
 	}
 
-	// 父目录顶层 → 浅层列出兄弟；其他 → 深度扫描
-	maxDepth := 10
+	// 父目录顶层 → 浅层列出兄弟；其他 → 浅层扫描（5 层），
+	// 用户输入更多路径分量后 searchRoot 自然收窄，无需深层扫描。
+	maxDepth := 5
 	excludeCWD := false
 	if searchRoot == filepath.Dir(cwd) {
 		maxDepth = 2
@@ -2419,26 +2457,92 @@ func doScanRelative(ctx context.Context, registry tool.Registry, cwd, filter str
 	}
 
 	doSearch := func(namePattern string) (files []string) {
-		cmd := fmt.Sprintf("find %s -maxdepth %d -type f", shellQuote(searchRoot), maxDepth)
-		cmd += " -not -path '*/.git/*' -not -path '*/node_modules/*' 2>/dev/null"
-		if excludeCWD {
-			cwdBase := filepath.Base(cwd)
-			cmd += fmt.Sprintf(" -not -path %s", shellQuote(filepath.Join(searchRoot, cwdBase)+"/*"))
+		// 使用 filepath.WalkDir 替代 find 命令：
+		// - 跨平台兼容（Windows 无 find）
+		// - 无外部依赖、无 shell 转义、无 MaxShellLines 截断
+		// - WalkDirFunc 内直接 prune / 深度控制 / 名称过滤
+
+		// 根目录绝对化，用于深度计算
+		absRoot, err := filepath.Abs(filepath.Join(searchDir, searchRoot))
+		if err != nil {
+			absRoot = filepath.Join(searchDir, searchRoot)
 		}
-		if namePattern != "" && namePattern != "*" {
-			cmd += fmt.Sprintf(" -name '%s'", namePattern)
-		}
-		cmd += " | sort"
-		jsonBytes, _ := json.Marshal(map[string]string{
-			"command":     cmd,
-			"working_dir": searchDir,
-		})
-		result, err := registry.Execute(ctx, "bash", jsonBytes)
-		if err != nil || result.IsError() {
+		absRoot = filepath.Clean(absRoot)
+		// 计算根目录的路径分量数，用于深度判断
+		rootDepth := len(strings.Split(absRoot, string(filepath.Separator)))
+
+		var found []string
+		walkCtx, walkCancel := context.WithTimeout(ctx, 8*time.Second)
+		defer walkCancel()
+
+		walkFn := func(path string, d os.DirEntry, walkErr error) error {
+			select {
+			case <-walkCtx.Done():
+				return walkCtx.Err()
+			default:
+			}
+
+			if walkErr != nil {
+				return nil // 跳过无法访问的目录
+			}
+
+			// 深度控制
+			currentDepth := len(strings.Split(path, string(filepath.Separator))) - rootDepth
+			if currentDepth > maxDepth {
+				if d.IsDir() {
+					return filepath.SkipDir
+				}
+				return nil
+			}
+
+			// prune: 跳过 .git / node_modules 整树
+			base := d.Name()
+			if d.IsDir() && (base == ".git" || base == "node_modules") {
+				return filepath.SkipDir
+			}
+
+			// 隐藏目录/文件跳过（非 . 或 ..）
+			if strings.HasPrefix(base, ".") && base != "." && base != ".." {
+				if d.IsDir() {
+					return filepath.SkipDir
+				}
+				return nil
+			}
+
+			// excludeCWD: 跳过 CWD 下的所有条目
+			if excludeCWD {
+				cwdAbs, _ := filepath.Abs(cwd)
+				if strings.HasPrefix(path+string(filepath.Separator), cwdAbs+string(filepath.Separator)) {
+					if d.IsDir() {
+						return filepath.SkipDir
+					}
+					return nil
+				}
+			}
+
+			if !d.IsDir() {
+				// 名称过滤（只对文件，目录由目录推断生成）
+				if namePattern != "" && namePattern != "*" {
+					matched, _ := filepath.Match(namePattern, base)
+					if !matched {
+						return nil
+					}
+				}
+				// 转为相对路径（相对于 CWD，确保 ../ 等前缀在 relativizePaths 中正确处理）
+				rel, err := filepath.Rel(cwd, path)
+				if err != nil {
+					rel = path
+				}
+				found = append(found, rel)
+			}
+
 			return nil
 		}
-		rawFiles := parseFindOutput(result.Content)
-		return relativizePaths(rawFiles, cwd)
+
+		_ = filepath.WalkDir(searchDir, walkFn)
+		// WalkDir 可能因 context 超时返回 error，found 中已有部分结果可用
+		sort.Strings(found)
+		return relativizePaths(found, cwd)
 	}
 
 	files := doSearch("*")
@@ -2509,9 +2613,11 @@ func doScanRelative(ctx context.Context, registry tool.Registry, cwd, filter str
 		return nil
 	}
 
-	if len(items) > 500 {
-		items = items[:500]
-	}
+	// REGRESSION: 500 条截断在 sortPickerItems 之前。
+	// 4205 个目录中 waveloom/ 排在 ~4000 位，被截断提前丢弃，
+	// fuzzyFilter 从未收到该条目 → 永远搜不到字母序靠后的目录。
+	// 修复：去掉 500 截断，靠 fuzzyFilter（上限 20 条）自然限流。
+	// 不可单测：依赖真实目录结构，条目数随 CWD 变化。
 	sortPickerItems(items)
 	return items
 }
@@ -2537,21 +2643,22 @@ func doScanAbsolute(ctx context.Context, registry tool.Registry, cwd, filter str
 	}
 	searchRoot := resolved
 
-	// 深度 = searchRoot 之后的路径层级 + 2
-	// @~/ → depth 2（home 直系 + 一级子内容）
-	// @~/Workbench/waveloom/ → depth 3（项目内容 + 两层子目录）
 	relFilter := strings.TrimPrefix(filter, searchRoot)
 	relFilter = strings.Trim(relFilter, "/")
-	extraLevels := 0
+
+	// REGRESSION: 深度策略对模糊匹配（如 @/Use → searchRoot=/）使用 extraLevels+2，
+	// 根目录扫描 6+ 层极易超时，导致间歇性搜索不到。
+	// 修复：完整目录（relFilter=""）深度 5，模糊匹配（relFilter 非空）深度 1。
+	// 不可单测：依赖真实文件系统，扫描耗时随系统负载变化。
+	maxDepth := 5
 	if relFilter != "" {
-		extraLevels = len(strings.Split(relFilter, "/"))
+		maxDepth = 1
 	}
-	maxDepth := extraLevels + 2
 	if maxDepth < 1 {
 		maxDepth = 1
 	}
-	if maxDepth > 10 {
-		maxDepth = 10
+	if maxDepth > 12 {
+		maxDepth = 12
 	}
 
 	// 搜索策略：
@@ -2566,20 +2673,71 @@ func doScanAbsolute(ctx context.Context, registry tool.Registry, cwd, filter str
 	}
 
 	doSearch := func(typeFilter string) (files []string) {
-		cmd := fmt.Sprintf("find %s -maxdepth %d -type %s -not -path '*/.git/*' -not -path '*/node_modules/*' 2>/dev/null", shellQuote(searchRoot), maxDepth, typeFilter)
-		if namePattern != "*" {
-			cmd += fmt.Sprintf(" -name '%s'", namePattern)
-		}
-		cmd += " | sort"
-		jsonBytes, _ := json.Marshal(map[string]string{
-			"command":     cmd,
-			"working_dir": searchRoot,
-		})
-		result, err := registry.Execute(ctx, "bash", jsonBytes)
-		if err != nil || result.IsError() {
+		// 使用 filepath.WalkDir 替代 find：跨平台兼容，无外部依赖。
+
+		absRoot := filepath.Clean(searchRoot)
+		rootDepth := len(strings.Split(absRoot, string(filepath.Separator)))
+
+		var results []string
+		walkCtx, walkCancel := context.WithTimeout(ctx, 8*time.Second)
+		defer walkCancel()
+
+		walkFn := func(path string, d os.DirEntry, walkErr error) error {
+			select {
+			case <-walkCtx.Done():
+				return walkCtx.Err()
+			default:
+			}
+
+			if walkErr != nil {
+				return nil
+			}
+
+			currentDepth := len(strings.Split(path, string(filepath.Separator))) - rootDepth
+			if currentDepth > maxDepth {
+				if d.IsDir() {
+					return filepath.SkipDir
+				}
+				return nil
+			}
+
+			base := d.Name()
+			// prune .git / node_modules
+			if d.IsDir() && (base == ".git" || base == "node_modules") {
+				return filepath.SkipDir
+			}
+
+			// 隐藏目录跳过
+			if strings.HasPrefix(base, ".") && base != "." && base != ".." {
+				if d.IsDir() {
+					return filepath.SkipDir
+				}
+				return nil
+			}
+
+			// 类型过滤
+			if typeFilter == "d" && !d.IsDir() {
+				return nil
+			}
+			if typeFilter == "f" && d.IsDir() {
+				return nil
+			}
+
+			// 名称过滤
+			if namePattern != "*" {
+				matched, _ := filepath.Match(namePattern, base)
+				if !matched {
+					return nil
+				}
+			}
+
+			results = append(results, path)
 			return nil
 		}
-		return parseFindOutput(result.Content)
+
+		_ = filepath.WalkDir(absRoot, walkFn)
+		sort.Strings(results)
+		return results
 	}
 
 	dirFiles := doSearch("d")
@@ -2650,46 +2808,8 @@ func doScanAbsolute(ctx context.Context, registry tool.Registry, cwd, filter str
 		}
 	}
 
-	if len(items) > 500 {
-		items = items[:500]
-	}
 	sortPickerItems(items)
 	return items
-}
-
-// parseFindOutput 解析 shell 工具返回的 find 命令输出为文件路径列表。
-//
-// shell 工具的输出格式：
-//
-//	Command succeeded (exit=0)  8ms
-//	   stdout:
-//	     /path/to/file1
-//	     /path/to/file2
-//
-// 本函数跳过元数据头，仅提取缩进的文件路径行。
-func parseFindOutput(content string) []string {
-	lines := strings.Split(content, "\n")
-	var files []string
-	inBody := false
-
-	for _, line := range lines {
-		// 检测头→体边界："   stdout:" 或 "   stderr/stdout:"
-		if !inBody {
-			if strings.HasPrefix(line, "   stdout:") || strings.HasPrefix(line, "   stderr/stdout:") {
-				inBody = true
-			}
-			continue
-		}
-
-		// 体内部每行缩进 5 空格，剥离后即为实际文件路径
-		if strings.HasPrefix(line, "     ") {
-			file := strings.TrimSpace(line[5:])
-			if file != "" && file != "(empty)" {
-				files = append(files, file)
-			}
-		}
-	}
-	return files
 }
 
 // extractDirPrefix 从 filter 中提取可能的外部目录前缀。
@@ -2735,11 +2855,6 @@ func resolveTilde(filter string) string {
 		return filter
 	}
 	return homeDir + suffix
-}
-
-// shellQuote 为 shell 命令安全转义路径参数。
-func shellQuote(path string) string {
-	return "'" + strings.ReplaceAll(path, "'", "'\\''") + "'"
 }
 
 // relativizePaths 将绝对路径或 ./ 前缀路径转换为相对于 cwd 的路径。
