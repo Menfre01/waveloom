@@ -41,7 +41,35 @@ func (d *DangerousCommandPattern) Matches(command string) bool {
 	if len(d.Pipewords) > 0 {
 		return d.checkPipe(command)
 	}
+	// 对于 pattern 为 rm -rf / 的变体，额外检查 / 不是路径前缀：
+	// 拦截 "rm -rf /" 或 "rm -rf /*", 放行 "rm -rf /tmp/..."
+	if strings.Contains(d.Label, "rm -rf /") {
+		return d.checkRMRoot(command)
+	}
 	return true
+}
+
+// checkRMRoot 验证 rm -rf 的目标确实为根目录，而非子路径。
+func (d *DangerousCommandPattern) checkRMRoot(command string) bool {
+	// 查找 -rf 后面的路径部分
+	idx := strings.Index(command, "-rf")
+	if idx < 0 {
+		return false
+	}
+	rest := strings.TrimSpace(command[idx+3:])
+	// 提取路径：-rf 后的第一个空格分隔的 token
+	parts := strings.Fields(rest)
+	if len(parts) == 0 {
+		return false
+	}
+	path := parts[0]
+	// 危险：path == "/" 或 path == "/*" 或以 / 开头 + glob
+	if path == "/" || path == "/*" || path == "/." || path == "/.." ||
+		strings.HasPrefix(path, "/*.") {
+		return true
+	}
+	// 安全：/tmp/... /home/... /var/... 等子目录
+	return false
 }
 
 // anyFirstTokenMatches 检查命令链中任一子命令的首 token 是否匹配 keyword。

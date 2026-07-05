@@ -957,3 +957,32 @@ func TestAudit_FirstTokenOnly_Chains(t *testing.T) {
 		})
 	}
 }
+
+func TestRMRootSafety(t *testing.T) {
+	// Dangerous — should be blocked
+	dangerous := []string{
+		"rm -rf /",
+		"rm -rf /*",
+		"rm -rf /.",
+		"rm -rf /..",
+	}
+	for _, cmd := range dangerous {
+		result := CommandSafetyCheck(cmd)
+		if result.Level != RiskHigh {
+			t.Errorf("should block %q, got %s", cmd, result.Level)
+		}
+	}
+
+	// Safe — should NOT be blocked
+	safe := []string{
+		"rm -rf /tmp/test",
+		"rm -rf /tmp/waveloom-test-subagent",
+		"rm -rf /home/user/project",
+	}
+	for _, cmd := range safe {
+		result := CommandSafetyCheck(cmd)
+		if result.Level == RiskHigh {
+			t.Errorf("should NOT block %q, got High: %s", cmd, result.Message)
+		}
+	}
+}
