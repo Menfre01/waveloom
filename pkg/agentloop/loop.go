@@ -88,24 +88,19 @@ type LoopState struct {
 	// 达到上限后循环终止以防止死循环。
 	ConsecutiveEmpty int
 
-	// LastErrorKind 记录上一轮工具错误的 Kind。
-	// 用于检测同类错误连续重试。
-	LastErrorKind string
-
-	// ConsecutiveSameError 记录同一 ErrorKind 连续出现的次数。
-	// 达到上限（3）后 loop 强制终止，防止探测死循环。
-	ConsecutiveSameError int
-
 	// AnyToolSucceeded 标记本轮是否有任何工具成功执行。
-	// 成功时重置 ConsecutiveSameError 计数。
+	// 成功时重置退避计数器。
 	AnyToolSucceeded bool
 }
 
-// maxConsecutiveSameError 是同类工具错误的容忍上限。
+// maxConsecutiveSameError 是同类 (工具 + 错误) 连续失败的容忍上限。
 // 达到后 loop 强制终止，避免 LLM 陷入无限重试探测。
-// 阈值设为 5 轮：给 LLM 充分的自主纠错空间，同时保留兜底防护，
-// 防止 LLM 在不可恢复的错误上无限重试。
-const maxConsecutiveSameError = 5
+// 阈值设为 8 轮：其中第 3、第 5 轮会注入提醒消息引导 LLM 改变策略，
+// 8 轮后仍未改变则判定为死循环强制终止。
+const maxConsecutiveSameError = 8
+
+// warnThresholds 定义需要注入提醒消息的连续失败轮次。
+var warnThresholds = map[int]bool{3: true, 5: true}
 
 
 
@@ -149,6 +144,17 @@ type Loop struct {
 	prePlanMode bool   // 进入 plan 前的 bypassMode 状态
 	planPairID  string // START/END 配对 ID（4 位 hex，如 "a3f7"）
 	approvedPlan string // 审批通过的 plan 内容（用于 executeToolCalls 在 tool 消息后注入 [plan:end]）
+
+	// ── 退避追踪（会话级，跨 Run() 持久化）──
+
+	// lastErrorKind 记录上一轮工具错误的 Kind。
+	lastErrorKind string
+
+	// lastErrorTool 记录上一轮发生错误的工具名。
+	lastErrorTool string
+
+	// consecutiveSameError 记录同一 (ErrorKind, Tool) 连续出现的次数。
+	consecutiveSameError int
 }
 
 // New 创建一个新的 Loop 实例。
