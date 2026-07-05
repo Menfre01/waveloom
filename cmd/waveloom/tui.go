@@ -2728,41 +2728,6 @@ func doScanAbsolute(ctx context.Context, registry tool.Registry, cwd, filter str
 	return items
 }
 
-// parseFindOutput 解析 shell 工具返回的 find 命令输出为文件路径列表。
-//
-// shell 工具的输出格式：
-//
-//	Command succeeded (exit=0)  8ms
-//	   stdout:
-//	     /path/to/file1
-//	     /path/to/file2
-//
-// 本函数跳过元数据头，仅提取缩进的文件路径行。
-func parseFindOutput(content string) []string {
-	lines := strings.Split(content, "\n")
-	var files []string
-	inBody := false
-
-	for _, line := range lines {
-		// 检测头→体边界："   stdout:" 或 "   stderr/stdout:"
-		if !inBody {
-			if strings.HasPrefix(line, "   stdout:") || strings.HasPrefix(line, "   stderr/stdout:") {
-				inBody = true
-			}
-			continue
-		}
-
-		// 体内部每行缩进 5 空格，剥离后即为实际文件路径
-		if strings.HasPrefix(line, "     ") {
-			file := strings.TrimSpace(line[5:])
-			if file != "" && file != "(empty)" {
-				files = append(files, file)
-			}
-		}
-	}
-	return files
-}
-
 // extractDirPrefix 从 filter 中提取可能的外部目录前缀。
 // 若 filter 以 /、~ 或 . 开头，返回其目录部分作为搜索起点。
 // 绝对路径（/）和 ~ 直接使用；相对路径（./、../）基于 cwd 解析。
@@ -2806,11 +2771,6 @@ func resolveTilde(filter string) string {
 		return filter
 	}
 	return homeDir + suffix
-}
-
-// shellQuote 为 shell 命令安全转义路径参数。
-func shellQuote(path string) string {
-	return "'" + strings.ReplaceAll(path, "'", "'\\''") + "'"
 }
 
 // relativizePaths 将绝对路径或 ./ 前缀路径转换为相对于 cwd 的路径。
