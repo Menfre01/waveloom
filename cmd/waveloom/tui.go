@@ -31,7 +31,6 @@ import (
 	"image/color"
 	"io"
 	"os"
-	"os/exec"
 	"os/user"
 	"path/filepath"
 	"sort"
@@ -2458,51 +2457,92 @@ func doScanRelative(ctx context.Context, registry tool.Registry, cwd, filter str
 	}
 
 	doSearch := func(namePattern string) (files []string) {
-		// REGRESSION: 通过 bash 工具执行 find → shell 工具 MaxShellLines=3000 截断输出。
-		// 巨型目录（6036+ 文件）的 sort 结果被截掉中段，字母序靠后的目录（w*）被丢弃。
-		// 修复：os/exec 直接执行 find，绕过 shell 工具的所有输出限制。
-		// 不可单测：依赖真实文件系统，find 输出随 CWD 变化。
-		args := []string{
-			searchRoot,
-			"-maxdepth", fmt.Sprintf("%d", maxDepth),
-			"(", "-name", ".git", "-o", "-name", "node_modules", ")",
-			"-prune", "-o", "-type", "f",
-		}
-		if namePattern != "" && namePattern != "*" {
-			args = append(args, "-name", namePattern)
-		}
-		if excludeCWD {
-			cwdBase := filepath.Base(cwd)
-			args = append(args, "-not", "-path", filepath.Join(searchRoot, cwdBase)+"/*")
-		}
-		args = append(args, "-print")
+		// 使用 filepath.WalkDir 替代 find 命令：
+		// - 跨平台兼容（Windows 无 find）
+		// - 无外部依赖、无 shell 转义、无 MaxShellLines 截断
+		// - WalkDirFunc 内直接 prune / 深度控制 / 名称过滤
 
-		findCtx, findCancel := context.WithTimeout(ctx, 8*time.Second)
-		defer findCancel()
-		cmd := exec.CommandContext(findCtx, "find", args...)
-		cmd.Dir = searchDir
-		// 丢弃 stderr（权限错误等），只取 stdout
-		cmd.Stderr = nil
+		// 根目录绝对化，用于深度计算
+		absRoot, err := filepath.Abs(filepath.Join(searchDir, searchRoot))
+		if err != nil {
+			absRoot = filepath.Join(searchDir, searchRoot)
+		}
+		absRoot = filepath.Clean(absRoot)
+		// 计算根目录的路径分量数，用于深度判断
+		rootDepth := len(strings.Split(absRoot, string(filepath.Separator)))
 
-		output, err := cmd.Output()
-		// REGRESSION: macOS find 遇到 SIP 保护的目录 exit 1，cmd.Output() 返回 err。
-		// 旧逻辑 err != nil → return nil 丢弃了 stdout 中已有的有效结果（如 /Users）。
-		// 修复：仅在 output 为空且 err != nil 时判失败。
-		// 不可单测：依赖 macOS SIP / 文件系统权限，非 macOS 环境无法复现。
-		if len(output) == 0 && err != nil {
+		var found []string
+		walkCtx, walkCancel := context.WithTimeout(ctx, 8*time.Second)
+		defer walkCancel()
+
+		walkFn := func(path string, d os.DirEntry, walkErr error) error {
+			select {
+			case <-walkCtx.Done():
+				return walkCtx.Err()
+			default:
+			}
+
+			if walkErr != nil {
+				return nil // 跳过无法访问的目录
+			}
+
+			// 深度控制
+			currentDepth := len(strings.Split(path, string(filepath.Separator))) - rootDepth
+			if currentDepth > maxDepth {
+				if d.IsDir() {
+					return filepath.SkipDir
+				}
+				return nil
+			}
+
+			// prune: 跳过 .git / node_modules 整树
+			base := d.Name()
+			if d.IsDir() && (base == ".git" || base == "node_modules") {
+				return filepath.SkipDir
+			}
+
+			// 隐藏目录/文件跳过（非 . 或 ..）
+			if strings.HasPrefix(base, ".") && base != "." && base != ".." {
+				if d.IsDir() {
+					return filepath.SkipDir
+				}
+				return nil
+			}
+
+			// excludeCWD: 跳过 CWD 下的所有条目
+			if excludeCWD {
+				cwdAbs, _ := filepath.Abs(cwd)
+				if strings.HasPrefix(path+string(filepath.Separator), cwdAbs+string(filepath.Separator)) {
+					if d.IsDir() {
+						return filepath.SkipDir
+					}
+					return nil
+				}
+			}
+
+			if !d.IsDir() {
+				// 名称过滤（只对文件，目录由目录推断生成）
+				if namePattern != "" && namePattern != "*" {
+					matched, _ := filepath.Match(namePattern, base)
+					if !matched {
+						return nil
+					}
+				}
+				// 转为相对路径
+				rel, err := filepath.Rel(absRoot, path)
+				if err != nil {
+					rel = path
+				}
+				found = append(found, rel)
+			}
+
 			return nil
 		}
-		rawFiles := strings.Split(strings.TrimSpace(string(output)), "\n")
-		// 去空行并 sort（find 输出为磁盘顺序，sort 保证字母序一致）
-		filtered := make([]string, 0, len(rawFiles))
-		for _, f := range rawFiles {
-			f = strings.TrimSpace(f)
-			if f != "" {
-				filtered = append(filtered, f)
-			}
-		}
-		sort.Strings(filtered)
-		return relativizePaths(filtered, cwd)
+
+		_ = filepath.WalkDir(searchDir, walkFn)
+		// WalkDir 可能因 context 超时返回 error，found 中已有部分结果可用
+		sort.Strings(found)
+		return relativizePaths(found, cwd)
 	}
 
 	files := doSearch("*")
@@ -2633,39 +2673,71 @@ func doScanAbsolute(ctx context.Context, registry tool.Registry, cwd, filter str
 	}
 
 	doSearch := func(typeFilter string) (files []string) {
-		// 直接 os/exec 跑 find，绕过 shell 工具的 MaxShellLines 截断。
-		args := []string{
-			searchRoot,
-			"-maxdepth", fmt.Sprintf("%d", maxDepth),
-			"(", "-name", ".git", "-o", "-name", "node_modules", ")",
-			"-prune", "-o", "-type", typeFilter,
-		}
-		if namePattern != "*" {
-			args = append(args, "-name", namePattern)
-		}
-		args = append(args, "-print")
+		// 使用 filepath.WalkDir 替代 find：跨平台兼容，无外部依赖。
 
-		findCtx, findCancel := context.WithTimeout(ctx, 8*time.Second)
-		defer findCancel()
-		cmd := exec.CommandContext(findCtx, "find", args...)
-		cmd.Dir = searchRoot
-		cmd.Stderr = nil
+		absRoot := filepath.Clean(searchRoot)
+		rootDepth := len(strings.Split(absRoot, string(filepath.Separator)))
 
-		output, err := cmd.Output()
-		// find 在 macOS 上遇到权限拒绝的目录会 exit 1，但 stdout 中仍有有效结果
-		if len(output) == 0 && err != nil {
+		var results []string
+		walkCtx, walkCancel := context.WithTimeout(ctx, 8*time.Second)
+		defer walkCancel()
+
+		walkFn := func(path string, d os.DirEntry, walkErr error) error {
+			select {
+			case <-walkCtx.Done():
+				return walkCtx.Err()
+			default:
+			}
+
+			if walkErr != nil {
+				return nil
+			}
+
+			currentDepth := len(strings.Split(path, string(filepath.Separator))) - rootDepth
+			if currentDepth > maxDepth {
+				if d.IsDir() {
+					return filepath.SkipDir
+				}
+				return nil
+			}
+
+			base := d.Name()
+			// prune .git / node_modules
+			if d.IsDir() && (base == ".git" || base == "node_modules") {
+				return filepath.SkipDir
+			}
+
+			// 隐藏目录跳过
+			if strings.HasPrefix(base, ".") && base != "." && base != ".." {
+				if d.IsDir() {
+					return filepath.SkipDir
+				}
+				return nil
+			}
+
+			// 类型过滤
+			if typeFilter == "d" && !d.IsDir() {
+				return nil
+			}
+			if typeFilter == "f" && d.IsDir() {
+				return nil
+			}
+
+			// 名称过滤
+			if namePattern != "*" {
+				matched, _ := filepath.Match(namePattern, base)
+				if !matched {
+					return nil
+				}
+			}
+
+			results = append(results, path)
 			return nil
 		}
-		rawFiles := strings.Split(strings.TrimSpace(string(output)), "\n")
-		filtered := make([]string, 0, len(rawFiles))
-		for _, f := range rawFiles {
-			f = strings.TrimSpace(f)
-			if f != "" {
-				filtered = append(filtered, f)
-			}
-		}
-		sort.Strings(filtered)
-		return filtered
+
+		_ = filepath.WalkDir(absRoot, walkFn)
+		sort.Strings(results)
+		return results
 	}
 
 	dirFiles := doSearch("d")
