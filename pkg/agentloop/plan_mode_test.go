@@ -936,9 +936,7 @@ func TestBuildToolMessages_WithSkip(t *testing.T) {
 	skip := map[string]bool{
 		"tc2": true, // tool_b 被跳过（权限拒绝）
 	}
-	state := &LoopState{}
-
-	msgs, reason, err := l.buildToolMessages(calls, results, skip, state)
+	msgs, reason, err := l.buildToolMessages(calls, results, skip)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -967,9 +965,8 @@ func TestBuildToolMessages_MissingResult(t *testing.T) {
 
 	results := map[string]*tool.ToolResult{} // 空：tc1 无结果
 	skip := map[string]bool{}
-	state := &LoopState{}
 
-	msgs, reason, err := l.buildToolMessages(calls, results, skip, state)
+	msgs, reason, err := l.buildToolMessages(calls, results, skip)
 	// missing result → 生成 Fatal 占位错误
 	if err == nil {
 		t.Fatal("expected error for missing result")
