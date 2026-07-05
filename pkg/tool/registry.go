@@ -108,7 +108,8 @@ func NewDefaultRegistry() Registry {
 	r.Register(Wrap(&ReadFile{}))
 	r.Register(Wrap(&WriteFile{}))
 	r.Register(Wrap(&EditFile{}))
-	r.Register(Wrap(&Shell{}))
+	r.Register(Wrap(&Shell{AllowBg: true}))  // "bash"
+	r.Register(Wrap(&Shell{AllowBg: false})) // "bash_subagent"
 	r.Register(Wrap(&WebFetch{}))
 	r.Register(Wrap(&AskUserQuestion{}))
 	r.Register(Wrap(&EnterPlanMode{}))
