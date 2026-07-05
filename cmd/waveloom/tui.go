@@ -1956,6 +1956,10 @@ func (m *model) commitPickerSelection(idx int) {
 
 // renderPickerDropdown 渲染文件选择器下拉列表。
 func (m *model) renderPickerDropdown(contentWidth int) string {
+	// REGRESSION: 空 items 时返回 "" → 下拉面板完全不可见，用户在大目录中输入 @ 后
+	// 看到的是"没反应"，实际上扫描异步进行中但无任何视觉反馈。
+	// 修复：扫描中显示 spinner，无结果显示空状态，均不返回空字符串。
+	// 不可单测：依赖 TUI 模型状态 + lipgloss 样式 + spinner 组件。
 	// 扫描中 → 显示加载状态
 	if m.pickerScanning && len(m.pickerItems) == 0 {
 		spinner := m.spinner.View()
@@ -2454,9 +2458,10 @@ func doScanRelative(ctx context.Context, registry tool.Registry, cwd, filter str
 	}
 
 	doSearch := func(namePattern string) (files []string) {
-		// 直接 os/exec 跑 find，绕过 shell 工具的 MaxShellLines 截断。
-		// 巨型目录中 find 输出可能超过 3000 行，shell 工具会截掉中间部分，
-		// 导致字母序靠后的目录被遗漏。
+		// REGRESSION: 通过 bash 工具执行 find → shell 工具 MaxShellLines=3000 截断输出。
+		// 巨型目录（6036+ 文件）的 sort 结果被截掉中段，字母序靠后的目录（w*）被丢弃。
+		// 修复：os/exec 直接执行 find，绕过 shell 工具的所有输出限制。
+		// 不可单测：依赖真实文件系统，find 输出随 CWD 变化。
 		args := []string{
 			searchRoot,
 			"-maxdepth", fmt.Sprintf("%d", maxDepth),
@@ -2480,8 +2485,10 @@ func doScanRelative(ctx context.Context, registry tool.Registry, cwd, filter str
 		cmd.Stderr = nil
 
 		output, err := cmd.Output()
-		// find 在 macOS 上遇到权限拒绝的目录会 exit 1，但 stdout 中仍有有效结果，
-		// 因此仅在 output 为空时才视为失败。
+		// REGRESSION: macOS find 遇到 SIP 保护的目录 exit 1，cmd.Output() 返回 err。
+		// 旧逻辑 err != nil → return nil 丢弃了 stdout 中已有的有效结果（如 /Users）。
+		// 修复：仅在 output 为空且 err != nil 时判失败。
+		// 不可单测：依赖 macOS SIP / 文件系统权限，非 macOS 环境无法复现。
 		if len(output) == 0 && err != nil {
 			return nil
 		}
@@ -2566,6 +2573,11 @@ func doScanRelative(ctx context.Context, registry tool.Registry, cwd, filter str
 		return nil
 	}
 
+	// REGRESSION: 500 条截断在 sortPickerItems 之前。
+	// 4205 个目录中 waveloom/ 排在 ~4000 位，被截断提前丢弃，
+	// fuzzyFilter 从未收到该条目 → 永远搜不到字母序靠后的目录。
+	// 修复：去掉 500 截断，靠 fuzzyFilter（上限 20 条）自然限流。
+	// 不可单测：依赖真实目录结构，条目数随 CWD 变化。
 	sortPickerItems(items)
 	return items
 }
@@ -2594,10 +2606,10 @@ func doScanAbsolute(ctx context.Context, registry tool.Registry, cwd, filter str
 	relFilter := strings.TrimPrefix(filter, searchRoot)
 	relFilter = strings.Trim(relFilter, "/")
 
-	// 深度策略：
-	// - 用户已指定完整存在的目录（relFilter 为空）→ 深度扫描（5 层起）
-	// - 部分模糊匹配（relFilter 非空，目录不存在）→ 浅层扫描（1 层），
-	//   因为 find 从 searchRoot 全量遍历高深度极易超时
+	// REGRESSION: 深度策略对模糊匹配（如 @/Use → searchRoot=/）使用 extraLevels+2，
+	// 根目录扫描 6+ 层极易超时，导致间歇性搜索不到。
+	// 修复：完整目录（relFilter=""）深度 5，模糊匹配（relFilter 非空）深度 1。
+	// 不可单测：依赖真实文件系统，扫描耗时随系统负载变化。
 	maxDepth := 5
 	if relFilter != "" {
 		maxDepth = 1
