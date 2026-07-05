@@ -781,7 +781,8 @@ func TestRunRecoverableErrorsDoNotTerminate(t *testing.T) {
 }
 
 func TestRunConsecutiveSameErrorsTerminate(t *testing.T) {
-	// 同类 Recoverable 错误连续出现 5 次 → 强制终止，避免无限重试。
+	// 同类 (Tool, ErrorKind) Recoverable 错误连续出现 8 次 → 强制终止，避免无限重试。
+	// 第 3、第 5 轮会注入警告消息，LLM 应在这之前改变策略。
 	fileNotFoundErr := &tool.ToolError{
 		Class:   tool.ErrorClassRecoverable,
 		Kind:    tool.ErrKindFileNotFound,
@@ -795,7 +796,10 @@ func TestRunConsecutiveSameErrorsTerminate(t *testing.T) {
 			makeToolCallResponse("", makeToolCall("tc3", "read_file", `{"file_path":"/tmp/x"}`)),
 			makeToolCallResponse("", makeToolCall("tc4", "read_file", `{"file_path":"/tmp/x"}`)),
 			makeToolCallResponse("", makeToolCall("tc5", "read_file", `{"file_path":"/tmp/x"}`)),
-			// 不应到达这里——第 5 次后 loop 已终止
+			makeToolCallResponse("", makeToolCall("tc6", "read_file", `{"file_path":"/tmp/x"}`)),
+			makeToolCallResponse("", makeToolCall("tc7", "read_file", `{"file_path":"/tmp/x"}`)),
+			makeToolCallResponse("", makeToolCall("tc8", "read_file", `{"file_path":"/tmp/x"}`)),
+			// 不应到达这里——第 8 次后 loop 已终止
 			makeTextResponse("unreachable"),
 		},
 	}
@@ -808,14 +812,14 @@ func TestRunConsecutiveSameErrorsTerminate(t *testing.T) {
 	}))
 
 	if finalEv.Err == nil {
-		t.Fatalf("expected error after 5 consecutive same errors, got nil")
+		t.Fatalf("expected error after 8 consecutive same (tool, error) pairs, got nil")
 	}
 	if finalEv.Reason != ReasonToolFatal {
 		t.Errorf("expected ReasonToolFatal, got %s", finalEv.Reason)
 	}
-	// 5 轮 LLM 调用后终止
-	if finalEv.Turn != 5 {
-		t.Errorf("expected 5 turns, got %d", finalEv.Turn)
+	// 8 轮 LLM 调用后终止
+	if finalEv.Turn != 8 {
+		t.Errorf("expected 8 turns, got %d", finalEv.Turn)
 	}
 }
 
@@ -890,7 +894,7 @@ func TestRunDifferentRecoverableErrors(t *testing.T) {
 
 func TestRunBackoffResetBySuccess(t *testing.T) {
 	// 同类错误连续出现，中间夹一个成功的工具调用 → 计数器归零。
-	// find_file(error)×2 → list_files(success) → find_file(error)×5 → 退避触发
+	// find_file(error)×2 → list_files(success) → find_file(error)×8 → 退避触发
 	fileNotFoundErr := &tool.ToolError{
 		Class:   tool.ErrorClassRecoverable,
 		Kind:    tool.ErrKindFileNotFound,
@@ -904,12 +908,15 @@ func TestRunBackoffResetBySuccess(t *testing.T) {
 			makeToolCallResponse("", makeToolCall("tc2", "find_file", `{"path":"/tmp/x"}`)),
 			// Turn 3: list_files 成功（不同工具，anySuccess=true → 计数器归零）
 			makeToolCallResponse("", makeToolCall("tc3", "list_files", `{"path":"/tmp"}`)),
-			// Turn 4-8: find_file 错误 × 5 → 退避触发
+			// Turn 4-11: find_file 错误 × 8 → 退避触发
 			makeToolCallResponse("", makeToolCall("tc4", "find_file", `{"path":"/tmp/x"}`)),
 			makeToolCallResponse("", makeToolCall("tc5", "find_file", `{"path":"/tmp/x"}`)),
 			makeToolCallResponse("", makeToolCall("tc6", "find_file", `{"path":"/tmp/x"}`)),
 			makeToolCallResponse("", makeToolCall("tc7", "find_file", `{"path":"/tmp/x"}`)),
 			makeToolCallResponse("", makeToolCall("tc8", "find_file", `{"path":"/tmp/x"}`)),
+			makeToolCallResponse("", makeToolCall("tc9", "find_file", `{"path":"/tmp/x"}`)),
+			makeToolCallResponse("", makeToolCall("tc10", "find_file", `{"path":"/tmp/x"}`)),
+			makeToolCallResponse("", makeToolCall("tc11", "find_file", `{"path":"/tmp/x"}`)),
 			// 不应到达
 			makeTextResponse("unreachable"),
 		},
@@ -925,16 +932,16 @@ func TestRunBackoffResetBySuccess(t *testing.T) {
 		{Role: llm.RoleUser, Content: "find the file"},
 	}))
 
-	// 成功重置后的 5 次同类错误触发退避
+	// 成功重置后的 8 次同类错误触发退避
 	if finalEv.Err == nil {
-		t.Fatalf("expected error after 5 consecutive same errors following a success reset")
+		t.Fatalf("expected error after 8 consecutive same errors following a success reset")
 	}
 	if finalEv.Reason != ReasonToolFatal {
 		t.Errorf("expected ReasonToolFatal, got %s", finalEv.Reason)
 	}
-	// 8 轮 LLM 调用后终止（2 error + 1 success + 5 error）
-	if finalEv.Turn != 8 {
-		t.Errorf("expected 8 turns, got %d", finalEv.Turn)
+	// 11 轮 LLM 调用后终止（2 error + 1 success + 8 error）
+	if finalEv.Turn != 11 {
+		t.Errorf("expected 11 turns, got %d", finalEv.Turn)
 	}
 }
 
@@ -992,6 +999,59 @@ func TestRunMixedErrorsSameBatchNoBackoff(t *testing.T) {
 	}
 	if finalEv.Turn != 4 {
 		t.Errorf("expected 4 turns, got %d", finalEv.Turn)
+	}
+}
+
+func TestRegression_SameErrorKindDifferentToolResetsCounter(t *testing.T) {
+	// 同名 ErrorKind 但不同工具 → 计数器应重置（LLM 在切换工具即改变策略）。
+	// bash(command_failed) × 3 → read_file(command_failed) → 不应触发退避。
+	commandFailedErr := &tool.ToolError{
+		Class:   tool.ErrorClassRecoverable,
+		Kind:    tool.ErrKindCommandFailed,
+		Message: "command failed: exit status 127",
+	}
+
+	client := &mockLLMClient{
+		responses: []*llm.Response{
+			// Turn 1-3: bash 失败 (command_failed) × 3
+			makeToolCallResponse("", makeToolCall("tc1", "bash", `{"command":"invalid1"}`)),
+			makeToolCallResponse("", makeToolCall("tc2", "bash", `{"command":"invalid2"}`)),
+			makeToolCallResponse("", makeToolCall("tc3", "bash", `{"command":"invalid3"}`)),
+			// Turn 4: LLM 切换工具 → read_file，但仍失败 (command_failed)
+			// Tool 变化 → 计数器应重置为 1，不累积前面的 bash 计数
+			makeToolCallResponse("", makeToolCall("tc4", "read_file", `{"file_path":"/nonexistent"}`)),
+			// Turn 5-11: read_file 继续失败 × 7（共 8 次 → 触发退避）
+			makeToolCallResponse("", makeToolCall("tc5", "read_file", `{"file_path":"/nonexistent"}`)),
+			makeToolCallResponse("", makeToolCall("tc6", "read_file", `{"file_path":"/nonexistent"}`)),
+			makeToolCallResponse("", makeToolCall("tc7", "read_file", `{"file_path":"/nonexistent"}`)),
+			makeToolCallResponse("", makeToolCall("tc8", "read_file", `{"file_path":"/nonexistent"}`)),
+			makeToolCallResponse("", makeToolCall("tc9", "read_file", `{"file_path":"/nonexistent"}`)),
+			makeToolCallResponse("", makeToolCall("tc10", "read_file", `{"file_path":"/nonexistent"}`)),
+			makeToolCallResponse("", makeToolCall("tc11", "read_file", `{"file_path":"/nonexistent"}`)),
+			// 不应到达
+			makeTextResponse("unreachable"),
+		},
+	}
+
+	bashTool := newErrorTool("bash", true, commandFailedErr)
+	readTool := newErrorTool("read_file", true, commandFailedErr)
+	registry := newTestRegistry(bashTool, readTool)
+	loop := New(client, registry, DefaultConfig())
+
+	finalEv := drainEvents(loop.Run(context.Background(), []llm.Message{
+		{Role: llm.RoleUser, Content: "run some commands"},
+	}))
+
+	// Turn 4 切换工具应重置计数，后续 read_file 的 8 次失败才触发退避
+	if finalEv.Err == nil {
+		t.Fatalf("expected error after 8 consecutive same (tool, error) pairs, got nil")
+	}
+	if finalEv.Reason != ReasonToolFatal {
+		t.Errorf("expected ReasonToolFatal, got %s", finalEv.Reason)
+	}
+	// 3 bash + 8 read_file = 11 轮后终止（第 12 个响应不可达）
+	if finalEv.Turn != 11 {
+		t.Errorf("expected 11 turns, got %d", finalEv.Turn)
 	}
 }
 
@@ -3294,9 +3354,8 @@ func TestBuildToolMessages_FatalOverridesBackoff(t *testing.T) {
 		},
 	}
 	skip := map[string]bool{}
-	state := &LoopState{}
 
-	_, reason, err := l.buildToolMessages(calls, results, skip, state)
+	_, reason, err := l.buildToolMessages(calls, results, skip)
 	if err == nil {
 		t.Fatal("expected error for fatal tool error")
 	}
@@ -3304,8 +3363,8 @@ func TestBuildToolMessages_FatalOverridesBackoff(t *testing.T) {
 		t.Errorf("expected ReasonToolFatal, got %s", reason)
 	}
 	// Fatal 优先返回，但退避计数器也会追踪 Recoverable 错误
-	if state.ConsecutiveSameError == 0 {
-		t.Error("expected ConsecutiveSameError to track Recoverable error even with Fatal present")
+	if l.consecutiveSameError == 0 {
+		t.Error("expected consecutiveSameError to track Recoverable error even with Fatal present")
 	}
 }
 

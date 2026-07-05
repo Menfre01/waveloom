@@ -58,7 +58,7 @@ func (l *Loop) executeToolCalls(ctx context.Context, calls []llm.ToolCall, state
 	// 即使中途因 context 取消或执行错误提前返回，也不破坏消息配对完整性。
 	defer func() {
 		if msgs == nil {
-			msgs, _, _ = l.buildToolMessages(calls, results, skip, state)
+			msgs, _, _ = l.buildToolMessages(calls, results, skip)
 		}
 	}()
 
@@ -410,7 +410,7 @@ func (l *Loop) executeToolCalls(ctx context.Context, calls []llm.ToolCall, state
 	//
 	// [plan:start] 必须在 tool 消息之后注入，确保消息序列符合 API 要求：
 	// assistant(tool_calls) → tool(result) → user([plan:start])
-	messages, reason, execErr := l.buildToolMessages(calls, results, skip, state)
+	messages, reason, execErr := l.buildToolMessages(calls, results, skip)
 
 	// 若本轮执行了 enter_plan_mode 且成功，在 tool 消息之后注入 [plan:start]
 	// 若本轮执行了 exit_plan_mode 且审批通过，在 tool 消息之后注入 [plan:end]
@@ -451,15 +451,16 @@ func (l *Loop) buildToolMessages(
 	calls []llm.ToolCall,
 	results map[string]*tool.ToolResult,
 	skip map[string]bool,
-	state *LoopState,
 ) ([]llm.Message, TerminalReason, error) {
 	messages := make([]llm.Message, 0, len(calls))
 	var fatalReason TerminalReason
 	var fatalErr error
 
-	// 退避追踪：本轮首个 Recoverable 错误的 Kind 和是否全部同 Kind。
+	// 退避追踪：本轮首个 Recoverable 错误的 Kind / Tool 和是否全部同 (Kind, Tool)。
 	var firstRecoverableKind string
+	var firstRecoverableTool string
 	allRecoverableSameKind := true
+	allRecoverableSameTool := true
 	anySuccess := false
 
 	for _, tc := range calls {
@@ -487,11 +488,17 @@ func (l *Loop) buildToolMessages(
 					fatalErr = fmt.Errorf("fatal tool error (%s): %s", toolErr.Kind, toolErr.Message)
 				}
 			} else {
-				// Recoverable 错误 → 退避追踪
+				// Recoverable 错误 → 退避追踪（同时追踪 Kind 和 Tool）
 				if firstRecoverableKind == "" {
 					firstRecoverableKind = toolErr.Kind
-				} else if toolErr.Kind != firstRecoverableKind {
-					allRecoverableSameKind = false
+					firstRecoverableTool = tc.Name
+				} else {
+					if toolErr.Kind != firstRecoverableKind {
+						allRecoverableSameKind = false
+					}
+					if tc.Name != firstRecoverableTool {
+						allRecoverableSameTool = false
+					}
 				}
 			}
 
@@ -508,32 +515,50 @@ func (l *Loop) buildToolMessages(
 		})
 	}
 
-	// 退避检查：同类 Recoverable 错误连续出现达到上限 → 升级为 Fatal。
+	// 退避检查：同类 (Kind, Tool) Recoverable 错误连续出现达到上限 → 升级为 Fatal。
 	// 若本轮有任意工具成功，重置计数（LLM 在推进任务，不是死循环）。
+	// Kind 或 Tool 任一变化即视为 LLM 改变了策略，重新计数。
 	if anySuccess {
-		state.LastErrorKind = ""
-		state.ConsecutiveSameError = 0
-	} else if firstRecoverableKind != "" && allRecoverableSameKind {
-		if state.LastErrorKind == firstRecoverableKind {
-			state.ConsecutiveSameError++
+		l.lastErrorKind = ""
+		l.lastErrorTool = ""
+		l.consecutiveSameError = 0
+	} else if firstRecoverableKind != "" && allRecoverableSameKind && allRecoverableSameTool {
+		samePair := l.lastErrorKind == firstRecoverableKind && l.lastErrorTool == firstRecoverableTool
+		if samePair {
+			l.consecutiveSameError++
 		} else {
-			state.LastErrorKind = firstRecoverableKind
-			state.ConsecutiveSameError = 1
+			l.lastErrorKind = firstRecoverableKind
+			l.lastErrorTool = firstRecoverableTool
+			l.consecutiveSameError = 1
 		}
 
-		if state.ConsecutiveSameError >= maxConsecutiveSameError {
+		// 警告注入：连续失败达到阈值时，向 messages 末尾注入 system 提示，
+		// 引导 LLM 意识到重复错误并改变策略。
+		if warnThresholds[l.consecutiveSameError] {
+			warnMsg := llm.Message{
+				Role: llm.RoleUser,
+				Content: fmt.Sprintf(
+					"[system] 你已经连续 %d 轮对 %q 工具收到 %q 错误。请反思当前策略——尝试用不同的工具、不同的参数，或重新理解任务目标。不要重复相同的调用模式。",
+					l.consecutiveSameError, firstRecoverableTool, firstRecoverableKind,
+				),
+			}
+			messages = append(messages, warnMsg)
+		}
+
+		if l.consecutiveSameError >= maxConsecutiveSameError {
 			if fatalErr == nil {
 				fatalReason = ReasonToolFatal
 				fatalErr = fmt.Errorf(
-					"tool error %q repeated %d times consecutively — stopping to avoid infinite retry loop",
-					firstRecoverableKind, state.ConsecutiveSameError,
+					"tool %q error %q repeated %d times consecutively — stopping to avoid infinite retry loop",
+					firstRecoverableTool, firstRecoverableKind, l.consecutiveSameError,
 				)
 			}
 		}
 	} else {
-		// 混合错误（不同 Kind）或本轮无 Recoverable 错误 → 不触发退避
-		state.LastErrorKind = ""
-		state.ConsecutiveSameError = 0
+		// 混合错误（不同 Kind 或不同 Tool）或本轮无 Recoverable 错误 → 不触发退避
+		l.lastErrorKind = ""
+		l.lastErrorTool = ""
+		l.consecutiveSameError = 0
 	}
 
 	return messages, fatalReason, fatalErr
