@@ -8,6 +8,7 @@
 ### 修复
 - **@ 文件选择器巨型目录无响应**：`filepath.WalkDir` 遍历超大目录时不截断、实时显示进度，绝对路径搜索不再超时
 - **@ ../ 路径基准错误**：`doScanRelative` 解析 `../` 相对路径时 CWD 基准修复，确保兄弟目录搜索结果正确
+- **Windows CI 测试失败**：`relativizePaths` 单元测试硬编码 Unix 路径，在 Windows 平台 `filepath.IsAbs` 无盘符判定为假导致 `filepath.Rel` 异常，修复为跨平台绝对路径构造
 
 ### 重构
 - **@ 选择器跨平台兼容**：用 `filepath.WalkDir` 替代 `find` 外部命令，Windows / Linux / Darwin 三平台统一搜索逻辑
