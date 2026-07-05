@@ -1,5 +1,17 @@
 # Changelog
 
+## [v0.1.0-alpha.14] — 2026-07-04
+
+### Added
+- **Backoff mechanism refactored**: Tool+Kind dual-key backoff tracking with three-tier progressive warnings (3/5/8 strikes), cross-turn backoff state persistence across loops, reducing pointless retries on same-class errors
+
+### Fixed
+- **@ file picker unresponsive in large directories**: `filepath.WalkDir` traversal no longer truncates in huge directories, shows real-time progress; absolute path search no longer times out
+- **@ ../ path base error**: `doScanRelative` CWD base fix when resolving `../` relative paths, ensuring correct sibling directory search results
+
+### Refactored
+- **@ picker cross-platform compatibility**: Replaced external `find` command with `filepath.WalkDir`, unified search logic across Windows / Linux / Darwin
+
 ## [v0.1.0-alpha.13] — 2026-07-04
 
 ### Fixed
