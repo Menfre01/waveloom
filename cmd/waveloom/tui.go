@@ -60,6 +60,7 @@ import (
 	"github.com/Menfre01/waveloom/pkg/reference"
 	"github.com/Menfre01/waveloom/pkg/skill"
 	"github.com/Menfre01/waveloom/pkg/slashcommand"
+	"github.com/Menfre01/waveloom/pkg/subagent"
 	"github.com/Menfre01/waveloom/pkg/tool"
 )
 
@@ -202,7 +203,7 @@ type keyMap struct {
 // 作为接受 *Messages 的函数实现，支持国际化。
 
 var defaultKeys = keyMap{
-	Enter:         key.NewBinding(key.WithKeys("enter"), key.WithHelp("Enter", "发送消息")),
+	Enter:         key.NewBinding(key.WithKeys("enter"), key.WithHelp("⏎", "发送消息")),
 	Interrupt:     key.NewBinding(key.WithKeys("esc"), key.WithHelp("Esc", "中断 agent loop")),
 	Quit:          key.NewBinding(key.WithKeys("ctrl+c"), key.WithHelp("Ctrl+C", "退出")),
 	FocusNext:     key.NewBinding(key.WithKeys("tab"), key.WithHelp("Tab", "聚焦下一个可交互段落")),
@@ -220,7 +221,7 @@ var defaultKeys = keyMap{
 // makeKeyMap 根据 locale 生成带翻译帮助文本的 keyMap。
 func makeKeyMap(lc *Messages) keyMap {
 	return keyMap{
-		Enter:       key.NewBinding(key.WithKeys("enter"), key.WithHelp("Enter", lc.KeySend)),
+		Enter:       key.NewBinding(key.WithKeys("enter"), key.WithHelp("⏎", lc.KeySend)),
 		Interrupt:   key.NewBinding(key.WithKeys("esc"), key.WithHelp("Esc", lc.KeyInterrupt)),
 		Quit:        key.NewBinding(key.WithKeys("ctrl+c"), key.WithHelp("Ctrl+C", lc.KeyQuit)),
 		FocusNext:   key.NewBinding(key.WithKeys("tab"), key.WithHelp("Tab", lc.KeyFocusNext)),
@@ -724,6 +725,11 @@ func (m *model) wireLoop() {
 		VerboseWriter: m.verboseLog,
 		Compactor:     m.cm.Compactor(),
 		ToolTimeout:   m.toolTimeout,
+		EventCallback: func(ev agentloop.TurnEvent) {
+			if m.program != nil {
+				m.program.Send(ev)
+			}
+		},
 	})
 }
 
@@ -984,6 +990,22 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// 不应该走到这里——所有 LoopDone 都应该被 goroutine 包装为 LoopDoneWithGen。
 		// 保留此分支作为防御（如单次模式 runner.go 直接使用 agentloop.LoopDone）。
 		m.handleLoopDone(msg, 0)
+		m.flushTranscript()
+		return m, nil
+
+	// ------------------------------------------------------------------
+	// Subagent 事件（由 AgentTool 通过 EventCallback 推送）
+	// ------------------------------------------------------------------
+	case subagent.SubagentStart:
+		m.handleSubagentStart(msg)
+		return m, nil
+
+	case subagent.SubagentEvent:
+		m.handleSubagentEvent(msg)
+		return m, nil
+
+	case subagent.SubagentEnd:
+		m.handleSubagentEnd(msg)
 		m.flushTranscript()
 		return m, nil
 
@@ -3076,13 +3098,15 @@ func (m *model) handleToolStart(ev agentloop.ToolCallStart) {
 		last.renderDirty = true
 	}
 
-	// 创建 tool 段落
-	m.paras = append(m.paras, Paragraph{
-		Type:     paraTool,
-		State:    stateStreaming,
-		ToolName: ev.ToolCallName,
-		ToolArgs: formatToolArgs(ev.ToolCallName, ev.Arguments, m.cwd),
-	})
+	// 创建 tool 段落（agent 工具由 SubagentStart 事件创建 paraSubagent 替代）
+	if ev.ToolCallName != "agent" {
+		m.paras = append(m.paras, Paragraph{
+			Type:     paraTool,
+			State:    stateStreaming,
+			ToolName: ev.ToolCallName,
+			ToolArgs: formatToolArgs(ev.ToolCallName, ev.Arguments, m.cwd),
+		})
+	}
 }
 
 // handleToolStream 处理工具执行中的增量输出流。
@@ -3262,6 +3286,13 @@ func (m *model) handleLoopDone(ev agentloop.LoopDone, generation int) {
 			p.State = stateDone
 			p.renderDirty = true
 		}
+		// 如果 paraSubagent 在 loop 终止时仍为 streaming，标记为 error
+		// 正常情况下 SubagentEnd 事件会在 loop 终止前到达
+		if p.Type == paraSubagent && p.State == stateStreaming {
+			p.State = stateError
+			p.ToolError = "subagent interrupted (loop terminated)"
+			p.renderDirty = true
+		}
 	}
 
 	// 所有终止原因都追加系统提示段落（仅当前 run）
@@ -3333,6 +3364,72 @@ func (m *model) handleLoopDone(ev agentloop.LoopDone, generation int) {
 	}
 }
 
+// ---------------------------------------------------------------------------
+// Subagent 事件处理
+// ---------------------------------------------------------------------------
+
+// handleSubagentStart 在子 agent 开始执行时创建 paraSubagent 段落。
+func (m *model) handleSubagentStart(ev subagent.SubagentStart) {
+	m.paras = append(m.paras, Paragraph{
+		Type:           paraSubagent,
+		State:          stateStreaming,
+		SubagentType:   ev.AgentType,
+		SubagentPrompt: ev.Prompt,
+	})
+}
+
+// handleSubagentEvent 处理子 agent 的内部事件——追加文本或记录工具调用。
+func (m *model) handleSubagentEvent(ev subagent.SubagentEvent) {
+	// 找到最后一个 paraSubagent 段落（stateStreaming）
+	for i := len(m.paras) - 1; i >= 0; i-- {
+		p := &m.paras[i]
+		if p.Type == paraSubagent && p.State == stateStreaming {
+			switch ev.Kind {
+			case subagent.SubagentText:
+				p.Text += ev.TextDelta
+				p.renderDirty = true
+			case subagent.SubagentToolStart:
+				// 内联工具调用摘要
+				line := fmt.Sprintf("● %s  %s", ev.ToolName, ev.ToolArgs)
+				if p.Text == "" {
+					p.Text = line
+				} else {
+					p.Text += "\n" + line
+				}
+				p.renderDirty = true
+			case subagent.SubagentToolResult:
+				if ev.ToolResult != "" {
+					// 追加工具结果
+					p.Text += "\n" + ev.ToolResult
+					p.renderDirty = true
+				}
+			}
+			return
+		}
+	}
+}
+
+// handleSubagentEnd 在子 agent 结束时更新段落状态。
+func (m *model) handleSubagentEnd(ev subagent.SubagentEnd) {
+	for i := len(m.paras) - 1; i >= 0; i-- {
+		p := &m.paras[i]
+		if p.Type == paraSubagent && p.State == stateStreaming {
+			p.SubagentTurns = ev.TotalTurns
+			p.SubagentPromptTok = ev.PromptTokens
+			p.SubagentComplTok = ev.CompletionTokens
+			p.ToolDurMs = ev.DurationMs
+			if ev.Error != "" {
+				p.State = stateError
+				p.ToolError = ev.Error
+			} else {
+				p.State = stateDone
+			}
+			p.renderDirty = true
+			return
+		}
+	}
+}
+
 // isTimeoutError 判断错误是否为超时引起（context deadline exceeded 或包含 deadline exceeded 字样）。
 func isTimeoutError(err error) bool {
 	if err == nil {
@@ -3399,6 +3496,8 @@ func paragraphToTranscriptLine(p *Paragraph) ctxpkg.TranscriptLine {
 		line.Type = "tool"
 	case paraSystem:
 		line.Type = "system"
+	case paraSubagent:
+		line.Type = "subagent"
 	}
 	switch p.State {
 	case stateDone:
@@ -3443,6 +3542,8 @@ func transcriptLineToParagraph(line ctxpkg.TranscriptLine) Paragraph {
 		p.Type = paraTool
 	case "system":
 		p.Type = paraSystem
+	case "subagent":
+		p.Type = paraSubagent
 	}
 	switch line.State {
 	case "done":
@@ -3560,6 +3661,9 @@ func isExpandable(p *Paragraph, contentWidth int) bool {
 			return true
 		}
 		return false
+	case paraSubagent:
+		// subagent 容器始终可展开（done/collapsed/expanded/error 态均可交互）
+		return p.State != stateStreaming
 	}
 	return false
 }
@@ -3696,6 +3800,15 @@ func (m *model) toggleParagraphFocus() {
 			} else {
 				p.State = stateDone
 			}
+		}
+	case paraSubagent:
+		switch p.State {
+		case stateDone, stateCollapsed:
+			p.State = stateExpanded
+		case stateExpanded:
+			p.State = stateDone
+		case stateError:
+			p.State = stateExpanded
 		}
 	}
 	p.renderDirty = true

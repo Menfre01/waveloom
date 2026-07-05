@@ -35,6 +35,15 @@ import (
 //   - Fatal → 直接返回 TerminalReason
 //   - Recoverable → 作为 tool 消息内容返回给 LLM，由 LLM 根据错误反馈自行修正
 func (l *Loop) executeToolCalls(ctx context.Context, calls []llm.ToolCall, state *LoopState, ch chan<- TurnEvent) (msgs []llm.Message, termReason TerminalReason, execErr error) {
+	// Inject EventCallback + ParentMessages into tool execution context.
+	// Sub-tools like AgentTool read these to create nested loops and forward events.
+	if l.config.EventCallback != nil {
+		ctx = WithEventCallback(ctx, l.config.EventCallback)
+	}
+	ctx = WithParentMessages(ctx, state.Messages)
+	// Also inject system prompt for fork subagents to reuse parent prompt cache.
+	ctx = context.WithValue(ctx, parentSystemPromptKey{}, l.config.SystemPrompt)
+
 	// 1. 按 ConcurrentSafe 分区
 	var concurrent, serial []llm.ToolCall
 	for _, tc := range calls {

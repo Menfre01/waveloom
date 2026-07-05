@@ -61,6 +61,10 @@ type Config struct {
 	// PlanFile plan 文件路径（首次进入 plan 时自动生成 slug 文件名）。
 	// 仅在 plan 模式下有效。
 	PlanFile string
+
+	// EventCallback 在工具执行 ctx 中注入的回调，供 AgentTool 等嵌套工具向父通道推送事件。
+	// nil → 不注入（不影响现有路径）。
+	EventCallback func(TurnEvent)
 }
 
 // DefaultToolTimeout 是单个工具执行的推荐超时时间（10 分钟）。
@@ -391,8 +395,6 @@ func (l *Loop) Run(ctx context.Context, messages []llm.Message) <-chan TurnEvent
 			}
 			// 4. 防御：LLM 返回空响应（无 content 无 tool_calls）。
 			//    注入最小占位内容避免后续 API 400，累加连续空响应计数器。
-			//    注意：空响应时不应保留 reasoning_content —— DeepSeek 要求 tool_calls
-			//    场景下回传，但空响应时回传会污染下一轮上下文，导致模型持续空输出。
 			emptyResponse := contentBuf == "" && len(toolCalls) == 0
 			if emptyResponse {
 				contentBuf = "(empty response)"
@@ -413,6 +415,19 @@ func (l *Loop) Run(ctx context.Context, messages []llm.Message) <-chan TurnEvent
 				assistantMsg.ReasoningContent = reasoningBuf
 			}
 			state.Messages = append(state.Messages, assistantMsg)
+
+			// 5.5 空响应警告：以 user 角色注入，让 LLM 意识到自己行为异常。
+			//     对标 buildToolMessages 中的退避警告注入模式（user 消息）。
+			if emptyResponse && reasoningBuf != "" && state.ConsecutiveEmpty <= maxConsecutiveSameError {
+				warnMsg := llm.Message{
+					Role: llm.RoleUser,
+					Content: fmt.Sprintf(
+						"[system] You have produced %d consecutive responses with thinking (reasoning) but no visible content or tool calls. Your last response was empty — the user cannot see your thoughts, only your output. On this turn, produce actual content or use a tool immediately.",
+						state.ConsecutiveEmpty,
+					),
+				}
+				state.Messages = append(state.Messages, warnMsg)
+			}
 			state.TurnCount++
 
 			// 6. 无工具调用且有实际内容 → 完成；空响应继续下一轮
