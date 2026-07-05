@@ -8,6 +8,7 @@
 ### Fixed
 - **@ file picker unresponsive in large directories**: `filepath.WalkDir` traversal no longer truncates in huge directories, shows real-time progress; absolute path search no longer times out
 - **@ ../ path base error**: `doScanRelative` CWD base fix when resolving `../` relative paths, ensuring correct sibling directory search results
+- **Windows CI test failure**: `relativizePaths` unit tests used hardcoded Unix paths; on Windows, `filepath.IsAbs` returns false without a drive letter, causing `filepath.Rel` to misbehave — fixed with cross-platform absolute path construction
 
 ### Refactored
 - **@ picker cross-platform compatibility**: Replaced external `find` command with `filepath.WalkDir`, unified search logic across Windows / Linux / Darwin
