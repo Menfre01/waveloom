@@ -31,6 +31,7 @@ import (
 	"image/color"
 	"io"
 	"os"
+	"os/exec"
 	"os/user"
 	"path/filepath"
 	"sort"
@@ -412,6 +413,7 @@ type model struct {
 	pickerLastScannedBase string                // 上次触发磁盘扫描的 filepath.Base(filter)，base 未变则跳过扫描
 	pickerDismissValue    string                // 选择器关闭时的 input 值，防止立即重新触发
 	pickerLastValue       string                // 上次刷新时的 input 值，避免 spinner tick 触发重复扫描
+	pickerScanning        bool                  // 是否正在异步扫描中（用于显示加载状态）
 	pickerList            list.Model            // 文件列表组件（bubbles/list）
 	pickerDelegate        *list.DefaultDelegate // 文件选择器 delegate 指针，主题切换时更新样式
 
@@ -1051,6 +1053,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.gen != m.pickerScanGen {
 			return m, nil
 		}
+		m.pickerScanning = false
 		m.pickerAllItems = msg.items
 		m.pickerItems = fuzzyFilter(m.pickerFilter, m.pickerAllItems)
 		m.buildPickerList()
@@ -1904,6 +1907,7 @@ func (m *model) handlePickerKey(msg tea.KeyPressMsg) (bool, tea.Cmd) {
 // closePicker 关闭文件选择器。
 func (m *model) closePicker() {
 	m.pickerVisible = false
+	m.pickerScanning = false
 	m.pickerDismissValue = m.input.Value()
 	m.pickerLastValue = ""
 	m.pickerLastScannedBase = ""
@@ -1952,8 +1956,26 @@ func (m *model) commitPickerSelection(idx int) {
 
 // renderPickerDropdown 渲染文件选择器下拉列表。
 func (m *model) renderPickerDropdown(contentWidth int) string {
+	// 扫描中 → 显示加载状态
+	if m.pickerScanning && len(m.pickerItems) == 0 {
+		spinner := m.spinner.View()
+		boxStyle := lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(colorHeaderAccent).
+			Padding(0, 1).
+			Width(contentWidth)
+		return boxStyle.Render(spinner + " " + m.msg().PickerScanning)
+	}
+
+	// 扫描完成但无结果 → 显示空状态
 	if len(m.pickerItems) == 0 {
-		return ""
+		emptyStyle := lipgloss.NewStyle().Foreground(colorGray)
+		boxStyle := lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(colorHeaderAccent).
+			Padding(0, 1).
+			Width(contentWidth)
+		return boxStyle.Render(emptyStyle.Render(m.msg().PickerNoResults))
 	}
 
 	// 同步 list 宽度
@@ -2285,6 +2307,7 @@ func (m *model) scanFilesAsync() {
 		m.pickerScanCancel = nil
 	}
 
+	m.pickerScanning = true
 	m.pickerScanGen++
 	gen := m.pickerScanGen
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -2314,6 +2337,7 @@ func (m *model) activatePicker() {
 	m.pickerVisible = true
 	m.pickerFilter = resolveTilde(extractFilterAfterAt(m.input.Value()))
 	m.pickerLastValue = m.input.Value()
+	m.pickerScanning = true
 
 	// 立即用空列表占位，避免 View() 中 nil list
 	m.pickerItems = nil
@@ -2420,8 +2444,9 @@ func doScanRelative(ctx context.Context, registry tool.Registry, cwd, filter str
 		}
 	}
 
-	// 父目录顶层 → 浅层列出兄弟；其他 → 深度扫描
-	maxDepth := 10
+	// 父目录顶层 → 浅层列出兄弟；其他 → 浅层扫描（5 层），
+	// 用户输入更多路径分量后 searchRoot 自然收窄，无需深层扫描。
+	maxDepth := 5
 	excludeCWD := false
 	if searchRoot == filepath.Dir(cwd) {
 		maxDepth = 2
@@ -2429,26 +2454,48 @@ func doScanRelative(ctx context.Context, registry tool.Registry, cwd, filter str
 	}
 
 	doSearch := func(namePattern string) (files []string) {
-		cmd := fmt.Sprintf("find %s -maxdepth %d -type f", shellQuote(searchRoot), maxDepth)
-		cmd += " -not -path '*/.git/*' -not -path '*/node_modules/*' 2>/dev/null"
-		if excludeCWD {
-			cwdBase := filepath.Base(cwd)
-			cmd += fmt.Sprintf(" -not -path %s", shellQuote(filepath.Join(searchRoot, cwdBase)+"/*"))
+		// 直接 os/exec 跑 find，绕过 shell 工具的 MaxShellLines 截断。
+		// 巨型目录中 find 输出可能超过 3000 行，shell 工具会截掉中间部分，
+		// 导致字母序靠后的目录被遗漏。
+		args := []string{
+			searchRoot,
+			"-maxdepth", fmt.Sprintf("%d", maxDepth),
+			"(", "-name", ".git", "-o", "-name", "node_modules", ")",
+			"-prune", "-o", "-type", "f",
 		}
 		if namePattern != "" && namePattern != "*" {
-			cmd += fmt.Sprintf(" -name '%s'", namePattern)
+			args = append(args, "-name", namePattern)
 		}
-		cmd += " | sort"
-		jsonBytes, _ := json.Marshal(map[string]string{
-			"command":     cmd,
-			"working_dir": searchDir,
-		})
-		result, err := registry.Execute(ctx, "bash", jsonBytes)
-		if err != nil || result.IsError() {
+		if excludeCWD {
+			cwdBase := filepath.Base(cwd)
+			args = append(args, "-not", "-path", filepath.Join(searchRoot, cwdBase)+"/*")
+		}
+		args = append(args, "-print")
+
+		findCtx, findCancel := context.WithTimeout(ctx, 8*time.Second)
+		defer findCancel()
+		cmd := exec.CommandContext(findCtx, "find", args...)
+		cmd.Dir = searchDir
+		// 丢弃 stderr（权限错误等），只取 stdout
+		cmd.Stderr = nil
+
+		output, err := cmd.Output()
+		// find 在 macOS 上遇到权限拒绝的目录会 exit 1，但 stdout 中仍有有效结果，
+		// 因此仅在 output 为空时才视为失败。
+		if len(output) == 0 && err != nil {
 			return nil
 		}
-		rawFiles := parseFindOutput(result.Content)
-		return relativizePaths(rawFiles, cwd)
+		rawFiles := strings.Split(strings.TrimSpace(string(output)), "\n")
+		// 去空行并 sort（find 输出为磁盘顺序，sort 保证字母序一致）
+		filtered := make([]string, 0, len(rawFiles))
+		for _, f := range rawFiles {
+			f = strings.TrimSpace(f)
+			if f != "" {
+				filtered = append(filtered, f)
+			}
+		}
+		sort.Strings(filtered)
+		return relativizePaths(filtered, cwd)
 	}
 
 	files := doSearch("*")
@@ -2519,9 +2566,6 @@ func doScanRelative(ctx context.Context, registry tool.Registry, cwd, filter str
 		return nil
 	}
 
-	if len(items) > 500 {
-		items = items[:500]
-	}
 	sortPickerItems(items)
 	return items
 }
@@ -2547,21 +2591,22 @@ func doScanAbsolute(ctx context.Context, registry tool.Registry, cwd, filter str
 	}
 	searchRoot := resolved
 
-	// 深度 = searchRoot 之后的路径层级 + 2
-	// @~/ → depth 2（home 直系 + 一级子内容）
-	// @~/Workbench/waveloom/ → depth 3（项目内容 + 两层子目录）
 	relFilter := strings.TrimPrefix(filter, searchRoot)
 	relFilter = strings.Trim(relFilter, "/")
-	extraLevels := 0
+
+	// 深度策略：
+	// - 用户已指定完整存在的目录（relFilter 为空）→ 深度扫描（5 层起）
+	// - 部分模糊匹配（relFilter 非空，目录不存在）→ 浅层扫描（1 层），
+	//   因为 find 从 searchRoot 全量遍历高深度极易超时
+	maxDepth := 5
 	if relFilter != "" {
-		extraLevels = len(strings.Split(relFilter, "/"))
+		maxDepth = 1
 	}
-	maxDepth := extraLevels + 2
 	if maxDepth < 1 {
 		maxDepth = 1
 	}
-	if maxDepth > 10 {
-		maxDepth = 10
+	if maxDepth > 12 {
+		maxDepth = 12
 	}
 
 	// 搜索策略：
@@ -2576,20 +2621,39 @@ func doScanAbsolute(ctx context.Context, registry tool.Registry, cwd, filter str
 	}
 
 	doSearch := func(typeFilter string) (files []string) {
-		cmd := fmt.Sprintf("find %s -maxdepth %d -type %s -not -path '*/.git/*' -not -path '*/node_modules/*' 2>/dev/null", shellQuote(searchRoot), maxDepth, typeFilter)
-		if namePattern != "*" {
-			cmd += fmt.Sprintf(" -name '%s'", namePattern)
+		// 直接 os/exec 跑 find，绕过 shell 工具的 MaxShellLines 截断。
+		args := []string{
+			searchRoot,
+			"-maxdepth", fmt.Sprintf("%d", maxDepth),
+			"(", "-name", ".git", "-o", "-name", "node_modules", ")",
+			"-prune", "-o", "-type", typeFilter,
 		}
-		cmd += " | sort"
-		jsonBytes, _ := json.Marshal(map[string]string{
-			"command":     cmd,
-			"working_dir": searchRoot,
-		})
-		result, err := registry.Execute(ctx, "bash", jsonBytes)
-		if err != nil || result.IsError() {
+		if namePattern != "*" {
+			args = append(args, "-name", namePattern)
+		}
+		args = append(args, "-print")
+
+		findCtx, findCancel := context.WithTimeout(ctx, 8*time.Second)
+		defer findCancel()
+		cmd := exec.CommandContext(findCtx, "find", args...)
+		cmd.Dir = searchRoot
+		cmd.Stderr = nil
+
+		output, err := cmd.Output()
+		// find 在 macOS 上遇到权限拒绝的目录会 exit 1，但 stdout 中仍有有效结果
+		if len(output) == 0 && err != nil {
 			return nil
 		}
-		return parseFindOutput(result.Content)
+		rawFiles := strings.Split(strings.TrimSpace(string(output)), "\n")
+		filtered := make([]string, 0, len(rawFiles))
+		for _, f := range rawFiles {
+			f = strings.TrimSpace(f)
+			if f != "" {
+				filtered = append(filtered, f)
+			}
+		}
+		sort.Strings(filtered)
+		return filtered
 	}
 
 	dirFiles := doSearch("d")
@@ -2660,9 +2724,6 @@ func doScanAbsolute(ctx context.Context, registry tool.Registry, cwd, filter str
 		}
 	}
 
-	if len(items) > 500 {
-		items = items[:500]
-	}
 	sortPickerItems(items)
 	return items
 }
