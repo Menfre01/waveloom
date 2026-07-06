@@ -1,5 +1,18 @@
 # Changelog
 
+## [未发布]
+
+### 新增功能
+- **Subagent 委托**：新增 `agent` 工具，支持 fork 和 cold agent 两种模式，子 agent 可独立执行复杂多步任务；cold agent 冷启动（无上下文延续），适用于探索性任务
+
+### 修复
+- **Windows Git Bash 兼容性**：Shell 解释器探测优先通过 `exec.LookPath` 在 PATH 中查找 `bash.exe`，修复 Git Bash 内 setup 能跑但正常启动崩溃的问题；`resolveWindowsShell` 不再 `os.Exit(1)`，改为返回空字符串由调用方处理
+- **权限规则引擎 Windows 路径适配**：`splitPath`/`matchGlob` 使用 `filepath.ToSlash` 统一归一化 `\` 分隔符，修复 Windows 下文件路径 glob 规则（如 `src/**`）无法匹配的问题
+- **自更新 `os.Chmod` Windows 守卫**：`SelfUpdate` 和 `extractWaveloom` 增加 `runtime.GOOS != "windows"` 守卫，避免 Windows 上 `Chmod(0o755)` 报错阻塞更新流程
+- **`/tmp` 工作目录白名单平台守卫**：`Guard` 初始化时仅 Unix 平台添加 `/tmp` 到工作目录白名单，Windows 使用 `os.TempDir()`
+- **命令安全 `extractFirstToken` 适配 `\`**：增加 `\` 回退分支，确保 Windows 绝对路径命令提取正确
+- **`/proc/self/fd/` 路径检查平台守卫**：增加 `runtime.GOOS != "windows"` 守卫，Windows 无 `/proc/` 文件系统
+
 ## [v0.1.0-alpha.14] — 2026-07-04
 
 ### 新增功能
