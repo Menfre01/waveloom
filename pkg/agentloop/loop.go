@@ -65,6 +65,10 @@ type Config struct {
 	// EventCallback 在工具执行 ctx 中注入的回调，供 AgentTool 等嵌套工具向父通道推送事件。
 	// nil → 不注入（不影响现有路径）。
 	EventCallback func(TurnEvent)
+
+	// AgentsMD 项目 AGENTS.md 文本，注入到 cold subagent 的上下文。
+	// 空字符串 → 不注入。
+	AgentsMD string
 }
 
 // DefaultToolTimeout 是单个工具执行的推荐超时时间（10 分钟）。

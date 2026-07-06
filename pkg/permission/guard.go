@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 
 	"github.com/Menfre01/waveloom/pkg/pathutil"
 )
@@ -144,14 +145,18 @@ func NewGuard(opts ...GuardOption) *GuardImpl {
 		"skill":             true, // 用户显式安装/调用的 skill，不受权限拦截
 		"enter_plan_mode":   true,
 		"exit_plan_mode":    true,
+		"agent":             true, // 子 agent 委托：父已 bypass，子能力是父的子集
 	}
 
-	// 默认工作目录：项目根目录 + /tmp + 系统临时目录
+	// 默认工作目录：项目根目录 + /tmp（Unix）+ 系统临时目录
 	g.workingDirs = make([]string, 0, 3)
 	if cwd, err := os.Getwd(); err == nil {
 		g.workingDirs = append(g.workingDirs, cwd)
 	}
-	g.workingDirs = append(g.workingDirs, "/tmp", os.TempDir())
+	if runtime.GOOS != "windows" {
+		g.workingDirs = append(g.workingDirs, "/tmp")
+	}
+	g.workingDirs = append(g.workingDirs, os.TempDir())
 
 	for _, opt := range opts {
 		opt(g)
