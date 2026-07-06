@@ -42,17 +42,17 @@ brew install Menfre01/tap/waveloom
 powershell -c "irm https://raw.githubusercontent.com/Menfre01/waveloom/main/install.ps1 | iex"
 ```
 
-安装完成后，**打开 Git Bash**（不是 cmd 或 PowerShell），运行：
+> [!TIP]
+> **Windows 上推荐使用 [WSL2](https://learn.microsoft.com/zh-cn/windows/wsl/install) 获得最佳体验。** 在 WSL2 内安装 Linux 版本，无需 Git Bash 转发层，终端渲染更流畅，shell 命令性能更佳。
+>
+> 选择 Git Bash？Waveloom 依赖 `bash.exe`，cmd 和 PowerShell 不支持。安装完成后，**打开 Git Bash** 执行下方命令。若找不到 `waveloom`，将 `%USERPROFILE%\.local\bin` 加入 Windows 系统 PATH（安装脚本已自动处理）。
+
+安装后配置 Key 即可开始：
 
 ```sh
 waveloom setup
 waveloom
 ```
-
-> [!TIP]
-> **Windows 上推荐使用 [WSL2](https://learn.microsoft.com/zh-cn/windows/wsl/install) 获得最佳体验。** 在 WSL2 内安装 Linux 版本，无需 Git Bash 转发层，终端渲染更流畅，shell 命令性能更佳。
-
-> Waveloom 依赖 Git Bash 的 `bash.exe` 执行 shell 命令，cmd 和 PowerShell 不作为运行终端支持。如果 Git Bash 中找不到 `waveloom`，请将 `%USERPROFILE%\.local\bin` 加入 Windows 系统 PATH（安装脚本会自动提示）。
 
 > [!IMPORTANT]
 > API Key 直连 DeepSeek / OpenAI，代码不经过第三方。写文件和执行命令前需要你确认。
