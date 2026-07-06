@@ -674,6 +674,7 @@ type ViewportCtx struct {
 	Asst     spinner.Model
 	Thought  spinner.Model
 	Tool     spinner.Model
+	Subagent spinner.Model
 	Glamour  *glamour.TermRenderer // nil 时回退到纯文本
 	Width    int                   // viewport 内容宽度（终端宽度 - 4）
 	Focused  bool                  // 当前段落是否处于焦点态
@@ -1905,8 +1906,8 @@ func renderSubagentPara(sb *strings.Builder, p *Paragraph, ctx ViewportCtx) {
 		subState = stateError
 	}
 
-	// ── 前缀复用 toolPrefix ──
-	prefix := toolPrefix(ctx.Tool, subState, false)
+	// ── 前缀：使用独立的 subagent spinner，区别于普通工具 ──
+	prefix := toolPrefix(ctx.Subagent, subState, false)
 	if ctx.Focused {
 		prefix = styleFocusIndicator.Render(prefix)
 	}
@@ -1921,7 +1922,11 @@ func renderSubagentPara(sb *strings.Builder, p *Paragraph, ctx ViewportCtx) {
 	// ── tool 名颜色 ──
 	toolNameStyle := styleToolPrefixDone
 	if subState == stateError {
-		toolNameStyle = styleToolPrefixWarn
+		if p.ToolFatal {
+			toolNameStyle = styleToolPrefixErr
+		} else {
+			toolNameStyle = styleToolPrefixWarn
+		}
 	}
 	toolNameRendered := toolNameStyle.Render("agent")
 

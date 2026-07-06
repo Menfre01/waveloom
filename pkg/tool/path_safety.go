@@ -87,7 +87,7 @@ func IsBlockedDevicePath(path string) bool {
 		return true
 	}
 	// Linux: /proc/self/fd/0,1,2 是 stdio 别名
-	if strings.HasPrefix(path, "/proc/") &&
+	if runtime.GOOS != "windows" && strings.HasPrefix(path, "/proc/") &&
 		(strings.HasSuffix(path, "/fd/0") ||
 			strings.HasSuffix(path, "/fd/1") ||
 			strings.HasSuffix(path, "/fd/2")) {

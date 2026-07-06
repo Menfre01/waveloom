@@ -97,6 +97,40 @@ var defaultSystemPrompt = `You are Waveloom, a coding agent. You help users writ
 - Use shell('ls') or shell('find') to explore directories before reading files — never pass a directory path to read_file. Paths without a file extension (e.g., pkg/tool) are likely directories: use shell('ls') first, then pass the actual filename to read_file.
 - For throwaway verification scripts: prefer python, write to the system temp directory, and clean up after.
 
+## Agent Tool
+
+### When to use the agent tool
+
+- Use the agent tool for complex, multi-step tasks that require exploring multiple files, making several edits, or independent research.
+- Launch multiple agents concurrently whenever possible — send a single message with multiple agent tool calls.
+- Explore agent: use proactively for codebase exploration (finding files by pattern, searching for code, answering questions about the codebase). Invoke without the user having to ask.
+
+### When NOT to use the agent tool
+
+- Reading a specific known file path → use read_file instead.
+- Searching within 1-3 specific files → use read_file instead.
+- Simple file pattern matching (e.g. ` + "`" + `find . -name '*.go'` + "`" + `) → use shell instead.
+
+### When to fork (omit subagent_type)
+
+- Fork when the intermediate tool output isn't worth keeping in your context — "will I need this output again", not task size.
+- Research: fork open-ended questions. If research can be broken into independent questions, launch parallel forks in one message.
+- Implementation: prefer to fork work that requires more than a couple of edits.
+- Fork results are returned synchronously — wait for the tool result before acting on the fork's findings.
+
+### When to use a cold agent (with subagent_type)
+
+- Use a cold agent when you need an independent perspective — e.g. code review, where the agent should not see your own analysis.
+- Use Explore for read-only codebase exploration — it is faster and cannot modify files.
+- Use general-purpose when the task needs a different tool set or permission mode than the parent.
+
+### Writing the prompt
+
+- The description parameter is a 3-5 word task label (e.g. "Fix login bug", "Audit auth flow") — not a full sentence.
+- Cold agents (with subagent_type): brief like a smart colleague who just walked in — explain what you're trying to accomplish, what you've learned, and why it matters.
+- Fork prompts (omit subagent_type): write as a directive — the fork inherits your context. Be specific about scope; don't re-explain background.
+- Never delegate understanding. Include file paths, line numbers, what specifically to change. Don't write "based on your findings, fix the bug."
+
 ## Plan Mode
 
 - Call enter_plan_mode ONLY when you need to implement a complex feature or refactoring (3+ files, architectural decisions, multiple valid approaches).
@@ -472,6 +506,7 @@ type model struct {
 	spAsst         spinner.Model  // assistant 流式前缀动画
 	spThought      spinner.Model  // thought 流式前缀动画
 	spTool         spinner.Model  // tool 执行中前缀动画
+	spSubagent     spinner.Model  // subagent 执行中前缀动画（独立视觉）
 	ctxProgress    progress.Model // ctx 窗口进度条（bubbles progress 组件）
 	input          textarea.Model
 
@@ -643,6 +678,11 @@ func newTUIModel(llmClient llm.Client, registry tool.Registry, guard permission.
 	spTool.Spinner = spinner.Line
 	spTool.Style = lipgloss.NewStyle().Foreground(darkPalette.Gray) // 初始值，initTheme 同步
 
+	// 初始化 subagent 执行中前缀 spinner（Jump — 横向脉冲，区分子 agent 与普通工具）
+	spSubagent := spinner.New()
+	spSubagent.Spinner = spinner.Jump
+	spSubagent.Style = lipgloss.NewStyle().Foreground(darkPalette.Gray) // 初始值，initTheme 同步
+
 	// 初始化 ctx 进度条（bubbles progress 组件，全块字符 █  提供清晰的逐格填充）
 	// 宽度在 renderCtxBarCompact() 中每次设置（20 列，每列 5%）。
 	cp := progress.New(
@@ -690,6 +730,7 @@ func newTUIModel(llmClient llm.Client, registry tool.Registry, guard permission.
 		spAsst:          spAsst,
 		spThought:       spThought,
 		spTool:          spTool,
+		spSubagent:      spSubagent,
 		ctxProgress:     cp,
 		input:           ti,
 		otherInput:      otherTi,
@@ -725,6 +766,7 @@ func (m *model) wireLoop() {
 		VerboseWriter: m.verboseLog,
 		Compactor:     m.cm.Compactor(),
 		ToolTimeout:   m.toolTimeout,
+		AgentsMD:      m.agentsMdText,
 		EventCallback: func(ev agentloop.TurnEvent) {
 			if m.program != nil {
 				m.program.Send(ev)
@@ -745,6 +787,7 @@ func (m *model) Init() tea.Cmd {
 		m.spAsst.Tick,
 		m.spThought.Tick,
 		m.spTool.Tick,
+		m.spSubagent.Tick,
 		m.checkUpdateCmd(),
 	)
 }
@@ -871,6 +914,9 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cmds = append(cmds, cmd)
 
 		m.spTool, cmd = m.spTool.Update(msg)
+		cmds = append(cmds, cmd)
+
+		m.spSubagent, cmd = m.spSubagent.Update(msg)
 		cmds = append(cmds, cmd)
 
 		return m, tea.Batch(cmds...)
@@ -3818,12 +3864,13 @@ func (m *model) toggleParagraphFocus() {
 func (m *model) viewportCtx() ViewportCtx {
 	contentWidth := max(m.width-4, 20)
 	return ViewportCtx{
-		Asst:    m.spAsst,
-		Thought: m.spThought,
-		Tool:    m.spTool,
-		Glamour: m.glamourRenderer,
-		Width:   contentWidth,
-		LC:      m.msg(),
+		Asst:     m.spAsst,
+		Thought:  m.spThought,
+		Tool:     m.spTool,
+		Subagent: m.spSubagent,
+		Glamour:  m.glamourRenderer,
+		Width:    contentWidth,
+		LC:       m.msg(),
 	}
 }
 
@@ -4807,6 +4854,7 @@ func (m *model) syncThemeComponents() {
 	m.spAsst.Style = lipgloss.NewStyle().Foreground(colorOK)
 	m.spThought.Style = lipgloss.NewStyle().Foreground(colorGray)
 	m.spTool.Style = lipgloss.NewStyle().Foreground(colorGray)
+	m.spSubagent.Style = lipgloss.NewStyle().Foreground(colorGray)
 
 	// 同步 ctx 进度条轨道颜色
 	m.ctxProgress.EmptyColor = colorFooterFg

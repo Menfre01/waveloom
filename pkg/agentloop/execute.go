@@ -41,8 +41,17 @@ func (l *Loop) executeToolCalls(ctx context.Context, calls []llm.ToolCall, state
 		ctx = WithEventCallback(ctx, l.config.EventCallback)
 	}
 	ctx = WithParentMessages(ctx, state.Messages)
-	// Also inject system prompt for fork subagents to reuse parent prompt cache.
-	ctx = context.WithValue(ctx, parentSystemPromptKey{}, l.config.SystemPrompt)
+	// Inject system prompt for subagents. Prefer Config; fall back to extracting
+	// from messages[0] (ContextManager-managed sessions use empty Config.SystemPrompt).
+	systemPrompt := l.config.SystemPrompt
+	if systemPrompt == "" && len(state.Messages) > 0 && state.Messages[0].Role == llm.RoleSystem {
+		systemPrompt = state.Messages[0].Content
+	}
+	ctx = WithParentSystemPrompt(ctx, systemPrompt)
+	// Inject AGENTS.md for cold subagents.
+	if l.config.AgentsMD != "" {
+		ctx = WithAgentsMD(ctx, l.config.AgentsMD)
+	}
 
 	// 1. 按 ConcurrentSafe 分区
 	var concurrent, serial []llm.ToolCall

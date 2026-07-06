@@ -46,6 +46,10 @@ func ShellInterpreter() (binary string, args []string) {
 	cachedShell.once.Do(func() {
 		if runtime.GOOS == "windows" {
 			cachedShell.bin, cachedShell.args = resolveWindowsShell()
+			if cachedShell.bin == "" {
+				fmt.Fprintln(os.Stderr, "Waveloom on Windows requires Git for Windows (https://git-scm.com/downloads/win).")
+				fmt.Fprintln(os.Stderr, "If already installed, set WAVELOOM_GIT_BASH_PATH to your bash.exe location.")
+			}
 			return
 		}
 		if _, err := exec.LookPath("bash"); err == nil {
@@ -59,11 +63,20 @@ func ShellInterpreter() (binary string, args []string) {
 
 // resolveWindowsShell 在 Windows 上定位 Git Bash 的 bash.exe。
 // 探测顺序：
-//  1. WAVELOOM_GIT_BASH_PATH 环境变量
-//  2. 从 git.exe 路径推算 ../../bin/bash.exe
-//  3. 常见安装路径 C:\Program Files\Git\bin\bash.exe
-//  4. 都找不到 → 报错退出
+//  1. PATH 中的 bash / bash.exe（运行在 Git Bash 中时最可靠）
+//  2. WAVELOOM_GIT_BASH_PATH 环境变量
+//  3. 从 git.exe 路径推算 ../../bin/bash.exe
+//  4. 常见安装路径（C:\Program Files\Git\bin\bash.exe）
+//  5. 都找不到 → 返回空字符串，由调用方报错
 func resolveWindowsShell() (string, []string) {
+	// 0. 直接查找 PATH（用户在 Git Bash 中运行 waveloom 时 bash.exe 就在 PATH 中）
+	if bashPath, err := exec.LookPath("bash.exe"); err == nil {
+		return bashPath, []string{"-c"}
+	}
+	if bashPath, err := exec.LookPath("bash"); err == nil {
+		return bashPath, []string{"-c"}
+	}
+
 	// 1. 环境变量
 	if envPath := os.Getenv("WAVELOOM_GIT_BASH_PATH"); envPath != "" {
 		if fi, err := os.Stat(envPath); err == nil && !fi.IsDir() {
@@ -93,9 +106,6 @@ func resolveWindowsShell() (string, []string) {
 		}
 	}
 
-	// 4. 找不到
-	fmt.Fprintln(os.Stderr, "Waveloom on Windows requires Git for Windows (https://git-scm.com/downloads/win).")
-	fmt.Fprintln(os.Stderr, "If already installed, set WAVELOOM_GIT_BASH_PATH to your bash.exe location.")
-	os.Exit(1)
-	panic("unreachable")
+	// 4. 找不到 → 返回空，由 ShellInterpreter 调用方处理
+	return "", nil
 }
