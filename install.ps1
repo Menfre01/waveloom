@@ -70,9 +70,14 @@ if ($env:PATH -notlike "*$InstallDir*") {
     Write-Host "   Run the following in an elevated PowerShell:"
     Write-Host ""
     Write-Host '   [Environment]::SetEnvironmentVariable("PATH", $env:PATH + ";' + $InstallDir + '", "User")'
+    Write-Host ""
+    Write-Host "   If waveloom is still not found in Git Bash, add to ~/.bashrc:"
+    Write-Host '   export PATH="$HOME/.local/bin:$PATH"'
 }
 
 Write-Host ""
-Write-Host "Next steps:"
+Write-Host "Next steps (in Git Bash, not cmd/PowerShell):"
 Write-Host "  waveloom setup    # Configure your DeepSeek API Key"
 Write-Host "  waveloom          # Launch the TUI"
+Write-Host ""
+Write-Host "Waveloom requires Git Bash to run — cmd and PowerShell are not supported."
