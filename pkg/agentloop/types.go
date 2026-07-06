@@ -14,7 +14,7 @@ import (
 // TurnEvent 是 Loop 逐轮推送给上层的事件接口。
 // 所有事件类型通过 channel 发送，消费方用 type switch 路由。
 type TurnEvent interface {
-	turnEvent()
+	TurnEvent()
 }
 
 // ---------------------------------------------------------------------------
@@ -30,7 +30,7 @@ type StreamDelta struct {
 	ReasoningDelta string // 增量思考链（DeepSeek 思考模式，通常为空）
 }
 
-func (StreamDelta) turnEvent() {}
+func (StreamDelta) TurnEvent() {}
 
 // ---------------------------------------------------------------------------
 // ToolCallStart — 工具调用开始
@@ -44,7 +44,7 @@ type ToolCallStart struct {
 	Arguments    string // JSON 编码的调用参数
 }
 
-func (ToolCallStart) turnEvent() {}
+func (ToolCallStart) TurnEvent() {}
 
 // ---------------------------------------------------------------------------
 // ToolCallStream — 工具执行增量输出
@@ -60,7 +60,7 @@ type ToolCallStream struct {
 	Chunk        string // 增量文本
 }
 
-func (ToolCallStream) turnEvent() {}
+func (ToolCallStream) TurnEvent() {}
 
 // ---------------------------------------------------------------------------
 // ToolCallResult — 工具执行结果
@@ -86,7 +86,7 @@ type ToolCallResult struct {
 	DiffHunks []tool.DiffHunk
 }
 
-func (ToolCallResult) turnEvent() {}
+func (ToolCallResult) TurnEvent() {}
 
 // IsError 返回该结果是否为错误。
 func (r ToolCallResult) IsError() bool { return r.Error != "" }
@@ -142,7 +142,7 @@ type TurnStats struct {
 	Compaction CompactionInfo
 }
 
-func (TurnStats) turnEvent() {}
+func (TurnStats) TurnEvent() {}
 
 // ---------------------------------------------------------------------------
 // BalanceUpdate — 余额更新
@@ -156,7 +156,7 @@ type BalanceUpdate struct {
 	Balance *llm.BalanceInfo // 余额信息；nil 表示查询失败
 }
 
-func (BalanceUpdate) turnEvent() {}
+func (BalanceUpdate) TurnEvent() {}
 
 // ---------------------------------------------------------------------------
 // AskUserQuestionEvent — 用户选择题交互通知
@@ -179,7 +179,7 @@ type AskUserQuestionEvent struct {
 	Questions  []QuestionPrompt
 }
 
-func (AskUserQuestionEvent) turnEvent() {}
+func (AskUserQuestionEvent) TurnEvent() {}
 
 // ---------------------------------------------------------------------------
 // PlanModeEnter / PlanModeExit — plan 模式事件
@@ -192,7 +192,7 @@ type PlanModeEnter struct {
 	PairID   string // START/END 配对 ID，TUI 用于用户手动退出时注入 [plan:end]
 }
 
-func (PlanModeEnter) turnEvent() {}
+func (PlanModeEnter) TurnEvent() {}
 
 // PlanModeExit 在退出 plan 模式时推送（无论 approve 或 reject）。
 type PlanModeExit struct {
@@ -203,7 +203,7 @@ type PlanModeExit struct {
 	Feedback string
 }
 
-func (PlanModeExit) turnEvent() {}
+func (PlanModeExit) TurnEvent() {}
 
 // ---------------------------------------------------------------------------
 // LoopDone — 循环终止
@@ -218,7 +218,7 @@ type LoopDone struct {
 	Messages []llm.Message    // 完整消息历史
 }
 
-func (LoopDone) turnEvent() {}
+func (LoopDone) TurnEvent() {}
 
 // ---------------------------------------------------------------------------
 // LoopDoneWithGen — 带代数标记的 LoopDone
@@ -231,4 +231,4 @@ type LoopDoneWithGen struct {
 	Generation int
 }
 
-func (LoopDoneWithGen) turnEvent() {}
+func (LoopDoneWithGen) TurnEvent() {}

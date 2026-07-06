@@ -137,7 +137,12 @@ func (re *RuleEngine) checkRules(rules []RuleEntry, toolName string, input json.
 // matchGlob 是对 path.Match 的增强，额外支持 ** 递归匹配。
 // ** 匹配零个或多个路径组件（跨越 / 边界）。
 // 不含 ** 的 pattern 直接委托给 path.Match，行为完全兼容。
+// target 会先归一化为 / 分隔符，确保 Windows 下 \ 路径能正确匹配。
 func matchGlob(pattern, target string) (bool, error) {
+	// 归一化：将 Windows \ 转为 /，使 path.Match 和 splitPath 行为一致
+	if strings.ContainsRune(target, '\\') {
+		target = filepath.ToSlash(target)
+	}
 	if !strings.Contains(pattern, "**") {
 		return path.Match(pattern, target)
 	}
@@ -147,11 +152,12 @@ func matchGlob(pattern, target string) (bool, error) {
 }
 
 // splitPath 将路径按 / 分割，保留空段（如绝对路径开头的空字符串）。
+// Windows 路径中的 \ 会先归一化为 /，确保跨平台 glob 匹配一致性。
 func splitPath(p string) []string {
 	if p == "" {
 		return nil
 	}
-	return strings.Split(p, "/")
+	return strings.Split(filepath.ToSlash(p), "/")
 }
 
 // matchSegments 递归匹配 pattern 段与 target 段，** 可跨越零或多个段。

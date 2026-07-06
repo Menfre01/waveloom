@@ -28,6 +28,7 @@ const (
 	paraThought                        // ~ 思考过程
 	paraTool                           // ● 工具调用
 	paraSystem                         // ◼ 系统提示（终止原因、状态通知等）
+	paraSubagent                       // ◆ 子 agent 容器
 )
 
 // paraStateEnum 标识段落的渲染状态。
@@ -76,6 +77,13 @@ type Paragraph struct {
 
 	// System 专用字段
 	NotifKind systemNotifKind // 通知类型（仅 paraSystem 有效）
+
+	// Subagent 专用字段
+	SubagentType      string // "fork" | "general-purpose" | "Explore"
+	SubagentPrompt    string // 委派任务描述
+	SubagentTurns     int    // 总轮次
+	SubagentPromptTok int    // ↑ 输入 token
+	SubagentComplTok  int    // ↓ 输出 token
 
 	// 渲染缓存（避免每次 buildViewportContent 时重复 Glamour 渲染）
 	renderedCache string
@@ -151,6 +159,14 @@ func formatToolArgs(toolName string, argsJSON string, cwd string) string {
 			return name + " " + args
 		}
 		return name
+	case "agent":
+		if desc := extractField(argsJSON, "description"); desc != "" {
+			return desc
+		}
+		if t := extractField(argsJSON, "subagent_type"); t != "" {
+			return t + " · " + extractField(argsJSON, "description")
+		}
+		return "fork · " + extractField(argsJSON, "description")
 	case "ask_user_question":
 		return formatQuestionArgs(argsJSON)
 	case "enter_plan_mode", "exit_plan_mode":
@@ -658,6 +674,7 @@ type ViewportCtx struct {
 	Asst     spinner.Model
 	Thought  spinner.Model
 	Tool     spinner.Model
+	Subagent spinner.Model
 	Glamour  *glamour.TermRenderer // nil 时回退到纯文本
 	Width    int                   // viewport 内容宽度（终端宽度 - 4）
 	Focused  bool                  // 当前段落是否处于焦点态
@@ -707,6 +724,8 @@ func buildViewportContent(paras []Paragraph, ctx ViewportCtx, focusIndex int, li
 			renderToolPara(&tmp, p, ctx)
 		case paraSystem:
 			renderSystemPara(&tmp, p, ctx)
+		case paraSubagent:
+			renderSubagentPara(&tmp, p, ctx)
 		}
 
 		rendered := tmp.String()
@@ -1448,7 +1467,6 @@ func renderToolStreamOutput(sb *strings.Builder, p *Paragraph, textWidth int, in
 		return
 	}
 
-	mutedStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#666666"))
 	contentWidth := textWidth - 2 // "│ " 前缀占 2 列
 	if contentWidth < 1 {
 		contentWidth = 1
@@ -1473,7 +1491,7 @@ func renderToolStreamOutput(sb *strings.Builder, p *Paragraph, textWidth int, in
 
 	for _, wl := range visible {
 		sb.WriteString(indent)
-		sb.WriteString(mutedStyle.Render("│ "))
+		sb.WriteString(styleToolPreview.Render("│ "))
 		sb.WriteString(wl)
 		sb.WriteString("\n")
 	}
@@ -1874,6 +1892,170 @@ func findFirstPromptPos(s string) int {
 		i++
 	}
 	return -1
+}
+
+// ---------------------------------------------------------------------------
+// Subagent 段落渲染
+// ---------------------------------------------------------------------------
+
+// renderSubagentPara 渲染子 agent 段落，完全对齐 renderToolPara 的样式。
+// 摘要行格式：● agent  general-purpose · description  (2轮, 2.1s, ↑1.2K, ↓2.0K)
+func renderSubagentPara(sb *strings.Builder, p *Paragraph, ctx ViewportCtx) {
+	subState := p.State
+	if p.ToolError != "" {
+		subState = stateError
+	}
+
+	// ── 前缀：使用独立的 subagent spinner，区别于普通工具 ──
+	prefix := toolPrefix(ctx.Subagent, subState, false)
+	if ctx.Focused {
+		prefix = styleFocusIndicator.Render(prefix)
+	}
+	prefixStr := prefix + " "
+	prefixWidth := lipgloss.Width(prefixStr)
+	indentStr := strings.Repeat(" ", prefixWidth)
+	textWidth := ctx.Width - prefixWidth
+	if textWidth < 1 {
+		textWidth = 1
+	}
+
+	// ── tool 名颜色 ──
+	toolNameStyle := styleToolPrefixDone
+	if subState == stateError {
+		if p.ToolFatal {
+			toolNameStyle = styleToolPrefixErr
+		} else {
+			toolNameStyle = styleToolPrefixWarn
+		}
+	}
+	toolNameRendered := toolNameStyle.Render("agent")
+
+	// ── args：agent 类型 · description ──
+	agentLabel := p.SubagentType
+	if agentLabel == "" {
+		agentLabel = "fork"
+	}
+	desc := p.SubagentPrompt
+	if desc == "" {
+		desc = p.Text
+	}
+	argsText := agentLabel + " · " + desc
+
+	// ── suffix（对齐 bash 的 toolSuffix 格式） ──
+	suffixRendered := subagentSuffix(p)
+
+	// ── 摘要行宽度自适应 ──
+	fixedWidth := lipgloss.Width(toolNameRendered) + lipgloss.Width("  ") + lipgloss.Width("  ") + lipgloss.Width(suffixRendered)
+	maxArgsWidth := textWidth - fixedWidth
+	if maxArgsWidth < 4 {
+		maxArgsWidth = 4
+	}
+	argsRunes := []rune(argsText)
+	if len(argsRunes) > maxArgsWidth {
+		argsText = string(argsRunes[:maxArgsWidth-1]) + "…"
+	}
+
+	sb.WriteString(prefixStr)
+	sb.WriteString(toolNameRendered)
+	sb.WriteString("  ")
+	sb.WriteString(styleToolArgs.Render(argsText))
+	sb.WriteString("  ")
+	sb.WriteString(suffixRendered)
+	sb.WriteString("\n")
+
+	// ── 流式输出：活跃中普通字体（对齐 shell 流式） ──
+	if p.State == stateStreaming && p.Text != "" {
+		renderSubagentStreamLines(sb, p.Text, textWidth, indentStr, 5, false)
+		return
+	}
+
+	// ── 完成/折叠：灰色预览（对齐 shell 折叠预览） ──
+	if p.State == stateDone || p.State == stateCollapsed {
+		renderSubagentStreamLines(sb, p.Text, textWidth, indentStr, 5, true)
+		sb.WriteString(indentStr)
+		sb.WriteString(styleToolPreviewHint.Render(ctx.LC.ToolExpandAllHint))
+		sb.WriteString("\n")
+		return
+	}
+
+	// ── 错误态 ──
+	if p.State == stateError {
+		renderSubagentStreamLines(sb, p.Text, textWidth, indentStr, 5, true)
+		return
+	}
+
+	// ── 展开态：完整输出 ──
+	if p.State == stateExpanded {
+		saved := p.ToolResult
+		p.ToolResult = p.Text
+		renderToolFullOutput(sb, p, textWidth, indentStr, ctx.LC)
+		p.ToolResult = saved
+	}
+}
+
+// renderSubagentStreamLines 渲染固定行数、尾部内容。
+// muted=true 时全文灰色（折叠预览），false 时仅前缀灰色（流式，对齐 shell）。
+func renderSubagentStreamLines(sb *strings.Builder, text string, textWidth int, indent string, fixedLines int, muted bool) {
+	text = strings.TrimRight(text, "\n")
+	if text == "" {
+		return
+	}
+	contentWidth := textWidth - 2
+	if contentWidth < 1 {
+		contentWidth = 1
+	}
+	rawLines := strings.Split(text, "\n")
+	var visible []string
+	for i := len(rawLines) - 1; i >= 0 && len(visible) < fixedLines; i-- {
+		if rawLines[i] == "" {
+			continue
+		}
+		wrapped := wrapLineStable(rawLines[i], contentWidth)
+		visible = append(wrapped, visible...)
+	}
+	if len(visible) > fixedLines {
+		visible = visible[len(visible)-fixedLines:]
+	}
+	for _, wl := range visible {
+		sb.WriteString(indent)
+		if muted {
+			sb.WriteString(styleToolPreview.Render("│ " + wl))
+		} else {
+			sb.WriteString(styleToolPreview.Render("│ "))
+			sb.WriteString(wl)
+		}
+		sb.WriteString("\n")
+	}
+}
+
+// subagentSuffix 返回子 agent 摘要行后缀，对齐 bash 的 toolSuffix 格式。
+func subagentSuffix(p *Paragraph) string {
+	if p.State == stateStreaming {
+		return ""
+	}
+	if p.ToolError != "" {
+		return "(interrupted)"
+	}
+	suffix := ""
+	if p.SubagentTurns > 0 {
+		suffix = fmt.Sprintf("%d轮", p.SubagentTurns)
+	}
+	if p.ToolDurMs > 0 {
+		if suffix != "" {
+			suffix += ", "
+		}
+		suffix += formatDuration(p.ToolDurMs)
+	}
+	if p.SubagentPromptTok > 0 {
+		suffix += fmt.Sprintf(", ↑%s", formatTokens(p.SubagentPromptTok))
+	}
+	if p.SubagentComplTok > 0 {
+		suffix += fmt.Sprintf(", ↓%s", formatTokens(p.SubagentComplTok))
+	}
+	if suffix == "" {
+		return ""
+	}
+	return "(" + suffix + ")"
 }
 
 // ---------------------------------------------------------------------------
