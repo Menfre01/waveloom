@@ -49,9 +49,10 @@ waveloom setup
 waveloom
 ```
 
+> [!TIP]
+> **For the best experience on Windows, use [WSL2](https://learn.microsoft.com/en-us/windows/wsl/install).** Install the Linux binary inside WSL2 and enjoy native performance — no Git Bash forwarding layer, smoother terminal rendering, and faster shell commands.
+
 > Waveloom relies on Git Bash (`bash.exe`) to execute shell commands — cmd and PowerShell are not supported as the runtime terminal. If `waveloom` is not found in Git Bash, add `%USERPROFILE%\.local\bin` to your Windows PATH (the installer will prompt you if needed).
->
-> 💡 **For the best experience on Windows, use [WSL](https://learn.microsoft.com/en-us/windows/wsl/install).** Install the Linux binary inside WSL and enjoy native performance without Git Bash overhead.
 
 > [!IMPORTANT]
 > API key connects directly to DeepSeek / OpenAI — your code never passes through a third-party server. Every file write and command execution requires your confirmation.
