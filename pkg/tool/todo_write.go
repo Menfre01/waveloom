@@ -50,7 +50,7 @@ var todoWriteSchema = json.RawMessage(`{
     "merge": {
       "type": "boolean",
       "default": false,
-      "description": "Whether to merge the todos with the existing todos. If true, the todos will be merged into the existing todos based on the id field. If false, the new todos will replace the existing todos."
+      "description": "Whether to merge the todos with the existing todos. If true, the passed todos are created (no id) or updated (with id); items not passed are left unchanged. If false, the new todos replace the existing todos."
     }
   },
   "required": ["todos"]
@@ -71,7 +71,7 @@ Create and manage a structured task list. Use proactively for complex tasks (3+ 
 
 content = imperative ("Fix bug"). activeForm = present continuous ("Fixing bug") — displayed with spinner during in_progress state. Both required for every task.
 
-Omit id to create new (system assigns). Include id to update. Use merge=true to update existing while adding new — you MUST include ALL tasks you want to keep; omitted tasks are deleted. Max one in_progress at a time.
+Omit id to create new (system assigns). Include id to update. Use merge=true to update existing while adding new — only items you pass are created or updated; items you don't pass are left unchanged. Use merge=false to replace the entire list (for deletion or full reset). Max one in_progress at a time.
 
 → Detailed rules and examples: see system prompt section "## Todo List".
 `)

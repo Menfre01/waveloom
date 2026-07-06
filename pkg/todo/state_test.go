@@ -80,7 +80,8 @@ func TestTodoState_Merge(t *testing.T) {
 	}
 }
 
-func TestTodoState_MergeDelete(t *testing.T) {
+func TestTodoState_MergeKeepUnmentioned(t *testing.T) {
+	// REGRESSION: merge=true 不应删除未传入的项。只更新传入的项，其他保持不变。
 	s := NewTodoState()
 
 	s.Apply(TodoWriteParams{
@@ -91,7 +92,7 @@ func TestTodoState_MergeDelete(t *testing.T) {
 		},
 	})
 
-	// Merge: only pass #1 and #3 — #2 should be deleted
+	// Merge: only pass #1 and #3 — #2 should be KEPT (not deleted)
 	_, new := s.Apply(TodoWriteParams{
 		Merge: true,
 		Todos: []TodoItem{
@@ -100,14 +101,17 @@ func TestTodoState_MergeDelete(t *testing.T) {
 		},
 	})
 
-	if len(new) != 2 {
-		t.Fatalf("after delete len = %d, want 2", len(new))
+	if len(new) != 3 {
+		t.Fatalf("after merge len = %d, want 3 (#2 kept)", len(new))
 	}
 	if new[0].ID != "1" {
 		t.Errorf("first item ID = %s, want 1", new[0].ID)
 	}
-	if new[1].ID != "3" {
-		t.Errorf("second item ID = %s, want 3", new[1].ID)
+	if new[1].ID != "2" {
+		t.Errorf("second item ID = %s, want 2 (unmentioned, kept)", new[1].ID)
+	}
+	if new[2].ID != "3" {
+		t.Errorf("third item ID = %s, want 3", new[2].ID)
 	}
 }
 
@@ -329,7 +333,8 @@ func TestFormatResult_WithoutDescription(t *testing.T) {
 	}
 }
 
-func TestTodoState_MergeDeleteAll(t *testing.T) {
+func TestTodoState_MergeEmptyListNoOp(t *testing.T) {
+	// REGRESSION: merge=true 空列表应该是无操作，不应删除已有项。
 	s := NewTodoState()
 
 	s.Apply(TodoWriteParams{
@@ -339,14 +344,14 @@ func TestTodoState_MergeDeleteAll(t *testing.T) {
 		},
 	})
 
-	// Merge with empty list → all deleted (empty list after apply)
+	// Merge with empty list → no-op, existing items kept
 	_, new := s.Apply(TodoWriteParams{
 		Merge: true,
 		Todos:  []TodoItem{},
 	})
 
-	if len(new) != 0 {
-		t.Errorf("after delete-all merge, len = %d, want 0", len(new))
+	if len(new) != 2 {
+		t.Errorf("after empty merge, len = %d, want 2 (items kept)", len(new))
 	}
 }
 
