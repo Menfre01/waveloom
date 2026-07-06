@@ -140,7 +140,7 @@ func TestNewDefaultRegistry(t *testing.T) {
 
 	expectedTools := []string{
 		"read_file", "write_file", "edit_file",
-		"bash",
+		"bash", "bash_subagent",
 		"web_fetch",
 		"ask_user_question",
 		"enter_plan_mode", "exit_plan_mode",
@@ -167,7 +167,7 @@ func TestNewDefaultRegistry(t *testing.T) {
 
 func TestRegistry_IsStreamable_Shell(t *testing.T) {
 	r := NewRegistry()
-	r.Register(Wrap(&Shell{}))
+	r.Register(Wrap(&Shell{AllowBg: true}))
 	if !r.IsStreamable("bash") {
 		t.Error("bash should be streamable")
 	}
@@ -193,7 +193,7 @@ func TestRegistry_ExecuteStreaming(t *testing.T) {
 		t.Skip("skipping streaming test on Windows")
 	}
 	r := NewRegistry()
-	r.Register(Wrap(&Shell{}))
+	r.Register(Wrap(&Shell{AllowBg: true}))
 	var chunks []string
 	result, err := r.ExecuteStreaming(context.Background(), "bash", json.RawMessage(`{"command":"echo streaming-test"}`), func(chunk string) {
 		chunks = append(chunks, chunk)

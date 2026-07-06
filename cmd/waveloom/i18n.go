@@ -213,11 +213,11 @@ type Messages struct {
 
 var zhCN = Messages{
 	// Input
-	InputPlaceholder:          "输入消息, Enter 发送 · / 命令 · @ 选择文件 · Esc 中断",
+	InputPlaceholder:          "输入消息, ⏎ 发送 · / 命令 · @ 选择文件 · Esc 中断",
 	InputOtherPlaceholder:     "输入自定义答案...",
 	InputAgentRunning:         "Agent 执行中... Esc 中断",
-	InputFocusModePlaceholder: "段落已聚焦 · Enter 展开/折叠 · Esc 回到输入",
-	InputPlanModePlaceholder:  "[Plan] 输入消息, Enter 发送 · Shift+Tab 退出",
+	InputFocusModePlaceholder: "段落已聚焦 · ⏎ 展开/折叠 · Esc 回到输入",
+	InputPlanModePlaceholder:  "[Plan] 输入消息, ⏎ 发送 · Shift+Tab 退出",
 
 	// System
 	SysCompactionDone:    "压缩完成。",
@@ -240,13 +240,13 @@ var zhCN = Messages{
 	LoopToolFatal:   "工具错误（%s, %v）",
 
 	// Update
-	UpdateAvailable: "↑ %s  enter 更新 • esc 忽略",
+	UpdateAvailable: "↑ %s  ⏎ 更新 • esc 忽略",
 
 	// Thought
 	ThoughtThinking:     "思考中...",
-	ThoughtComplete:     "▶ 思考完成 (%d tokens) · Enter 展开",
-	ThoughtExpandHint:   "··· Enter 展开 (%d tokens)",
-	ThoughtCollapseHint: "▼ Enter 折叠",
+	ThoughtComplete:     "▶ 思考完成 (%d tokens) · ⏎ 展开",
+	ThoughtExpandHint:   "··· ⏎ 展开 (%d tokens)",
+	ThoughtCollapseHint: "▼ ⏎ 折叠",
 
 	// Tool
 	ToolNotFound:         "(未找到)",
@@ -255,8 +255,8 @@ var zhCN = Messages{
 	ToolQuestionDeclined: "(declined)",
 	ToolTruncated:        "··· (truncated)",
 	ToolTruncatedLines:   "... (truncated to %d lines)",
-	ToolExpandAllHint:    "··· Enter 展开全部",
-	ToolCollapseHint:     "▼ Enter 折叠",
+	ToolExpandAllHint:    "··· ⏎ 展开全部",
+	ToolCollapseHint:     "▼ ⏎ 折叠",
 
 	// Permission
 	PermRequired: "▲ Permission Required",
@@ -297,7 +297,7 @@ var zhCN = Messages{
 	KeyPaste:       "粘贴",
 
 	// Focus separator
-	FocusSeparatorHint: " ◆ 段落已聚焦 · Enter 展开/折叠 · Esc 退出 ◆ ",
+	FocusSeparatorHint: " ◆ 段落已聚焦 · ⏎ 展开/折叠 · Esc 退出 ◆ ",
 
 	// Plan mode
 	PlanEnterTitle:   "进入 Plan 模式？",
@@ -340,7 +340,7 @@ var zhCN = Messages{
 	SetupConfirmTitle:    "确认配置",
 	SetupConfirmPrompt:   "确认以上配置？",
 	SetupConfirmRedo:     "重新设置 Step %d",
-	SetupHelpHint:        "↑↓ 导航   Enter 确认   Esc 回退   Ctrl+C 退出",
+	SetupHelpHint:        "↑↓ 导航   ⏎ 确认   Esc 回退   Ctrl+C 退出",
 	SetupSummaryTheme:    "主题",
 	SetupSummaryLanguage: "语言",
 	SetupSummaryProvider: "Provider",
@@ -366,10 +366,10 @@ var zhCN = Messages{
 	SlashHelpText: `使用技巧:
 
   —— 以下仅在空闲时生效 ——
-  输入 /         查看并补全命令（↑↓ 导航，Enter 确认，Tab 自动补全）
-  输入 @         引用文件（↑↓ 导航，Enter 确认，Tab 深入目录）
+  输入 /         查看并补全命令（↑↓ 导航，⏎ 确认，Tab 自动补全）
+  输入 @         引用文件（↑↓ 导航，⏎ 确认，Tab 深入目录）
   ↑↓              浏览输入历史
-  Tab / Shift+Tab 段落间导航，Enter 展开 / 折叠
+  Tab / Shift+Tab 段落间导航，⏎ 展开 / 折叠
   Esc（双击）      清空输入框
   exit            退出程序
 
@@ -460,11 +460,11 @@ var zhCN = Messages{
 }
 
 var enUS = Messages{
-	InputPlaceholder:          "Type a message, Enter to send · / commands · @ pick files · Esc to interrupt",
+	InputPlaceholder:          "Type a message, ⏎ to send · / commands · @ pick files · Esc to interrupt",
 	InputOtherPlaceholder:     "Type custom answer...",
 	InputAgentRunning:         "Agent running... Esc to interrupt",
-	InputFocusModePlaceholder: "Paragraph focused · Enter expand/collapse · Esc back to input",
-	InputPlanModePlaceholder:  "[Plan] Type a message, Enter to send · Shift+Tab to exit",
+	InputFocusModePlaceholder: "Paragraph focused · ⏎ expand/collapse · Esc back to input",
+	InputPlanModePlaceholder:  "[Plan] Type a message, ⏎ to send · Shift+Tab to exit",
 
 	// System
 	SysCompactionDone:    "Compaction complete.",
@@ -487,13 +487,13 @@ var enUS = Messages{
 	LoopToolFatal:   "Tool error (%s, %v)",
 
 	// Update
-	UpdateAvailable: "↑ %s  enter update • esc dismiss",
+	UpdateAvailable: "↑ %s  ⏎ update • esc dismiss",
 
 	// Thought
 	ThoughtThinking:     "Thinking...",
-	ThoughtComplete:     "▶ Thinking done (%d tokens) · Enter to expand",
-	ThoughtExpandHint:   "··· Enter to expand (%d tokens)",
-	ThoughtCollapseHint: "▼ Enter to collapse",
+	ThoughtComplete:     "▶ Thinking done (%d tokens) · ⏎ to expand",
+	ThoughtExpandHint:   "··· ⏎ to expand (%d tokens)",
+	ThoughtCollapseHint: "▼ ⏎ to collapse",
 
 	// Tool
 	ToolNotFound:         "(not found)",
@@ -502,8 +502,8 @@ var enUS = Messages{
 	ToolQuestionDeclined: "(declined)",
 	ToolTruncated:        "··· (truncated)",
 	ToolTruncatedLines:   "... (truncated to %d lines)",
-	ToolExpandAllHint:    "··· Enter to expand all",
-	ToolCollapseHint:     "▼ Enter to collapse",
+	ToolExpandAllHint:    "··· ⏎ to expand all",
+	ToolCollapseHint:     "▼ ⏎ to collapse",
 
 	// Permission
 	PermRequired: "▲ Permission Required",
@@ -544,7 +544,7 @@ var enUS = Messages{
 	KeyPaste:       "Paste",
 
 	// Focus separator
-	FocusSeparatorHint: " ◆ Paragraph focused · Enter expand/collapse · Esc exit ◆ ",
+	FocusSeparatorHint: " ◆ Paragraph focused · ⏎ expand/collapse · Esc exit ◆ ",
 
 	// Plan mode
 	PlanEnterTitle:   "Enter plan mode?",
@@ -587,7 +587,7 @@ var enUS = Messages{
 	SetupConfirmTitle:    "Confirm Settings",
 	SetupConfirmPrompt:   "Confirm the settings above?",
 	SetupConfirmRedo:     "Redo Step %d",
-	SetupHelpHint:        "↑↓ navigate   Enter confirm   Esc back   Ctrl+C quit",
+	SetupHelpHint:        "↑↓ navigate   ⏎ confirm   Esc back   Ctrl+C quit",
 	SetupSummaryTheme:    "Theme",
 	SetupSummaryLanguage: "Language",
 	SetupSummaryProvider: "Provider",
@@ -613,10 +613,10 @@ var enUS = Messages{
 	SlashHelpText: `Usage tips:
 
   —— Idle only ——
-  Type /         View and complete commands (↑↓ navigate, Enter confirm, Tab autocomplete)
-  Type @         Reference files (↑↓ navigate, Enter confirm, Tab dive into directories)
+  Type /         View and complete commands (↑↓ navigate, ⏎ confirm, Tab autocomplete)
+  Type @         Reference files (↑↓ navigate, ⏎ confirm, Tab dive into directories)
   ↑↓              Browse input history
-  Tab / Shift+Tab Navigate between paragraphs, Enter expand / collapse
+  Tab / Shift+Tab Navigate between paragraphs, ⏎ expand / collapse
   Esc (double)    Clear input
   exit            Exit program
 

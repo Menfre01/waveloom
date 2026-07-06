@@ -60,6 +60,7 @@ import (
 	"github.com/Menfre01/waveloom/pkg/reference"
 	"github.com/Menfre01/waveloom/pkg/skill"
 	"github.com/Menfre01/waveloom/pkg/slashcommand"
+	"github.com/Menfre01/waveloom/pkg/subagent"
 	"github.com/Menfre01/waveloom/pkg/tool"
 )
 
@@ -95,6 +96,40 @@ var defaultSystemPrompt = `You are Waveloom, a coding agent. You help users writ
 - Invoke parallel-safe tools (read_file, web_fetch) in the same response when independent — the system serializes write_file, edit_file, and shell automatically.
 - Use shell('ls') or shell('find') to explore directories before reading files — never pass a directory path to read_file. Paths without a file extension (e.g., pkg/tool) are likely directories: use shell('ls') first, then pass the actual filename to read_file.
 - For throwaway verification scripts: prefer python, write to the system temp directory, and clean up after.
+
+## Agent Tool
+
+### When to use the agent tool
+
+- Use the agent tool for complex, multi-step tasks that require exploring multiple files, making several edits, or independent research.
+- Launch multiple agents concurrently whenever possible — send a single message with multiple agent tool calls.
+- Explore agent: use proactively for codebase exploration (finding files by pattern, searching for code, answering questions about the codebase). Invoke without the user having to ask.
+
+### When NOT to use the agent tool
+
+- Reading a specific known file path → use read_file instead.
+- Searching within 1-3 specific files → use read_file instead.
+- Simple file pattern matching (e.g. ` + "`" + `find . -name '*.go'` + "`" + `) → use shell instead.
+
+### When to fork (omit subagent_type)
+
+- Fork when the intermediate tool output isn't worth keeping in your context — "will I need this output again", not task size.
+- Research: fork open-ended questions. If research can be broken into independent questions, launch parallel forks in one message.
+- Implementation: prefer to fork work that requires more than a couple of edits.
+- Fork results are returned synchronously — wait for the tool result before acting on the fork's findings.
+
+### When to use a cold agent (with subagent_type)
+
+- Use a cold agent when you need an independent perspective — e.g. code review, where the agent should not see your own analysis.
+- Use Explore for read-only codebase exploration — it is faster and cannot modify files.
+- Use general-purpose when the task needs a different tool set or permission mode than the parent.
+
+### Writing the prompt
+
+- The description parameter is a 3-5 word task label (e.g. "Fix login bug", "Audit auth flow") — not a full sentence.
+- Cold agents (with subagent_type): brief like a smart colleague who just walked in — explain what you're trying to accomplish, what you've learned, and why it matters.
+- Fork prompts (omit subagent_type): write as a directive — the fork inherits your context. Be specific about scope; don't re-explain background.
+- Never delegate understanding. Include file paths, line numbers, what specifically to change. Don't write "based on your findings, fix the bug."
 
 ## Plan Mode
 
@@ -202,7 +237,7 @@ type keyMap struct {
 // 作为接受 *Messages 的函数实现，支持国际化。
 
 var defaultKeys = keyMap{
-	Enter:         key.NewBinding(key.WithKeys("enter"), key.WithHelp("Enter", "发送消息")),
+	Enter:         key.NewBinding(key.WithKeys("enter"), key.WithHelp("⏎", "发送消息")),
 	Interrupt:     key.NewBinding(key.WithKeys("esc"), key.WithHelp("Esc", "中断 agent loop")),
 	Quit:          key.NewBinding(key.WithKeys("ctrl+c"), key.WithHelp("Ctrl+C", "退出")),
 	FocusNext:     key.NewBinding(key.WithKeys("tab"), key.WithHelp("Tab", "聚焦下一个可交互段落")),
@@ -220,7 +255,7 @@ var defaultKeys = keyMap{
 // makeKeyMap 根据 locale 生成带翻译帮助文本的 keyMap。
 func makeKeyMap(lc *Messages) keyMap {
 	return keyMap{
-		Enter:       key.NewBinding(key.WithKeys("enter"), key.WithHelp("Enter", lc.KeySend)),
+		Enter:       key.NewBinding(key.WithKeys("enter"), key.WithHelp("⏎", lc.KeySend)),
 		Interrupt:   key.NewBinding(key.WithKeys("esc"), key.WithHelp("Esc", lc.KeyInterrupt)),
 		Quit:        key.NewBinding(key.WithKeys("ctrl+c"), key.WithHelp("Ctrl+C", lc.KeyQuit)),
 		FocusNext:   key.NewBinding(key.WithKeys("tab"), key.WithHelp("Tab", lc.KeyFocusNext)),
@@ -471,6 +506,7 @@ type model struct {
 	spAsst         spinner.Model  // assistant 流式前缀动画
 	spThought      spinner.Model  // thought 流式前缀动画
 	spTool         spinner.Model  // tool 执行中前缀动画
+	spSubagent     spinner.Model  // subagent 执行中前缀动画（独立视觉）
 	ctxProgress    progress.Model // ctx 窗口进度条（bubbles progress 组件）
 	input          textarea.Model
 
@@ -642,6 +678,11 @@ func newTUIModel(llmClient llm.Client, registry tool.Registry, guard permission.
 	spTool.Spinner = spinner.Line
 	spTool.Style = lipgloss.NewStyle().Foreground(darkPalette.Gray) // 初始值，initTheme 同步
 
+	// 初始化 subagent 执行中前缀 spinner（Jump — 横向脉冲，区分子 agent 与普通工具）
+	spSubagent := spinner.New()
+	spSubagent.Spinner = spinner.Jump
+	spSubagent.Style = lipgloss.NewStyle().Foreground(darkPalette.Gray) // 初始值，initTheme 同步
+
 	// 初始化 ctx 进度条（bubbles progress 组件，全块字符 █  提供清晰的逐格填充）
 	// 宽度在 renderCtxBarCompact() 中每次设置（20 列，每列 5%）。
 	cp := progress.New(
@@ -689,6 +730,7 @@ func newTUIModel(llmClient llm.Client, registry tool.Registry, guard permission.
 		spAsst:          spAsst,
 		spThought:       spThought,
 		spTool:          spTool,
+		spSubagent:      spSubagent,
 		ctxProgress:     cp,
 		input:           ti,
 		otherInput:      otherTi,
@@ -724,6 +766,12 @@ func (m *model) wireLoop() {
 		VerboseWriter: m.verboseLog,
 		Compactor:     m.cm.Compactor(),
 		ToolTimeout:   m.toolTimeout,
+		AgentsMD:      m.agentsMdText,
+		EventCallback: func(ev agentloop.TurnEvent) {
+			if m.program != nil {
+				m.program.Send(ev)
+			}
+		},
 	})
 }
 
@@ -739,6 +787,7 @@ func (m *model) Init() tea.Cmd {
 		m.spAsst.Tick,
 		m.spThought.Tick,
 		m.spTool.Tick,
+		m.spSubagent.Tick,
 		m.checkUpdateCmd(),
 	)
 }
@@ -867,6 +916,9 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.spTool, cmd = m.spTool.Update(msg)
 		cmds = append(cmds, cmd)
 
+		m.spSubagent, cmd = m.spSubagent.Update(msg)
+		cmds = append(cmds, cmd)
+
 		return m, tea.Batch(cmds...)
 
 	// ------------------------------------------------------------------
@@ -984,6 +1036,22 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// 不应该走到这里——所有 LoopDone 都应该被 goroutine 包装为 LoopDoneWithGen。
 		// 保留此分支作为防御（如单次模式 runner.go 直接使用 agentloop.LoopDone）。
 		m.handleLoopDone(msg, 0)
+		m.flushTranscript()
+		return m, nil
+
+	// ------------------------------------------------------------------
+	// Subagent 事件（由 AgentTool 通过 EventCallback 推送）
+	// ------------------------------------------------------------------
+	case subagent.SubagentStart:
+		m.handleSubagentStart(msg)
+		return m, nil
+
+	case subagent.SubagentEvent:
+		m.handleSubagentEvent(msg)
+		return m, nil
+
+	case subagent.SubagentEnd:
+		m.handleSubagentEnd(msg)
 		m.flushTranscript()
 		return m, nil
 
@@ -3076,13 +3144,15 @@ func (m *model) handleToolStart(ev agentloop.ToolCallStart) {
 		last.renderDirty = true
 	}
 
-	// 创建 tool 段落
-	m.paras = append(m.paras, Paragraph{
-		Type:     paraTool,
-		State:    stateStreaming,
-		ToolName: ev.ToolCallName,
-		ToolArgs: formatToolArgs(ev.ToolCallName, ev.Arguments, m.cwd),
-	})
+	// 创建 tool 段落（agent 工具由 SubagentStart 事件创建 paraSubagent 替代）
+	if ev.ToolCallName != "agent" {
+		m.paras = append(m.paras, Paragraph{
+			Type:     paraTool,
+			State:    stateStreaming,
+			ToolName: ev.ToolCallName,
+			ToolArgs: formatToolArgs(ev.ToolCallName, ev.Arguments, m.cwd),
+		})
+	}
 }
 
 // handleToolStream 处理工具执行中的增量输出流。
@@ -3262,6 +3332,13 @@ func (m *model) handleLoopDone(ev agentloop.LoopDone, generation int) {
 			p.State = stateDone
 			p.renderDirty = true
 		}
+		// 如果 paraSubagent 在 loop 终止时仍为 streaming，标记为 error
+		// 正常情况下 SubagentEnd 事件会在 loop 终止前到达
+		if p.Type == paraSubagent && p.State == stateStreaming {
+			p.State = stateError
+			p.ToolError = "subagent interrupted (loop terminated)"
+			p.renderDirty = true
+		}
 	}
 
 	// 所有终止原因都追加系统提示段落（仅当前 run）
@@ -3333,6 +3410,72 @@ func (m *model) handleLoopDone(ev agentloop.LoopDone, generation int) {
 	}
 }
 
+// ---------------------------------------------------------------------------
+// Subagent 事件处理
+// ---------------------------------------------------------------------------
+
+// handleSubagentStart 在子 agent 开始执行时创建 paraSubagent 段落。
+func (m *model) handleSubagentStart(ev subagent.SubagentStart) {
+	m.paras = append(m.paras, Paragraph{
+		Type:           paraSubagent,
+		State:          stateStreaming,
+		SubagentType:   ev.AgentType,
+		SubagentPrompt: ev.Prompt,
+	})
+}
+
+// handleSubagentEvent 处理子 agent 的内部事件——追加文本或记录工具调用。
+func (m *model) handleSubagentEvent(ev subagent.SubagentEvent) {
+	// 找到最后一个 paraSubagent 段落（stateStreaming）
+	for i := len(m.paras) - 1; i >= 0; i-- {
+		p := &m.paras[i]
+		if p.Type == paraSubagent && p.State == stateStreaming {
+			switch ev.Kind {
+			case subagent.SubagentText:
+				p.Text += ev.TextDelta
+				p.renderDirty = true
+			case subagent.SubagentToolStart:
+				// 内联工具调用摘要
+				line := fmt.Sprintf("● %s  %s", ev.ToolName, ev.ToolArgs)
+				if p.Text == "" {
+					p.Text = line
+				} else {
+					p.Text += "\n" + line
+				}
+				p.renderDirty = true
+			case subagent.SubagentToolResult:
+				if ev.ToolResult != "" {
+					// 追加工具结果
+					p.Text += "\n" + ev.ToolResult
+					p.renderDirty = true
+				}
+			}
+			return
+		}
+	}
+}
+
+// handleSubagentEnd 在子 agent 结束时更新段落状态。
+func (m *model) handleSubagentEnd(ev subagent.SubagentEnd) {
+	for i := len(m.paras) - 1; i >= 0; i-- {
+		p := &m.paras[i]
+		if p.Type == paraSubagent && p.State == stateStreaming {
+			p.SubagentTurns = ev.TotalTurns
+			p.SubagentPromptTok = ev.PromptTokens
+			p.SubagentComplTok = ev.CompletionTokens
+			p.ToolDurMs = ev.DurationMs
+			if ev.Error != "" {
+				p.State = stateError
+				p.ToolError = ev.Error
+			} else {
+				p.State = stateDone
+			}
+			p.renderDirty = true
+			return
+		}
+	}
+}
+
 // isTimeoutError 判断错误是否为超时引起（context deadline exceeded 或包含 deadline exceeded 字样）。
 func isTimeoutError(err error) bool {
 	if err == nil {
@@ -3399,6 +3542,8 @@ func paragraphToTranscriptLine(p *Paragraph) ctxpkg.TranscriptLine {
 		line.Type = "tool"
 	case paraSystem:
 		line.Type = "system"
+	case paraSubagent:
+		line.Type = "subagent"
 	}
 	switch p.State {
 	case stateDone:
@@ -3443,6 +3588,8 @@ func transcriptLineToParagraph(line ctxpkg.TranscriptLine) Paragraph {
 		p.Type = paraTool
 	case "system":
 		p.Type = paraSystem
+	case "subagent":
+		p.Type = paraSubagent
 	}
 	switch line.State {
 	case "done":
@@ -3560,6 +3707,9 @@ func isExpandable(p *Paragraph, contentWidth int) bool {
 			return true
 		}
 		return false
+	case paraSubagent:
+		// subagent 容器始终可展开（done/collapsed/expanded/error 态均可交互）
+		return p.State != stateStreaming
 	}
 	return false
 }
@@ -3697,6 +3847,15 @@ func (m *model) toggleParagraphFocus() {
 				p.State = stateDone
 			}
 		}
+	case paraSubagent:
+		switch p.State {
+		case stateDone, stateCollapsed:
+			p.State = stateExpanded
+		case stateExpanded:
+			p.State = stateDone
+		case stateError:
+			p.State = stateExpanded
+		}
 	}
 	p.renderDirty = true
 }
@@ -3705,12 +3864,13 @@ func (m *model) toggleParagraphFocus() {
 func (m *model) viewportCtx() ViewportCtx {
 	contentWidth := max(m.width-4, 20)
 	return ViewportCtx{
-		Asst:    m.spAsst,
-		Thought: m.spThought,
-		Tool:    m.spTool,
-		Glamour: m.glamourRenderer,
-		Width:   contentWidth,
-		LC:      m.msg(),
+		Asst:     m.spAsst,
+		Thought:  m.spThought,
+		Tool:     m.spTool,
+		Subagent: m.spSubagent,
+		Glamour:  m.glamourRenderer,
+		Width:    contentWidth,
+		LC:       m.msg(),
 	}
 }
 
@@ -4694,6 +4854,7 @@ func (m *model) syncThemeComponents() {
 	m.spAsst.Style = lipgloss.NewStyle().Foreground(colorOK)
 	m.spThought.Style = lipgloss.NewStyle().Foreground(colorGray)
 	m.spTool.Style = lipgloss.NewStyle().Foreground(colorGray)
+	m.spSubagent.Style = lipgloss.NewStyle().Foreground(colorGray)
 
 	// 同步 ctx 进度条轨道颜色
 	m.ctxProgress.EmptyColor = colorFooterFg

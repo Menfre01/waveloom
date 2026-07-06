@@ -32,19 +32,39 @@ type ShellParams struct {
 	RunInBackground bool   `json:"run_in_background"` // 显式请求后台执行
 }
 
-type Shell struct{}
+type Shell struct {
+	AllowBg bool // true for "bash" (main agent), false for "bash_subagent"
+}
 
-func (t *Shell) Name() string    { return "bash" }
-func (t *Shell) Schema() json.RawMessage { return shellSchema }
-func (t *Shell) ConcurrentSafe() bool    { return false }
+func (t *Shell) Name() string {
+	if t.AllowBg {
+		return "bash"
+	}
+	return "bash_subagent"
+}
+
+func (t *Shell) Schema() json.RawMessage {
+	if t.AllowBg {
+		return shellSchema
+	}
+	return shellSchemaNoBackground
+}
+
+func (t *Shell) ConcurrentSafe() bool { return false }
 
 // Description 引导 LLM 优先使用专用工具，仅在必要时使用 shell。
 func (t *Shell) Description() string {
-	return strings.Join([]string{
+	lines := []string{
 		"Execute a shell command in a subprocess. Configurable timeout (default 120s, max 600s), captures stdout and stderr.",
 		"",
-		"Set run_in_background to true for long-running commands (servers, watchers, daemons). The tool returns immediately with a task ID and log path — use read_file to check progress. Use kill_background_task to stop a running background task.",
-		"",
+	}
+	if t.AllowBg {
+		lines = append(lines,
+			"Set run_in_background to true for long-running commands (servers, watchers, daemons). The tool returns immediately with a task ID and log path — use read_file to check progress. Use kill_background_task to stop a running background task.",
+			"",
+		)
+	}
+	lines = append(lines,
 		"Unix/macOS uses bash -c (sh fallback), Windows uses Git Bash (bash -c).",
 		"",
 		"Prefer dedicated tools over shell:",
@@ -68,7 +88,8 @@ func (t *Shell) Description() string {
 		`  {"command":"python /tmp/check.py && rm /tmp/check.py"}  — Unix/macOS or Windows (Git Bash)`,
 		`  {"command":"make build"}                                 — runs in workspace`,
 		`  {"command":"ls", "working_dir":"/tmp"}                   — runs in /tmp, clean`,
-	}, "\n")
+	)
+	return strings.Join(lines, "\n")
 }
 
 // ── 超时常量 ──
@@ -96,6 +117,15 @@ func (t *Shell) Execute(ctx context.Context, p ShellParams) (*ToolResult, error)
 
 	// ── 后台命令检测与预处理 ──
 	bgLogFile, isBackground := prepareBackgroundCommand(&p)
+	if isBackground && !t.AllowBg {
+		return &ToolResult{
+			Error: &ToolError{
+				Class:   ErrorClassRecoverable,
+				Kind:    ErrKindInvalidArgs,
+				Message: "background execution is not supported in this context",
+			},
+		}, nil
+	}
 
 	// ── 共享前置逻辑（文件 fd 输出） ──
 	cmd, cmdCtx, cancel, timeout, outputFile, outputPath := t.setupCommand(ctx, &p)
@@ -220,6 +250,15 @@ func (t *Shell) ExecuteStreaming(ctx context.Context, p ShellParams, chunkCb fun
 
 	// ── 后台命令检测与预处理 ──
 	bgLogFile, isBackground := prepareBackgroundCommand(&p)
+	if isBackground && !t.AllowBg {
+		return &ToolResult{
+			Error: &ToolError{
+				Class:   ErrorClassRecoverable,
+				Kind:    ErrKindInvalidArgs,
+				Message: "background execution is not supported in this context",
+			},
+		}, nil
+	}
 
 	// ── 共享前置逻辑（文件 fd 输出） ──
 	cmd, cmdCtx, cancel, timeout, outputFile, outputPath := t.setupCommand(ctx, &p)

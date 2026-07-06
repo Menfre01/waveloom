@@ -100,6 +100,25 @@ var shellSchema = json.RawMessage(`{
   "required": ["command"]
 }`)
 
+var shellSchemaNoBackground = json.RawMessage(`{
+  "type": "object",
+  "properties": {
+    "command": {
+      "type": "string",
+      "description": "Shell command to execute. Unix/macOS uses bash -c (sh fallback), Windows uses Git Bash (bash -c)."
+    },
+    "working_dir": {
+      "type": "string",
+      "description": "Working directory (optional)"
+    },
+    "timeout_ms": {
+      "type": "integer",
+      "description": "Timeout in milliseconds (default: 120000, max: 600000)"
+    }
+  },
+  "required": ["command"]
+}`)
+
 var webFetchSchema = json.RawMessage(`{
   "type": "object",
   "properties": {
