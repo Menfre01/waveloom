@@ -78,25 +78,6 @@ func (s *TodoState) Apply(params TodoWriteParams) (oldItems, newItems []TodoItem
 		s.nextID = 1
 	}
 
-	// 构建传入 ID 集合（用于 merge 模式下的 DELETE 检测）
-	incomingIDs := make(map[string]bool, len(params.Todos))
-	for _, t := range params.Todos {
-		if t.ID != "" {
-			incomingIDs[t.ID] = true
-		}
-	}
-
-	// merge 模式：删除不在传入列表中的旧项
-	if params.Merge {
-		filtered := s.items[:0]
-		for _, item := range s.items {
-			if incomingIDs[item.ID] {
-				filtered = append(filtered, item)
-			}
-		}
-		s.items = filtered
-	}
-
 	// 逐项处理
 	for _, t := range params.Todos {
 		if t.ID != "" {
