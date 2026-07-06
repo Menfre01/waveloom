@@ -208,7 +208,6 @@ type Messages struct {
 	TodoDoneCount    string // 含 %d
 	TodoInProgCount  string // 含 %d
 	TodoPendingCount string // 含 %d
-	TodoExpandHint   string
 
 	// ── Setup locale options ──────────────────────────────
 	SetupLocaleZhCNLabel string
@@ -468,7 +467,6 @@ var zhCN = Messages{
 	TodoDoneCount:    "%d 完成",
 	TodoInProgCount:  "%d 进行中",
 	TodoPendingCount: "%d 等待",
-	TodoExpandHint:   "⏎ 展开",
 
 	// Setup locale options
 	SetupLocaleZhCNLabel: "简体中文  (zh-CN)",
@@ -722,7 +720,6 @@ Environment variables:
 	TodoDoneCount:    "%d done",
 	TodoInProgCount:  "%d in progress",
 	TodoPendingCount: "%d pending",
-	TodoExpandHint:   "⏎ to expand",
 
 	// Setup locale options
 	SetupLocaleZhCNLabel: "简体中文  (zh-CN)",
