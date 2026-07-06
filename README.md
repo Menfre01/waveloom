@@ -42,12 +42,14 @@ brew install Menfre01/tap/waveloom
 powershell -c "irm https://raw.githubusercontent.com/Menfre01/waveloom/main/install.ps1 | iex"
 ```
 
-Then configure your key and start:
+After installation, **open Git Bash** (not cmd or PowerShell) and run:
 
 ```sh
 waveloom setup
 waveloom
 ```
+
+> Waveloom relies on Git Bash (`bash.exe`) to execute shell commands — cmd and PowerShell are not supported as the runtime terminal. If `waveloom` is not found in Git Bash, add `%USERPROFILE%\.local\bin` to your Windows PATH (the installer will prompt you if needed).
 
 > [!IMPORTANT]
 > API key connects directly to DeepSeek / OpenAI — your code never passes through a third-party server. Every file write and command execution requires your confirmation.

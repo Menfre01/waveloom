@@ -52,17 +52,62 @@ mkdir -p ~/.local/bin && curl -fsSL https://github.com/Menfre01/waveloom/release
 
 **Windows**
 
-需要 [Git for Windows](https://git-scm.com/downloads/win)。打开 PowerShell 运行：
+> [!IMPORTANT]
+> Waveloom 使用 Git Bash 的 `bash.exe` 执行所有 shell 命令，因此**安装和使用都必须在 Git Bash 中进行**。cmd 和 PowerShell 不可作为运行终端。
+
+**Step 1 — 安装 Git for Windows**
+
+如果尚未安装，从 https://git-scm.com/downloads/win 下载安装（默认选项即可）。
+
+**Step 2 — 下载 Waveloom**
+
+打开 **PowerShell**（不是 Git Bash），运行：
 
 ```powershell
 powershell -c "irm https://raw.githubusercontent.com/Menfre01/waveloom/main/install.ps1 | iex"
 ```
 
-> 安装到 `%USERPROFILE%\.local\bin`。若该路径不在 PATH 中，执行：
-> ```powershell
-> [Environment]::SetEnvironmentVariable("PATH", $env:PATH + ";$env:USERPROFILE\.local\bin", "User")
+> 安装到 `%USERPROFILE%\.local\bin`。脚本会自动检测 Git Bash 是否安装，并提示 PATH 设置。
+
+**Step 3 — 配置 PATH**
+
+安装脚本结束时如果提示 PATH 未配置，在**管理员 PowerShell** 中执行：
+
+```powershell
+[Environment]::SetEnvironmentVariable("PATH", $env:PATH + ";$env:USERPROFILE\.local\bin", "User")
+```
+
+然后**重启 Git Bash**（如果已打开的话），验证安装：
+
+```sh
+which waveloom
+# 应输出 /c/Users/<你的用户名>/.local/bin/waveloom
+```
+
+> 如果在 Git Bash 中仍找不到 `waveloom`，手动将 `export PATH="$HOME/.local/bin:$PATH"` 追加到 `~/.bashrc`，然后执行 `source ~/.bashrc`。
+
+**Step 4 — 首次配置**
+
+在 **Git Bash** 中运行：
+
+```sh
+waveloom setup
+# → 选主题 → 选语言 → 选 Provider → 粘贴 API Key → 确认模型 → 保存
+```
+
+**Step 5 — 开始使用**
+
+```sh
+waveloom "帮我创建一个 Go HTTP 服务"
+# 或在项目目录下直接启动交互式 TUI：
+waveloom
+```
+
+> 如果 `waveloom` 启动后立即退出并提示 "requires Git for Windows"，说明 Git Bash 的安装路径不在默认位置。设置环境变量 `WAVELOOM_GIT_BASH_PATH` 指向你的 `bash.exe` 位置，例如：
+> ```sh
+> export WAVELOOM_GIT_BASH_PATH="/c/Program Files/Git/bin/bash.exe"
 > ```
-> 然后重启终端。
+> 写入 `~/.bashrc` 以持久化。
 
 > macOS 首次运行若提示"无法验证开发者"，执行：
 > ```sh
