@@ -287,7 +287,7 @@ func TestForwardEvents_TextAggregation(t *testing.T) {
 		close(ch)
 	}()
 
-	aggregated, turns, promptTok, complTok, err := forwardEvents(ctx, ch, nil)
+	aggregated, turns, promptTok, complTok, err := forwardEvents(ctx, ch, nil, "")
 	if err != nil {
 		t.Fatalf("forwardEvents error: %v", err)
 	}
@@ -322,7 +322,7 @@ func TestForwardEvents_ToolEventsProduceCallback(t *testing.T) {
 		close(ch)
 	}()
 
-	_, _, _, _, err := forwardEvents(ctx, ch, cb)
+	_, _, _, _, err := forwardEvents(ctx, ch, cb, "")
 	if err != nil {
 		t.Fatalf("forwardEvents error: %v", err)
 	}
@@ -360,7 +360,7 @@ func TestForwardEvents_WriteOperationsTracking(t *testing.T) {
 		close(ch)
 	}()
 
-	aggregated, _, _, _, err := forwardEvents(ctx, ch, nil)
+	aggregated, _, _, _, err := forwardEvents(ctx, ch, nil, "")
 	if err != nil {
 		t.Fatalf("forwardEvents error: %v", err)
 	}
@@ -388,7 +388,7 @@ func TestForwardEvents_TurnStatsAccumulation(t *testing.T) {
 		close(ch)
 	}()
 
-	_, turns, promptTok, complTok, err := forwardEvents(ctx, ch, nil)
+	_, turns, promptTok, complTok, err := forwardEvents(ctx, ch, nil, "")
 	if err != nil {
 		t.Fatalf("forwardEvents error: %v", err)
 	}
@@ -411,7 +411,7 @@ func TestForwardEvents_LoopDoneError(t *testing.T) {
 		close(ch)
 	}()
 
-	_, _, _, _, err := forwardEvents(ctx, ch, nil)
+	_, _, _, _, err := forwardEvents(ctx, ch, nil, "")
 	if err == nil {
 		t.Fatal("expected error from LoopDone")
 	}
@@ -430,7 +430,7 @@ func TestForwardEvents_EmptyStream(t *testing.T) {
 		close(ch)
 	}()
 
-	aggregated, _, _, _, err := forwardEvents(ctx, ch, nil)
+	aggregated, _, _, _, err := forwardEvents(ctx, ch, nil, "")
 	if err != nil {
 		t.Fatalf("forwardEvents error: %v", err)
 	}
@@ -458,7 +458,7 @@ func TestForwardEvents_ToolCallStreamEvent(t *testing.T) {
 		close(ch)
 	}()
 
-	_, _, _, _, err := forwardEvents(ctx, ch, cb)
+	_, _, _, _, err := forwardEvents(ctx, ch, cb, "")
 	if err != nil {
 		t.Fatalf("forwardEvents error: %v", err)
 	}
@@ -501,7 +501,7 @@ func TestForwardEvents_ToolCallResultError(t *testing.T) {
 		close(ch)
 	}()
 
-	_, _, _, _, err := forwardEvents(ctx, ch, cb)
+	_, _, _, _, err := forwardEvents(ctx, ch, cb, "")
 	if err != nil {
 		t.Fatalf("forwardEvents error: %v", err)
 	}
@@ -530,7 +530,7 @@ func TestForwardEvents_ChannelCloseWithoutLoopDone(t *testing.T) {
 		close(ch)
 	}()
 
-	aggregated, turns, _, _, err := forwardEvents(ctx, ch, nil)
+	aggregated, turns, _, _, err := forwardEvents(ctx, ch, nil, "")
 	if err != nil {
 		t.Fatalf("forwardEvents error: %v", err)
 	}
@@ -539,6 +539,38 @@ func TestForwardEvents_ChannelCloseWithoutLoopDone(t *testing.T) {
 	}
 	if turns != 0 {
 		t.Errorf("turns = %d, want 0 (no LoopDone)", turns)
+	}
+}
+
+// REGRESSION: forwardEvents 只返回最后一个 turn 的文本，丢弃中间推理过程，
+// 节省主 agent 的 token 消耗。
+func TestRegression_ForwardEvents_OnlyLastTurnText(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	ch := make(chan agentloop.TurnEvent, 10)
+	go func() {
+		// Turn 1（中间推理，应被丢弃）
+		ch <- agentloop.StreamDelta{Turn: 1, ContentDelta: "turn 1 thinking..."}
+		ch <- agentloop.StreamDelta{Turn: 1, ContentDelta: " more turn 1"}
+		ch <- agentloop.ToolCallStart{Turn: 1, ToolCallName: "read_file", Arguments: `{"file_path":"a.go"}`}
+		ch <- agentloop.ToolCallResult{Turn: 1, ToolCallName: "read_file", Result: "content", DurationMs: 10}
+		// Turn 2（最终结论，应保留）
+		ch <- agentloop.StreamDelta{Turn: 2, ContentDelta: "conclusion"}
+		ch <- agentloop.StreamDelta{Turn: 2, ContentDelta: " finalized"}
+		ch <- agentloop.LoopDone{Turn: 2}
+		close(ch)
+	}()
+
+	lastTurnText, turns, _, _, err := forwardEvents(ctx, ch, nil, "")
+	if err != nil {
+		t.Fatalf("forwardEvents error: %v", err)
+	}
+	if lastTurnText != "conclusion finalized" {
+		t.Errorf("lastTurnText = %q, want %q", lastTurnText, "conclusion finalized")
+	}
+	if turns != 2 {
+		t.Errorf("turns = %d, want 2", turns)
 	}
 }
 
@@ -1088,7 +1120,7 @@ func BenchmarkForwardEvents(b *testing.B) {
 			ch <- agentloop.LoopDone{Turn: 3}
 			close(ch)
 		}()
-		_, _, _, _, _ = forwardEvents(ctx, ch, nil)
+		_, _, _, _, _ = forwardEvents(ctx, ch, nil, "")
 		cancel()
 	}
 }

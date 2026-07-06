@@ -148,15 +148,16 @@ func (a *AgentTool) executeFork(ctx context.Context, p AgentParams) (*tool.ToolR
 	})
 
 	startTime := time.Now()
+	toolCallID := agentloop.ToolCallIDFromContext(ctx)
 
 	if cb != nil {
-		cb(SubagentStart{Prompt: p.Description, AgentType: "fork", InheritCtx: true})
+		cb(SubagentStart{Prompt: p.Description, AgentType: "fork", InheritCtx: true, ToolCallID: toolCallID})
 	}
 
-	aggregated, totalTurns, promptTok, complTok, err := forwardEvents(subCtx, subLoop.Run(subCtx, messages), cb)
+	lastTurnText, totalTurns, promptTok, complTok, err := forwardEvents(subCtx, subLoop.Run(subCtx, messages), cb, toolCallID)
 	if err != nil {
 		if cb != nil {
-			cb(SubagentEnd{DurationMs: time.Since(startTime).Milliseconds(), Error: err.Error()})
+			cb(SubagentEnd{ToolCallID: toolCallID, DurationMs: time.Since(startTime).Milliseconds(), Error: err.Error()})
 		}
 		return &tool.ToolResult{
 			Content: fmt.Sprintf("Fork subagent failed: %s", err),
@@ -165,11 +166,11 @@ func (a *AgentTool) executeFork(ctx context.Context, p AgentParams) (*tool.ToolR
 	}
 
 	if cb != nil {
-		cb(SubagentEnd{TotalTurns: totalTurns, PromptTokens: promptTok, CompletionTokens: complTok, DurationMs: time.Since(startTime).Milliseconds()})
+		cb(SubagentEnd{ToolCallID: toolCallID, TotalTurns: totalTurns, PromptTokens: promptTok, CompletionTokens: complTok, DurationMs: time.Since(startTime).Milliseconds()})
 	}
 
 	return &tool.ToolResult{
-		Content: fmt.Sprintf("(fork subagent completed, %d turns, %d+%d tokens)\n\n%s", totalTurns, promptTok, complTok, aggregated),
+		Content: fmt.Sprintf("(fork subagent completed, %d turns, %d+%d tokens)\n\n%s", totalTurns, promptTok, complTok, lastTurnText),
 		Meta:    tool.ToolMeta{Duration: time.Since(startTime)},
 	}, nil
 }
@@ -199,6 +200,7 @@ func (a *AgentTool) executeCold(ctx context.Context, p AgentParams) (*tool.ToolR
 	})
 
 	startTime := time.Now()
+	toolCallID := agentloop.ToolCallIDFromContext(ctx)
 
 	messages := []llm.Message{
 		{Role: llm.RoleSystem, Content: sp},
@@ -214,13 +216,13 @@ func (a *AgentTool) executeCold(ctx context.Context, p AgentParams) (*tool.ToolR
 	})
 
 	if cb != nil {
-		cb(SubagentStart{Prompt: p.Description, AgentType: p.SubagentType, InheritCtx: false})
+		cb(SubagentStart{Prompt: p.Description, AgentType: p.SubagentType, InheritCtx: false, ToolCallID: toolCallID})
 	}
 
-	aggregated, totalTurns, promptTok, complTok, err := forwardEvents(subCtx, subLoop.Run(subCtx, messages), cb)
+	lastTurnText, totalTurns, promptTok, complTok, err := forwardEvents(subCtx, subLoop.Run(subCtx, messages), cb, toolCallID)
 	if err != nil {
 		if cb != nil {
-			cb(SubagentEnd{DurationMs: time.Since(startTime).Milliseconds(), Error: err.Error()})
+			cb(SubagentEnd{ToolCallID: toolCallID, DurationMs: time.Since(startTime).Milliseconds(), Error: err.Error()})
 		}
 		return &tool.ToolResult{
 			Content: fmt.Sprintf("Subagent [%s] failed: %s", p.SubagentType, err),
@@ -229,11 +231,11 @@ func (a *AgentTool) executeCold(ctx context.Context, p AgentParams) (*tool.ToolR
 	}
 
 	if cb != nil {
-		cb(SubagentEnd{TotalTurns: totalTurns, PromptTokens: promptTok, CompletionTokens: complTok, DurationMs: time.Since(startTime).Milliseconds()})
+		cb(SubagentEnd{ToolCallID: toolCallID, TotalTurns: totalTurns, PromptTokens: promptTok, CompletionTokens: complTok, DurationMs: time.Since(startTime).Milliseconds()})
 	}
 
 	return &tool.ToolResult{
-		Content: fmt.Sprintf("(subagent [%s] completed, %d turns, %d+%d tokens)\n\n%s", p.SubagentType, totalTurns, promptTok, complTok, aggregated),
+		Content: fmt.Sprintf("(subagent [%s] completed, %d turns, %d+%d tokens)\n\n%s", p.SubagentType, totalTurns, promptTok, complTok, lastTurnText),
 		Meta:    tool.ToolMeta{Duration: time.Since(startTime)},
 	}, nil
 }
@@ -330,27 +332,33 @@ type writeOp struct {
 	LinesDel int
 }
 
-func forwardEvents(ctx context.Context, subCh <-chan agentloop.TurnEvent, cb func(agentloop.TurnEvent)) (aggregated string, totalTurns int, promptTokens int, completionTokens int, finalErr error) {
+func forwardEvents(ctx context.Context, subCh <-chan agentloop.TurnEvent, cb func(agentloop.TurnEvent), toolCallID string) (lastTurnText string, totalTurns int, promptTokens int, completionTokens int, finalErr error) {
 	var sb strings.Builder
 	var writeOps []writeOp
+	var currentTurn int
 
 	for ev := range subCh {
 		switch e := ev.(type) {
 		case agentloop.StreamDelta:
+			if e.Turn > currentTurn {
+				// 进入新 turn：只保留最后一个 turn 的文本，丢弃中间推理过程
+				currentTurn = e.Turn
+				sb.Reset()
+			}
 			if e.ContentDelta != "" {
 				sb.WriteString(e.ContentDelta)
-				pushEvent(cb, SubagentEvent{Kind: SubagentText, TextDelta: e.ContentDelta})
+				pushEvent(cb, SubagentEvent{ToolCallID: toolCallID, Kind: SubagentText, TextDelta: e.ContentDelta})
 			}
 
 		case agentloop.ToolCallStart:
 			args := formatArgs(e.ToolCallName, e.Arguments)
-			pushEvent(cb, SubagentEvent{Kind: SubagentToolStart, ToolName: e.ToolCallName, ToolArgs: args})
+			pushEvent(cb, SubagentEvent{ToolCallID: toolCallID, Kind: SubagentToolStart, ToolName: e.ToolCallName, ToolArgs: args})
 
 		case agentloop.ToolCallStream:
-			pushEvent(cb, SubagentEvent{Kind: SubagentToolResult, ToolName: e.ToolCallName, ToolResult: e.Chunk})
+			pushEvent(cb, SubagentEvent{ToolCallID: toolCallID, Kind: SubagentToolResult, ToolName: e.ToolCallName, ToolResult: e.Chunk})
 
 		case agentloop.ToolCallResult:
-			pushEvent(cb, SubagentEvent{Kind: SubagentToolResult, ToolName: e.ToolCallName, ToolResult: e.Result, ToolDurMs: e.DurationMs, ToolError: e.Error})
+			pushEvent(cb, SubagentEvent{ToolCallID: toolCallID, Kind: SubagentToolResult, ToolName: e.ToolCallName, ToolResult: e.Result, ToolDurMs: e.DurationMs, ToolError: e.Error})
 			if e.ToolCallName == "write_file" || e.ToolCallName == "edit_file" {
 				op := writeOp{ToolName: e.ToolCallName, FilePath: extractPath(e.Result), BytesIn: len(e.Result)}
 				if e.ToolCallName == "edit_file" {
