@@ -1,5 +1,18 @@
 # Changelog
 
+## [v0.1.0-alpha.15] — 2026-07-06
+
+### Added
+- **Subagent delegation**: New `agent` tool supporting fork and cold agent modes; subagents can autonomously execute complex multi-step tasks; cold agents start with fresh context for exploratory tasks
+
+### Fixed
+- **Windows Git Bash compatibility**: Shell interpreter detection now prefers `exec.LookPath` to find `bash.exe` in PATH, fixing the "setup works but normal startup crashes" issue; `resolveWindowsShell` no longer calls `os.Exit(1)`, returning empty string for caller handling instead
+- **Permission rule engine Windows path adaptation**: `splitPath`/`matchGlob` now normalize `\` to `/` via `filepath.ToSlash`, fixing Windows file path glob rule matching (e.g., `src/**`)
+- **Self-update `os.Chmod` Windows guard**: `SelfUpdate` and `extractWaveloom` now check `runtime.GOOS != "windows"` before calling `Chmod(0o755)`, preventing update failures on Windows
+- **`/tmp` working directory whitelist platform guard**: `Guard` initialization only adds `/tmp` on Unix; Windows uses `os.TempDir()` instead
+- **Command safety `extractFirstToken` backslash fallback**: Added `\` fallback for correct command extraction from Windows absolute paths
+- **`/proc/self/fd/` platform guard**: Added `runtime.GOOS != "windows"` guard since Windows has no `/proc/` filesystem
+
 ## [v0.1.0-alpha.14] — 2026-07-04
 
 ### Added

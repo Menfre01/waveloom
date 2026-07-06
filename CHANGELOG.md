@@ -1,6 +1,6 @@
 # Changelog
 
-## [未发布]
+## [v0.1.0-alpha.15] — 2026-07-06
 
 ### 新增功能
 - **Subagent 委托**：新增 `agent` 工具，支持 fork 和 cold agent 两种模式，子 agent 可独立执行复杂多步任务；cold agent 冷启动（无上下文延续），适用于探索性任务
