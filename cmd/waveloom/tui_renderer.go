@@ -2127,7 +2127,7 @@ func renderTodoPanel(lc *Messages, todos []todo.TodoItem, width int, expanded bo
 
 	// ── 标题行 ──
 	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(colorHeaderAccent).Width(innerWidth)
-	title := titleStyle.Render(fmt.Sprintf(lc.TodoTitle, totalCount))
+	title := titleStyle.Render(fmt.Sprintf(lc.TodoTitle, completedCount, totalCount))
 
 	// ── 每项渲染 ──
 	var itemLines []string
