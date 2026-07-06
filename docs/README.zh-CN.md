@@ -45,7 +45,7 @@ powershell -c "irm https://raw.githubusercontent.com/Menfre01/waveloom/main/inst
 > [!TIP]
 > **Windows 上推荐使用 [WSL2](https://learn.microsoft.com/zh-cn/windows/wsl/install) 获得最佳体验。** 在 WSL2 内安装 Linux 版本，无需 Git Bash 转发层，终端渲染更流畅，shell 命令性能更佳。
 >
-> 如果直接使用 Git Bash：Waveloom 依赖 `bash.exe` 执行 shell 命令，cmd 和 PowerShell 不支持。若 Git Bash 中找不到 `waveloom`，将 `%USERPROFILE%\.local\bin` 加入 Windows 系统 PATH（安装脚本已自动处理）。
+> 选择 Git Bash？Waveloom 依赖 `bash.exe`，cmd 和 PowerShell 不支持。安装完成后，**打开 Git Bash** 执行下方命令。若找不到 `waveloom`，将 `%USERPROFILE%\.local\bin` 加入 Windows 系统 PATH（安装脚本已自动处理）。
 
 安装后配置 Key 即可开始：
 

@@ -45,7 +45,7 @@ powershell -c "irm https://raw.githubusercontent.com/Menfre01/waveloom/main/inst
 > [!TIP]
 > **For the best experience on Windows, use [WSL2](https://learn.microsoft.com/en-us/windows/wsl/install).** Install the Linux binary inside WSL2 and enjoy native performance — no Git Bash forwarding layer, smoother terminal rendering, and faster shell commands.
 >
-> If using Git Bash directly: Waveloom relies on `bash.exe` to execute shell commands — cmd and PowerShell are not supported. If `waveloom` is not found in Git Bash, add `%USERPROFILE%\.local\bin` to your Windows PATH (the installer handles this automatically).
+> Prefer Git Bash? Waveloom requires `bash.exe` — cmd and PowerShell are not supported. After installation, **open Git Bash** and run the commands below. If `waveloom` is not found, add `%USERPROFILE%\.local\bin` to your Windows PATH (the installer handles this automatically).
 
 Then configure your key and start:
 
