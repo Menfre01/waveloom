@@ -77,7 +77,7 @@ waveloom
 - **Permission safety** — Three-tier decisions (allow / deny / ask) with pattern-matching rule engine. Every write operation requires your confirmation.
 - **Session persistence** — Close the terminal, come back days later with `waveloom --continue`. The agent remembers all prior context.
 - **Plan Mode** — Two-stage workflow: explore & design first, implement after approval. `Shift+Tab` to enter/exit, Guard-enforced write protection, `[plan:start]/[plan:end]` message pairing for prefix-cache-safe context.
-- **9 built-in tools** — `read_file` / `write_file` / `edit_file` / `shell` / `web_fetch` / `ask_user_question` / `enter_plan_mode` / `exit_plan_mode` / `skill` — invoked autonomously by the agent.
+- **10 built-in tools** — `read_file` / `write_file` / `edit_file` / `shell` / `web_fetch` / `ask_user_question` / `enter_plan_mode` / `exit_plan_mode` / `skill` / `agent` — invoked autonomously by the agent.
 - **i18n multilingual** — Full zh-CN / en-US bilingual UI. `--locale` CLI flag, `/locale` command, `settings.json` persistence, auto-detect from LANG env var.
 - **TUI interactions** — `@` file references / `@` fuzzy file picker / `/` command palette / `/locale` switch language / `Tab` paragraph navigation / `Shift+Tab` Plan Mode / `Ctrl+G` theme toggle
 
