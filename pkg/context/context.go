@@ -9,6 +9,7 @@
 package context
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
@@ -48,6 +49,9 @@ type ContextManager struct {
 
 	// 后台任务上次检查时间（用于跨 turn 通知）
 	lastBackgroundCheck time.Time
+
+	// Todo 列表持久化
+	todoItems []json.RawMessage
 }
 
 // compactorState 是 compactor 内部使用的扩展接口，
@@ -255,10 +259,12 @@ func (cm *ContextManager) Save() {
 	copy(messages, cm.messages)
 	stats := cm.stats
 	compaction := cm.compactionData()
+	todoItems := make([]json.RawMessage, len(cm.todoItems))
+	copy(todoItems, cm.todoItems)
 	cm.mu.RUnlock()
 
 	if path != "" {
-		_ = SaveSessionToFile(path, messages, stats, &compaction)
+		_ = SaveSessionToFile(path, messages, stats, &compaction, todoItems)
 	}
 }
 
@@ -269,9 +275,11 @@ func (cm *ContextManager) saveToPath(path string) {
 	copy(messages, cm.messages)
 	stats := cm.stats
 	compaction := cm.compactionData()
+	todoItems := make([]json.RawMessage, len(cm.todoItems))
+	copy(todoItems, cm.todoItems)
 	cm.mu.RUnlock()
 
-	_ = SaveSessionToFile(path, messages, stats, &compaction)
+	_ = SaveSessionToFile(path, messages, stats, &compaction, todoItems)
 }
 
 // stateful 返回内部 Compactor 的持久化扩展接口。
@@ -302,10 +310,13 @@ func (cm *ContextManager) compactionData() compaction.CompactionData {
 //
 // 修复详情通过 stderr 输出（静默修复不阻塞恢复流程）。
 func (cm *ContextManager) LoadFromFile(path string) bool {
-	messages, stats, compactionData, _, tasks, err := LoadSessionFromFile(path)
+	messages, stats, compactionData, _, tasks, todoItems, err := LoadSessionFromFile(path)
 	if err != nil || messages == nil {
 		return false
 	}
+
+	// 恢复 Todo 列表
+	cm.todoItems = todoItems
 
 	// 恢复后台任务注册表
 	for _, t := range tasks {
@@ -399,4 +410,18 @@ func (cm *ContextManager) InjectUserInstructions(text string) {
 		cm.messages = append(cm.messages[:1], append([]llm.Message{msg}, cm.messages[1:]...)...)
 		cm.instructionsInjected = true
 	}
+}
+
+// SetTodoItems 持久化 todo 列表（session 保存时序列化）。
+func (cm *ContextManager) SetTodoItems(data []json.RawMessage) {
+	cm.mu.Lock()
+	defer cm.mu.Unlock()
+	cm.todoItems = data
+}
+
+// TodoItems 返回已持久化的 todo 列表（session 恢复时反序列化）。
+func (cm *ContextManager) TodoItems() []json.RawMessage {
+	cm.mu.RLock()
+	defer cm.mu.RUnlock()
+	return cm.todoItems
 }

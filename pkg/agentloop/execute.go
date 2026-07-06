@@ -14,6 +14,7 @@ import (
 
 	"github.com/Menfre01/waveloom/pkg/llm"
 	"github.com/Menfre01/waveloom/pkg/permission"
+	"github.com/Menfre01/waveloom/pkg/todo"
 	"github.com/Menfre01/waveloom/pkg/tool"
 )
 
@@ -347,6 +348,31 @@ func (l *Loop) executeToolCalls(ctx context.Context, calls []llm.ToolCall, state
 			}
 		}
 
+		// todo_write 由 Loop 拦截处理（更新 TodoState + 推送事件）
+		if tc.Name == "todo_write" {
+			result := l.executeTodoWrite(ctx, tc, state, ch)
+			results[tc.ID] = result
+			durations[tc.ID] = 0
+
+			ev := ToolCallResult{
+				Turn:         state.TurnCount,
+				ToolCallID:   tc.ID,
+				ToolCallName: tc.Name,
+				DurationMs:   0,
+			}
+			if result.IsError() {
+				ev.Error = result.Error.Message
+				ev.ErrorKind = result.Error.Kind
+				ev.Fatal = result.Error.Class == tool.ErrorClassFatal
+			} else {
+				ev.Result = result.Content
+			}
+			if !sendEvent(ctx, ch, ev) {
+				return nil, ReasonAborted, ctx.Err()
+			}
+			continue
+		}
+
 		if l.checkPermission(ctx, tc, results, skip) {
 			r := results[tc.ID]
 			if !sendEvent(ctx, ch, ToolCallResult{
@@ -658,6 +684,44 @@ func (l *Loop) checkPermission(ctx context.Context, tc llm.ToolCall, results map
 		return skip[tc.ID]
 	}
 	return false
+}
+
+// executeTodoWrite 处理 todo_write 工具调用。
+// 解析参数 → 更新 TodoState → 推送 TodoUpdateEvent → 返回格式化结果给 LLM。
+func (l *Loop) executeTodoWrite(ctx context.Context, tc llm.ToolCall, state *LoopState, ch chan<- TurnEvent) *tool.ToolResult {
+	if l.config.TodoState == nil {
+		return &tool.ToolResult{
+			Content: "todo_write is not available (TodoState not configured).",
+		}
+	}
+
+	var params todo.TodoWriteParams
+	if err := json.Unmarshal([]byte(tc.Arguments), &params); err != nil {
+		return &tool.ToolResult{
+			Error: &tool.ToolError{
+				Class:   tool.ErrorClassRecoverable,
+				Kind:    tool.ErrKindInvalidArgs,
+				Message: "todo_write: failed to parse arguments: " + err.Error(),
+			},
+		}
+	}
+
+	_, newItems := l.config.TodoState.Apply(params)
+
+	// 推送更新事件给 TUI
+	if !sendEvent(ctx, ch, TodoUpdateEvent{Items: newItems}) {
+		return &tool.ToolResult{
+			Error: &tool.ToolError{
+				Class:   tool.ErrorClassRecoverable,
+				Kind:    "context_cancelled",
+				Message: "todo_write: context cancelled",
+			},
+		}
+	}
+
+	return &tool.ToolResult{
+		Content: todo.FormatResult(newItems),
+	}
 }
 
 // executeAskUserQuestion 处理 ask_user_question 工具调用。

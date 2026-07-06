@@ -61,6 +61,7 @@ import (
 	"github.com/Menfre01/waveloom/pkg/skill"
 	"github.com/Menfre01/waveloom/pkg/slashcommand"
 	"github.com/Menfre01/waveloom/pkg/subagent"
+	"github.com/Menfre01/waveloom/pkg/todo"
 	"github.com/Menfre01/waveloom/pkg/tool"
 )
 
@@ -96,6 +97,13 @@ var defaultSystemPrompt = `You are Waveloom, a coding agent. You help users writ
 - Invoke parallel-safe tools (read_file, web_fetch) in the same response when independent — the system serializes write_file, edit_file, and shell automatically.
 - Use shell('ls') or shell('find') to explore directories before reading files — never pass a directory path to read_file. Paths without a file extension (e.g., pkg/tool) are likely directories: use shell('ls') first, then pass the actual filename to read_file.
 - For throwaway verification scripts: prefer python, write to the system temp directory, and clean up after.
+
+## DO NOT
+
+- Do NOT fabricate or predict tool results — only report what tools actually returned.
+- Do NOT skip verification after editing code. If you edited, you must build to verify.
+- Do NOT delegate understanding to subagents. Write prompts with file paths, line numbers, and specific changes — never "based on your findings, fix the bug."
+- Do NOT batch-mark todo tasks as complete. Update each one immediately after finishing.
 
 ## Agent Tool
 
@@ -137,6 +145,55 @@ var defaultSystemPrompt = `You are Waveloom, a coding agent. You help users writ
 - Do NOT use plan mode for: code review, bug analysis, performance investigation, explaining code, answering questions, or any task that does not involve writing implementation code.
 - Skip for single-file fixes, trivial bugs, or when the user gives precise step-by-step instructions.
 - Once in plan mode, follow the instructions in the [plan:start] system message.
+
+## Todo List
+
+Use ` + "`todo_write`" + ` to create and manage a structured task list for complex multi-step tasks (3+ distinct steps). This helps track progress, organize work, and prevent omissions.
+
+### content vs activeForm
+
+Every task requires both fields:
+- **content**: Imperative, describes WHAT to do ("Fix login bug", "Run tests")
+- **activeForm**: Present continuous, displayed DURING execution with spinner ("Fixing login bug", "Running tests")
+- **description**: Optional details, context, or notes about the task
+
+### When to Use
+
+- Complex multi-step tasks (3+ distinct steps)
+- Non-trivial tasks requiring planning or multiple operations
+- User explicitly provides multiple tasks
+- After receiving new instructions — immediately capture as todos
+
+### When NOT to Use
+
+- Single straightforward task — just do it directly
+- Purely conversational or informational requests
+- Fewer than 3 trivial steps
+
+### Examples
+
+**Use todo** — User: "Add dark mode toggle, make sure tests pass." → Create items: add toggle, add state management, update components, run tests.
+**Use todo** — User: "Rename getCwd across my project." → Search first, then create one item per file that needs updating.
+**Skip todo** — User: "What does git status do?" → Informational, no coding task.
+**Skip todo** — User: "Add a comment to calculateTotal." → Single straightforward task.
+
+### States
+
+- **pending**: Not yet started
+- **in_progress**: Currently working — exactly ONE at a time, paired with spinner
+- **completed**: Finished successfully
+
+### Rules
+
+- Mark in_progress BEFORE beginning work. Update status in real-time.
+- Mark completed IMMEDIATELY after finishing — never batch completions.
+- Only mark completed when FULLY done. Not if tests fail, implementation is partial, or errors unresolved.
+- When blocked, create a new task describing the blocker.
+- Remove irrelevant tasks from the list.
+- When all tasks are completed, the list is automatically cleared.
+- Omit id when creating (system assigns); include id when updating; pass ALL tasks when using merge=true (omitted tasks are deleted).
+
+When in doubt, use this tool. Proactive task management prevents omissions and keeps the user informed.
 
 ## Coding standards
 
@@ -396,6 +453,11 @@ type model struct {
 	verboseLog io.Writer // --verbose 日志输出（nil = 不记录）
 	loop       *agentloop.Loop
 
+	// Todo 任务列表
+	todoState    *todo.TodoState // session 级 todo 状态（跨 Loop 持久）
+	todoExpanded bool            // 是否展开全部（默认 false）
+	todoFocused  bool            // 是否聚焦到 todo panel（Tab 键导航）
+
 	// 国际化
 	lc *Messages // 当前语言的文案实例（nil 时回退到 enUS）
 
@@ -507,6 +569,7 @@ type model struct {
 	spThought      spinner.Model  // thought 流式前缀动画
 	spTool         spinner.Model  // tool 执行中前缀动画
 	spSubagent     spinner.Model  // subagent 执行中前缀动画（独立视觉）
+	spTodo         spinner.Model  // todo in_progress 前缀动画
 	ctxProgress    progress.Model // ctx 窗口进度条（bubbles progress 组件）
 	input          textarea.Model
 
@@ -625,7 +688,7 @@ func colorHex(c color.Color) string {
 // ---------------------------------------------------------------------------
 
 // newTUIModel 创建 TUI model，依赖由外部注入（LLM client / tool registry / guard / expander / verboseLog / locale）。
-func newTUIModel(llmClient llm.Client, registry tool.Registry, guard permission.Guard, expander *reference.Expander, modelName string, theme string, verboseLog io.Writer, contextLimit int, maxTurns int, toolTimeout time.Duration, toolTimeoutSource string, loc Locale) *model {
+func newTUIModel(llmClient llm.Client, registry tool.Registry, guard permission.Guard, expander *reference.Expander, modelName string, theme string, verboseLog io.Writer, contextLimit int, maxTurns int, toolTimeout time.Duration, toolTimeoutSource string, loc Locale, todoState *todo.TodoState) *model {
 	if modelName == "" {
 		modelName = "deepseek-v4"
 	}
@@ -683,6 +746,11 @@ func newTUIModel(llmClient llm.Client, registry tool.Registry, guard permission.
 	spSubagent.Spinner = spinner.Jump
 	spSubagent.Style = lipgloss.NewStyle().Foreground(darkPalette.Gray) // 初始值，initTheme 同步
 
+	// 初始化 todo in_progress 前缀 spinner（Dot — 小巧不抢眼）
+	spTodo := spinner.New()
+	spTodo.Spinner = spinner.Dot
+	spTodo.Style = lipgloss.NewStyle().Foreground(darkPalette.AccentGold) // 初始值，initTheme 同步
+
 	// 初始化 ctx 进度条（bubbles progress 组件，全块字符 █  提供清晰的逐格填充）
 	// 宽度在 renderCtxBarCompact() 中每次设置（20 列，每列 5%）。
 	cp := progress.New(
@@ -731,6 +799,7 @@ func newTUIModel(llmClient llm.Client, registry tool.Registry, guard permission.
 		spThought:       spThought,
 		spTool:          spTool,
 		spSubagent:      spSubagent,
+		spTodo:          spTodo,
 		ctxProgress:     cp,
 		input:           ti,
 		otherInput:      otherTi,
@@ -741,6 +810,7 @@ func newTUIModel(llmClient llm.Client, registry tool.Registry, guard permission.
 		focusIndex:      -1,
 		pinnedToBottom:  true,
 		lc:              lc,
+		todoState:       todoState,
 	}
 }
 
@@ -772,6 +842,7 @@ func (m *model) wireLoop() {
 				m.program.Send(ev)
 			}
 		},
+		TodoState: m.todoState,
 	})
 }
 
@@ -788,6 +859,7 @@ func (m *model) Init() tea.Cmd {
 		m.spThought.Tick,
 		m.spTool.Tick,
 		m.spSubagent.Tick,
+		m.spTodo.Tick,
 		m.checkUpdateCmd(),
 	)
 }
@@ -919,6 +991,9 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.spSubagent, cmd = m.spSubagent.Update(msg)
 		cmds = append(cmds, cmd)
 
+		m.spTodo, cmd = m.spTodo.Update(msg)
+		cmds = append(cmds, cmd)
+
 		return m, tea.Batch(cmds...)
 
 	// ------------------------------------------------------------------
@@ -930,6 +1005,10 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case agentloop.ToolCallStart:
+		// todo_write 调用不显示在消息流中
+		if msg.ToolCallName == "todo_write" {
+			return m, nil
+		}
 		m.handleToolStart(msg)
 		m.flushTranscript()
 		return m, nil
@@ -939,6 +1018,10 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case agentloop.ToolCallResult:
+		// todo_write 结果已在面板渲染，消息流中静默
+		if msg.ToolCallName == "todo_write" {
+			return m, nil
+		}
 		m.handleToolResult(msg)
 		m.flushTranscript()
 		return m, nil
@@ -1030,6 +1113,10 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case agentloop.LoopDoneWithGen:
 		m.handleLoopDone(msg.LoopDone, msg.Generation)
 		m.flushTranscript()
+		return m, nil
+
+	case agentloop.TodoUpdateEvent:
+		// Todo 面板更新，仅更新本地引用（renderTodoPanel 从 todoState 读取）
 		return m, nil
 
 	case agentloop.LoopDone:
@@ -4272,6 +4359,17 @@ func (m *model) View() tea.View {
 	// separator(1) + input(inputHeight) + footer(footerHeight)
 	fixedBottomHeight := 1 + inputHeight + footerHeight
 
+	// Todo 面板（仅 overlayNone 且 todos >= 3 时显示）
+	var todoPanelContent string
+	var todoPanelHeight int
+	if m.overlay == overlayNone {
+		todos := m.todoState.Snapshot()
+		if len(todos) >= 3 {
+			todoPanelContent, todoPanelHeight = renderTodoPanel(m.lc, todos, contentWidth, m.todoExpanded, m.todoFocused, m.spTodo.View())
+			fixedBottomHeight += todoPanelHeight
+		}
+	}
+
 	// styleApp 顶部 padding 1 行，底部 0；内区可用高度 = m.height - 1
 	innerHeight := m.height - 1
 	bodyHeight := innerHeight - headerHeight - fixedBottomHeight - overlayLines - pickerLines - commandPickerLines
@@ -4281,6 +4379,24 @@ func (m *model) View() tea.View {
 	m.bodyHeight = bodyHeight
 
 	// 4. 根据滚动偏移裁剪可见内容
+	// 过滤 StatusSummary 注入行（仅 LLM 上下文，不应在 TUI 渲染）
+	var filteredLines []string
+	skip := false
+	for _, line := range allLines {
+		if strings.HasPrefix(strings.TrimSpace(line), "## Current Todo Status") {
+			skip = true
+			continue
+		}
+		if skip && strings.TrimSpace(line) == "" {
+			skip = false
+			continue
+		}
+		if skip {
+			continue
+		}
+		filteredLines = append(filteredLines, line)
+	}
+	allLines = filteredLines
 	totalLines := len(allLines)
 	maxScrollTop := max(0, totalLines-bodyHeight)
 
@@ -4323,6 +4439,9 @@ func (m *model) View() tea.View {
 	if overlayContent != "" {
 		parts = append(parts, overlayContent)
 	}
+	if todoPanelContent != "" {
+		parts = append(parts, todoPanelContent)
+	}
 	if pickerContent != "" {
 		parts = append(parts, pickerContent)
 	}
@@ -4341,8 +4460,8 @@ func (m *model) View() tea.View {
 	// real cursor 模式：定位输入光标
 	if m.overlay == overlayNone {
 		if cur := m.input.Cursor(); cur != nil {
-			// 布局：styleApp top(1) + header + 空行 + body + overlays + picker + separator(1)
-			cur.Y += 1 + headerHeight + bodyHeight + overlayLines + pickerLines + commandPickerLines + 1
+			// 布局：styleApp top(1) + header + 空行 + body + overlays + todo + picker + separator(1)
+			cur.Y += 1 + headerHeight + bodyHeight + overlayLines + todoPanelHeight + pickerLines + commandPickerLines + 1
 			cur.X += 2 // styleApp 左 padding
 			if cur.X > m.width-2 {
 				cur.X = m.width - 2
@@ -4855,6 +4974,7 @@ func (m *model) syncThemeComponents() {
 	m.spThought.Style = lipgloss.NewStyle().Foreground(colorGray)
 	m.spTool.Style = lipgloss.NewStyle().Foreground(colorGray)
 	m.spSubagent.Style = lipgloss.NewStyle().Foreground(colorGray)
+	m.spTodo.Style = lipgloss.NewStyle().Foreground(colorAccentGold)
 
 	// 同步 ctx 进度条轨道颜色
 	m.ctxProgress.EmptyColor = colorFooterFg
@@ -5624,8 +5744,8 @@ func (m *model) closeModelPicker() {
 // ---------------------------------------------------------------------------
 
 // runTUI 启动交互式 TUI 模式。依赖由 main() 统一初始化后传入，无需重复创建。
-func runTUI(llmClient llm.Client, registry tool.Registry, guard permission.Guard, expander *reference.Expander, modelName string, theme string, verboseLog io.Writer, contextLimit int, maxTurns int, toolTimeout time.Duration, toolTimeoutSource string, bypassPerm bool, ctxMgr *ctxpkg.ContextManager, isResume bool, sessionDir string, globalPath string, projectPath string, agentsMdText string, loc Locale) {
-	m := newTUIModel(llmClient, registry, guard, expander, modelName, theme, verboseLog, contextLimit, maxTurns, toolTimeout, toolTimeoutSource, loc)
+func runTUI(llmClient llm.Client, registry tool.Registry, guard permission.Guard, expander *reference.Expander, modelName string, theme string, verboseLog io.Writer, contextLimit int, maxTurns int, toolTimeout time.Duration, toolTimeoutSource string, bypassPerm bool, ctxMgr *ctxpkg.ContextManager, isResume bool, sessionDir string, globalPath string, projectPath string, agentsMdText string, loc Locale, todoState *todo.TodoState) {
+	m := newTUIModel(llmClient, registry, guard, expander, modelName, theme, verboseLog, contextLimit, maxTurns, toolTimeout, toolTimeoutSource, loc, todoState)
 	m.agentsMdText = agentsMdText
 	m.sessionDir = sessionDir
 
@@ -5682,6 +5802,18 @@ func runTUI(llmClient llm.Client, registry tool.Registry, guard permission.Guard
 	}
 
 	// 正常退出时保存 session 并提示 session ID
+	// 序列化 TodoState 到 ContextManager 以便持久化
+	if m.todoState != nil {
+		snapshot := m.todoState.Snapshot()
+		if len(snapshot) > 0 {
+			rawItems := make([]json.RawMessage, len(snapshot))
+			for i, item := range snapshot {
+				data, _ := json.Marshal(item)
+				rawItems[i] = data
+			}
+			m.cm.SetTodoItems(rawItems)
+		}
+	}
 	m.cm.Save()
 	if sid := m.cm.SessionID(); sid != "" {
 		// 退出时用最终统计更新 recent.json（覆盖启动时写入的初始值）
