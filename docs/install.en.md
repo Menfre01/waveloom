@@ -52,17 +52,64 @@ mkdir -p ~/.local/bin && curl -fsSL https://github.com/Menfre01/waveloom/release
 
 **Windows**
 
-Requires [Git for Windows](https://git-scm.com/downloads/win). Open PowerShell and run:
+> [!IMPORTANT]
+> Waveloom relies on Git Bash's `bash.exe` to execute shell commands — you must **install and run waveloom in Git Bash**. cmd and PowerShell are not supported as the runtime terminal.
+>
+> 💡 **Want the best experience? Use [WSL](https://learn.microsoft.com/en-us/windows/wsl/install).** Install the Linux binary inside WSL for native performance — no Git Bash forwarding layer, smoother terminal rendering, and faster shell commands.
+
+**Step 1 — Install Git for Windows**
+
+If not already installed, download from https://git-scm.com/downloads/win (default options are fine).
+
+**Step 2 — Download Waveloom**
+
+Open **PowerShell** (not Git Bash) and run:
 
 ```powershell
 powershell -c "irm https://raw.githubusercontent.com/Menfre01/waveloom/main/install.ps1 | iex"
 ```
 
-> Installs to `%USERPROFILE%\.local\bin`. If the directory isn't in PATH, run:
-> ```powershell
-> [Environment]::SetEnvironmentVariable("PATH", $env:PATH + ";$env:USERPROFILE\.local\bin", "User")
+> Installs to `%USERPROFILE%\.local\bin`. The script automatically checks for Git Bash and prompts for PATH setup.
+
+**Step 3 — Configure PATH**
+
+If the installer warns that PATH is not configured, run this in an **elevated PowerShell**:
+
+```powershell
+[Environment]::SetEnvironmentVariable("PATH", $env:PATH + ";$env:USERPROFILE\.local\bin", "User")
+```
+
+Then **restart Git Bash** (if already open) and verify:
+
+```sh
+which waveloom
+# Should output /c/Users/<yourname>/.local/bin/waveloom
+```
+
+> If `waveloom` is still not found in Git Bash, manually add `export PATH="$HOME/.local/bin:$PATH"` to `~/.bashrc`, then run `source ~/.bashrc`.
+
+**Step 4 — First-time Setup**
+
+In **Git Bash**, run:
+
+```sh
+waveloom setup
+# → Choose theme → Choose language → Choose Provider → Paste API Key → Confirm model → Save
+```
+
+**Step 5 — Start Using**
+
+```sh
+waveloom "Create a Go HTTP server for me"
+# Or launch the interactive TUI from your project directory:
+waveloom
+```
+
+> If `waveloom` starts then immediately exits with "requires Git for Windows", Git Bash is installed at a non-standard location. Set the `WAVELOOM_GIT_BASH_PATH` environment variable to your `bash.exe` path, e.g.:
+> ```sh
+> export WAVELOOM_GIT_BASH_PATH="/c/Program Files/Git/bin/bash.exe"
 > ```
-> then restart the terminal.
+> Add to `~/.bashrc` to persist.
 
 > macOS Gatekeeper? Allow it with:
 > ```sh
