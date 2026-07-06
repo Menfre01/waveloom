@@ -263,6 +263,12 @@ func (l *Loop) Run(ctx context.Context, messages []llm.Message) <-chan TurnEvent
 			Messages: messages,
 		}
 
+		// 有残留 todo 状态时重置提醒标记，确保每次 Run() 首轮注入最新快照，
+		// 消除 ESC 中断后 LLM 看不到当前任务列表的窗口期。
+		if l.config.TodoState != nil && len(l.config.TodoState.Snapshot()) > 0 {
+			l.config.TodoState.ReminderInjected = false
+		}
+
 		for l.shouldContinue(state) {
 			// 1. Context 取消检查
 			if err := ctx.Err(); err != nil {
