@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -121,7 +122,19 @@ func main() {
 	registerBuiltinTools(registry, skillLoader, llmClient)
 
 	// 8.5 启动 MCP Manager — 连接配置的 MCP Server，注册工具代理
-	mcpManager := mcp.NewManager(registry)
+	// 日志输出策略：
+	//   - --verbose：写入滚动日志文件
+	//   - TUI 模式（默认）：丢弃（避免泄漏到界面）
+	//   - One-shot 模式：输出到 stderr（无 TUI，安全）
+	mcpLogger := io.Discard
+	if verboseLog != nil {
+		mcpLogger = verboseLog
+	} else if cfg.OneShot != "" {
+		mcpLogger = os.Stderr
+	}
+	mcpManager := mcp.NewManager(registry,
+		mcp.WithLogger(log.New(mcpLogger, "[mcp] ", log.LstdFlags)),
+	)
 	mcpManager.Start(context.Background(), mcp.LoadConfigs(cwd, homeDir))
 	defer func() { _ = mcpManager.Stop() }()
 

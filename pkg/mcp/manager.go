@@ -3,8 +3,8 @@ package mcp
 import (
 	"context"
 	"fmt"
+	"io"
 	"log"
-	"os"
 	"sync"
 	"time"
 
@@ -27,14 +27,29 @@ type Manager struct {
 	connectFunc func(ctx context.Context, name string, config ServerConfig) (*Client, error)
 }
 
+// ManagerOption 是 NewManager 的功能选项。
+type ManagerOption func(*Manager)
+
+// WithLogger 设置 MCP Manager 的日志输出目标。
+// 默认使用 io.Discard，不输出任何日志。
+func WithLogger(l *log.Logger) ManagerOption {
+	return func(m *Manager) {
+		m.logger = l
+	}
+}
+
 // NewManager 创建一个新的 MCP Manager。
-func NewManager(registry tool.Registry) *Manager {
-	return &Manager{
+func NewManager(registry tool.Registry, opts ...ManagerOption) *Manager {
+	m := &Manager{
 		registry:    registry,
-		logger:      log.New(os.Stderr, "[mcp] ", log.LstdFlags),
+		logger:      log.New(io.Discard, "[mcp] ", log.LstdFlags),
 		clients:     make(map[string]*Client),
 		connectFunc: Connect,
 	}
+	for _, o := range opts {
+		o(m)
+	}
+	return m
 }
 
 // Start 连接所有配置的 MCP Server，发现工具并注册到 Registry。
@@ -91,6 +106,9 @@ func (m *Manager) connectServer(ctx context.Context, config ServerConfig) {
 		m.logger.Printf("failed to connect %q after %d attempts: %v", name, maxRetries, lastErr)
 		return
 	}
+
+	// 将 Manager 的 logger 注入 Client，统一日志输出。
+	client.logger = m.logger
 
 	// 设置 tools/list_changed 回调，触发工具刷新
 	client.OnToolsChanged = func() {
