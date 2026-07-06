@@ -263,7 +263,7 @@ var zhCN = Messages{
 	ToolQuestionDeclined: "(declined)",
 	ToolTruncated:        "··· (truncated)",
 	ToolTruncatedLines:   "... (truncated to %d lines)",
-	ToolExpandAllHint:    "··· ⏎ 展开全部",
+	ToolExpandAllHint:    "··· ⏎ 展开",
 	ToolCollapseHint:     "▼ ⏎ 折叠",
 
 	// Permission
@@ -518,7 +518,7 @@ var enUS = Messages{
 	ToolQuestionDeclined: "(declined)",
 	ToolTruncated:        "··· (truncated)",
 	ToolTruncatedLines:   "... (truncated to %d lines)",
-	ToolExpandAllHint:    "··· ⏎ to expand all",
+	ToolExpandAllHint:    "··· ⏎ to expand",
 	ToolCollapseHint:     "▼ ⏎ to collapse",
 
 	// Permission
