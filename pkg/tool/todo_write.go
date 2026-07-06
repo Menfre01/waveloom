@@ -20,10 +20,6 @@ var todoWriteSchema = json.RawMessage(`{
       "items": {
         "type": "object",
         "properties": {
-          "id": {
-            "type": "string",
-            "description": "Unique task identifier assigned by the system. Include this field when updating an existing task; omit when creating a new task."
-          },
           "content": {
             "type": "string",
             "minLength": 1,
@@ -46,11 +42,6 @@ var todoWriteSchema = json.RawMessage(`{
         },
         "required": ["content", "status", "activeForm"]
       }
-    },
-    "merge": {
-      "type": "boolean",
-      "default": false,
-      "description": "Whether to merge the todos with the existing todos. If true, the passed todos are created (no id) or updated (with id); items not passed are left unchanged. If false, the new todos replace the existing todos."
     }
   },
   "required": ["todos"]
@@ -61,17 +52,19 @@ var todoWriteSchema = json.RawMessage(`{
 // 工具自身的 Execute 返回占位结果。
 type TodoWrite struct{}
 
-func (t *TodoWrite) Name() string                       { return "todo_write" }
-func (t *TodoWrite) ConcurrentSafe() bool                { return false }
-func (t *TodoWrite) RequiresUserInteraction() bool       { return false }
+func (t *TodoWrite) Name() string                 { return "todo_write" }
+func (t *TodoWrite) ConcurrentSafe() bool          { return false }
+func (t *TodoWrite) RequiresUserInteraction() bool { return false }
 
 func (t *TodoWrite) Description() string {
 	return strings.TrimSpace(`
 Create and manage a structured task list. Use proactively for complex tasks (3+ steps). Skip for single straightforward tasks or informational requests.
 
+ALWAYS pass the COMPLETE todo list — copy the current list from the previous tool result, modify what you need (change status, add new items, remove done items), and pass the entire list back. The tool handles state tracking internally; you do NOT need to remember or pass any IDs.
+
 content = imperative ("Fix bug"). activeForm = present continuous ("Fixing bug") — displayed with spinner during in_progress state. Both required for every task.
 
-Omit id to create new (system assigns). Include id to update. Use merge=true to update existing while adding new — only items you pass are created or updated; items you don't pass are left unchanged. Use merge=false to replace the entire list (for deletion or full reset). Max one in_progress at a time.
+Max one in_progress at a time. When all tasks are completed, the list is automatically cleared.
 
 → Detailed rules and examples: see system prompt section "## Todo List".
 `)
