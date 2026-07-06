@@ -153,8 +153,8 @@ func TestSanitizeName(t *testing.T) {
 // ============================================================================
 
 func TestExpandEnv(t *testing.T) {
-	os.Setenv("TEST_MCP_VAR", "hello")
-	defer os.Unsetenv("TEST_MCP_VAR")
+	_ = os.Setenv("TEST_MCP_VAR", "hello")
+	defer func() { _ = os.Unsetenv("TEST_MCP_VAR") }()
 
 	tests := []struct {
 		input    string
@@ -210,8 +210,8 @@ func TestMergeConfigs(t *testing.T) {
 }
 
 func TestMergeConfigs_EnvExpansion(t *testing.T) {
-	os.Setenv("MCP_TEST_URL", "https://example.com/mcp")
-	defer os.Unsetenv("MCP_TEST_URL")
+	_ = os.Setenv("MCP_TEST_URL", "https://example.com/mcp")
+	defer func() { _ = os.Unsetenv("MCP_TEST_URL") }()
 
 	src := map[string]ServerConfig{
 		"test": {Type: ServerTypeHTTP, URL: "${MCP_TEST_URL}"},
@@ -336,7 +336,7 @@ func TestStdioTransport_Echo(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewStdioTransport failed: %v", err)
 	}
-	defer transport.Close()
+	defer func() { _ = transport.Close() }()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -368,7 +368,7 @@ func TestStdioTransport_ReceiveTimeout(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewStdioTransport failed: %v", err)
 	}
-	defer transport.Close()
+	defer func() { _ = transport.Close() }()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
@@ -460,7 +460,7 @@ func TestManager_Stop(t *testing.T) {
 func TestLoadMCPJSON(t *testing.T) {
 	dir := t.TempDir()
 	content := `{"mcpServers":{"test-server":{"type":"http","url":"https://example.com/mcp"}}}`
-	os.WriteFile(filepath.Join(dir, ".mcp.json"), []byte(content), 0644)
+	_ = os.WriteFile(filepath.Join(dir, ".mcp.json"), []byte(content), 0644)
 
 	servers := loadMCPJSON(dir)
 	if len(servers) != 1 {
@@ -486,7 +486,7 @@ func TestLoadMCPJSON_NotExist(t *testing.T) {
 func TestLoadWaveloomJSON_UserScope(t *testing.T) {
 	dir := t.TempDir()
 	content := `{"mcpServers":{"global-srv":{"type":"stdio","command":"npx"}}}`
-	os.WriteFile(filepath.Join(dir, ".waveloom.json"), []byte(content), 0644)
+	_ = os.WriteFile(filepath.Join(dir, ".waveloom.json"), []byte(content), 0644)
 
 	servers := loadWaveloomJSON(dir, "")
 	if len(servers) != 1 {
@@ -501,7 +501,7 @@ func TestLoadWaveloomJSON_LocalScope(t *testing.T) {
 	dir := t.TempDir()
 	cwd := "/some/project"
 	content := `{"projects":{"/some/project":{"mcpServers":{"local-srv":{"type":"http","url":"http://localhost"}}}}}`
-	os.WriteFile(filepath.Join(dir, ".waveloom.json"), []byte(content), 0644)
+	_ = os.WriteFile(filepath.Join(dir, ".waveloom.json"), []byte(content), 0644)
 
 	servers := loadWaveloomJSON(dir, cwd)
 	if len(servers) != 1 {
@@ -515,7 +515,7 @@ func TestLoadWaveloomJSON_LocalScope(t *testing.T) {
 func TestLoadClaudeJSON(t *testing.T) {
 	dir := t.TempDir()
 	content := `{"mcpServers":{"claude-srv":{"type":"stdio","command":"echo"}}}`
-	os.WriteFile(filepath.Join(dir, ".claude.json"), []byte(content), 0644)
+	_ = os.WriteFile(filepath.Join(dir, ".claude.json"), []byte(content), 0644)
 
 	servers := loadClaudeJSON(dir, "")
 	if len(servers) != 1 {
@@ -532,15 +532,15 @@ func TestLoadConfigs_MergeAndPriority(t *testing.T) {
 
 	// Claude Code user scope (lowest)
 	claudeContent := `{"mcpServers":{"shared":{"type":"http","url":"http://claude-user"}}}`
-	os.WriteFile(filepath.Join(homeDir, ".claude.json"), []byte(claudeContent), 0644)
+	_ = os.WriteFile(filepath.Join(homeDir, ".claude.json"), []byte(claudeContent), 0644)
 
 	// Waveloom user scope (higher)
 	waveloomContent := `{"mcpServers":{"shared":{"type":"http","url":"http://waveloom-user"}}}`
-	os.WriteFile(filepath.Join(homeDir, ".waveloom.json"), []byte(waveloomContent), 0644)
+	_ = os.WriteFile(filepath.Join(homeDir, ".waveloom.json"), []byte(waveloomContent), 0644)
 
 	// Project scope (highest)
 	mcpContent := `{"mcpServers":{"shared":{"type":"http","url":"http://project"}}}`
-	os.WriteFile(filepath.Join(projectDir, ".mcp.json"), []byte(mcpContent), 0644)
+	_ = os.WriteFile(filepath.Join(projectDir, ".mcp.json"), []byte(mcpContent), 0644)
 
 	configs := LoadConfigs(projectDir, homeDir)
 

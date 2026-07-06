@@ -32,13 +32,10 @@ func TestTodoWrite_Schema(t *testing.T) {
 	if len(schema) == 0 {
 		t.Error("Schema should not be empty")
 	}
-	// Quick sanity: should mention "todos" and "merge"
+	// Quick sanity: should mention "todos"
 	s := string(schema)
 	if !containsStr(s, "todos") {
 		t.Error("Schema missing 'todos'")
-	}
-	if !containsStr(s, "merge") {
-		t.Error("Schema missing 'merge'")
 	}
 }
 

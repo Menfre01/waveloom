@@ -701,11 +701,6 @@ func buildViewportContent(paras []Paragraph, ctx ViewportCtx, focusIndex int, li
 	for i := range paras {
 		p := &paras[i]
 
-		// 过滤 Todo StatusSummary 注入消息（仅为 LLM 上下文，不应在 TUI 中渲染）
-		if (p.Type == paraUser || p.Type == paraSystem) && strings.HasPrefix(strings.TrimSpace(p.Text), "## Current Todo Status") {
-			lineStarts[i] = currentLine
-			continue
-		}
 		lineStarts[i] = currentLine
 
 		// 设置当前段落的焦点状态
