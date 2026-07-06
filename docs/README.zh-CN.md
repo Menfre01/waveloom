@@ -50,6 +50,8 @@ waveloom
 ```
 
 > Waveloom 依赖 Git Bash 的 `bash.exe` 执行 shell 命令，cmd 和 PowerShell 不作为运行终端支持。如果 Git Bash 中找不到 `waveloom`，请将 `%USERPROFILE%\.local\bin` 加入 Windows 系统 PATH（安装脚本会自动提示）。
+>
+> 💡 **Windows 上推荐使用 [WSL](https://learn.microsoft.com/zh-cn/windows/wsl/install) 获得最佳体验。** 在 WSL 内安装 Linux 版本，无需 Git Bash 转发层，性能更佳。
 
 > [!IMPORTANT]
 > API Key 直连 DeepSeek / OpenAI，代码不经过第三方。写文件和执行命令前需要你确认。
