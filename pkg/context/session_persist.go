@@ -28,7 +28,7 @@ type sessionFile struct {
 	Stats       sessionStats        `json:"stats"`
 	Compaction  *sessionCompaction  `json:"compaction,omitempty"`
 	Tasks       []task.TaskInfo     `json:"tasks,omitempty"`
-	TodoItems   []json.RawMessage   `json:"todo_items,omitempty"`
+	TodoItems   []json.RawMessage   `json:"todo_items"`
 }
 
 // sessionCompaction 是压缩状态的序列化形式。
@@ -103,10 +103,10 @@ func SaveSessionToFile(path string, messages []llm.Message, stats Stats, compDat
 		sf.Tasks[i] = *t
 	}
 
-	if len(todoItems) > 0 {
+	if todoItems != nil {
 		sf.TodoItems = todoItems
 	} else if existing != nil && len(existing.TodoItems) > 0 {
-		// 自动保存（如 CompleteRun）传入空 todoItems 时保留已有数据
+		// 从未设置过 todo（nil）→ 保留已有数据
 		sf.TodoItems = existing.TodoItems
 	}
 
