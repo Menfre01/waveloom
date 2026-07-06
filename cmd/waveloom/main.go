@@ -19,6 +19,7 @@ import (
 	"github.com/Menfre01/waveloom/pkg/reference"
 	"github.com/Menfre01/waveloom/pkg/shellutil"
 	"github.com/Menfre01/waveloom/pkg/skill"
+	"github.com/Menfre01/waveloom/pkg/subagent"
 	"github.com/Menfre01/waveloom/pkg/tool"
 )
 
@@ -115,7 +116,7 @@ func main() {
 
 	// 6. 初始化 Tool Registry
 	registry := tool.NewRegistry()
-	registerBuiltinTools(registry, skillLoader)
+	registerBuiltinTools(registry, skillLoader, llmClient)
 
 	// 9. 创建 @ 引用展开器（用于 AGENTS.md 和用户输入中的 @ 引用展开）
 	expander := reference.New(guard)
@@ -236,15 +237,16 @@ func main() {
 		return
 	}
 
-	runOneShot(cfg, llmClient, registry, guard, expander, cwd, verboseLog, ctxMgr, loc)
+	runOneShot(cfg, llmClient, registry, guard, expander, cwd, verboseLog, ctxMgr, agentsMdText, loc)
 }
 
 // registerBuiltinTools 注册内置工具。
-func registerBuiltinTools(r tool.Registry, skillLoader *skill.Loader) {
+func registerBuiltinTools(r tool.Registry, skillLoader *skill.Loader, llmClient llm.Client) {
 	r.Register(tool.Wrap(&tool.ReadFile{}))
 	r.Register(tool.Wrap(&tool.WriteFile{}))
 	r.Register(tool.Wrap(&tool.EditFile{}))
-	r.Register(tool.Wrap(&tool.Shell{}))
+	r.Register(tool.Wrap(&tool.Shell{AllowBg: true}))  // "bash"
+	r.Register(tool.Wrap(&tool.Shell{AllowBg: false})) // "bash_subagent"
 	r.Register(tool.Wrap(&tool.WebFetch{}))
 
 	// Skill 工具
@@ -261,6 +263,10 @@ func registerBuiltinTools(r tool.Registry, skillLoader *skill.Loader) {
 
 	// Kill background task
 	r.Register(tool.Wrap(&tool.KillBackgroundTask{}))
+
+	// Agent — subagent delegation
+	at := &subagent.AgentTool{LLMClient: llmClient}
+	r.Register(tool.Wrap(at))
 }
 
 // resolveSettingsPaths 返回全局和项目配置文件路径。

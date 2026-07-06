@@ -51,7 +51,7 @@ func TestShellContextCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // 立即取消
 
-	tool := &Shell{}
+	tool := &Shell{AllowBg: true}
 	_, err := tool.Execute(ctx, ShellParams{
 		Command: "echo hello",
 	})
@@ -74,7 +74,7 @@ func TestShellInterruptKillsProcessGroup(t *testing.T) {
 	// 启动一个子进程：sh -c 'sleep 100'（sleep 是 bash 的子进程）
 	ctx, cancel := context.WithCancel(context.Background())
 
-	tool := &Shell{}
+	tool := &Shell{AllowBg: true}
 	done := make(chan struct{})
 	var result *ToolResult
 	var execErr error
@@ -118,7 +118,7 @@ func TestShellContextTimeout(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
 	defer cancel()
 
-	tool := &Shell{}
+	tool := &Shell{AllowBg: true}
 	result, err := tool.Execute(ctx, ShellParams{
 		Command:   "sleep 5",
 		TimeoutMs: 100, // 工具超时 > context 超时，确保 context 先触发
@@ -138,7 +138,7 @@ func TestShellContextTimeout(t *testing.T) {
 
 func TestShellSuccess(t *testing.T) {
 	skipOnWindows(t)
-	tool := &Shell{}
+	tool := &Shell{AllowBg: true}
 	result, err := tool.Execute(context.Background(), ShellParams{
 		Command: "echo hello",
 	})
@@ -163,7 +163,7 @@ func TestShellNonZeroExit(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("false is a Unix command; Windows equivalent test uses 'cmd /c exit 1'")
 	}
-	tool := &Shell{}
+	tool := &Shell{AllowBg: true}
 	result, err := tool.Execute(context.Background(), ShellParams{
 		Command: "false",
 	})
@@ -297,7 +297,7 @@ func TestShellTimeout(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("sleep is a Unix command; Windows equivalent uses timeout/ping")
 	}
-	tool := &Shell{}
+	tool := &Shell{AllowBg: true}
 	result, err := tool.Execute(context.Background(), ShellParams{
 		Command:   "sleep 10",
 		TimeoutMs: 100,
@@ -325,7 +325,7 @@ func TestShellWithWorkingDir(t *testing.T) {
 		t.Skip("pwd is a Unix command; Windows equivalent uses 'cd' in cmd")
 	}
 	dir := t.TempDir()
-	tool := &Shell{}
+	tool := &Shell{AllowBg: true}
 	result, err := tool.Execute(context.Background(), ShellParams{
 		Command:    "pwd",
 		WorkingDir: dir,
@@ -345,7 +345,7 @@ func TestShellOutputCapture(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip(">&2 is Unix shell syntax; Windows cmd uses 2>&1 or different syntax")
 	}
-	tool := &Shell{}
+	tool := &Shell{AllowBg: true}
 	result, err := tool.Execute(context.Background(), ShellParams{
 		Command: "echo stdout_line && echo stderr_line >&2",
 	})
@@ -367,7 +367,7 @@ func TestShellTimeoutClamped(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("true is a Unix command; Windows equivalent uses 'ver' or 'echo'")
 	}
-	tool := &Shell{}
+	tool := &Shell{AllowBg: true}
 	result, err := tool.Execute(context.Background(), ShellParams{
 		Command:   "true",
 		TimeoutMs: MaxShellTimeoutMs + 1000,
@@ -388,7 +388,7 @@ func TestShellDangerousWarning(t *testing.T) {
 	// performs security checks — that's the Guard's responsibility.
 	// This test verifies that the shell still executes commands that would
 	// previously have triggered warnings.
-	tool := &Shell{}
+	tool := &Shell{AllowBg: true}
 	result, err := tool.Execute(context.Background(), ShellParams{
 		Command: "echo chmod -R 777 /tmp",
 	})
@@ -405,7 +405,7 @@ func TestShellDangerousWarning(t *testing.T) {
 
 func TestShellRMRootDetection(t *testing.T) {
 	skipOnWindows(t)
-	tool := &Shell{}
+	tool := &Shell{AllowBg: true}
 	result, err := tool.Execute(context.Background(), ShellParams{
 		Command: "echo rm -rf /",
 	})
@@ -427,7 +427,7 @@ func TestShellCurlPipeShellDetection(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("uses sh -c which is not available on Windows")
 	}
-	tool := &Shell{}
+	tool := &Shell{AllowBg: true}
 	result, err := tool.Execute(context.Background(), ShellParams{
 		Command: `echo curl test && true | sh -c "echo safe"`,
 	})
@@ -444,7 +444,7 @@ func TestShellCurlPipeShellDetection(t *testing.T) {
 
 func TestShellSafeCommandNoWarning(t *testing.T) {
 	skipOnWindows(t)
-	tool := &Shell{}
+	tool := &Shell{AllowBg: true}
 	result, err := tool.Execute(context.Background(), ShellParams{
 		Command: "echo hello world",
 	})
@@ -460,7 +460,7 @@ func TestShellSafeCommandNoWarning(t *testing.T) {
 }
 
 func TestShellDescriptionGuidesToolUsage(t *testing.T) {
-	tool := &Shell{}
+	tool := &Shell{AllowBg: true}
 	desc := tool.Description()
 	// Description 应引导 LLM 优先用专用工具
 	expectedMentions := []string{
@@ -632,7 +632,7 @@ func TestFormatShellError(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestShell_SupportsStreaming(t *testing.T) {
-	s := &Shell{}
+	s := &Shell{AllowBg: true}
 	if !s.SupportsStreaming() {
 		t.Error("Shell should support streaming")
 	}
@@ -640,7 +640,7 @@ func TestShell_SupportsStreaming(t *testing.T) {
 
 func TestShell_ExecuteStreaming_Basic(t *testing.T) {
 	skipOnWindows(t)
-	s := &Shell{}
+	s := &Shell{AllowBg: true}
 	ctx := context.Background()
 	var chunks []string
 	result, err := s.ExecuteStreaming(ctx, ShellParams{
@@ -666,7 +666,7 @@ func TestShell_ExecuteStreaming_Basic(t *testing.T) {
 }
 
 func TestShell_ExecuteStreaming_Error(t *testing.T) {
-	s := &Shell{}
+	s := &Shell{AllowBg: true}
 	ctx := context.Background()
 	var chunks []string
 	result, err := s.ExecuteStreaming(ctx, ShellParams{
@@ -686,7 +686,7 @@ func TestShell_ExecuteStreaming_Error(t *testing.T) {
 }
 
 func TestShell_ExecuteStreaming_Timeout(t *testing.T) {
-	s := &Shell{}
+	s := &Shell{AllowBg: true}
 	ctx := context.Background()
 	result, err := s.ExecuteStreaming(ctx, ShellParams{
 		Command:   "sleep 10",
@@ -701,7 +701,7 @@ func TestShell_ExecuteStreaming_Timeout(t *testing.T) {
 }
 
 func TestShell_ExecuteStreaming_ContextCancel(t *testing.T) {
-	s := &Shell{}
+	s := &Shell{AllowBg: true}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // 立即取消
 	_, err := s.ExecuteStreaming(ctx, ShellParams{
@@ -815,7 +815,7 @@ func TestShell_BackgroundCommand_DoesNotHang(t *testing.T) {
 		t.Skip("background & is Unix shell syntax")
 	}
 
-	s := &Shell{}
+	s := &Shell{AllowBg: true}
 	ctx := context.Background()
 	done := make(chan struct{})
 	var result *ToolResult
@@ -861,7 +861,7 @@ func TestShell_BackgroundCommand_LogFileHasOutput(t *testing.T) {
 		t.Skip("background & is Unix shell syntax")
 	}
 
-	s := &Shell{}
+	s := &Shell{AllowBg: true}
 	result, err := s.Execute(context.Background(), ShellParams{
 		Command:   "echo background_hello &",
 		TimeoutMs: 5000,
@@ -903,7 +903,7 @@ func TestShell_ExecuteStreaming_BackgroundCommand_DoesNotHang(t *testing.T) {
 		t.Skip("background & is Unix shell syntax")
 	}
 
-	s := &Shell{}
+	s := &Shell{AllowBg: true}
 	ctx := context.Background()
 	done := make(chan struct{})
 	var result *ToolResult
@@ -949,7 +949,7 @@ func TestShell_ExecuteStreaming_PipeWaitTimeout(t *testing.T) {
 		t.Skip("Unix process group semantics")
 	}
 
-	s := &Shell{}
+	s := &Shell{AllowBg: true}
 	ctx := context.Background()
 	done := make(chan struct{})
 	var result *ToolResult
@@ -1040,7 +1040,7 @@ func TestShell_Execute_RunInBackground(t *testing.T) {
 		t.Skip("background execution is Unix-specific")
 	}
 
-	s := &Shell{}
+	s := &Shell{AllowBg: true}
 	result, err := s.Execute(context.Background(), ShellParams{
 		Command:         "sleep 100",
 		RunInBackground: true,
@@ -1069,7 +1069,7 @@ func TestShell_ExecuteStreaming_RunInBackground(t *testing.T) {
 		t.Skip("background execution is Unix-specific")
 	}
 
-	s := &Shell{}
+	s := &Shell{AllowBg: true}
 	result, err := s.ExecuteStreaming(context.Background(), ShellParams{
 		Command:         "sleep 100",
 		RunInBackground: true,
@@ -1089,5 +1089,64 @@ func TestShell_ExecuteStreaming_RunInBackground(t *testing.T) {
 	}
 	if result.Meta.BackgroundTaskID != "" {
 		task.DefaultRegistry.Remove(result.Meta.BackgroundTaskID)
+	}
+}
+
+func TestShell_BashSubagent_RejectsBackground(t *testing.T) {
+	s := &Shell{AllowBg: false}
+	if s.Name() != "bash_subagent" {
+		t.Errorf("Name() = %q, want %q", s.Name(), "bash_subagent")
+	}
+
+	// Background should be rejected
+	result, err := s.Execute(context.Background(), ShellParams{
+		Command:         "sleep 1",
+		RunInBackground: true,
+	})
+	if err != nil {
+		t.Fatalf("Execute() unexpected error: %v", err)
+	}
+	if result.Error == nil {
+		t.Fatal("expected error in result for background execution in bash_subagent")
+	}
+	if result.Error.Kind != ErrKindInvalidArgs {
+		t.Errorf("error kind = %q, want %q", result.Error.Kind, ErrKindInvalidArgs)
+	}
+}
+
+func TestShell_Bash_AllowsBackground(t *testing.T) {
+	s := &Shell{AllowBg: true}
+	if s.Name() != "bash" {
+		t.Errorf("Name() = %q, want %q", s.Name(), "bash")
+	}
+}
+
+func TestShell_Schema_WithAndWithoutBackground(t *testing.T) {
+	sBg := &Shell{AllowBg: true}
+	sNoBg := &Shell{AllowBg: false}
+
+	bgSchema := string(sBg.Schema())
+	noBgSchema := string(sNoBg.Schema())
+
+	if !strings.Contains(bgSchema, "run_in_background") {
+		t.Error("bash schema should have run_in_background")
+	}
+	if strings.Contains(noBgSchema, "run_in_background") {
+		t.Error("bash_subagent schema should NOT have run_in_background")
+	}
+}
+
+func TestShell_Description_WithAndWithoutBackground(t *testing.T) {
+	sBg := &Shell{AllowBg: true}
+	sNoBg := &Shell{AllowBg: false}
+
+	bgDesc := sBg.Description()
+	noBgDesc := sNoBg.Description()
+
+	if !strings.Contains(bgDesc, "run_in_background") {
+		t.Error("bash description should mention run_in_background")
+	}
+	if strings.Contains(noBgDesc, "run_in_background") {
+		t.Error("bash_subagent description should NOT mention run_in_background")
 	}
 }
