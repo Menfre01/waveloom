@@ -463,7 +463,7 @@ var zhCN = Messages{
 	SessionResumeHint: "  恢复对话: waveloom --resume %s\n",
 
 	// Todo panel
-	TodoTitle:        "Todo — %d 项",
+	TodoTitle:        "Todo — %d/%d 项",
 	TodoHiddenCount:  "%d 项隐藏",
 	TodoDoneCount:    "%d 完成",
 	TodoInProgCount:  "%d 进行中",
@@ -717,7 +717,7 @@ Environment variables:
 	SessionResumeHint: "  Resume: waveloom --resume %s\n",
 
 	// Todo panel
-	TodoTitle:        "Todo — %d items",
+	TodoTitle:        "Todo — %d/%d items",
 	TodoHiddenCount:  "%d hidden",
 	TodoDoneCount:    "%d done",
 	TodoInProgCount:  "%d in progress",
