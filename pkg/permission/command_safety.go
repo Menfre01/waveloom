@@ -603,9 +603,11 @@ func extractFirstToken(command string) string {
 		return ""
 	}
 
-	// 取路径的最后一部分（如 /usr/bin/git → git）
+	// 取路径的最后一部分（如 /usr/bin/git → git，C:\Program Files\Git\bin\bash.exe → bash.exe）
 	token := parts[0]
 	if idx := strings.LastIndex(token, "/"); idx >= 0 {
+		token = token[idx+1:]
+	} else if idx := strings.LastIndex(token, "\\"); idx >= 0 {
 		token = token[idx+1:]
 	}
 

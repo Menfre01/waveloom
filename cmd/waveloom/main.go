@@ -237,7 +237,7 @@ func main() {
 		return
 	}
 
-	runOneShot(cfg, llmClient, registry, guard, expander, cwd, verboseLog, ctxMgr, loc)
+	runOneShot(cfg, llmClient, registry, guard, expander, cwd, verboseLog, ctxMgr, agentsMdText, loc)
 }
 
 // registerBuiltinTools 注册内置工具。

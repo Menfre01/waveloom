@@ -47,14 +47,18 @@ func (a *AgentTool) Description() string {
 		"Launch a subagent to handle complex, multi-step tasks autonomously.",
 		"",
 		"Available subagent types and the tools they have access to:",
-		"- general-purpose: all tools available to the parent agent (read, write, edit, bash_subagent, web_fetch, skill)",
+		"- general-purpose: read_file, write_file, edit_file, bash_subagent, web_fetch",
 		"- Explore: read-only exploration (read_file, bash_subagent, web_fetch)",
 		"",
-		"Omit subagent_type to fork yourself — the fork inherits your full conversation context and all tools.",
+		"Omit subagent_type to fork yourself — the fork inherits your conversation context (minus the agent call itself).",
 		"Specify subagent_type for a cold agent that starts with fresh context and filtered tools.",
 		"",
-		"Usage: provide a short description and a clear, self-contained prompt.",
+		"Usage: for forks, write a directive (context is inherited); for cold agents, provide a self-contained prompt with full background.",
 		"You will receive the subagent's final output as the tool result.",
+		"",
+		"Do NOT use the agent tool for: reading a known file path (use read_file),",
+		"searching within 1-3 files (use read_file), or simple file pattern matching (use shell).",
+		"Explore agent should be used proactively for codebase exploration without the user having to ask.",
 	}, "\n")
 }
 
@@ -94,8 +98,8 @@ const (
 
 func exploreSystemPrompt() string {
 	return `You are a read-only file exploration agent. Your role is to search, read, and analyze existing code.
-You CAN use: read_file, web_fetch.
-You CAN use bash_subagent ONLY for read-only operations: ls, cat, head, tail, find, grep, file, wc, sort, uniq, diff, git log, git status, git diff, du, df, which, pwd, date, uname.
+You CAN use: read_file, bash_subagent, web_fetch.
+bash_subagent is for read-only operations ONLY: ls, cat, head, tail, find, grep, file, wc, sort, uniq, diff, git log, git status, git diff, du, df, which, pwd, date, uname.
 You CANNOT use: write_file, edit_file.
 You MUST NOT use bash_subagent for: mkdir, touch, rm, cp, mv, chmod, chown, echo > (redirect), tee, git add, git commit, npm install, pip install, or any command that writes to the filesystem.
 Complete the search request efficiently and report your findings clearly.`
@@ -180,6 +184,9 @@ func (a *AgentTool) executeCold(ctx context.Context, p AgentParams) (*tool.ToolR
 	sp, extraDisallowed := agentConfig(p.SubagentType)
 	subRegistry := buildColdRegistry(extraDisallowed)
 
+	// Build complete system prompt: agent-specific prompt + workspace/environment from parent.
+	sp = appendParentContext(sp, ctx)
+
 	subCtx, subCancel := context.WithCancel(ctx)
 	defer subCancel()
 
@@ -195,8 +202,16 @@ func (a *AgentTool) executeCold(ctx context.Context, p AgentParams) (*tool.ToolR
 
 	messages := []llm.Message{
 		{Role: llm.RoleSystem, Content: sp},
-		{Role: llm.RoleUser, Content: fmt.Sprintf("Task: %s\n\n%s", p.Description, p.Prompt)},
 	}
+	// Inject AGENTS.md as user message, matching the parent's context setup.
+	if agentsMD := agentloop.AgentsMDFromContext(ctx); agentsMD != "" {
+		messages = append(messages, llm.Message{
+			Role: llm.RoleUser, Content: agentsMD,
+		})
+	}
+	messages = append(messages, llm.Message{
+		Role: llm.RoleUser, Content: fmt.Sprintf("Task: %s\n\n%s", p.Description, p.Prompt),
+	})
 
 	if cb != nil {
 		cb(SubagentStart{Prompt: p.Description, AgentType: p.SubagentType, InheritCtx: false})
@@ -256,7 +271,6 @@ func allTools() []tool.Tool {
 		tool.Wrap(&tool.EditFile{}),
 		tool.Wrap(&tool.WebFetch{}),
 		tool.Wrap(&tool.Shell{AllowBg: false}), // bash_subagent
-		tool.Wrap(&tool.KillBackgroundTask{}),
 	}
 }
 
@@ -287,6 +301,20 @@ func agentConfig(agentType string) (systemPrompt string, extraDisallowed map[str
 	default:
 		return generalPurposeSystemPrompt(), nil
 	}
+}
+
+// appendParentContext appends workspace and environment context from the parent
+// system prompt to the agent-specific prompt, so cold agents know CWD and toolchain.
+func appendParentContext(agentSP string, ctx context.Context) string {
+	parentSP := agentloop.ParentSystemPromptFromContext(ctx)
+	if parentSP == "" {
+		return agentSP
+	}
+	// Extract "## Workspace" and everything after it (includes "## Environment").
+	if idx := strings.Index(parentSP, "## Workspace"); idx >= 0 {
+		agentSP += "\n\n" + parentSP[idx:]
+	}
+	return agentSP
 }
 
 // ---------------------------------------------------------------------------

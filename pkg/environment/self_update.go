@@ -107,8 +107,11 @@ func SelfUpdate(ctx context.Context, currentPath, downloadURL string, progress S
 
 	_ = os.Remove(backupPath)
 
-	if err := os.Chmod(currentPath, 0o755); err != nil {
-		return fmt.Errorf("设置权限失败: %w", err)
+	// Windows: os.Chmod 仅影响写权限位，设置 0o755 会报错
+	if runtime.GOOS != "windows" {
+		if err := os.Chmod(currentPath, 0o755); err != nil {
+			return fmt.Errorf("设置权限失败: %w", err)
+		}
 	}
 
 	report(PhaseDone, 100, "installed")
@@ -212,8 +215,11 @@ func extractWaveloom(tarballPath, tmpDir string) (string, error) {
 				return "", err
 			}
 			_ = out.Close()
-			if err := os.Chmod(outPath, 0o755); err != nil {
-				return "", err
+			// Windows: os.Chmod 0o755 会报错，Unix 平台正常设置
+			if runtime.GOOS != "windows" {
+				if err := os.Chmod(outPath, 0o755); err != nil {
+					return "", err
+				}
 			}
 			return outPath, nil
 		}
