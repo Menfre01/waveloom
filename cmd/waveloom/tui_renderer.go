@@ -2170,9 +2170,9 @@ func renderTodoInProgress(t todo.TodoItem, width int, spinnerView string) string
 }
 
 func renderTodoPending(t todo.TodoItem, width int) string {
-	// dim circle + muted
+	// dim circle + default text
 	marker := lipgloss.NewStyle().Foreground(colorMuted).Render("○")
-	text := lipgloss.NewStyle().Foreground(colorMuted).Render(t.Content)
+	text := t.Content
 	line := marker + " " + text
 	return lipgloss.NewStyle().Width(width).Render(line)
 }
@@ -2208,7 +2208,6 @@ func formatHiddenSummary(lc *Messages, hiddenItems []todo.TodoItem, hiddenCount 
 	if pendCount > 0 {
 		parts = append(parts, fmt.Sprintf(lc.TodoPendingCount, pendCount))
 	}
-	parts = append(parts, lc.TodoExpandHint)
 	return strings.Join(parts, " · ")
 }
 
