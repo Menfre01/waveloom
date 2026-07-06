@@ -154,6 +154,7 @@ func (l *Loop) executeToolCalls(ctx context.Context, calls []llm.ToolCall, state
 					execCtx, cancel = context.WithTimeout(ctx, l.config.ToolTimeout)
 					defer cancel()
 				}
+				execCtx = WithToolCallID(execCtx, tc.ID)
 				var result *tool.ToolResult
 				var execErr error
 				if l.toolRegistry.IsStreamable(tc.Name) {
@@ -402,6 +403,7 @@ func (l *Loop) executeToolCalls(ctx context.Context, calls []llm.ToolCall, state
 			execCtx, cancel = context.WithTimeout(ctx, l.config.ToolTimeout)
 			defer cancel()
 		}
+		execCtx = WithToolCallID(execCtx, tc.ID)
 		var result *tool.ToolResult
 		var execErr error
 		if l.toolRegistry.IsStreamable(tc.Name) {
