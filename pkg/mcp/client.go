@@ -31,6 +31,10 @@ type Client struct {
 	toolTimeout   time.Duration  // 单次工具调用超时
 	mu            sync.Mutex
 
+	// logger 用于内部日志输出（如 protocol 级别警告）。
+	// 默认为 io.Discard；Manager 连接完成后注入。
+	logger *log.Logger
+
 	// OnToolsChanged 在收到 tools/list_changed 通知时被调用。
 	// Manager 设置此回调以触发工具列表刷新和重新注册。
 	OnToolsChanged func()
@@ -251,7 +255,9 @@ func (c *Client) sendRequestStdio(ctx context.Context, method string, params any
 		}
 
 		// 不匹配的 ID — 极不常见（单线程使用），记录并继续
-		log.Printf("[mcp] %s: received response with unexpected id %v (expected %v)", c.name, raw.ID, reqID)
+		if c.logger != nil {
+			c.logger.Printf("%s: received response with unexpected id %v (expected %v)", c.name, raw.ID, reqID)
+		}
 	}
 }
 
