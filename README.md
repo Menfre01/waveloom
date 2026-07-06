@@ -42,17 +42,17 @@ brew install Menfre01/tap/waveloom
 powershell -c "irm https://raw.githubusercontent.com/Menfre01/waveloom/main/install.ps1 | iex"
 ```
 
-After installation, **open Git Bash** (not cmd or PowerShell) and run:
+> [!TIP]
+> **For the best experience on Windows, use [WSL2](https://learn.microsoft.com/en-us/windows/wsl/install).** Install the Linux binary inside WSL2 and enjoy native performance — no Git Bash forwarding layer, smoother terminal rendering, and faster shell commands.
+>
+> Prefer Git Bash? Waveloom requires `bash.exe` — cmd and PowerShell are not supported. After installation, **open Git Bash** and run the commands below. If `waveloom` is not found, add `%USERPROFILE%\.local\bin` to your Windows PATH (the installer handles this automatically).
+
+Then configure your key and start:
 
 ```sh
 waveloom setup
 waveloom
 ```
-
-> [!TIP]
-> **For the best experience on Windows, use [WSL2](https://learn.microsoft.com/en-us/windows/wsl/install).** Install the Linux binary inside WSL2 and enjoy native performance — no Git Bash forwarding layer, smoother terminal rendering, and faster shell commands.
-
-> Waveloom relies on Git Bash (`bash.exe`) to execute shell commands — cmd and PowerShell are not supported as the runtime terminal. If `waveloom` is not found in Git Bash, add `%USERPROFILE%\.local\bin` to your Windows PATH (the installer will prompt you if needed).
 
 > [!IMPORTANT]
 > API key connects directly to DeepSeek / OpenAI — your code never passes through a third-party server. Every file write and command execution requires your confirmation.
