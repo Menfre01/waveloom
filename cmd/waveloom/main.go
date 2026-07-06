@@ -14,6 +14,7 @@ import (
 	ctxpkg "github.com/Menfre01/waveloom/pkg/context"
 	"github.com/Menfre01/waveloom/pkg/environment"
 	"github.com/Menfre01/waveloom/pkg/llm"
+	"github.com/Menfre01/waveloom/pkg/mcp"
 	"github.com/Menfre01/waveloom/pkg/memory"
 	"github.com/Menfre01/waveloom/pkg/permission"
 	"github.com/Menfre01/waveloom/pkg/reference"
@@ -118,6 +119,11 @@ func main() {
 	// 6. 初始化 Tool Registry
 	registry := tool.NewRegistry()
 	registerBuiltinTools(registry, skillLoader, llmClient)
+
+	// 8.5 启动 MCP Manager — 连接配置的 MCP Server，注册工具代理
+	mcpManager := mcp.NewManager(registry)
+	mcpManager.Start(context.Background(), mcp.LoadConfigs(cwd, homeDir))
+	defer func() { _ = mcpManager.Stop() }()
 
 	// 9. 创建 @ 引用展开器（用于 AGENTS.md 和用户输入中的 @ 引用展开）
 	expander := reference.New(guard)

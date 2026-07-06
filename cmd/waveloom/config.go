@@ -95,7 +95,7 @@ func parseCLI() CLIConfig {
 	// 单次模式：命令行剩余参数即 prompt
 	args := flag.Args()
 	if len(args) > 0 {
-		// "setup"、"ls"、"completion" 作为子命令处理，不走 oneshot
+		// "setup"、"ls"、"completion"、"mcp" 作为子命令处理，不走 oneshot
 		switch args[0] {
 		case "setup":
 			cfg.Setup = true
@@ -108,6 +108,8 @@ func parseCLI() CLIConfig {
 				fmt.Fprintf(os.Stderr, "Usage: waveloom completion <bash|zsh|fish>\n")
 				os.Exit(1)
 			}
+		case "mcp":
+			runMCPCommand(args[1:])
 		default:
 			cfg.OneShot = args[0]
 		}
