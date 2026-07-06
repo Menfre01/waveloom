@@ -284,8 +284,7 @@ func registerBuiltinTools(r tool.Registry, skillLoader *skill.Loader, llmClient 
 	r.Register(tool.Wrap(&tool.ReadFile{}))
 	r.Register(tool.Wrap(&tool.WriteFile{}))
 	r.Register(tool.Wrap(&tool.EditFile{}))
-	r.Register(tool.Wrap(&tool.Shell{AllowBg: true}))  // "bash"
-	r.Register(tool.Wrap(&tool.Shell{AllowBg: false})) // "bash_subagent"
+	r.Register(tool.Wrap(&tool.Shell{AllowBg: true})) // "bash"
 	r.Register(tool.Wrap(&tool.WebFetch{}))
 
 	// Skill 工具

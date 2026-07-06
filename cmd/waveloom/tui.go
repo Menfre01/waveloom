@@ -3506,19 +3506,20 @@ func (m *model) handleLoopDone(ev agentloop.LoopDone, generation int) {
 // handleSubagentStart 在子 agent 开始执行时创建 paraSubagent 段落。
 func (m *model) handleSubagentStart(ev subagent.SubagentStart) {
 	m.paras = append(m.paras, Paragraph{
-		Type:           paraSubagent,
-		State:          stateStreaming,
-		SubagentType:   ev.AgentType,
-		SubagentPrompt: ev.Prompt,
+		Type:                paraSubagent,
+		State:               stateStreaming,
+		SubagentType:        ev.AgentType,
+		SubagentPrompt:      ev.Prompt,
+		SubagentToolCallID:  ev.ToolCallID,
 	})
 }
 
 // handleSubagentEvent 处理子 agent 的内部事件——追加文本或记录工具调用。
+// 按 ToolCallID 精确路由到对应的 subagent 段落，支持多个 subagent 并发执行。
 func (m *model) handleSubagentEvent(ev subagent.SubagentEvent) {
-	// 找到最后一个 paraSubagent 段落（stateStreaming）
 	for i := len(m.paras) - 1; i >= 0; i-- {
 		p := &m.paras[i]
-		if p.Type == paraSubagent && p.State == stateStreaming {
+		if p.Type == paraSubagent && p.State == stateStreaming && p.SubagentToolCallID == ev.ToolCallID {
 			switch ev.Kind {
 			case subagent.SubagentText:
 				p.Text += ev.TextDelta
@@ -3545,10 +3546,11 @@ func (m *model) handleSubagentEvent(ev subagent.SubagentEvent) {
 }
 
 // handleSubagentEnd 在子 agent 结束时更新段落状态。
+// 按 ToolCallID 精确匹配，支持多个 subagent 并发结束。
 func (m *model) handleSubagentEnd(ev subagent.SubagentEnd) {
 	for i := len(m.paras) - 1; i >= 0; i-- {
 		p := &m.paras[i]
-		if p.Type == paraSubagent && p.State == stateStreaming {
+		if p.Type == paraSubagent && p.State == stateStreaming && p.SubagentToolCallID == ev.ToolCallID {
 			p.SubagentTurns = ev.TotalTurns
 			p.SubagentPromptTok = ev.PromptTokens
 			p.SubagentComplTok = ev.CompletionTokens

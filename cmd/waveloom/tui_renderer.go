@@ -80,11 +80,12 @@ type Paragraph struct {
 	NotifKind systemNotifKind // 通知类型（仅 paraSystem 有效）
 
 	// Subagent 专用字段
-	SubagentType      string // "fork" | "general-purpose" | "Explore"
-	SubagentPrompt    string // 委派任务描述
-	SubagentTurns     int    // 总轮次
-	SubagentPromptTok int    // ↑ 输入 token
-	SubagentComplTok  int    // ↓ 输出 token
+	SubagentType       string // "fork" | "general-purpose" | "Explore"
+	SubagentPrompt     string // 委派任务描述
+	SubagentTurns      int    // 总轮次
+	SubagentPromptTok  int    // ↑ 输入 token
+	SubagentComplTok   int    // ↓ 输出 token
+	SubagentToolCallID string // 父级 tool_call ID，用于并发 subagent 事件路由
 
 	// 渲染缓存（避免每次 buildViewportContent 时重复 Glamour 渲染）
 	renderedCache string
