@@ -28,6 +28,7 @@ type sessionFile struct {
 	Stats       sessionStats        `json:"stats"`
 	Compaction  *sessionCompaction  `json:"compaction,omitempty"`
 	Tasks       []task.TaskInfo     `json:"tasks,omitempty"`
+	TodoItems   []json.RawMessage   `json:"todo_items,omitempty"`
 }
 
 // sessionCompaction 是压缩状态的序列化形式。
@@ -53,7 +54,7 @@ type sessionStats struct {
 // SaveSessionToFile 将消息历史和统计信息序列化写入指定文件。
 // 使用原子写入：先写临时文件，再 rename。
 // compaction 为 nil 时不写入压缩状态。
-func SaveSessionToFile(path string, messages []llm.Message, stats Stats, compData *compaction.CompactionData) error {
+func SaveSessionToFile(path string, messages []llm.Message, stats Stats, compData *compaction.CompactionData, todoItems []json.RawMessage) error {
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return fmt.Errorf("create session dir: %w", err)
@@ -102,6 +103,13 @@ func SaveSessionToFile(path string, messages []llm.Message, stats Stats, compDat
 		sf.Tasks[i] = *t
 	}
 
+	if len(todoItems) > 0 {
+		sf.TodoItems = todoItems
+	} else if existing != nil && len(existing.TodoItems) > 0 {
+		// 自动保存（如 CompleteRun）传入空 todoItems 时保留已有数据
+		sf.TodoItems = existing.TodoItems
+	}
+
 	data, err := json.MarshalIndent(sf, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshal session: %w", err)
@@ -120,13 +128,13 @@ func SaveSessionToFile(path string, messages []llm.Message, stats Stats, compDat
 
 // LoadSessionFromFile 从指定文件读取并返回消息历史、统计信息、压缩数据、session ID 和后台任务列表。
 // 文件不存在返回 nil, ..., nil, "", nil；格式无效返回 error。
-func LoadSessionFromFile(path string) ([]llm.Message, Stats, *compaction.CompactionData, string, []task.TaskInfo, error) {
+func LoadSessionFromFile(path string) ([]llm.Message, Stats, *compaction.CompactionData, string, []task.TaskInfo, []json.RawMessage, error) {
 	sf, err := loadSessionFile(path)
 	if err != nil {
-		return nil, Stats{}, nil, "", nil, err
+		return nil, Stats{}, nil, "", nil, nil, err
 	}
 	if sf == nil {
-		return nil, Stats{}, nil, "", nil, nil
+		return nil, Stats{}, nil, "", nil, nil, nil
 	}
 
 	stats := Stats{
@@ -151,7 +159,7 @@ func LoadSessionFromFile(path string) ([]llm.Message, Stats, *compaction.Compact
 		}
 	}
 
-	return sf.Messages, stats, compData, sf.SessionID, sf.Tasks, nil
+	return sf.Messages, stats, compData, sf.SessionID, sf.Tasks, sf.TodoItems, nil
 }
 
 // loadSessionFile 读取并解析 session 文件。文件不存在返回 nil, nil。

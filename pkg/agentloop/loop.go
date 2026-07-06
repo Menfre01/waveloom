@@ -17,6 +17,7 @@ import (
 	"github.com/Menfre01/waveloom/pkg/compaction"
 	"github.com/Menfre01/waveloom/pkg/llm"
 	"github.com/Menfre01/waveloom/pkg/permission"
+	"github.com/Menfre01/waveloom/pkg/todo"
 	"github.com/Menfre01/waveloom/pkg/tool"
 )
 
@@ -69,6 +70,10 @@ type Config struct {
 	// AgentsMD 项目 AGENTS.md 文本，注入到 cold subagent 的上下文。
 	// 空字符串 → 不注入。
 	AgentsMD string
+
+	// TodoState session 级 todo 状态，跨 Loop 持久。
+	// nil → todo_write 工具禁用。
+	TodoState *todo.TodoState
 }
 
 // DefaultToolTimeout 是单个工具执行的推荐超时时间（10 分钟）。
@@ -273,10 +278,22 @@ func (l *Loop) Run(ctx context.Context, messages []llm.Message) <-chan TurnEvent
 			l.verbose("→ LLM call #%d  (messages=%d, tools=%d)\n",
 				state.TurnCount+1, len(state.Messages), len(l.toolRegistry.List()))
 
+			// 注入当前 Todo 状态摘要（system role，TUI 不渲染为段落）
+			messagesForTurn := state.Messages
+			if l.config.TodoState != nil {
+				if summary := l.config.TodoState.StatusSummary(); summary != "" {
+					messagesForTurn = append([]llm.Message{}, state.Messages...)
+					messagesForTurn = append(messagesForTurn, llm.Message{
+						Role:    llm.RoleSystem,
+						Content: summary,
+					})
+				}
+			}
+
 			var lastPromptTokens int      // 本轮 API 返回的 prompt_tokens
 			var lastUsage       *llm.UsageInfo // 暂存 usage，压缩后统一推送 TurnStats
 			var lastModel       string         // 暂存 model
-			streamCh, err := l.llmClient.SendMessageStream(ctx, state.Messages, toLLMToolSpecs(l.toolRegistry.List()))
+			streamCh, err := l.llmClient.SendMessageStream(ctx, messagesForTurn, toLLMToolSpecs(l.toolRegistry.List()))
 			if err != nil {
 				l.verbose("  ← ERROR: %v\n", err)
 				ch <- LoopDone{
@@ -309,7 +326,7 @@ func (l *Loop) Run(ctx context.Context, messages []llm.Message) <-chan TurnEvent
 
 					// 回退到非流式调用（自带重试）
 					l.verbose("  ← falling back to non-streaming\n")
-					resp, fallbackErr := l.llmClient.SendMessage(ctx, state.Messages, toLLMToolSpecs(l.toolRegistry.List()))
+					resp, fallbackErr := l.llmClient.SendMessage(ctx, messagesForTurn, toLLMToolSpecs(l.toolRegistry.List()))
 					if fallbackErr != nil {
 						l.verbose("  ← FALLBACK ERROR: %v\n", fallbackErr)
 

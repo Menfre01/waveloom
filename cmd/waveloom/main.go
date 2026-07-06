@@ -20,6 +20,7 @@ import (
 	"github.com/Menfre01/waveloom/pkg/shellutil"
 	"github.com/Menfre01/waveloom/pkg/skill"
 	"github.com/Menfre01/waveloom/pkg/subagent"
+	"github.com/Menfre01/waveloom/pkg/todo"
 	"github.com/Menfre01/waveloom/pkg/tool"
 )
 
@@ -231,13 +232,32 @@ func main() {
 		skillLoader.SessionID = sid
 	}
 
-	// 15. 分支：无 prompt → 交互式 TUI，有 prompt → 单次执行
+	// 15. 创建 session 级 TodoState
+	todoState := todo.NewTodoState()
+
+	// session resume: 恢复持久化的 todo 列表
+	if isResume {
+		if rawItems := ctxMgr.TodoItems(); len(rawItems) > 0 {
+			var items []todo.TodoItem
+			for _, raw := range rawItems {
+				var item todo.TodoItem
+				if err := json.Unmarshal(raw, &item); err == nil {
+					items = append(items, item)
+				}
+			}
+			if len(items) > 0 {
+				todoState.Restore(items)
+			}
+		}
+	}
+
+	// 16. 分支：无 prompt → 交互式 TUI，有 prompt → 单次执行
 	if cfg.OneShot == "" {
-		runTUI(llmClient, registry, guard, expander, cfg.Model, cfg.Theme, verboseLog, cfg.ContextLimit, cfg.MaxTurns, cfg.ToolTimeout, cfg.ToolTimeoutSource, cfg.BypassPerm, ctxMgr, isResume, sessionDir, globalPath, projectPath, agentsMdText, loc)
+		runTUI(llmClient, registry, guard, expander, cfg.Model, cfg.Theme, verboseLog, cfg.ContextLimit, cfg.MaxTurns, cfg.ToolTimeout, cfg.ToolTimeoutSource, cfg.BypassPerm, ctxMgr, isResume, sessionDir, globalPath, projectPath, agentsMdText, loc, todoState)
 		return
 	}
 
-	runOneShot(cfg, llmClient, registry, guard, expander, cwd, verboseLog, ctxMgr, agentsMdText, loc)
+	runOneShot(cfg, llmClient, registry, guard, expander, cwd, verboseLog, ctxMgr, agentsMdText, loc, todoState)
 }
 
 // registerBuiltinTools 注册内置工具。
@@ -267,6 +287,9 @@ func registerBuiltinTools(r tool.Registry, skillLoader *skill.Loader, llmClient 
 	// Agent — subagent delegation
 	at := &subagent.AgentTool{LLMClient: llmClient}
 	r.Register(tool.Wrap(at))
+
+	// TodoWrite — 结构化任务列表管理
+	r.Register(tool.Wrap(&tool.TodoWrite{}))
 }
 
 // resolveSettingsPaths 返回全局和项目配置文件路径。
