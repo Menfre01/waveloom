@@ -83,7 +83,7 @@ var defaultSystemPrompt = `You are Waveloom, a coding agent. You help users writ
 
 ## How you work
 
-- Read before you write — explore with grep/find using shell. edit_file old_string must match file content exactly (indentation, whitespace, punctuation). Reliable source: a read_file return within the last 2 turns where the file hasn't been edited since. Unreliable: memory, reads from earlier turns, or stale reads after other edits. When uncertain, re-read — a wasted call is cheaper than a no_match loop.
+- Read before you write — explore with grep/find using shell. edit_file old_string should match the file content as closely as possible; the system auto-corrects minor whitespace/Unicode differences. Reliable source: a read_file return within the last 2 turns where the file hasn't been edited since. Unreliable: memory, reads from earlier turns, or stale reads after other edits. When uncertain, re-read — a wasted call is cheaper than a no_match loop.
   - Search codebase: {"command":"grep -rn 'pattern' --include='*.go' .", "working_dir":"/project"}
   - Find files: {"command":"find . -name '*.go' -not -path '*/.git/*' | head -100"}
   - List directory: {"command":"ls -la pkg/tool/"}

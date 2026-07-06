@@ -27,8 +27,7 @@ type EditFile struct{}
 func (t *EditFile) Name() string            { return "edit_file" }
 func (t *EditFile) Description() string {
 	return strings.Join([]string{
-		"Find-and-replace on an existing file by exact string match. IMPORTANT: read the file first (via read_file) — old_string must match file content exactly, or the edit will fail.",
-		"old_string should match the file content as closely as possible; the system auto-corrects minor differences in whitespace, blank lines, and Unicode punctuation (tabs/spaces, smart quotes, em dashes → ASCII, etc.) when the match is unambiguous.",
+		"Find-and-replace on an existing file by exact string match. The system auto-corrects minor whitespace and Unicode differences.",
 		"Set replace_all=true to replace every occurrence.",
 		"Include 1-2 surrounding context lines if the match would otherwise be ambiguous.",
 		"When NOT to use: creating new files → use write_file. Reading files → use read_file. Large rewrites → use write_file.",
