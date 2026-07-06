@@ -73,16 +73,6 @@ func (f *fakeTransport) Close() error {
 	return nil
 }
 
-// lastSent 返回最近一次 Send 的消息（JSON 原文）。
-func (f *fakeTransport) lastSent() json.RawMessage {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	if len(f.sent) == 0 {
-		return nil
-	}
-	return f.sent[len(f.sent)-1]
-}
-
 // allSent 返回所有 Send 过的消息。
 func (f *fakeTransport) allSent() []json.RawMessage {
 	f.mu.Lock()

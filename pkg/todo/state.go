@@ -1,15 +1,11 @@
 // Package todo 提供 session 级 Todo 任务列表状态管理。
 //
-// TodoState 是线程安全的内存持有者，支持 ID-based CRUD：
-//   - 有 ID → UPDATE
-//   - 无 ID → CREATE（自动分配自增 ID）
-//   - merge 模式下不在传入列表中的 → DELETE
-//   - 全部 completed → 自动清空
+// TodoState 是线程安全的内存持有者。LLM 每次传入完整列表，State 直接替换。
+// 无内部 ID，LLM 通过 content 引用任务。
 package todo
 
 import (
 	"fmt"
-	"strconv"
 	"strings"
 	"sync"
 )
@@ -20,11 +16,10 @@ import (
 
 // TodoItem 描述一个待办任务。
 type TodoItem struct {
-	ID          string `json:"id,omitempty"`         // 服务端分配的 ID（CREATE 时为空，返回时填充）
-	Content     string `json:"content"`               // 祈使句：要完成的事项
-	Status      string `json:"status"`                // pending | in_progress | completed
-	ActiveForm  string `json:"activeForm"`            // 现在进行时描述
-	Description string `json:"description,omitempty"` // 可选：任务详情/备注
+	Content     string `json:"content"`                 // 祈使句：要完成的事项
+	Status      string `json:"status"`                  // pending | in_progress | completed
+	ActiveForm  string `json:"activeForm"`              // 现在进行时描述
+	Description string `json:"description,omitempty"`   // 可选：任务详情/备注
 }
 
 // ValidStatuses 是合法的 status 枚举值。
@@ -39,9 +34,9 @@ var ValidStatuses = map[string]bool{
 // ---------------------------------------------------------------------------
 
 // TodoWriteParams 是 todo_write 工具的输入参数。
+// LLM 传入完整的 todo 列表，State 直接替换。
 type TodoWriteParams struct {
 	Todos []TodoItem `json:"todos"`
-	Merge bool       `json:"merge,omitempty"` // 默认 false = 全量替换
 }
 
 // ---------------------------------------------------------------------------
@@ -49,68 +44,36 @@ type TodoWriteParams struct {
 // ---------------------------------------------------------------------------
 
 // TodoState 持有当前 session 的 todo 列表，支持跨 Loop 持久。
-// 零值不可用，必须通过 NewTodoState() 创建。
 type TodoState struct {
-	mu     sync.RWMutex
-	items  []TodoItem
-	nextID int
+	mu    sync.RWMutex
+	items []TodoItem
+
+	// ReminderInjected 标记是否已向 LLM 注入过 todo 更新提醒。
+	ReminderInjected bool
 }
 
 // NewTodoState 创建一个新的空 TodoState。
 func NewTodoState() *TodoState {
-	return &TodoState{
-		items:  nil,
-		nextID: 1,
-	}
+	return &TodoState{}
 }
 
-// Apply 应用一次 todo_write 操作。
-// 返回操作前的旧列表和操作后的新列表（用于构建 tool result）。
+// Apply 应用一次 todo_write 操作，直接替换整个列表。
 func (s *TodoState) Apply(params TodoWriteParams) (oldItems, newItems []TodoItem) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	oldItems = cloneItems(s.items)
+	s.items = cloneItems(params.Todos)
 
-	if !params.Merge {
-		// 全量替换
-		s.items = nil
-		s.nextID = 1
-	}
-
-	// 逐项处理
-	for _, t := range params.Todos {
-		if t.ID != "" {
-			// UPDATE：找到并原地更新
-			found := false
-			for i := range s.items {
-				if s.items[i].ID == t.ID {
-					s.items[i] = TodoItem{
-						ID:          t.ID, // ID 不可变
-						Content:     t.Content,
-						Status:      t.Status,
-						ActiveForm:  t.ActiveForm,
-						Description: t.Description,
-					}
-					found = true
-					break
-				}
-			}
-			// ID 不存在且非 merge 模式 → 作为新项追加（保留指定 ID）
-			if !found && !params.Merge {
-				s.items = append(s.items, t)
-			}
-		} else {
-			// CREATE：分配 ID
-			t.ID = strconv.Itoa(s.nextID)
-			s.nextID++
-			s.items = append(s.items, t)
-		}
-	}
-
-	// allDone：全部 completed → 清空
+	// allDone：全部 completed → 清空 + 重置提醒标记
 	if s.allDoneLocked() {
 		s.items = nil
+		s.ReminderInjected = false
+	}
+
+	// 列表清空时重置提醒标记
+	if len(s.items) == 0 {
+		s.ReminderInjected = false
 	}
 
 	newItems = cloneItems(s.items)
@@ -125,25 +88,13 @@ func (s *TodoState) Snapshot() []TodoItem {
 }
 
 // Restore 从持久化数据恢复 todo 列表（用于 session resume）。
-// 恢复后自动推算 nextID 为 max(id)+1。
 func (s *TodoState) Restore(items []TodoItem) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-
 	s.items = cloneItems(items)
-
-	// 推算 nextID
-	maxID := 0
-	for _, t := range s.items {
-		if id, err := strconv.Atoi(t.ID); err == nil && id > maxID {
-			maxID = id
-		}
-	}
-	s.nextID = maxID + 1
 }
 
-// StatusSummary 格式化为 LLM 上下文摘要（单行一项）。
-// 空列表返回空字符串。
+// StatusSummary 格式化为 LLM 上下文摘要。
 func (s *TodoState) StatusSummary() string {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -169,7 +120,6 @@ func (s *TodoState) AllDone() bool {
 }
 
 // FormatResult 格式化 Apply 结果，作为 tool result 返回给 LLM。
-// 包含完整列表（含 ID），让 LLM 感知所有任务的 ID 和状态。
 func FormatResult(items []TodoItem) string {
 	if len(items) == 0 {
 		return "All todos completed and cleared."
@@ -185,12 +135,12 @@ func FormatResult(items []TodoItem) string {
 }
 
 // ---------------------------------------------------------------------------
-// 内部方法（调用方已持有锁）
+// 内部方法
 // ---------------------------------------------------------------------------
 
 func (s *TodoState) allDoneLocked() bool {
 	if len(s.items) == 0 {
-		return false // 空列表不是 "all done"，而是已经清空
+		return false
 	}
 	for _, t := range s.items {
 		if t.Status != "completed" {
@@ -199,10 +149,6 @@ func (s *TodoState) allDoneLocked() bool {
 	}
 	return true
 }
-
-// ---------------------------------------------------------------------------
-// 辅助函数
-// ---------------------------------------------------------------------------
 
 func cloneItems(items []TodoItem) []TodoItem {
 	if items == nil {
@@ -218,5 +164,5 @@ func formatTodoLine(t TodoItem) string {
 	if t.Description != "" {
 		desc += " — " + t.Description
 	}
-	return fmt.Sprintf("#%s [%s] %s", t.ID, t.Status, desc)
+	return fmt.Sprintf("[%s] %s", t.Status, desc)
 }

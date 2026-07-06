@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 	"time"
 
 	"github.com/Menfre01/waveloom/pkg/compaction"
@@ -278,18 +279,24 @@ func (l *Loop) Run(ctx context.Context, messages []llm.Message) <-chan TurnEvent
 			l.verbose("→ LLM call #%d  (messages=%d, tools=%d)\n",
 				state.TurnCount+1, len(state.Messages), len(l.toolRegistry.List()))
 
-			// 注入当前 Todo 状态摘要（system role，TUI 不渲染为段落）
-			messagesForTurn := state.Messages
-			if l.config.TodoState != nil {
-				if summary := l.config.TodoState.StatusSummary(); summary != "" {
-					messagesForTurn = append([]llm.Message{}, state.Messages...)
-					messagesForTurn = append(messagesForTurn, llm.Message{
-						Role:    llm.RoleSystem,
-						Content: summary,
+			// 首次创建 todo 后注入一次性提醒（固定内容 → 不破坏前缀缓存）
+			// 内容包含当前状态快照，让 LLM（尤其是 resume 场景）知道任务列表现状
+			if l.config.TodoState != nil && !l.config.TodoState.ReminderInjected {
+				snapshot := l.config.TodoState.Snapshot()
+				if len(snapshot) > 0 {
+					l.config.TodoState.ReminderInjected = true
+					state.Messages = append(state.Messages, llm.Message{
+						Role: llm.RoleUser,
+						Content: l.config.TodoState.StatusSummary() + "\n\n" +
+							"Remember to keep the todo list updated using `todo_write` as you work through tasks. " +
+							"Mark each task complete immediately after finishing it, and set the next task to in_progress before starting work. " +
+							"Use `todo_write` with `merge=true` to update existing tasks — only pass the items that changed; others are left unchanged. " +
+							"Exactly ONE task must be in_progress at a time.",
 					})
 				}
 			}
 
+			messagesForTurn := state.Messages
 			var lastPromptTokens int      // 本轮 API 返回的 prompt_tokens
 			var lastUsage       *llm.UsageInfo // 暂存 usage，压缩后统一推送 TurnStats
 			var lastModel       string         // 暂存 model
@@ -557,6 +564,20 @@ func (l *Loop) Run(ctx context.Context, messages []llm.Message) <-chan TurnEvent
 				tick := l.config.Compactor.Compact(ctx, &state.Messages, lastPromptTokens)
 				compacted = true
 
+				// compaction 可能移除了旧的 todo_write 结果，刷新 todo-status 消息
+				// 确保 LLM 在压缩后仍能看到当前状态
+				if l.config.TodoState != nil {
+					if summary := l.config.TodoState.StatusSummary(); summary != "" {
+						if idx := findTodoStatusIndex(state.Messages); idx >= 0 {
+							state.Messages[idx].Content = summary + "\n\n" +
+								"Remember to keep the todo list updated using `todo_write` as you work through tasks. " +
+								"Mark each task complete immediately after finishing it, and set the next task to in_progress before starting work. " +
+								"Use `todo_write` with `merge=true` to update existing tasks — only pass the items that changed; others are left unchanged. " +
+								"Exactly ONE task must be in_progress at a time."
+						}
+					}
+				}
+
 				// 推送合并后的 TurnStats（含压缩字段）
 				if lastUsage != nil {
 					ch <- TurnStats{
@@ -660,3 +681,15 @@ func sendEvent(ctx context.Context, ch chan<- TurnEvent, ev TurnEvent) bool {
 		return false
 	}
 }
+
+// findTodoStatusIndex 返回最后一条 todo-status 消息的索引，-1 表示不存在。
+// todo-status 消息以 "## Current Todo Status" 开头，RoleUser 角色。
+func findTodoStatusIndex(msgs []llm.Message) int {
+	for i := len(msgs) - 1; i >= 0; i-- {
+		if msgs[i].Role == llm.RoleUser && strings.HasPrefix(strings.TrimSpace(msgs[i].Content), "## Current Todo Status") {
+			return i
+		}
+	}
+	return -1
+}
+

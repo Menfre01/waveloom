@@ -227,11 +227,10 @@ func TestExecuteTodoWrite_TwoCallsInSameTurn(t *testing.T) {
 		Name: "todo_write",
 		Arguments: func() string {
 			args, _ := json.Marshal(map[string]interface{}{
-				"merge": true,
 				"todos": []map[string]interface{}{
-					{"id": "1", "content": "Task A", "status": "completed", "activeForm": "Did A"},
-					{"id": "2", "content": "Task B", "status": "in_progress", "activeForm": "Doing B"},
-					{"id": "3", "content": "Task C", "status": "pending", "activeForm": "Doing C"},
+					{"content": "Task A", "status": "completed", "activeForm": "Did A"},
+					{"content": "Task B", "status": "in_progress", "activeForm": "Doing B"},
+					{"content": "Task C", "status": "pending", "activeForm": "Doing C"},
 				},
 			})
 			return string(args)
@@ -248,18 +247,14 @@ func TestExecuteTodoWrite_TwoCallsInSameTurn(t *testing.T) {
 		t.Fatalf("expected 3 items, got %d", len(snapshot))
 	}
 
-	statuses := map[string]string{}
-	for _, item := range snapshot {
-		statuses[item.ID] = item.Status
+	if snapshot[0].Content != "Task A" || snapshot[0].Status != "completed" {
+		t.Errorf("Task A: content=%s status=%s, want completed", snapshot[0].Content, snapshot[0].Status)
 	}
-	if statuses["1"] != "completed" {
-		t.Errorf("#1 status = %s, want completed", statuses["1"])
+	if snapshot[1].Content != "Task B" || snapshot[1].Status != "in_progress" {
+		t.Errorf("Task B: content=%s status=%s, want in_progress", snapshot[1].Content, snapshot[1].Status)
 	}
-	if statuses["2"] != "in_progress" {
-		t.Errorf("#2 status = %s, want in_progress", statuses["2"])
-	}
-	if statuses["3"] != "pending" {
-		t.Errorf("#3 status = %s, want pending", statuses["3"])
+	if snapshot[2].Content != "Task C" || snapshot[2].Status != "pending" {
+		t.Errorf("Task C: content=%s status=%s, want pending", snapshot[2].Content, snapshot[2].Status)
 	}
 }
 
@@ -329,14 +324,14 @@ func TestTodoState_ConcurrencyDataIntegrity(t *testing.T) {
 				// 不变式：所有项 content 非空
 				for _, item := range snap {
 					if item.Content == "" {
-						t.Errorf("item %s has empty content", item.ID)
+						t.Error("item has empty content")
 					}
 				}
 			}
 		}()
 	}
 
-	// 10 writers: 标记所有项为 completed（merge=true）
+	// 10 writers: 标记所有项为 completed
 	for i := 0; i < 10; i++ {
 		wg.Add(1)
 		go func(idx int) {
@@ -344,13 +339,12 @@ func TestTodoState_ConcurrencyDataIntegrity(t *testing.T) {
 			todos := make([]todo.TodoItem, 10)
 			for j := 0; j < 10; j++ {
 				todos[j] = todo.TodoItem{
-					ID:         fmt.Sprintf("%d", j+1), // "1" through "10"
 					Content:    fmt.Sprintf("Base %d", j+1),
 					Status:     "completed",
 					ActiveForm: "done",
 				}
 			}
-			ts.Apply(todo.TodoWriteParams{Merge: true, Todos: todos})
+			ts.Apply(todo.TodoWriteParams{Todos: todos})
 		}(i)
 	}
 
@@ -363,22 +357,17 @@ func TestTodoState_ConcurrencyDataIntegrity(t *testing.T) {
 		return
 	}
 
-	// 验证 ID 唯一性
-	seen := make(map[string]bool)
+	// 验证所有项 content 非空
 	for _, item := range snap {
-		if seen[item.ID] {
-			t.Errorf("duplicate ID: %s", item.ID)
-		}
-		seen[item.ID] = true
 		if item.Content == "" {
-			t.Errorf("item %s has empty content", item.ID)
+			t.Errorf("item has empty content")
 		}
 	}
 
 	// 所有项应为 completed
 	for _, item := range snap {
 		if item.Status != "completed" {
-			t.Errorf("item %s status = %s, want completed", item.ID, item.Status)
+			t.Errorf("item %s status = %s, want completed", item.Content, item.Status)
 		}
 	}
 }

@@ -191,7 +191,7 @@ Every task requires both fields:
 - When blocked, create a new task describing the blocker.
 - Remove irrelevant tasks from the list.
 - When all tasks are completed, the list is automatically cleared.
-- Omit id when creating (system assigns); include id when updating; pass ALL tasks when using merge=true (omitted tasks are deleted).
+- Pass the COMPLETE list every time — copy the current list from the tool result, modify what you need, pass it all back.
 
 When in doubt, use this tool. Proactive task management prevents omissions and keeps the user informed.
 
@@ -3377,6 +3377,8 @@ func (m *model) handleLoopDone(ev agentloop.LoopDone, generation int) {
 		loopOut = m.loopCompl
 
 		// 提交到 ContextManager（stats 累加 + 落盘；压缩已在 Loop 内完成）
+		// 先同步当前 todo 列表到持久化层
+		m.cm.SetTodoItems(serializeTodoItems(m.todoState))
 		result := m.cm.CompleteRun(ev.Messages, m.loopPrompt, m.lastTurnPrompt, m.loopCompl, m.loopCacheHit, m.loopCacheMiss, m.loopReasoning, m.hudModel, elapsedMs, string(ev.Reason))
 
 		// loop 级增量归零，准备下一个 loop
@@ -4379,23 +4381,7 @@ func (m *model) View() tea.View {
 	m.bodyHeight = bodyHeight
 
 	// 4. 根据滚动偏移裁剪可见内容
-	// 过滤 StatusSummary 注入行（仅 LLM 上下文，不应在 TUI 渲染）
-	var filteredLines []string
-	skip := false
-	for _, line := range allLines {
-		if strings.HasPrefix(strings.TrimSpace(line), "## Current Todo Status") {
-			skip = true
-			continue
-		}
-		if skip && strings.TrimSpace(line) == "" {
-			skip = false
-			continue
-		}
-		if skip {
-			continue
-		}
-		filteredLines = append(filteredLines, line)
-	}
+	filteredLines := allLines
 	allLines = filteredLines
 	totalLines := len(allLines)
 	maxScrollTop := max(0, totalLines-bodyHeight)
@@ -5803,17 +5789,7 @@ func runTUI(llmClient llm.Client, registry tool.Registry, guard permission.Guard
 
 	// 正常退出时保存 session 并提示 session ID
 	// 序列化 TodoState 到 ContextManager 以便持久化
-	if m.todoState != nil {
-		snapshot := m.todoState.Snapshot()
-		if len(snapshot) > 0 {
-			rawItems := make([]json.RawMessage, len(snapshot))
-			for i, item := range snapshot {
-				data, _ := json.Marshal(item)
-				rawItems[i] = data
-			}
-			m.cm.SetTodoItems(rawItems)
-		}
-	}
+	m.cm.SetTodoItems(serializeTodoItems(m.todoState))
 	m.cm.Save()
 	if sid := m.cm.SessionID(); sid != "" {
 		// 退出时用最终统计更新 recent.json（覆盖启动时写入的初始值）
@@ -6006,4 +5982,21 @@ var tuiNouns = []string{
 	"lemur", "marlin", "newt", "otter", "puffin",
 	"quokka", "raven", "salmon", "tapir", "urchin",
 	"viper", "weasel", "xerus", "yak", "zebra",
+}
+
+// serializeTodoItems 将 TodoState 快照序列化为 JSON，供 ContextManager 持久化。
+func serializeTodoItems(ts *todo.TodoState) []json.RawMessage {
+	if ts == nil {
+		return nil
+	}
+	snapshot := ts.Snapshot()
+	if len(snapshot) == 0 {
+		return nil
+	}
+	rawItems := make([]json.RawMessage, len(snapshot))
+	for i, item := range snapshot {
+		data, _ := json.Marshal(item)
+		rawItems[i] = data
+	}
+	return rawItems
 }

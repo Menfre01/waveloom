@@ -64,21 +64,21 @@ func NewStdioTransport(command string, args []string, env map[string]string) (*S
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		stdin.Close()
+		_ = stdin.Close()
 		return nil, fmt.Errorf("create stdout pipe: %w", err)
 	}
 
 	stderr, err := cmd.StderrPipe()
 	if err != nil {
-		stdin.Close()
-		stdout.Close()
+		_ = stdin.Close()
+		_ = stdout.Close()
 		return nil, fmt.Errorf("create stderr pipe: %w", err)
 	}
 
 	if err := cmd.Start(); err != nil {
-		stdin.Close()
-		stdout.Close()
-		stderr.Close()
+		_ = stdin.Close()
+		_ = stdout.Close()
+		_ = stderr.Close()
 		return nil, fmt.Errorf("start command %q: %w", command, err)
 	}
 
@@ -224,7 +224,7 @@ func (t *HTTPTransport) Send(ctx context.Context, msg any) error {
 	if err != nil {
 		return fmt.Errorf("http post: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	// 捕获 session ID
 	if sid := resp.Header.Get("MCP-Session-Id"); sid != "" {
@@ -270,7 +270,7 @@ func (t *HTTPTransport) Receive(ctx context.Context) (json.RawMessage, error) {
 	if err != nil {
 		return nil, fmt.Errorf("http get: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode == 405 {
 		return nil, fmt.Errorf("server does not support SSE GET")
@@ -320,7 +320,7 @@ func (t *HTTPTransport) SendAndReceive(ctx context.Context, msg any) (json.RawMe
 	if err != nil {
 		return nil, fmt.Errorf("http post: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	// 捕获 session ID
 	if sid := resp.Header.Get("MCP-Session-Id"); sid != "" {
