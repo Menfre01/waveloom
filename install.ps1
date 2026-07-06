@@ -63,16 +63,46 @@ try {
     Remove-Item -Recurse -Force $TmpDir -ErrorAction SilentlyContinue
 }
 
-# Check PATH
+# Configure PATH
 if ($env:PATH -notlike "*$InstallDir*") {
     Write-Host ""
-    Write-Host "!  $InstallDir is not in your PATH."
-    Write-Host "   Run the following in an elevated PowerShell:"
-    Write-Host ""
-    Write-Host '   [Environment]::SetEnvironmentVariable("PATH", $env:PATH + ";' + $InstallDir + '", "User")'
-    Write-Host ""
-    Write-Host "   If waveloom is still not found in Git Bash, add to ~/.bashrc:"
-    Write-Host '   export PATH="$HOME/.local/bin:$PATH"'
+    Write-Host "-> Adding $InstallDir to your user PATH..."
+
+    try {
+        $currentUserPath = [Environment]::GetEnvironmentVariable("PATH", "User") ?? ""
+        if ($currentUserPath -notlike "*$InstallDir*") {
+            $newPath = if ($currentUserPath) { "$currentUserPath;$InstallDir" } else { $InstallDir }
+            [Environment]::SetEnvironmentVariable("PATH", $newPath, "User")
+            # Also update current session so it works immediately
+            $env:PATH = "$env:PATH;$InstallDir"
+            Write-Host "v  PATH updated successfully."
+        } else {
+            Write-Host "v  $InstallDir is already in your user PATH."
+        }
+    } catch {
+        Write-Host "!  Unable to set PATH automatically (may need elevation)."
+        Write-Host "   Run the following in an elevated PowerShell:"
+        Write-Host ""
+        Write-Host '   [Environment]::SetEnvironmentVariable("PATH", $env:PATH + ";' + $InstallDir + '", "User")'
+    }
+}
+
+# Ensure Git Bash also picks up the PATH
+$bashRc = "$env:USERPROFILE\.bashrc"
+$exportLine = 'export PATH="$HOME/.local/bin:$PATH"'
+$bashRcUpdated = $false
+if (Test-Path $bashRc) {
+    $content = Get-Content $bashRc -Raw
+    if ($content -notlike "*$InstallDir*" -and $content -notlike "*`$HOME/.local/bin*") {
+        Add-Content $bashRc "`n$exportLine"
+        $bashRcUpdated = $true
+    }
+} else {
+    Set-Content $bashRc $exportLine
+    $bashRcUpdated = $true
+}
+if ($bashRcUpdated) {
+    Write-Host "v  Added PATH entry to ~/.bashrc for Git Bash compatibility."
 }
 
 Write-Host ""
