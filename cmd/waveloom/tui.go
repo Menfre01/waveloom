@@ -5991,7 +5991,8 @@ func serializeTodoItems(ts *todo.TodoState) []json.RawMessage {
 	}
 	snapshot := ts.Snapshot()
 	if len(snapshot) == 0 {
-		return nil
+		// 返回空切片（非 nil），表示"显式清空"，与"从未设置"(nil) 区分
+		return []json.RawMessage{}
 	}
 	rawItems := make([]json.RawMessage, len(snapshot))
 	for i, item := range snapshot {
