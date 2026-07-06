@@ -54,6 +54,8 @@ mkdir -p ~/.local/bin && curl -fsSL https://github.com/Menfre01/waveloom/release
 
 > [!IMPORTANT]
 > Waveloom relies on Git Bash's `bash.exe` to execute shell commands — you must **install and run waveloom in Git Bash**. cmd and PowerShell are not supported as the runtime terminal.
+>
+> 💡 **Want the best experience? Use [WSL](https://learn.microsoft.com/en-us/windows/wsl/install).** Install the Linux binary inside WSL for native performance — no Git Bash forwarding layer, smoother terminal rendering, and faster shell commands.
 
 **Step 1 — Install Git for Windows**
 

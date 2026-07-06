@@ -54,6 +54,8 @@ mkdir -p ~/.local/bin && curl -fsSL https://github.com/Menfre01/waveloom/release
 
 > [!IMPORTANT]
 > Waveloom 使用 Git Bash 的 `bash.exe` 执行所有 shell 命令，因此**安装和使用都必须在 Git Bash 中进行**。cmd 和 PowerShell 不可作为运行终端。
+>
+> 💡 **追求最佳体验？推荐使用 [WSL](https://learn.microsoft.com/zh-cn/windows/wsl/install)。** 在 WSL 内按 Linux 方式安装，无需 Git Bash 转发层，终端渲染更流畅，shell 命令性能更佳。
 
 **Step 1 — 安装 Git for Windows**
 
