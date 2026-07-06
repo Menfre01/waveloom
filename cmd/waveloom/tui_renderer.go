@@ -2127,7 +2127,7 @@ func renderTodoPanel(lc *Messages, todos []todo.TodoItem, width int, expanded bo
 
 	// ── 标题行 ──
 	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(colorHeaderAccent).Width(innerWidth)
-	title := titleStyle.Render(fmt.Sprintf(lc.TodoTitle, totalCount, completedCount, totalCount))
+	title := titleStyle.Render(fmt.Sprintf(lc.TodoTitle, totalCount))
 
 	// ── 每项渲染 ──
 	var itemLines []string
@@ -2213,6 +2213,7 @@ func formatHiddenSummary(lc *Messages, hiddenItems []todo.TodoItem, hiddenCount 
 	if pendCount > 0 {
 		parts = append(parts, fmt.Sprintf(lc.TodoPendingCount, pendCount))
 	}
+	parts = append(parts, lc.TodoExpandHint)
 	return strings.Join(parts, " · ")
 }
 
