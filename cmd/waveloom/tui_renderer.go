@@ -789,12 +789,13 @@ func renderUserPara(sb *strings.Builder, p *Paragraph, ctx ViewportCtx) {
 		textWidth = 1
 	}
 
-	lines := strings.Split(p.Text, "\n")
-	for _, line := range lines {
+	first := true
+	for _, line := range strings.Split(p.Text, "\n") {
 		wrapped := wrapLine(line, textWidth)
-		for i, wl := range wrapped {
-			if i == 0 {
+		for _, wl := range wrapped {
+			if first {
 				sb.WriteString(prefixStr)
+				first = false
 			} else {
 				sb.WriteString(indentStr)
 			}
