@@ -185,6 +185,11 @@ func verificationSystemPrompt() string {
 it's to try to BREAK it.
 
 You are a READ-ONLY agent for the project directory. You CANNOT use write_file or edit_file.
+bash_subagent is for READ-ONLY operations: running tests, compiling, checking git history —
+anything that does not modify project files.
+NEVER use bash_subagent for: mkdir, touch, rm, cp, mv, chmod, chown, echo > (redirect),
+tee, sed -i, git add, git commit, npm install, pip install, or any filesystem modification
+inside the project directory.
 However, you MAY create ephemeral test scripts in /tmp via bash_subagent when inline commands
 aren't sufficient (e.g., a multi-step test harness). Clean up /tmp files when done.
 
@@ -232,6 +237,11 @@ func evaluateSystemPrompt() string {
 not to implement changes.
 
 You are READ-ONLY for the project directory. You CANNOT use write_file or edit_file.
+bash_subagent is for READ-ONLY operations: running tests, compiling, checking git history —
+anything that does not modify project files.
+NEVER use bash_subagent for: mkdir, touch, rm, cp, mv, chmod, chown, echo > (redirect),
+tee, sed -i, git add, git commit, npm install, pip install, or any filesystem modification
+inside the project directory.
 You MAY create ephemeral test scripts in /tmp via bash_subagent when you need to test behavior.
 Clean up /tmp files when done.
 
@@ -573,6 +583,32 @@ func forwardEvents(ctx context.Context, subCh <-chan agentloop.TurnEvent, cb fun
 	var writeOps []writeOp
 	var currentTurn int
 
+	// 缓冲扇出通道：解耦 subagent 事件消费与 TUI 投递。
+	// 若不隔离，pushEvent → m.program.Send() 可能因 TUI 消息通道拥塞而阻塞，
+	// 进而阻塞 forwardEvents → 阻塞 subLoop goroutine → 级联死锁。
+	// 此 channel 由专用 goroutine 消费，保证事件投递顺序且不丢事件。
+	//
+	// Buffer 容量选取：subagent 事件总量受 MaxTurns（fork=200, cold=50）约束，
+	// 不存在无界增长风险。16384 ≈ 典型场景（20 turns × 500 tokens）的 ~1.6 倍余量，
+	// 在 100 events/s 流式速率下可吸收 ~164 秒的 TUI 拥塞，远超任何合理卡顿时长。
+	fanout := make(chan agentloop.TurnEvent, 16384)
+	fanoutDone := make(chan struct{})
+	go func() {
+		defer close(fanoutDone)
+		for ev := range fanout {
+			if cb != nil {
+				cb(ev)
+			}
+		}
+	}()
+
+	// defer 在函数返回前关闭 fanout 并等待所有事件投递完成，
+	// 确保 SubagentEnd 之前的全部 SubagentEvent 已被 TUI 消费。
+	defer func() {
+		close(fanout)
+		<-fanoutDone
+	}()
+
 	for ev := range subCh {
 		switch e := ev.(type) {
 		case agentloop.StreamDelta:
@@ -583,18 +619,18 @@ func forwardEvents(ctx context.Context, subCh <-chan agentloop.TurnEvent, cb fun
 			}
 			if e.ContentDelta != "" {
 				sb.WriteString(e.ContentDelta)
-				pushEvent(cb, SubagentEvent{ToolCallID: toolCallID, Kind: SubagentText, TextDelta: e.ContentDelta})
+				fanout <- SubagentEvent{ToolCallID: toolCallID, Kind: SubagentText, TextDelta: e.ContentDelta}
 			}
 
 		case agentloop.ToolCallStart:
 			args := formatArgs(e.ToolCallName, e.Arguments)
-			pushEvent(cb, SubagentEvent{ToolCallID: toolCallID, Kind: SubagentToolStart, ToolName: e.ToolCallName, ToolArgs: args})
+			fanout <- SubagentEvent{ToolCallID: toolCallID, Kind: SubagentToolStart, ToolName: e.ToolCallName, ToolArgs: args}
 
 		case agentloop.ToolCallStream:
-			pushEvent(cb, SubagentEvent{ToolCallID: toolCallID, Kind: SubagentToolResult, ToolName: e.ToolCallName, ToolResult: e.Chunk})
+			fanout <- SubagentEvent{ToolCallID: toolCallID, Kind: SubagentToolResult, ToolName: e.ToolCallName, ToolResult: e.Chunk}
 
 		case agentloop.ToolCallResult:
-			pushEvent(cb, SubagentEvent{ToolCallID: toolCallID, Kind: SubagentToolResult, ToolName: e.ToolCallName, ToolResult: e.Result, ToolDurMs: e.DurationMs, ToolError: e.Error})
+			fanout <- SubagentEvent{ToolCallID: toolCallID, Kind: SubagentToolResult, ToolName: e.ToolCallName, ToolResult: e.Result, ToolDurMs: e.DurationMs, ToolError: e.Error}
 			if e.ToolCallName == "write_file" || e.ToolCallName == "edit_file" {
 				op := writeOp{ToolName: e.ToolCallName, FilePath: extractPath(e.Result), BytesIn: len(e.Result)}
 				if e.ToolCallName == "edit_file" {
@@ -628,12 +664,6 @@ func forwardEvents(ctx context.Context, subCh <-chan agentloop.TurnEvent, cb fun
 		}
 	}
 	return sb.String(), totalTurns, promptTokens, completionTokens, nil
-}
-
-func pushEvent(cb func(agentloop.TurnEvent), ev SubagentEvent) {
-	if cb != nil {
-		cb(ev)
-	}
 }
 
 // ---------------------------------------------------------------------------
