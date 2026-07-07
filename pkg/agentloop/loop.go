@@ -211,7 +211,9 @@ func (l *Loop) SetPlanMode(planFile string) (planPairID string, startMessage llm
 	l.plan = true
 	l.planPairID = generatePairID()
 	l.config.PlanFile = planFile
-	l.config.Guard.EnterPlanMode(planFile)
+	if l.config.Guard != nil {
+		l.config.Guard.EnterPlanMode(planFile)
+	}
 	startMessage = llm.Message{
 		Role:    llm.RoleUser,
 		Content: l.planModeStartMessage(),
@@ -393,7 +395,12 @@ func (l *Loop) Run(ctx context.Context, messages []llm.Message) <-chan TurnEvent
 						ContentDelta:   ev.Delta,
 						ReasoningDelta: ev.ReasoningDelta,
 					}) {
-						// ctx 已取消，跳出流消费循环，由下方的 ctx.Err() 检测统一终止
+						// ctx 已取消，排空 streamCh 防止 LLM 流生产者 goroutine 泄漏
+						go func() {
+							for range streamCh {
+								// drain
+							}
+						}()
 						break
 					}
 				}
