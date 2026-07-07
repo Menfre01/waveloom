@@ -1,5 +1,28 @@
 # Changelog
 
+## [v0.1.0-beta.1] — 2026-07-07
+
+### 新增功能
+- **MCP Client**：完整 MCP 客户端实现 — 连接外部 MCP Server，自动工具发现与注册，与内置工具并列显示；支持 SSE 和 stdio 传输，`mcpServers` 配置与 Claude Code `.claude.json` 兼容
+- **Todo 任务列表**：完整 todo 状态管理系统 — `todo_write` 工具、TUI 侧边面板、周期性提醒、pending/in_progress/completed 三态流转；支持并行子代理多 in_progress、标题显示完成进度
+- **Subagent 增强**：fork 身份注入保持调用链可追溯；evaluation/verification 冷 agent（独立视角评审、对抗验证）；模型自动切换（deepseek-v4-pro 深推理 vs flash 日常）；缓存友好消息构造最大化前缀命中
+- **Todo 周期性提醒**：替代 ReminderInjected 一次性注入，todo 列表未完成时按时钟频率自动提醒 LLM
+
+### 修复
+- **MCP**：goroutine 泄漏、SSE 行解析异常、退出码错误等 9 个问题；日志默认写入 `io.Discard` 避免泄漏到 TUI
+- **Agent Loop**：`resultsCh` 双重 panic、Guard nil 解引用等 4 个缺陷；残留 todo 时 `ReminderInjected` 跨 turn 未重置
+- **Subagent**：`forwardEvents` 扇出通道解耦消除死锁；并发事件路由修复、中间 turn 文本裁剪、`bash_subagent` 隔离
+- **Todo**：merge 模式不删除未传入项；LLM 直接替换而非逐步更新的工作流引导
+- **TUI**：多行用户消息仅首行显示 `›` 前缀；`--resume` 恢复后已清空的 todolist 仍然出现；todo 面板 pending 项默认字体色
+- **Windows**：`install.ps1` 自动配置 PATH 与 Git Bash `~/.bashrc`；Go module 路径适配 Windows 反斜杠
+
+### 重构
+- Todo 去掉 ID 和 merge 机制，LLM 每次传入完整列表以消除状态不一致
+- Todo 移除 in_progress 单任务限制，支持并行子代理多任务同时进行
+- Subagent 提取 `ensureNonEmpty` 消除 anyText 状态追踪
+- 收紧 `todo_write` 触发条件减少小型任务滥用
+- 强化系统提示词中 `deepseek-v4-flash` 默认推荐力度
+
 ## [v0.1.0-alpha.15] — 2026-07-06
 
 ### 新增功能

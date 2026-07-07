@@ -202,6 +202,13 @@ type Messages struct {
 	SessionSaved      string // 含 %s
 	SessionResumeHint string // 含 %s
 
+	// ── Todo panel ────────────────────────────────────────
+	TodoTitle        string // 含 %d
+	TodoHiddenCount  string // 含 %d
+	TodoDoneCount    string // 含 %d
+	TodoInProgCount  string // 含 %d
+	TodoPendingCount string // 含 %d
+
 	// ── Setup locale options ──────────────────────────────
 	SetupLocaleZhCNLabel string
 	SetupLocaleEnUSLabel string
@@ -255,7 +262,7 @@ var zhCN = Messages{
 	ToolQuestionDeclined: "(declined)",
 	ToolTruncated:        "··· (truncated)",
 	ToolTruncatedLines:   "... (truncated to %d lines)",
-	ToolExpandAllHint:    "··· ⏎ 展开全部",
+	ToolExpandAllHint:    "··· ⏎ 展开",
 	ToolCollapseHint:     "▼ ⏎ 折叠",
 
 	// Permission
@@ -454,6 +461,13 @@ var zhCN = Messages{
 	SessionSaved:      "已保存 session: %s\n",
 	SessionResumeHint: "  恢复对话: waveloom --resume %s\n",
 
+	// Todo panel
+	TodoTitle:        "Todo — %d/%d 项",
+	TodoHiddenCount:  "%d 项隐藏",
+	TodoDoneCount:    "%d 完成",
+	TodoInProgCount:  "%d 进行中",
+	TodoPendingCount: "%d 等待",
+
 	// Setup locale options
 	SetupLocaleZhCNLabel: "简体中文  (zh-CN)",
 	SetupLocaleEnUSLabel: "English   (en-US)",
@@ -502,7 +516,7 @@ var enUS = Messages{
 	ToolQuestionDeclined: "(declined)",
 	ToolTruncated:        "··· (truncated)",
 	ToolTruncatedLines:   "... (truncated to %d lines)",
-	ToolExpandAllHint:    "··· ⏎ to expand all",
+	ToolExpandAllHint:    "··· ⏎ to expand",
 	ToolCollapseHint:     "▼ ⏎ to collapse",
 
 	// Permission
@@ -699,6 +713,13 @@ Environment variables:
 	// Session save
 	SessionSaved:      "Session saved: %s\n",
 	SessionResumeHint: "  Resume: waveloom --resume %s\n",
+
+	// Todo panel
+	TodoTitle:        "Todo — %d/%d items",
+	TodoHiddenCount:  "%d hidden",
+	TodoDoneCount:    "%d done",
+	TodoInProgCount:  "%d in progress",
+	TodoPendingCount: "%d pending",
 
 	// Setup locale options
 	SetupLocaleZhCNLabel: "简体中文  (zh-CN)",

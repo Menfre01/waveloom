@@ -42,20 +42,24 @@ func (a *deepSeekAdapter) AuthHeader() (string, string) {
 	return "Authorization", "Bearer " + a.apiKey
 }
 
-func (a *deepSeekAdapter) BuildRequest(messages []Message, tools []ToolSpec) (*http.Request, error) {
-	body := a.buildRequestBody(messages, tools, false)
+func (a *deepSeekAdapter) BuildRequest(ctx context.Context, messages []Message, tools []ToolSpec) (*http.Request, error) {
+	body := a.buildRequestBody(ctx, messages, tools, false)
 	return newJSONRequest(http.MethodPost, a.baseURL+"/v1/chat/completions", body)
 }
 
-func (a *deepSeekAdapter) BuildStreamRequest(messages []Message, tools []ToolSpec) (*http.Request, error) {
-	body := a.buildRequestBody(messages, tools, true)
+func (a *deepSeekAdapter) BuildStreamRequest(ctx context.Context, messages []Message, tools []ToolSpec) (*http.Request, error) {
+	body := a.buildRequestBody(ctx, messages, tools, true)
 	return newJSONRequest(http.MethodPost, a.baseURL+"/v1/chat/completions", body)
 }
 
 // buildRequestBody 构造请求 body 公共逻辑。
-func (a *deepSeekAdapter) buildRequestBody(messages []Message, tools []ToolSpec, stream bool) map[string]any {
+func (a *deepSeekAdapter) buildRequestBody(ctx context.Context, messages []Message, tools []ToolSpec, stream bool) map[string]any {
 	body := make(map[string]any)
-	body["model"] = a.model
+	if override := ModelOverrideFromContext(ctx); override != "" {
+		body["model"] = override
+	} else {
+		body["model"] = a.model
+	}
 	body["messages"] = messages
 	body["stream"] = stream
 

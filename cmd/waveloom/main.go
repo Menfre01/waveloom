@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -14,12 +15,14 @@ import (
 	ctxpkg "github.com/Menfre01/waveloom/pkg/context"
 	"github.com/Menfre01/waveloom/pkg/environment"
 	"github.com/Menfre01/waveloom/pkg/llm"
+	"github.com/Menfre01/waveloom/pkg/mcp"
 	"github.com/Menfre01/waveloom/pkg/memory"
 	"github.com/Menfre01/waveloom/pkg/permission"
 	"github.com/Menfre01/waveloom/pkg/reference"
 	"github.com/Menfre01/waveloom/pkg/shellutil"
 	"github.com/Menfre01/waveloom/pkg/skill"
 	"github.com/Menfre01/waveloom/pkg/subagent"
+	"github.com/Menfre01/waveloom/pkg/todo"
 	"github.com/Menfre01/waveloom/pkg/tool"
 )
 
@@ -76,7 +79,7 @@ func main() {
 	}
 
 	// 4. 加载 LLM Client（合并全局和项目配置，项目字段优先；--model 覆盖配置文件）
-	llmClient, llmClientCfg, err := createLLMClient(globalPath, projectPath, cfg.Model, loc)
+	llmClient, llmClientCfg, llmSettings, err := createLLMClient(globalPath, projectPath, cfg.Model, loc)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		if needsSetup() {
@@ -116,7 +119,25 @@ func main() {
 
 	// 6. 初始化 Tool Registry
 	registry := tool.NewRegistry()
-	registerBuiltinTools(registry, skillLoader, llmClient)
+	subModelValidation := buildValidModels(llmSettings)
+	registerBuiltinTools(registry, skillLoader, llmClient, subModelValidation)
+
+	// 8.5 启动 MCP Manager — 连接配置的 MCP Server，注册工具代理
+	// 日志输出策略：
+	//   - --verbose：写入滚动日志文件
+	//   - TUI 模式（默认）：丢弃（避免泄漏到界面）
+	//   - One-shot 模式：输出到 stderr（无 TUI，安全）
+	mcpLogger := io.Discard
+	if verboseLog != nil {
+		mcpLogger = verboseLog
+	} else if cfg.OneShot != "" {
+		mcpLogger = os.Stderr
+	}
+	mcpManager := mcp.NewManager(registry,
+		mcp.WithLogger(log.New(mcpLogger, "[mcp] ", log.LstdFlags)),
+	)
+	mcpManager.Start(context.Background(), mcp.LoadConfigs(cwd, homeDir))
+	defer func() { _ = mcpManager.Stop() }()
 
 	// 9. 创建 @ 引用展开器（用于 AGENTS.md 和用户输入中的 @ 引用展开）
 	expander := reference.New(guard)
@@ -159,6 +180,11 @@ func main() {
 	// 注入 skill 列表到 system prompt
 	if skillListing := skillLoader.FormatSkillListing(); skillListing != "" {
 		systemPrompt += skillListing
+	}
+
+	// 注入 subagent 模型选择指导（主模型 ≠ sub_model 时）
+	if llmSettings.SubModel != "" && llmSettings.Model != llmSettings.SubModel {
+		systemPrompt += buildModelSelectionSection(llmSettings.Model, llmSettings.SubModel)
 	}
 
 	// 合并 compaction 配置：默认值 + settings.json 覆盖
@@ -231,22 +257,40 @@ func main() {
 		skillLoader.SessionID = sid
 	}
 
-	// 15. 分支：无 prompt → 交互式 TUI，有 prompt → 单次执行
+	// 15. 创建 session 级 TodoState
+	todoState := todo.NewTodoState()
+
+	// session resume: 恢复持久化的 todo 列表
+	if isResume {
+		if rawItems := ctxMgr.TodoItems(); len(rawItems) > 0 {
+			var items []todo.TodoItem
+			for _, raw := range rawItems {
+				var item todo.TodoItem
+				if err := json.Unmarshal(raw, &item); err == nil {
+					items = append(items, item)
+				}
+			}
+			if len(items) > 0 {
+				todoState.Restore(items)
+			}
+		}
+	}
+
+	// 16. 分支：无 prompt → 交互式 TUI，有 prompt → 单次执行
 	if cfg.OneShot == "" {
-		runTUI(llmClient, registry, guard, expander, cfg.Model, cfg.Theme, verboseLog, cfg.ContextLimit, cfg.MaxTurns, cfg.ToolTimeout, cfg.ToolTimeoutSource, cfg.BypassPerm, ctxMgr, isResume, sessionDir, globalPath, projectPath, agentsMdText, loc)
+		runTUI(llmClient, registry, guard, expander, cfg.Model, cfg.Theme, verboseLog, cfg.ContextLimit, cfg.MaxTurns, cfg.ToolTimeout, cfg.ToolTimeoutSource, cfg.BypassPerm, ctxMgr, isResume, sessionDir, globalPath, projectPath, agentsMdText, loc, todoState)
 		return
 	}
 
-	runOneShot(cfg, llmClient, registry, guard, expander, cwd, verboseLog, ctxMgr, agentsMdText, loc)
+	runOneShot(cfg, llmClient, registry, guard, expander, cwd, verboseLog, ctxMgr, agentsMdText, loc, todoState)
 }
 
 // registerBuiltinTools 注册内置工具。
-func registerBuiltinTools(r tool.Registry, skillLoader *skill.Loader, llmClient llm.Client) {
+func registerBuiltinTools(r tool.Registry, skillLoader *skill.Loader, llmClient llm.Client, validModels []string) {
 	r.Register(tool.Wrap(&tool.ReadFile{}))
 	r.Register(tool.Wrap(&tool.WriteFile{}))
 	r.Register(tool.Wrap(&tool.EditFile{}))
-	r.Register(tool.Wrap(&tool.Shell{AllowBg: true}))  // "bash"
-	r.Register(tool.Wrap(&tool.Shell{AllowBg: false})) // "bash_subagent"
+	r.Register(tool.Wrap(&tool.Shell{AllowBg: true})) // "bash"
 	r.Register(tool.Wrap(&tool.WebFetch{}))
 
 	// Skill 工具
@@ -265,8 +309,11 @@ func registerBuiltinTools(r tool.Registry, skillLoader *skill.Loader, llmClient 
 	r.Register(tool.Wrap(&tool.KillBackgroundTask{}))
 
 	// Agent — subagent delegation
-	at := &subagent.AgentTool{LLMClient: llmClient}
+	at := &subagent.AgentTool{LLMClient: llmClient, ValidModels: validModels}
 	r.Register(tool.Wrap(at))
+
+	// TodoWrite — 结构化任务列表管理
+	r.Register(tool.Wrap(&tool.TodoWrite{}))
 }
 
 // resolveSettingsPaths 返回全局和项目配置文件路径。
@@ -297,21 +344,21 @@ func resolveSettingsPaths(explicit string) (globalPath, projectPath string) {
 // createLLMClient 合并全局和项目配置创建 LLM Client。
 // 项目配置字段覆盖全局。若均无配置则生成默认项目配置。
 // cliModel 为 --model 命令行参数，非空时覆盖配置文件中的模型名。
-func createLLMClient(globalPath, projectPath, cliModel string, loc Locale) (llm.Client, llm.ClientConfig, error) {
+func createLLMClient(globalPath, projectPath, cliModel string, loc Locale) (llm.Client, llm.ClientConfig, *llm.LLMSettings, error) {
 	globalSettings, _ := llm.LoadSettingsIfExists(globalPath)
 	projectSettings, _ := llm.LoadSettingsIfExists(projectPath)
 
 	// 两边都没有配置文件 → 生成默认项目配置
 	if globalSettings == nil && projectSettings == nil {
 		if err := llm.WriteDefaultSettings(projectPath); err != nil {
-			return nil, llm.ClientConfig{}, fmt.Errorf("failed to create default settings: %w", err)
+			return nil, llm.ClientConfig{}, nil, fmt.Errorf("failed to create default settings: %w", err)
 		}
 		fmt.Fprintf(os.Stderr, messagesFor(loc).CLIDefaultConfigCreated, projectPath)
 		fmt.Fprint(os.Stderr, messagesFor(loc).CLISetupHint)
 		var loadErr error
 		projectSettings, loadErr = llm.LoadSettingsIfExists(projectPath)
 		if loadErr != nil {
-			return nil, llm.ClientConfig{}, loadErr
+			return nil, llm.ClientConfig{}, nil, loadErr
 		}
 	}
 
@@ -321,9 +368,9 @@ func createLLMClient(globalPath, projectPath, cliModel string, loc Locale) (llm.
 	}
 	client, cfg, err := llm.NewClientFromLLMSettings(merged)
 	if err != nil {
-		return nil, llm.ClientConfig{}, err
+		return nil, llm.ClientConfig{}, nil, err
 	}
-	return client, cfg, nil
+	return client, cfg, merged, nil
 }
 
 // setupVerboseLog 在 .waveloom/ 下创建滚动日志。
@@ -497,4 +544,36 @@ func (a *skillExecutorAdapter) Load(name, args string) (*tool.SkillLoadResult, e
 		Body:    loaded.Body,
 		DirPath: loaded.DirPath,
 	}, nil
+}
+
+// buildValidModels 从 LLMSettings 构造可用模型列表（用于 AgentTool 参数校验）。
+// 列表包含主模型和子模型（去重），仅在有子模型时启用校验。
+func buildValidModels(s *llm.LLMSettings) []string {
+	if s == nil || s.SubModel == "" {
+		return nil
+	}
+	models := []string{s.Model}
+	if s.SubModel != s.Model {
+		models = append(models, s.SubModel)
+	}
+	return models
+}
+
+// buildModelSelectionSection 构造注入到 system prompt 的模型选择指导。
+func buildModelSelectionSection(defaultModel, flashModel string) string {
+	return fmt.Sprintf(`
+## Subagent Model Selection
+
+When spawning subagents with the agent tool, you can override the model via the optional
+`+"`model`"+` parameter. The parameter accepts:
+
+  (omit / empty)  → uses the default (%s)
+  "%s"             → deep reasoning. Use ONLY for: evaluation, verification, complex multi-file implementation.
+  "%s"             → fast and cheap — the right choice for most tasks: Explore, research, code search, single-file edits, simple lookups.
+
+Prefer `+"`%s`"+` unless the task genuinely demands deep analysis.
+Output tokens cost 240x that of cached input — `+"`%s`"+` on routine tasks wastes compute with zero quality gain.
+
+If you pass an unrecognized value, the default is used.
+`, defaultModel, defaultModel, flashModel, flashModel, defaultModel)
 }

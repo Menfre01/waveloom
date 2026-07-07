@@ -25,6 +25,7 @@ Minimal config:
 | `api_key` | DeepSeek API Key, falls back to `LLM_API_KEY` env var when empty | — |
 | `provider` | `deepseek` or `openai` | `deepseek` |
 | `model` | Model name | `deepseek-v4-pro` |
+| `sub_model` | Sub-agent default model, auto-paired for DeepSeek (pro → flash) | Auto-paired |
 | `base_url` | API endpoint | `https://api.deepseek.com` |
 | `timeout` | Request timeout | `600s` |
 | `extra_params` | Extra parameters (thinking, reasoning_effort, etc.) | Thinking mode on by default |
@@ -36,7 +37,7 @@ Minimal config:
 ```json
 {
   "permissions": {
-    "allow": ["read_file", "search_file", "grep", "ls"],
+    "allow": ["read_file", "web_fetch", "bash(go build *)", "bash(go test *)"],
     "deny":  ["bash(rm -rf /*)"],
     "ask":   ["write_file", "edit_file"]
   }

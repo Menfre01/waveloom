@@ -12,7 +12,7 @@ We will acknowledge receipt within 48 hours and publicly credit you after the fi
 
 | Version | Support Status |
 |---------|----------------|
-| v0.1.x (alpha) | ✅ Security fixes |
+| v0.1.x | ✅ Security fixes |
 
 ## Security Checklist
 

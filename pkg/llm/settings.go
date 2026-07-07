@@ -13,13 +13,14 @@ import (
 // LLMSettings 对应 settings.json 中的顶层 llm 配置块。
 // 所有 LLM Client 的构造参数均通过此结构表达，支持任意嵌套的 extra_params。
 type LLMSettings struct {
-	APIKey      string            `json:"api_key"`     // API Key；为空时回退到 LLM_API_KEY 环境变量
-	Provider    string            `json:"provider"`    // "openai" / "deepseek"，默认 "openai"
-	Model       string            `json:"model"`       // 模型名称
-	BaseURL     string            `json:"base_url"`    // API 端点，留空使用默认
-	Timeout     string            `json:"timeout"`     // 单次请求超时，Go Duration 格式（如 "600s"），默认 600s
-	Retry       *RetrySettings    `json:"retry"`       // 重试策略，留空使用默认
-	Headers     map[string]string `json:"headers"`     // 自定义 HTTP 请求头
+	APIKey      string            `json:"api_key"`      // API Key；为空时回退到 LLM_API_KEY 环境变量
+	Provider    string            `json:"provider"`     // "openai" / "deepseek"，默认 "deepseek"
+	Model       string            `json:"model"`        // 模型名称（主模型）
+	SubModel    string            `json:"sub_model"`    // subagent 默认模型，仅 DeepSeek 下自动填充为空则用 Model
+	BaseURL     string            `json:"base_url"`     // API 端点，留空使用默认
+	Timeout     string            `json:"timeout"`      // 单次请求超时，Go Duration 格式（如 "600s"），默认 600s
+	Retry       *RetrySettings    `json:"retry"`        // 重试策略，留空使用默认
+	Headers     map[string]string `json:"headers"`      // 自定义 HTTP 请求头
 	ExtraParams map[string]any    `json:"extra_params"` // Provider 特有参数，支持任意嵌套
 }
 
@@ -196,6 +197,13 @@ func NewClientFromMergedSettings(globalPath, projectPath string) (Client, error)
 func NewClientFromLLMSettings(settings *LLMSettings) (Client, ClientConfig, error) {
 	if settings == nil {
 		return nil, ClientConfig{}, &NonRetryableError{Message: "settings must not be nil"}
+	}
+
+	// 自动配对 sub_model：DeepSeek pro 主模型 → flash 子模型
+	if settings.Provider == "deepseek" && settings.SubModel == "" {
+		if settings.Model == "deepseek-v4-pro" {
+			settings.SubModel = "deepseek-v4-flash"
+		}
 	}
 
 	apiKey := settings.APIKey
