@@ -4,6 +4,7 @@ import (
 	"github.com/Menfre01/waveloom/pkg/compaction"
 	"github.com/Menfre01/waveloom/pkg/llm"
 	"github.com/Menfre01/waveloom/pkg/permission"
+	"github.com/Menfre01/waveloom/pkg/todo"
 	"github.com/Menfre01/waveloom/pkg/tool"
 )
 
@@ -204,6 +205,18 @@ type PlanModeExit struct {
 }
 
 func (PlanModeExit) TurnEvent() {}
+
+// ---------------------------------------------------------------------------
+// TodoUpdateEvent — todo 列表更新
+// ---------------------------------------------------------------------------
+
+// TodoUpdateEvent 在 todo_write 工具执行后推送，
+// 通知 TUI 刷新 todo 面板显示。
+type TodoUpdateEvent struct {
+	Items []todo.TodoItem
+}
+
+func (TodoUpdateEvent) TurnEvent() {}
 
 // ---------------------------------------------------------------------------
 // LoopDone — 循环终止

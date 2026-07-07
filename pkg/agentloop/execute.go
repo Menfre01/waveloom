@@ -14,6 +14,7 @@ import (
 
 	"github.com/Menfre01/waveloom/pkg/llm"
 	"github.com/Menfre01/waveloom/pkg/permission"
+	"github.com/Menfre01/waveloom/pkg/todo"
 	"github.com/Menfre01/waveloom/pkg/tool"
 )
 
@@ -130,22 +131,22 @@ func (l *Loop) executeToolCalls(ctx context.Context, calls []llm.ToolCall, state
 			wg.Add(1)
 			go func(tc llm.ToolCall) {
 				defer wg.Done()
-				defer func() {
-					if r := recover(); r != nil {
-						resultsCh <- execResult{
-							tc: tc,
-							result: &tool.ToolResult{
-								Error: &tool.ToolError{
-									Class:   tool.ErrorClassFatal,
-									Kind:    tool.ErrKindUnknownTool,
-									Message: fmt.Sprintf("panic: %v", r),
-								},
+			defer func() {
+				if r := recover(); r != nil {
+					safeSend(resultsCh, execResult{
+						tc: tc,
+						result: &tool.ToolResult{
+							Error: &tool.ToolError{
+								Class:   tool.ErrorClassFatal,
+								Kind:    tool.ErrKindUnknownTool,
+								Message: fmt.Sprintf("panic: %v", r),
 							},
-							err:   fmt.Errorf("panic in tool %q: %v", tc.Name, r),
-							start: time.Now(),
-						}
-					}
-				}()
+						},
+						err:   fmt.Errorf("panic in tool %q: %v", tc.Name, r),
+						start: time.Now(),
+					})
+				}
+			}()
 				start := time.Now()
 				execCtx := ctx
 				if l.config.ToolTimeout > 0 {
@@ -153,6 +154,7 @@ func (l *Loop) executeToolCalls(ctx context.Context, calls []llm.ToolCall, state
 					execCtx, cancel = context.WithTimeout(ctx, l.config.ToolTimeout)
 					defer cancel()
 				}
+				execCtx = WithToolCallID(execCtx, tc.ID)
 				var result *tool.ToolResult
 				var execErr error
 				if l.toolRegistry.IsStreamable(tc.Name) {
@@ -165,7 +167,7 @@ func (l *Loop) executeToolCalls(ctx context.Context, calls []llm.ToolCall, state
 				} else {
 					result, execErr = l.toolRegistry.Execute(execCtx, tc.Name, json.RawMessage(tc.Arguments))
 				}
-				resultsCh <- execResult{tc: tc, result: result, err: execErr, start: start}
+				safeSend(resultsCh, execResult{tc: tc, result: result, err: execErr, start: start})
 			}(tc)
 		}
 		// REGRESSION: wg.Wait() 无超时保护。每个 goroutine 有 ToolTimeout，
@@ -347,6 +349,31 @@ func (l *Loop) executeToolCalls(ctx context.Context, calls []llm.ToolCall, state
 			}
 		}
 
+		// todo_write 由 Loop 拦截处理（更新 TodoState + 推送事件）
+		if tc.Name == "todo_write" {
+			result := l.executeTodoWrite(ctx, tc, state, ch)
+			results[tc.ID] = result
+			durations[tc.ID] = 0
+
+			ev := ToolCallResult{
+				Turn:         state.TurnCount,
+				ToolCallID:   tc.ID,
+				ToolCallName: tc.Name,
+				DurationMs:   0,
+			}
+			if result.IsError() {
+				ev.Error = result.Error.Message
+				ev.ErrorKind = result.Error.Kind
+				ev.Fatal = result.Error.Class == tool.ErrorClassFatal
+			} else {
+				ev.Result = result.Content
+			}
+			if !sendEvent(ctx, ch, ev) {
+				return nil, ReasonAborted, ctx.Err()
+			}
+			continue
+		}
+
 		if l.checkPermission(ctx, tc, results, skip) {
 			r := results[tc.ID]
 			if !sendEvent(ctx, ch, ToolCallResult{
@@ -376,6 +403,7 @@ func (l *Loop) executeToolCalls(ctx context.Context, calls []llm.ToolCall, state
 			execCtx, cancel = context.WithTimeout(ctx, l.config.ToolTimeout)
 			defer cancel()
 		}
+		execCtx = WithToolCallID(execCtx, tc.ID)
 		var result *tool.ToolResult
 		var execErr error
 		if l.toolRegistry.IsStreamable(tc.Name) {
@@ -660,6 +688,56 @@ func (l *Loop) checkPermission(ctx context.Context, tc llm.ToolCall, results map
 	return false
 }
 
+// executeTodoWrite 处理 todo_write 工具调用。
+// 解析参数 → 更新 TodoState → 推送 TodoUpdateEvent → 返回格式化结果给 LLM。
+func (l *Loop) executeTodoWrite(ctx context.Context, tc llm.ToolCall, state *LoopState, ch chan<- TurnEvent) *tool.ToolResult {
+	if l.config.TodoState == nil {
+		return &tool.ToolResult{
+			Content: "todo_write is not available (TodoState not configured).",
+		}
+	}
+
+	var params todo.TodoWriteParams
+	if err := json.Unmarshal([]byte(tc.Arguments), &params); err != nil {
+		return &tool.ToolResult{
+			Error: &tool.ToolError{
+				Class:   tool.ErrorClassRecoverable,
+				Kind:    tool.ErrKindInvalidArgs,
+				Message: "todo_write: failed to parse arguments: " + err.Error(),
+			},
+		}
+	}
+
+	oldItems, newItems := l.config.TodoState.Apply(params)
+
+	// 成功更新后重置周期性提醒计数器
+	l.turnsSinceLastTodoWrite = 0
+	l.turnsSinceLastTodoReminder = 0
+
+	// 推送更新事件给 TUI
+	if !sendEvent(ctx, ch, TodoUpdateEvent{Items: newItems}) {
+		return &tool.ToolResult{
+			Error: &tool.ToolError{
+				Class:   tool.ErrorClassRecoverable,
+				Kind:    "context_cancelled",
+				Message: "todo_write: context cancelled",
+			},
+		}
+	}
+
+	result := todo.FormatResult(newItems)
+
+	// 检测无状态变更的 no-op 调用：若新旧列表状态完全一致，追加提示
+	if todoItemsEqual(oldItems, newItems) && len(newItems) > 0 {
+		result += "\n⚠️ No status changes detected. Did you forget to update task statuses? " +
+			"Mark completed tasks as 'completed' and start the next task by setting it to 'in_progress'."
+	}
+
+	return &tool.ToolResult{
+		Content: result,
+	}
+}
+
 // executeAskUserQuestion 处理 ask_user_question 工具调用。
 // 发送通知事件后通过 UserResponder.AnswerQuestion() 阻塞等待用户回答。
 func (l *Loop) executeAskUserQuestion(ctx context.Context, tc llm.ToolCall, state *LoopState, ch chan<- TurnEvent) (*tool.ToolResult, error) {
@@ -704,11 +782,13 @@ func (l *Loop) executeAskUserQuestion(ctx context.Context, tc llm.ToolCall, stat
 	}
 
 	// 发送通知事件（非阻塞，TUI 可据此做渲染准备）
-	sendEvent(ctx, ch, AskUserQuestionEvent{
+	if !sendEvent(ctx, ch, AskUserQuestionEvent{
 		Turn:       state.TurnCount,
 		ToolCallID: tc.ID,
 		Questions:  prompts,
-	})
+	}) {
+		return nil, ctx.Err()
+	}
 
 	// 通过 UserResponder 阻塞等待用户回答
 	if l.config.UserResponder == nil {
@@ -812,7 +892,9 @@ Remember: DO NOT write or edit any source files — these operations will be blo
 	// 启用 plan 模式
 	l.plan = true
 	l.planPairID = generatePairID()
-	l.config.Guard.EnterPlanMode(l.config.PlanFile)
+	if l.config.Guard != nil {
+		l.config.Guard.EnterPlanMode(l.config.PlanFile)
+	}
 
 	emitPlanEnter(ch, state.TurnCount, l.config.PlanFile, l.planPairID)
 
@@ -900,7 +982,9 @@ func (l *Loop) executeExitPlanMode(ctx context.Context, tc llm.ToolCall, state *
 	l.plan = false
 	l.approvedPlan = planStr // 暂存，由 executeToolCalls 在 tool 消息后注入 [plan:end]
 	l.config.PlanFile = ""   // 清除，确保下次进入生成新文件
-	l.config.Guard.ExitPlanMode()
+	if l.config.Guard != nil {
+		l.config.Guard.ExitPlanMode()
+	}
 
 	emitPlanExit(ch, state.TurnCount, planStr, l.config.PlanFile)
 
@@ -1016,4 +1100,26 @@ var nouns = []string{
 	"lemur", "marlin", "newt", "otter", "puffin",
 	"quokka", "raven", "salmon", "tapir", "urchin",
 	"viper", "weasel", "xerus", "yak", "zebra",
+}
+
+// todoItemsEqual 比较两个 todo 列表的状态是否完全一致（content + status + activeForm）。
+// 用于检测 no-op todo_write 调用（LLM 传入相同状态但未做任何变更）。
+func todoItemsEqual(a, b []todo.TodoItem) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i].Content != b[i].Content || a[i].Status != b[i].Status || a[i].ActiveForm != b[i].ActiveForm {
+			return false
+		}
+	}
+	return true
+}
+
+// safeSend 向 channel 安全发送，channel 已关闭时静默丢弃（不 panic）。
+// REGRESSION: 工具 goroutine 可能在 resultsCh 关闭后仍尝试发送（工具忽略 context 取消），
+// 导致 panic-in-recover 的 double-panic 使进程崩溃。
+func safeSend[T any](ch chan<- T, v T) {
+	defer func() { _ = recover() }()
+	ch <- v
 }

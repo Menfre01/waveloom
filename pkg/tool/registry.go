@@ -98,22 +98,5 @@ func (r *registry) ExecuteStreaming(ctx context.Context, name string, input json
 	return st.ExecuteStreaming(ctx, input, chunkCb)
 }
 
-// ---------------------------------------------------------------------------
-// NewDefaultRegistry — 注册所有内置工具
-// ---------------------------------------------------------------------------
 
-// NewDefaultRegistry 创建包含所有内置工具的 Registry。
-func NewDefaultRegistry() Registry {
-	r := NewRegistry()
-	r.Register(Wrap(&ReadFile{}))
-	r.Register(Wrap(&WriteFile{}))
-	r.Register(Wrap(&EditFile{}))
-	r.Register(Wrap(&Shell{AllowBg: true}))  // "bash"
-	r.Register(Wrap(&Shell{AllowBg: false})) // "bash_subagent"
-	r.Register(Wrap(&WebFetch{}))
-	r.Register(Wrap(&AskUserQuestion{}))
-	r.Register(Wrap(&EnterPlanMode{}))
-	r.Register(Wrap(&ExitPlanMode{}))
-	r.Register(Wrap(&KillBackgroundTask{}))
-	return r
-}
+

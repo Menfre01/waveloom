@@ -15,7 +15,7 @@ Waveloom systematically optimizes for this:
 1. **System prompt fixed as `messages[0]`**: The first message never changes, no matter how long the conversation — ensuring the prefix starting point is always stable.
 2. **Message history accumulated across turns**: Each turn appends to the end rather than resetting. The first N-1 turns become the prefix for turn N's request.
 3. **Four-tier watermark compaction (Tier 0–3)**: As context utilization rises, history is compressed in stages. The key insight — **compacted byte content never changes again**. Once a message is truncated or replaced with a placeholder, it keeps the exact same byte representation in all future turns, so the prefix cache keeps hitting.
-4. **Monotonic boundary guarantee**: The decision table (`compactionDecisionSet`) + dual cursor mechanism ensures each message is compacted exactly once — never modified repeatedly, which would invalidate the cache.
+4. **Monotonic boundary guarantee**: The decision table (`compactionDecisionSet`) + triple cursor mechanism ensures each message is compacted exactly once — never modified repeatedly, which would invalidate the cache.
 
 ```mermaid
 flowchart LR

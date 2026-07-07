@@ -1,5 +1,28 @@
 # Changelog
 
+## [v0.1.0-beta.1] — 2026-07-07
+
+### Added
+- **MCP Client**: Full MCP client — connects to external MCP servers, automatic tool discovery and registration alongside built-in tools; supports SSE and stdio transports, `mcpServers` config compatible with Claude Code `.claude.json`
+- **Todo task list**: Complete todo state management — `todo_write` tool, TUI side panel, periodic reminders, pending/in_progress/completed state transitions; supports parallel subagent multi-in_progress, headline shows completion progress
+- **Subagent enhancements**: Fork identity injection keeps call chain traceable; evaluation/verification cold agents (independent review, adversarial verification); model auto-switching (deepseek-v4-pro for deep reasoning vs flash for routine); cache-friendly message construction maximizes prefix hits
+- **Periodic todo reminders**: Replaces one-shot ReminderInjected — auto-reminds the LLM about incomplete todo items on a clock cadence
+
+### Fixed
+- **MCP**: Goroutine leak, SSE line parsing errors, exit code bugs — 9 issues in one patch; log output now defaults to `io.Discard` to prevent TUI leakage
+- **Agent Loop**: `resultsCh` double-panic, Guard nil dereference — 4 defects fixed; `ReminderInjected` now resets across turns when stale todos remain
+- **Subagent**: `forwardEvents` fan-out channel decoupling eliminates deadlock; concurrent event routing fixes, mid-turn text trimming, `bash_subagent` isolation
+- **Todo**: Merge mode no longer drops unmentioned items; LLM workflow guidance shifted from incremental updates to full-list replacement
+- **TUI**: Multi-line user messages now show `›` prefix on every line; `--resume` no longer resurrects cleared todolists; todo panel pending items now use default text color
+- **Windows**: `install.ps1` auto-configures PATH and Git Bash `~/.bashrc`; Go module paths adapted for Windows backslash separators
+
+### Changed
+- Todo removes ID and merge mechanism — LLM passes the complete list each time, eliminating state inconsistency
+- Todo drops single-in_progress restriction, allowing parallel subagent tasks to be in_progress simultaneously
+- Subagent extracts `ensureNonEmpty` to eliminate anyText state tracking
+- Tighten `todo_write` trigger conditions to reduce abuse on trivial tasks
+- Strengthen `deepseek-v4-flash` default recommendation in system prompt
+
 ## [v0.1.0-alpha.15] — 2026-07-06
 
 ### Added

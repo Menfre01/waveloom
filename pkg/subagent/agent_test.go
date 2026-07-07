@@ -111,7 +111,7 @@ func TestAgentTool_Schema(t *testing.T) {
 func TestAgentTool_Description(t *testing.T) {
 	a := &AgentTool{}
 	desc := a.Description()
-	for _, keyword := range []string{"subagent", "fork", "general-purpose", "Explore"} {
+	for _, keyword := range []string{"subagent", "fork", "evaluate", "Explore", "verification"} {
 		if !strings.Contains(desc, keyword) {
 			t.Errorf("Description missing keyword %q", keyword)
 		}
@@ -122,19 +122,19 @@ func TestAgentTool_Description(t *testing.T) {
 // Cold agent tests
 // ---------------------------------------------------------------------------
 
-func TestAgentTool_ExecuteCold_GeneralPurpose(t *testing.T) {
+func TestAgentTool_ExecuteCold_Evaluate(t *testing.T) {
 	ctx := context.Background()
 
 	a := &AgentTool{LLMClient: &stubLLM{}}
 	result, err := a.Execute(ctx, AgentParams{
-		SubagentType: "general-purpose",
+		SubagentType: "evaluate",
 		Description:  "test",
-		Prompt:       "say hello",
+		Prompt:       "review something",
 	})
 	if err != nil {
 		t.Fatalf("Execute() error: %v", err)
 	}
-	if !strings.Contains(result.Content, "general-purpose") {
+	if !strings.Contains(result.Content, "evaluate") {
 		t.Errorf("result should mention agent type: %s", result.Content)
 	}
 	if !strings.Contains(result.Content, "ok") {
@@ -159,11 +159,12 @@ func TestAgentTool_ExecuteCold_Explore(t *testing.T) {
 	}
 }
 
-func TestAgentTool_ExecuteCold_UnknownTypeDefaultsToGeneral(t *testing.T) {
+func TestAgentTool_ExecuteCold_UnknownTypeDefaultsToEvaluate(t *testing.T) {
 	ctx := context.Background()
 
 	a := &AgentTool{LLMClient: &stubLLM{}}
-	// Unknown type should fall back to general-purpose
+	// Unknown type falls back to evaluate system prompt & tools, but the type
+	// label in the result preserves the original name (for TUI display).
 	result, err := a.Execute(ctx, AgentParams{
 		SubagentType: "nonexistent",
 		Description:  "test",
@@ -172,8 +173,9 @@ func TestAgentTool_ExecuteCold_UnknownTypeDefaultsToGeneral(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Execute() error: %v", err)
 	}
-	if !strings.Contains(result.Content, "general-purpose") && !strings.Contains(result.Content, "nonexistent") {
-		t.Errorf("unknown type should fall back to general-purpose system prompt: %s", result.Content)
+	// Verify it completed successfully with the fallback
+	if !strings.Contains(result.Content, "completed") && !strings.Contains(result.Content, "ok") {
+		t.Errorf("unknown type should succeed with fallback: %s", result.Content)
 	}
 }
 
@@ -213,7 +215,7 @@ func TestAgentTool_ExecuteCold_SubagentEndError(t *testing.T) {
 
 	a := &AgentTool{LLMClient: errLLM}
 	result, err := a.Execute(ctx, AgentParams{
-		SubagentType: "general-purpose",
+		SubagentType: "evaluate",
 		Description:  "error-test",
 		Prompt:       "test",
 	})
@@ -232,17 +234,22 @@ func TestAgentTool_ExecuteCold_SubagentEndError(t *testing.T) {
 // Cold registry tests
 // ---------------------------------------------------------------------------
 
-func TestBuildColdRegistry_GeneralPurpose_HasAllWriteableTools(t *testing.T) {
-	r := buildColdRegistry(nil) // general-purpose: no extra disallowed
+func TestBuildColdRegistry_Evaluate_IsReadOnly(t *testing.T) {
+	r := buildColdRegistry(evaluateDisallowed)
 	names := toolNames(r)
-	for _, name := range []string{"read_file", "write_file", "edit_file", "web_fetch", "bash_subagent"} {
+	for _, name := range []string{"read_file", "web_fetch", "bash_subagent"} {
 		if !contains(names, name) {
-			t.Errorf("general-purpose registry missing %q", name)
+			t.Errorf("evaluate registry missing %q", name)
+		}
+	}
+	for _, name := range []string{"write_file", "edit_file"} {
+		if contains(names, name) {
+			t.Errorf("evaluate registry should NOT have %q", name)
 		}
 	}
 	// bash (main agent) should NOT be available
 	if contains(names, "bash") {
-		t.Error("general-purpose registry should NOT have bash")
+		t.Error("evaluate registry should NOT have bash")
 	}
 }
 
@@ -287,7 +294,7 @@ func TestForwardEvents_TextAggregation(t *testing.T) {
 		close(ch)
 	}()
 
-	aggregated, turns, promptTok, complTok, err := forwardEvents(ctx, ch, nil)
+	aggregated, turns, promptTok, complTok, err := forwardEvents(ctx, ch, nil, "")
 	if err != nil {
 		t.Fatalf("forwardEvents error: %v", err)
 	}
@@ -322,7 +329,7 @@ func TestForwardEvents_ToolEventsProduceCallback(t *testing.T) {
 		close(ch)
 	}()
 
-	_, _, _, _, err := forwardEvents(ctx, ch, cb)
+	_, _, _, _, err := forwardEvents(ctx, ch, cb, "")
 	if err != nil {
 		t.Fatalf("forwardEvents error: %v", err)
 	}
@@ -360,7 +367,7 @@ func TestForwardEvents_WriteOperationsTracking(t *testing.T) {
 		close(ch)
 	}()
 
-	aggregated, _, _, _, err := forwardEvents(ctx, ch, nil)
+	aggregated, _, _, _, err := forwardEvents(ctx, ch, nil, "")
 	if err != nil {
 		t.Fatalf("forwardEvents error: %v", err)
 	}
@@ -388,7 +395,7 @@ func TestForwardEvents_TurnStatsAccumulation(t *testing.T) {
 		close(ch)
 	}()
 
-	_, turns, promptTok, complTok, err := forwardEvents(ctx, ch, nil)
+	_, turns, promptTok, complTok, err := forwardEvents(ctx, ch, nil, "")
 	if err != nil {
 		t.Fatalf("forwardEvents error: %v", err)
 	}
@@ -411,7 +418,7 @@ func TestForwardEvents_LoopDoneError(t *testing.T) {
 		close(ch)
 	}()
 
-	_, _, _, _, err := forwardEvents(ctx, ch, nil)
+	_, _, _, _, err := forwardEvents(ctx, ch, nil, "")
 	if err == nil {
 		t.Fatal("expected error from LoopDone")
 	}
@@ -430,12 +437,14 @@ func TestForwardEvents_EmptyStream(t *testing.T) {
 		close(ch)
 	}()
 
-	aggregated, _, _, _, err := forwardEvents(ctx, ch, nil)
+	aggregated, _, _, _, err := forwardEvents(ctx, ch, nil, "")
 	if err != nil {
 		t.Fatalf("forwardEvents error: %v", err)
 	}
-	if aggregated != "" {
-		t.Errorf("aggregated = %q, want empty", aggregated)
+	// 空流（无任何文本输出）应返回兜底文本，而非空字符串，
+	// 防止 tool_result 内容为空导致父 agent 误解。
+	if aggregated == "" {
+		t.Errorf("aggregated is empty, want non-empty fallback")
 	}
 }
 
@@ -458,7 +467,7 @@ func TestForwardEvents_ToolCallStreamEvent(t *testing.T) {
 		close(ch)
 	}()
 
-	_, _, _, _, err := forwardEvents(ctx, ch, cb)
+	_, _, _, _, err := forwardEvents(ctx, ch, cb, "")
 	if err != nil {
 		t.Fatalf("forwardEvents error: %v", err)
 	}
@@ -501,7 +510,7 @@ func TestForwardEvents_ToolCallResultError(t *testing.T) {
 		close(ch)
 	}()
 
-	_, _, _, _, err := forwardEvents(ctx, ch, cb)
+	_, _, _, _, err := forwardEvents(ctx, ch, cb, "")
 	if err != nil {
 		t.Fatalf("forwardEvents error: %v", err)
 	}
@@ -530,7 +539,7 @@ func TestForwardEvents_ChannelCloseWithoutLoopDone(t *testing.T) {
 		close(ch)
 	}()
 
-	aggregated, turns, _, _, err := forwardEvents(ctx, ch, nil)
+	aggregated, turns, _, _, err := forwardEvents(ctx, ch, nil, "")
 	if err != nil {
 		t.Fatalf("forwardEvents error: %v", err)
 	}
@@ -539,6 +548,38 @@ func TestForwardEvents_ChannelCloseWithoutLoopDone(t *testing.T) {
 	}
 	if turns != 0 {
 		t.Errorf("turns = %d, want 0 (no LoopDone)", turns)
+	}
+}
+
+// REGRESSION: forwardEvents 只返回最后一个 turn 的文本，丢弃中间推理过程，
+// 节省主 agent 的 token 消耗。
+func TestRegression_ForwardEvents_OnlyLastTurnText(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	ch := make(chan agentloop.TurnEvent, 10)
+	go func() {
+		// Turn 1（中间推理，应被丢弃）
+		ch <- agentloop.StreamDelta{Turn: 1, ContentDelta: "turn 1 thinking..."}
+		ch <- agentloop.StreamDelta{Turn: 1, ContentDelta: " more turn 1"}
+		ch <- agentloop.ToolCallStart{Turn: 1, ToolCallName: "read_file", Arguments: `{"file_path":"a.go"}`}
+		ch <- agentloop.ToolCallResult{Turn: 1, ToolCallName: "read_file", Result: "content", DurationMs: 10}
+		// Turn 2（最终结论，应保留）
+		ch <- agentloop.StreamDelta{Turn: 2, ContentDelta: "conclusion"}
+		ch <- agentloop.StreamDelta{Turn: 2, ContentDelta: " finalized"}
+		ch <- agentloop.LoopDone{Turn: 2}
+		close(ch)
+	}()
+
+	lastTurnText, turns, _, _, err := forwardEvents(ctx, ch, nil, "")
+	if err != nil {
+		t.Fatalf("forwardEvents error: %v", err)
+	}
+	if lastTurnText != "conclusion finalized" {
+		t.Errorf("lastTurnText = %q, want %q", lastTurnText, "conclusion finalized")
+	}
+	if turns != 2 {
+		t.Errorf("turns = %d, want 2", turns)
 	}
 }
 
@@ -563,15 +604,15 @@ func TestAgentTool_ExecuteFork_WorksWithoutParentMessages(t *testing.T) {
 }
 
 func TestBuildForkMessages(t *testing.T) {
-	// 有父消息 → 继承并剥离最后 assistant
+	// 有父消息 → 保留最后 assistant + 注入占位 tool_result + fork 指令
 	msgs := []llm.Message{
 		{Role: llm.RoleSystem, Content: "sys"},
 		{Role: llm.RoleUser, Content: "hello"},
-		{Role: llm.RoleAssistant, Content: "hi there"}, // ← 这条会被剥离
+		{Role: llm.RoleAssistant, Content: "hi there"}, // ← 无 tool_calls，保留不剥离
 	}
 	result := buildForkMessages(msgs, "test", "do it")
-	if len(result) != 3 { // sys + user + fork directive
-		t.Fatalf("expected 3 messages, got %d", len(result))
+	if len(result) != 4 { // sys + user + assistant(kept) + fork directive
+		t.Fatalf("expected 4 messages, got %d", len(result))
 	}
 	if result[0].Role != llm.RoleSystem || result[0].Content != "sys" {
 		t.Error("system message should be preserved")
@@ -579,8 +620,11 @@ func TestBuildForkMessages(t *testing.T) {
 	if result[1].Role != llm.RoleUser || result[1].Content != "hello" {
 		t.Error("user message should be preserved")
 	}
-	if result[2].Role != llm.RoleUser || !strings.Contains(result[2].Content, "Fork task") {
-		t.Errorf("fork directive should be user message: %+v", result[2])
+	if result[2].Role != llm.RoleAssistant || result[2].Content != "hi there" {
+		t.Error("assistant message should be preserved (not stripped)")
+	}
+	if result[3].Role != llm.RoleUser || !strings.Contains(result[3].Content, forkBoilerplateTag) {
+		t.Errorf("fork directive should be last user message with boilerplate: %+v", result[3])
 	}
 }
 
@@ -688,26 +732,21 @@ func TestAgentTool_ExecuteCold_WithAgentsMD(t *testing.T) {
 
 	a := &AgentTool{LLMClient: capture}
 	result, err := a.Execute(ctx, AgentParams{
-		SubagentType: "general-purpose",
+		SubagentType: "evaluate",
 		Description:  "test",
 		Prompt:       "say hello",
 	})
 	if err != nil {
 		t.Fatalf("Execute() error: %v", err)
 	}
-	if !strings.Contains(result.Content, "general-purpose") {
+	if !strings.Contains(result.Content, "evaluate") {
 		t.Errorf("result should mention agent type: %s", result.Content)
 	}
-	// Verify AGENTS.md content was injected as a user message
-	foundAgentsMD := false
+	// Verify AGENTS.md was NOT injected — all cold agents are read-only and skip it
 	for _, msg := range capture.CapturedMessages {
 		if msg.Role == llm.RoleUser && strings.Contains(msg.Content, "# Project Rules") {
-			foundAgentsMD = true
-			break
+			t.Error("evaluate agent should NOT receive AGENTS.md injection (all cold agents skip it)")
 		}
-	}
-	if !foundAgentsMD {
-		t.Error("AGENTS.md content should be injected as a user message")
 	}
 }
 
@@ -916,8 +955,8 @@ func TestBuildForkMessages_NonMessageType(t *testing.T) {
 	if result[0].Role != llm.RoleSystem {
 		t.Error("first message should be system (fallback)")
 	}
-	if !strings.Contains(result[1].Content, "Fork task") {
-		t.Error("second message should contain fork directive")
+	if !strings.Contains(result[1].Content, forkBoilerplateTag) {
+		t.Error("second message should contain fork-boilerplate directive")
 	}
 }
 
@@ -954,9 +993,336 @@ func TestBuildForkMessages_NoAssistant(t *testing.T) {
 	if result[2].Content != "another question" {
 		t.Error("second user message should be preserved")
 	}
-	// Fork directive should be appended
-	if !strings.Contains(result[3].Content, "Fork task") {
-		t.Error("fork directive should be appended as last message")
+	// Fork directive should be appended with boilerplate tag
+	if !strings.Contains(result[3].Content, forkBoilerplateTag) {
+		t.Error("fork directive should be appended as last message with boilerplate tag")
+	}
+}
+
+func TestBuildForkMessages_KeepsAssistantWithToolCalls(t *testing.T) {
+	// 有父消息，最后一条 assistant 含 tool_calls → 保留 assistant + 注入占位 tool 消息
+	msgs := []llm.Message{
+		{Role: llm.RoleSystem, Content: "sys"},
+		{Role: llm.RoleUser, Content: "hello"},
+		{Role: llm.RoleAssistant, Content: "let me check", ToolCalls: []llm.ToolCall{
+			{ID: "call_1", Name: "agent", Arguments: `{"description":"x","prompt":"y"}`},
+			{ID: "call_2", Name: "read_file", Arguments: `{"file_path":"/f.go"}`},
+		}},
+	}
+	result := buildForkMessages(msgs, "fork-desc", "do something")
+	// sys + user + assistant + tool(call_1) + tool(call_2) + user(fork directive) = 6
+	if len(result) != 6 {
+		t.Fatalf("expected 6 messages, got %d", len(result))
+	}
+	// assistant 保留
+	if result[2].Role != llm.RoleAssistant {
+		t.Error("assistant should be preserved")
+	}
+	if len(result[2].ToolCalls) != 2 {
+		t.Errorf("assistant should keep 2 tool_calls, got %d", len(result[2].ToolCalls))
+	}
+	// tool 占位消息
+	if result[3].Role != llm.RoleTool || result[3].ToolCallID != "call_1" {
+		t.Errorf("message 3 should be tool for call_1: %+v", result[3])
+	}
+	if result[3].Content != forkPlaceholderResult {
+		t.Errorf("tool placeholder should be %q, got %q", forkPlaceholderResult, result[3].Content)
+	}
+	if result[4].Role != llm.RoleTool || result[4].ToolCallID != "call_2" {
+		t.Errorf("message 4 should be tool for call_2: %+v", result[4])
+	}
+	if result[4].Content != forkPlaceholderResult {
+		t.Errorf("tool placeholder should be %q, got %q", forkPlaceholderResult, result[4].Content)
+	}
+	// fork directive 包含 boilerplate
+	if !strings.Contains(result[5].Content, forkBoilerplateTag) {
+		t.Error("fork directive should contain boilerplate tag")
+	}
+}
+
+func TestBuildForkDirective_ContainsBoilerplate(t *testing.T) {
+	directive := buildForkDirective("test task", "do something specific")
+	for _, keyword := range []string{
+		forkBoilerplateTag,
+		"fork child process",
+		"Scope:",
+		"Result:",
+		"Key files:",
+		"Files changed:",
+		"Issues:",
+		"test task",
+		"do something specific",
+	} {
+		if !strings.Contains(directive, keyword) {
+			t.Errorf("fork directive missing %q", keyword)
+		}
+	}
+}
+
+func TestIsInForkChild_Positive(t *testing.T) {
+	msgs := []llm.Message{
+		{Role: llm.RoleSystem, Content: "sys"},
+		{Role: llm.RoleUser, Content: "some context"},
+		{Role: llm.RoleUser, Content: "<fork-boilerplate>\nYou are a fork child process...\n</fork-boilerplate>\n\nTask: x"},
+	}
+	if !isInForkChild(msgs) {
+		t.Error("isInForkChild should return true when boilerplate tag is present")
+	}
+}
+
+func TestIsInForkChild_Negative(t *testing.T) {
+	msgs := []llm.Message{
+		{Role: llm.RoleSystem, Content: "sys"},
+		{Role: llm.RoleUser, Content: "hello world"},
+		{Role: llm.RoleAssistant, Content: "hi"},
+	}
+	if isInForkChild(msgs) {
+		t.Error("isInForkChild should return false when boilerplate tag is absent")
+	}
+}
+
+func TestIsInForkChild_EmptyMessages(t *testing.T) {
+	if isInForkChild(nil) {
+		t.Error("isInForkChild should return false for nil messages")
+	}
+	if isInForkChild([]llm.Message{}) {
+		t.Error("isInForkChild should return false for empty messages")
+	}
+}
+
+func TestFindLastAssistant(t *testing.T) {
+	msgs := []llm.Message{
+		{Role: llm.RoleSystem, Content: "sys"},
+		{Role: llm.RoleUser, Content: "q1"},
+		{Role: llm.RoleAssistant, Content: "a1"},
+		{Role: llm.RoleUser, Content: "q2"},
+		{Role: llm.RoleAssistant, Content: "a2", ToolCalls: []llm.ToolCall{
+			{ID: "tc1", Name: "agent"},
+		}},
+	}
+	last := findLastAssistant(msgs)
+	if last == nil {
+		t.Fatal("expected to find last assistant")
+	}
+	if last.Content != "a2" {
+		t.Errorf("last assistant content = %q, want %q", last.Content, "a2")
+	}
+	if len(last.ToolCalls) != 1 || last.ToolCalls[0].Name != "agent" {
+		t.Error("last assistant should have agent tool_call")
+	}
+}
+
+func TestFindLastAssistant_None(t *testing.T) {
+	msgs := []llm.Message{
+		{Role: llm.RoleSystem, Content: "sys"},
+		{Role: llm.RoleUser, Content: "q1"},
+	}
+	if last := findLastAssistant(msgs); last != nil {
+		t.Errorf("expected nil, got %+v", last)
+	}
+}
+
+func TestExecute_RecursiveForkGuard(t *testing.T) {
+	// fork 子 agent 尝试再次 fork → 返回 recoverable 错误
+	ctx := context.Background()
+	// 构造包含 fork-boilerplate 的父消息历史（模拟已在 fork 中的场景）
+	msgs := []llm.Message{
+		{Role: llm.RoleSystem, Content: "sys"},
+		{Role: llm.RoleUser, Content: "<fork-boilerplate>\nYou are a fork child process...\n</fork-boilerplate>\n\nTask: original fork"},
+		{Role: llm.RoleAssistant, Content: "working...", ToolCalls: []llm.ToolCall{
+			{ID: "call_nested", Name: "agent", Arguments: `{"description":"nested","prompt":"do nested fork"}`},
+		}},
+	}
+	ctx = agentloop.WithParentMessages(ctx, msgs)
+
+	a := &AgentTool{LLMClient: &stubLLM{}}
+	result, err := a.Execute(ctx, AgentParams{
+		Description: "nested fork attempt",
+		Prompt:      "do nested fork",
+	})
+	if err != nil {
+		t.Fatalf("Execute() should not return Go error: %v", err)
+	}
+	if !result.IsError() {
+		t.Fatal("expected recoverable error for recursive fork")
+	}
+	if !strings.Contains(result.Content, "already a fork child") {
+		t.Errorf("error should mention recursive fork prevention: %s", result.Content)
+	}
+	if !strings.Contains(result.Error.Message, "recursive fork") {
+		t.Errorf("error message should mention recursive fork: %s", result.Error.Message)
+	}
+}
+
+func TestExecute_RecursiveForkGuard_NonForkParent(t *testing.T) {
+	// 正常父 agent（无 fork-boilerplate）可以自由 fork
+	ctx := context.Background()
+	msgs := []llm.Message{
+		{Role: llm.RoleSystem, Content: "sys"},
+		{Role: llm.RoleUser, Content: "hello"},
+	}
+	ctx = agentloop.WithParentMessages(ctx, msgs)
+
+	a := &AgentTool{LLMClient: &stubLLM{}}
+	result, err := a.Execute(ctx, AgentParams{
+		Description: "valid fork",
+		Prompt:      "do something",
+	})
+	if err != nil {
+		t.Fatalf("Execute() error: %v", err)
+	}
+	if !strings.Contains(result.Content, "fork subagent completed") {
+		t.Errorf("valid fork should succeed: %s", result.Content)
+	}
+}
+
+// REGRESSION: Explore agents should skip AGENTS.md injection — they are read-only
+// searchers that don't need coding standards, saving prompt tokens.
+func TestAgentTool_ExecuteCold_ExploreSkipsAgentsMD(t *testing.T) {
+	ctx := context.Background()
+	capture := &captureLLM{}
+
+	ctx = agentloop.WithAgentsMD(ctx, "# Project Rules\n\n- Use Go 1.25+\n")
+
+	a := &AgentTool{LLMClient: capture}
+	_, err := a.Execute(ctx, AgentParams{
+		SubagentType: "Explore",
+		Description:  "search",
+		Prompt:       "find config files",
+	})
+	if err != nil {
+		t.Fatalf("Execute() error: %v", err)
+	}
+	// Verify AGENTS.md was NOT injected for Explore
+	for _, msg := range capture.CapturedMessages {
+		if msg.Role == llm.RoleUser && strings.Contains(msg.Content, "# Project Rules") {
+			t.Error("Explore agent should NOT receive AGENTS.md injection")
+		}
+	}
+}
+
+// REGRESSION: Verification agent should also skip AGENTS.md — it's read-only.
+func TestAgentTool_ExecuteCold_VerificationSkipsAgentsMD(t *testing.T) {
+	ctx := context.Background()
+	capture := &captureLLM{}
+
+	ctx = agentloop.WithAgentsMD(ctx, "# Project Rules\n\n- Use Go 1.25+\n")
+
+	a := &AgentTool{LLMClient: capture}
+	_, err := a.Execute(ctx, AgentParams{
+		SubagentType: "verification",
+		Description:  "verify auth fix",
+		Prompt:       "verify the recent auth changes",
+	})
+	if err != nil {
+		t.Fatalf("Execute() error: %v", err)
+	}
+	// Verify AGENTS.md was NOT injected for verification
+	for _, msg := range capture.CapturedMessages {
+		if msg.Role == llm.RoleUser && strings.Contains(msg.Content, "# Project Rules") {
+			t.Error("verification agent should NOT receive AGENTS.md injection")
+		}
+	}
+}
+
+// REGRESSION: All cold agents skip AGENTS.md — they are read-only on project files.
+func TestAgentTool_ExecuteCold_EvaluateSkipsAgentsMD(t *testing.T) {
+	ctx := context.Background()
+	capture := &captureLLM{}
+
+	ctx = agentloop.WithAgentsMD(ctx, "# Project Rules\n\n- Use Go 1.25+\n")
+
+	a := &AgentTool{LLMClient: capture}
+	_, err := a.Execute(ctx, AgentParams{
+		SubagentType: "evaluate",
+		Description:  "review auth",
+		Prompt:       "review auth.go for security issues",
+	})
+	if err != nil {
+		t.Fatalf("Execute() error: %v", err)
+	}
+	for _, msg := range capture.CapturedMessages {
+		if msg.Role == llm.RoleUser && strings.Contains(msg.Content, "# Project Rules") {
+			t.Error("evaluate agent should NOT receive AGENTS.md injection")
+		}
+	}
+}
+
+func TestEvaluateSystemPrompt_ContainsAssessmentFormat(t *testing.T) {
+	sp := evaluateSystemPrompt()
+	for _, keyword := range []string{
+		"assessment",
+		"CRITICAL",
+		"WARNING",
+		"NOTE",
+		"READ-ONLY",
+	} {
+		if !strings.Contains(sp, keyword) {
+			t.Errorf("evaluate system prompt missing %q", keyword)
+		}
+	}
+}
+
+// REGRESSION: Explore agents use exploreMaxTurns (25), not coldMaxTurns (50).
+// This is verified indirectly: the stub LLM always returns "ok" immediately,
+// so the agent completes in 1 turn regardless of limit. The limit is a safety
+// ceiling, not a minimum. We verify the constant value is lower.
+func TestExploreMaxTurns_LowerThanCold(t *testing.T) {
+	if exploreMaxTurns >= coldMaxTurns {
+		t.Errorf("exploreMaxTurns (%d) should be lower than coldMaxTurns (%d)", exploreMaxTurns, coldMaxTurns)
+	}
+}
+
+func TestAgentTool_ExecuteCold_Verification(t *testing.T) {
+	ctx := context.Background()
+
+	a := &AgentTool{LLMClient: &stubLLM{}}
+	result, err := a.Execute(ctx, AgentParams{
+		SubagentType: "verification",
+		Description:  "verify auth fix",
+		Prompt:       "verify the recent auth changes in login.go",
+	})
+	if err != nil {
+		t.Fatalf("Execute() error: %v", err)
+	}
+	if !strings.Contains(result.Content, "verification") {
+		t.Errorf("result should mention agent type: %s", result.Content)
+	}
+	if !strings.Contains(result.Content, "ok") {
+		t.Errorf("result should contain LLM output: %s", result.Content)
+	}
+}
+
+func TestVerificationRegistry_IsReadOnly(t *testing.T) {
+	r := buildColdRegistry(verificationDisallowed)
+	names := toolNames(r)
+	for _, name := range []string{"read_file", "web_fetch", "bash_subagent"} {
+		if !contains(names, name) {
+			t.Errorf("verification registry missing %q", name)
+		}
+	}
+	for _, name := range []string{"write_file", "edit_file"} {
+		if contains(names, name) {
+			t.Errorf("verification registry should NOT have %q", name)
+		}
+	}
+}
+
+func TestVerificationSystemPrompt_ContainsVerdictFormat(t *testing.T) {
+	sp := verificationSystemPrompt()
+	for _, keyword := range []string{
+		"VERDICT: PASS",
+		"VERDICT: FAIL",
+		"Command run:",
+		"Output observed:",
+		"Result: PASS",
+		"try to BREAK",
+		"/tmp",
+		"adversarial",
+	} {
+		if !strings.Contains(sp, keyword) {
+			t.Errorf("verification system prompt missing %q", keyword)
+		}
 	}
 }
 
@@ -1001,51 +1367,73 @@ func TestCountDiff_Mixed(t *testing.T) {
 	}
 }
 
-func TestAppendParentContext_WithWorkspace(t *testing.T) {
-	agentSP := "You are a general-purpose agent."
-	parentSP := "# System\n\n## Workspace\n\nWorking directory: /project\n\n## Environment\n\n- go 1.25\n"
-
+func TestFormatSubagentEnvironment_WithOSAndShell(t *testing.T) {
+	parentSP := "# System\n\n## Workspace\n\nWorking directory: /project\n\n## Environment\n\n- OS: darwin\n- Shell: /bin/zsh\n\nAvailable tools:\n  go         go version go1.25.8\n  cargo      cargo 1.85.0\n"
 	ctx := context.Background()
 	ctx = agentloop.WithParentSystemPrompt(ctx, parentSP)
 
-	got := appendParentContext(agentSP, ctx)
-	if !strings.Contains(got, "You are a general-purpose agent.") {
-		t.Error("result should still contain the agent-specific prompt")
-	}
-	if !strings.Contains(got, "## Workspace") {
-		t.Error("result should contain the Workspace section from parent")
-	}
+	r := tool.NewRegistry()
+	r.Register(tool.Wrap(&tool.ReadFile{}))
+	r.Register(tool.Wrap(&tool.Shell{AllowBg: false}))
+
+	got := formatSubagentEnvironment(ctx, r)
 	if !strings.Contains(got, "## Environment") {
-		t.Error("result should contain the Environment section from parent")
+		t.Error("result should contain ## Environment section")
 	}
-	if !strings.Contains(got, "go 1.25") {
-		t.Error("result should contain parent environment details")
+	if !strings.Contains(got, "- OS: darwin") {
+		t.Error("should contain OS info from parent")
+	}
+	if !strings.Contains(got, "- Shell: /bin/zsh") {
+		t.Error("should contain Shell info from parent")
+	}
+	if !strings.Contains(got, "read_file") {
+		t.Error("should list read_file from registry")
+	}
+	if !strings.Contains(got, "bash_subagent") {
+		t.Error("should list bash_subagent from registry")
+	}
+	// 不应包含子 agent 不可用的工具
+	if strings.Contains(got, "go version") || strings.Contains(got, "cargo") {
+		t.Error("should NOT contain tools that are not in the subagent registry")
 	}
 }
 
-func TestAppendParentContext_NoWorkspaceHeader(t *testing.T) {
-	agentSP := "You are a general-purpose agent."
-	parentSP := "# System\n\nJust some intro text without workspace section.\n"
-
-	ctx := context.Background()
-	ctx = agentloop.WithParentSystemPrompt(ctx, parentSP)
-
-	got := appendParentContext(agentSP, ctx)
-	// Should return agentSP unchanged (no "## Workspace" found)
-	if got != agentSP {
-		t.Errorf("appendParentContext without workspace should return agentSP unchanged: %q", got)
-	}
-}
-
-func TestAppendParentContext_EmptyParentSP(t *testing.T) {
-	agentSP := "You are a general-purpose agent."
-
+func TestFormatSubagentEnvironment_EmptyParent(t *testing.T) {
 	ctx := context.Background()
 	// No parent system prompt in context
 
-	got := appendParentContext(agentSP, ctx)
-	if got != agentSP {
-		t.Errorf("appendParentContext with empty parent should return agentSP unchanged: %q", got)
+	r := tool.NewRegistry()
+	got := formatSubagentEnvironment(ctx, r)
+	if got != "" {
+		t.Errorf("formatSubagentEnvironment with empty parent should return empty: %q", got)
+	}
+}
+
+func TestFormatSubagentEnvironment_ExploreRegistry(t *testing.T) {
+	parentSP := "# System\n\n## Workspace\n\nWorking directory: /src\n\n## Environment\n\n- OS: linux\n- Shell: /bin/bash\n\nAvailable tools:\n  docker     Docker 29.4.0\n  node       v23.10.0\n  go         go1.25.8\n"
+	ctx := context.Background()
+	ctx = agentloop.WithParentSystemPrompt(ctx, parentSP)
+
+	r := buildColdRegistry(exploreDisallowed)
+
+	got := formatSubagentEnvironment(ctx, r)
+	// Explore 只有 read_file, web_fetch, bash_subagent
+	if !strings.Contains(got, "read_file") {
+		t.Error("should list read_file")
+	}
+	if !strings.Contains(got, "web_fetch") {
+		t.Error("should list web_fetch")
+	}
+	// 不应包含 write_file 和 edit_file
+	if strings.Contains(got, "write_file") {
+		t.Error("Explore should NOT list write_file")
+	}
+	if strings.Contains(got, "edit_file") {
+		t.Error("Explore should NOT list edit_file")
+	}
+	// 不应包含 docker, node, go
+	if strings.Contains(got, "docker") {
+		t.Error("should NOT contain parent tool 'docker'")
 	}
 }
 
@@ -1088,7 +1476,112 @@ func BenchmarkForwardEvents(b *testing.B) {
 			ch <- agentloop.LoopDone{Turn: 3}
 			close(ch)
 		}()
-		_, _, _, _, _ = forwardEvents(ctx, ch, nil)
+		_, _, _, _, _ = forwardEvents(ctx, ch, nil, "")
 		cancel()
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Model switching tests
+// ---------------------------------------------------------------------------
+
+func TestIsValidModel_EmptyString(t *testing.T) {
+	a := &AgentTool{ValidModels: []string{"deepseek-v4-pro", "deepseek-v4-flash"}}
+	if !a.isValidModel("") {
+		t.Error("empty model should be valid (inherit default)")
+	}
+}
+
+func TestIsValidModel_ValidValue(t *testing.T) {
+	a := &AgentTool{ValidModels: []string{"deepseek-v4-pro", "deepseek-v4-flash"}}
+	if !a.isValidModel("deepseek-v4-flash") {
+		t.Error("valid model should be accepted")
+	}
+	if !a.isValidModel("deepseek-v4-pro") {
+		t.Error("valid model should be accepted")
+	}
+}
+
+func TestIsValidModel_InvalidValue(t *testing.T) {
+	a := &AgentTool{ValidModels: []string{"deepseek-v4-pro", "deepseek-v4-flash"}}
+	if a.isValidModel("garbage-model") {
+		t.Error("invalid model should be rejected")
+	}
+}
+
+func TestIsValidModel_EmptyList(t *testing.T) {
+	a := &AgentTool{ValidModels: nil}
+	if !a.isValidModel("anything") {
+		t.Error("empty ValidModels should accept any model (no restriction)")
+	}
+}
+
+func TestIsValidModel_EmptySlice(t *testing.T) {
+	a := &AgentTool{ValidModels: []string{}}
+	if !a.isValidModel("anything") {
+		t.Error("empty ValidModels slice should accept any model")
+	}
+}
+
+// REGRESSION: invalid model in AgentParams → sanitized to empty before sub-loop creation.
+func TestAgentTool_ExecuteFork_InvalidModelFallsBack(t *testing.T) {
+	ctx := context.Background()
+	msgs := []llm.Message{
+		{Role: llm.RoleSystem, Content: "sys"},
+		{Role: llm.RoleUser, Content: "hello"},
+	}
+	ctx = agentloop.WithParentMessages(ctx, msgs)
+
+	a := &AgentTool{
+		LLMClient:   &stubLLM{},
+		ValidModels: []string{"deepseek-v4-pro", "deepseek-v4-flash"},
+	}
+	result, err := a.Execute(ctx, AgentParams{
+		Description: "fork-test",
+		Prompt:      "do something",
+		Model:       "garbage", // invalid → should be cleared
+	})
+	if err != nil {
+		t.Fatalf("Execute() error: %v", err)
+	}
+	if !strings.Contains(result.Content, "fork subagent completed") {
+		t.Errorf("fork should succeed with invalid model sanitized: %s", result.Content)
+	}
+}
+
+// REGRESSION: valid model in AgentParams → passed through to sub-loop.
+func TestAgentTool_ExecuteCold_ValidModel(t *testing.T) {
+	ctx := context.Background()
+	a := &AgentTool{
+		LLMClient:   &stubLLM{},
+		ValidModels: []string{"deepseek-v4-pro", "deepseek-v4-flash"},
+	}
+	result, err := a.Execute(ctx, AgentParams{
+		SubagentType: "Explore",
+		Description:  "search",
+		Prompt:       "find it",
+		Model:        "deepseek-v4-flash",
+	})
+	if err != nil {
+		t.Fatalf("Execute() error: %v", err)
+	}
+	if !strings.Contains(result.Content, "Explore") {
+		t.Errorf("result should succeed with valid model: %s", result.Content)
+	}
+}
+
+// REGRESSION: SubagentStart carries Model field.
+func TestSubagentStart_ModelField(t *testing.T) {
+	ev := SubagentStart{
+		AgentType: "Explore",
+		Model:     "deepseek-v4-flash",
+	}
+	if ev.Model != "deepseek-v4-flash" {
+		t.Errorf("SubagentStart.Model = %q, want %q", ev.Model, "deepseek-v4-flash")
+	}
+	// Model should be empty by default (zero value)
+	ev2 := SubagentStart{}
+	if ev2.Model != "" {
+		t.Errorf("SubagentStart.Model zero value = %q, want empty", ev2.Model)
 	}
 }

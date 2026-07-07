@@ -9,6 +9,7 @@ type (
 	parentMessagesKey      struct{}
 	parentSystemPromptKey  struct{}
 	agentsMDKey            struct{}
+	toolCallIDKey          struct{}
 )
 
 // WithEventCallback injects a callback for subagent events into ctx.
@@ -55,5 +56,16 @@ func WithAgentsMD(ctx context.Context, text string) context.Context {
 // AgentsMDFromContext extracts the AGENTS.md content from ctx.
 func AgentsMDFromContext(ctx context.Context) string {
 	s, _ := ctx.Value(agentsMDKey{}).(string)
+	return s
+}
+
+// WithToolCallID injects the current tool call ID into ctx for subagent event routing.
+func WithToolCallID(ctx context.Context, id string) context.Context {
+	return context.WithValue(ctx, toolCallIDKey{}, id)
+}
+
+// ToolCallIDFromContext extracts the tool call ID from ctx.
+func ToolCallIDFromContext(ctx context.Context) string {
+	s, _ := ctx.Value(toolCallIDKey{}).(string)
 	return s
 }
