@@ -25,7 +25,7 @@ func TestDeepSeekBuildRequest(t *testing.T) {
 		{Role: RoleUser, Content: "Hello"},
 	}
 
-	req, err := adapter.BuildRequest(messages, nil)
+	req, err := adapter.BuildRequest(context.Background(), messages, nil)
 	if err != nil {
 		t.Fatalf("BuildRequest returned error: %v", err)
 	}
@@ -89,7 +89,7 @@ func TestDeepSeekBuildRequestReasoningContent(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			req, err := adapter.BuildRequest(tt.messages, nil)
+			req, err := adapter.BuildRequest(context.Background(), tt.messages, nil)
 			if err != nil {
 				t.Fatalf("BuildRequest returned error: %v", err)
 			}
@@ -127,7 +127,7 @@ func TestDeepSeekBuildRequestExtraParams(t *testing.T) {
 		},
 	})
 
-	req, err := adapter.BuildRequest([]Message{{Role: RoleUser, Content: "Hi"}}, nil)
+	req, err := adapter.BuildRequest(context.Background(), []Message{{Role: RoleUser, Content: "Hi"}}, nil)
 	if err != nil {
 		t.Fatalf("BuildRequest returned error: %v", err)
 	}
@@ -172,7 +172,7 @@ func TestDeepSeekReasoningEffortMapping(t *testing.T) {
 				},
 			})
 
-			req, err := adapter.BuildRequest([]Message{{Role: RoleUser, Content: "Hi"}}, nil)
+			req, err := adapter.BuildRequest(context.Background(), []Message{{Role: RoleUser, Content: "Hi"}}, nil)
 			if err != nil {
 				t.Fatalf("BuildRequest returned error: %v", err)
 			}
@@ -477,7 +477,7 @@ func TestDeepSeekBuildRequestWithTools(t *testing.T) {
 		},
 	}
 
-	req, err := adapter.BuildRequest([]Message{{Role: RoleUser, Content: "Read /etc/hosts"}}, tools)
+	req, err := adapter.BuildRequest(context.Background(), []Message{{Role: RoleUser, Content: "Read /etc/hosts"}}, tools)
 	if err != nil {
 		t.Fatalf("BuildRequest returned error: %v", err)
 	}
@@ -510,7 +510,7 @@ func TestDeepSeekBuildMessagesNameField(t *testing.T) {
 		{Role: RoleTool, ToolCallID: "call_1", Name: "read_file", Content: "file contents"},
 	}
 
-	req, err := adapter.BuildRequest(messages, nil)
+	req, err := adapter.BuildRequest(context.Background(), messages, nil)
 	if err != nil {
 		t.Fatalf("BuildRequest returned error: %v", err)
 	}
@@ -557,7 +557,7 @@ func TestDeepSeekBuildStreamRequest(t *testing.T) {
 		BaseURL: "https://api.deepseek.com",
 	})
 
-	req, err := adapter.BuildStreamRequest([]Message{
+	req, err := adapter.BuildStreamRequest(context.Background(), []Message{
 		{Role: RoleUser, Content: "Hello"},
 	}, nil)
 	if err != nil {
@@ -750,7 +750,7 @@ func TestDeepSeekBuildRequestResponseFormat(t *testing.T) {
 	})
 
 	messages := []Message{{Role: RoleUser, Content: "Give me JSON"}}
-	req, err := adapter.BuildRequest(messages, nil)
+	req, err := adapter.BuildRequest(context.Background(), messages, nil)
 	if err != nil {
 		t.Fatalf("BuildRequest: %v", err)
 	}
@@ -778,7 +778,7 @@ func TestDeepSeekBuildStreamRequestResponseFormat(t *testing.T) {
 	})
 
 	messages := []Message{{Role: RoleUser, Content: "Give me JSON"}}
-	req, err := adapter.BuildStreamRequest(messages, nil)
+	req, err := adapter.BuildStreamRequest(context.Background(), messages, nil)
 	if err != nil {
 		t.Fatalf("BuildStreamRequest: %v", err)
 	}
@@ -928,4 +928,51 @@ func TestDeepSeekListModelsParseError(t *testing.T) {
 // isError 辅助函数，检查 err 是否匹配 target 类型。
 func isError(err error, target interface{}) bool {
 	return errors.As(err, target)
+}
+
+// REGRESSION: model override from context should replace a.model in request body.
+func TestDeepSeekAdapter_ModelOverrideFromContext(t *testing.T) {
+	cfg := ClientConfig{
+		Provider: ProviderDeepSeek,
+		APIKey:   "sk-test",
+		Model:    "deepseek-v4-pro",
+	}
+	adapter := newDeepSeekAdapter(cfg)
+	ctx := WithModelOverride(context.Background(), "deepseek-v4-flash")
+
+	req, err := adapter.BuildRequest(ctx, []Message{{Role: RoleUser, Content: "Hi"}}, nil)
+	if err != nil {
+		t.Fatalf("BuildRequest error: %v", err)
+	}
+
+	var body map[string]any
+	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if body["model"] != "deepseek-v4-flash" {
+		t.Errorf("body[model] = %q, want %q", body["model"], "deepseek-v4-flash")
+	}
+}
+
+// REGRESSION: no model override → use default from ClientConfig.
+func TestDeepSeekAdapter_ModelOverrideEmpty(t *testing.T) {
+	cfg := ClientConfig{
+		Provider: ProviderDeepSeek,
+		APIKey:   "sk-test",
+		Model:    "deepseek-v4-pro",
+	}
+	adapter := newDeepSeekAdapter(cfg)
+
+	req, err := adapter.BuildRequest(context.Background(), []Message{{Role: RoleUser, Content: "Hi"}}, nil)
+	if err != nil {
+		t.Fatalf("BuildRequest error: %v", err)
+	}
+
+	var body map[string]any
+	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if body["model"] != "deepseek-v4-pro" {
+		t.Errorf("body[model] = %q, want %q", body["model"], "deepseek-v4-pro")
+	}
 }

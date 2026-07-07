@@ -32,15 +32,34 @@ type AgentParams struct {
 	SubagentType string `json:"subagent_type,omitempty"` // 可选。省略 = fork 模式
 	Description  string `json:"description"`              // 简短描述
 	Prompt       string `json:"prompt"`                   // 委派任务
+	Model        string `json:"model,omitempty"`          // 可选模型覆盖，空/无效 = 继承主模型
 }
 
 // AgentTool 实现 tool.TypedTool[AgentParams]，将任务委派给子 agent 执行。
 type AgentTool struct {
-	LLMClient llm.Client
+	LLMClient   llm.Client
+	ValidModels []string // 可用模型列表，空 = 不限制
 }
 
 func (a *AgentTool) Name() string              { return "agent" }
 func (a *AgentTool) ConcurrentSafe() bool      { return true }
+
+// isValidModel 校验模型名称是否在允许列表中。
+// 空字符串视为有效（继承默认）；空列表视为不限制。
+func (a *AgentTool) isValidModel(m string) bool {
+	if m == "" {
+		return true
+	}
+	if len(a.ValidModels) == 0 {
+		return true
+	}
+	for _, v := range a.ValidModels {
+		if v == m {
+			return true
+		}
+	}
+	return false
+}
 
 func (a *AgentTool) Description() string {
 	return strings.Join([]string{
@@ -78,6 +97,10 @@ func (a *AgentTool) Description() string {
 		"Do NOT use cold agents just to parallelize work — fork multiple times instead.",
 		"Each fork shares the same cache prefix; each cold agent pays the full input cost.",
 		"",
+		"- Launch multiple agents concurrently whenever possible — use a single message",
+		"  with multiple tool calls. Map each agent to a separate todo item via todo_write",
+		"  and mark them all in_progress while they run.",
+		"",
 		"Usage: for forks, write a directive (context is inherited); for cold agents, provide",
 		"a self-contained prompt with full background — the agent hasn't seen this conversation.",
 		"You will receive the subagent's final output as the tool result.",
@@ -103,6 +126,10 @@ func (a *AgentTool) Schema() json.RawMessage {
     "prompt": {
       "type": "string",
       "description": "The task for the subagent to perform"
+    },
+    "model": {
+      "type": "string",
+      "description": "Optional model override. Available values are listed in the system prompt under 'Subagent Model Selection'. Omit or leave blank to use the default. Invalid values are ignored."
     }
   },
   "required": ["description", "prompt"]
@@ -260,6 +287,12 @@ func (a *AgentTool) Execute(ctx context.Context, p AgentParams) (*tool.ToolResul
 func (a *AgentTool) executeFork(ctx context.Context, p AgentParams) (*tool.ToolResult, error) {
 	cb := agentloop.EventCallbackFromContext(ctx)
 
+	// 模型安全兜底：无效/空 → 继承主模型
+	model := p.Model
+	if !a.isValidModel(model) {
+		model = ""
+	}
+
 	// 从 context 获取父消息历史；buildForkMessages 会保留最后一条 assistant
 	// 并注入占位 tool_result 以保证缓存友好的 fork 构造。
 	parentRaw := agentloop.ParentMessagesFromContext(ctx)
@@ -274,13 +307,14 @@ func (a *AgentTool) executeFork(ctx context.Context, p AgentParams) (*tool.ToolR
 		Guard:         permission.NewGuard(permission.WithBypassMode(true)),
 		UserResponder: nil,
 		ToolTimeout:   agentloop.DefaultToolTimeout,
+		Model:         model,
 	})
 
 	startTime := time.Now()
 	toolCallID := agentloop.ToolCallIDFromContext(ctx)
 
 	if cb != nil {
-		cb(SubagentStart{Prompt: p.Description, AgentType: "fork", InheritCtx: true, ToolCallID: toolCallID})
+		cb(SubagentStart{Prompt: p.Description, AgentType: "fork", InheritCtx: true, ToolCallID: toolCallID, Model: model})
 	}
 
 	lastTurnText, totalTurns, promptTok, complTok, err := forwardEvents(subCtx, subLoop.Run(subCtx, messages), cb, toolCallID)
@@ -311,6 +345,12 @@ func (a *AgentTool) executeFork(ctx context.Context, p AgentParams) (*tool.ToolR
 func (a *AgentTool) executeCold(ctx context.Context, p AgentParams) (*tool.ToolResult, error) {
 	cb := agentloop.EventCallbackFromContext(ctx)
 
+	// 模型安全兜底：无效/空 → 继承主模型
+	model := p.Model
+	if !a.isValidModel(model) {
+		model = ""
+	}
+
 	sp, extraDisallowed := agentConfig(p.SubagentType)
 	subRegistry := buildColdRegistry(extraDisallowed)
 
@@ -335,6 +375,7 @@ func (a *AgentTool) executeCold(ctx context.Context, p AgentParams) (*tool.ToolR
 		Guard:         permission.NewGuard(permission.WithBypassMode(true)),
 		UserResponder: nil,
 		ToolTimeout:   agentloop.DefaultToolTimeout,
+		Model:         model,
 	})
 
 	startTime := time.Now()
@@ -348,7 +389,7 @@ func (a *AgentTool) executeCold(ctx context.Context, p AgentParams) (*tool.ToolR
 	})
 
 	if cb != nil {
-		cb(SubagentStart{Prompt: p.Description, AgentType: p.SubagentType, InheritCtx: false, ToolCallID: toolCallID})
+		cb(SubagentStart{Prompt: p.Description, AgentType: p.SubagentType, InheritCtx: false, ToolCallID: toolCallID, Model: model})
 	}
 
 	lastTurnText, totalTurns, promptTok, complTok, err := forwardEvents(subCtx, subLoop.Run(subCtx, messages), cb, toolCallID)

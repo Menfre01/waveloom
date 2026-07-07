@@ -100,7 +100,7 @@ func (c *client) SendMessage(ctx context.Context, messages []Message, tools []To
 		return nil, err
 	}
 
-	req, err := c.adapter.BuildRequest(messages, tools)
+	req, err := c.adapter.BuildRequest(ctx, messages, tools)
 	if err != nil {
 		return nil, fmt.Errorf("building request: %w", err)
 	}
@@ -131,7 +131,7 @@ func (c *client) SendMessageStream(ctx context.Context, messages []Message, tool
 		return nil, err
 	}
 
-	req, err := c.adapter.BuildStreamRequest(messages, tools)
+	req, err := c.adapter.BuildStreamRequest(ctx, messages, tools)
 	if err != nil {
 		return nil, fmt.Errorf("building stream request: %w", err)
 	}

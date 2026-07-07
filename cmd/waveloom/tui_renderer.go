@@ -81,6 +81,7 @@ type Paragraph struct {
 
 	// Subagent 专用字段
 	SubagentType       string // "fork" | "evaluate" | "Explore" | "verification"
+	SubagentModel      string // 模型名，与主模型不同时显示在 suffix
 	SubagentPrompt     string // 委派任务描述
 	SubagentTurns      int    // 总轮次
 	SubagentPromptTok  int    // ↑ 输入 token
@@ -2040,11 +2041,14 @@ func subagentSuffix(p *Paragraph) string {
 		return "(interrupted)"
 	}
 	suffix := ""
+	if p.SubagentModel != "" {
+		suffix = p.SubagentModel + ", "
+	}
 	if p.SubagentTurns > 0 {
-		suffix = fmt.Sprintf("%d轮", p.SubagentTurns)
+		suffix += fmt.Sprintf("%d轮", p.SubagentTurns)
 	}
 	if p.ToolDurMs > 0 {
-		if suffix != "" {
+		if suffix != "" && p.SubagentTurns > 0 {
 			suffix += ", "
 		}
 		suffix += formatDuration(p.ToolDurMs)

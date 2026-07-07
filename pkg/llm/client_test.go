@@ -861,7 +861,7 @@ type errorBuildAdapter struct {
 	*openAIAdapter
 }
 
-func (a *errorBuildAdapter) BuildRequest(messages []Message, tools []ToolSpec) (*http.Request, error) {
+func (a *errorBuildAdapter) BuildRequest(ctx context.Context, messages []Message, tools []ToolSpec) (*http.Request, error) {
 	return nil, fmt.Errorf("simulated build error")
 }
 
@@ -2496,7 +2496,7 @@ type errorBuildStreamAdapter struct {
 	*openAIAdapter
 }
 
-func (a *errorBuildStreamAdapter) BuildStreamRequest(messages []Message, tools []ToolSpec) (*http.Request, error) {
+func (a *errorBuildStreamAdapter) BuildStreamRequest(ctx context.Context, messages []Message, tools []ToolSpec) (*http.Request, error) {
 	return nil, fmt.Errorf("simulated build stream error")
 }
 

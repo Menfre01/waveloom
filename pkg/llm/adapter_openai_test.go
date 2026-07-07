@@ -37,7 +37,7 @@ func TestOpenAIBuildRequest(t *testing.T) {
 		},
 	}
 
-	req, err := adapter.BuildRequest(messages, tools)
+	req, err := adapter.BuildRequest(context.Background(), messages, tools)
 	if err != nil {
 		t.Fatalf("BuildRequest returned error: %v", err)
 	}
@@ -106,7 +106,7 @@ func TestOpenAIBuildRequestExtraParams(t *testing.T) {
 		},
 	})
 
-	req, err := adapter.BuildRequest([]Message{{Role: RoleUser, Content: "Hi"}}, nil)
+	req, err := adapter.BuildRequest(context.Background(), []Message{{Role: RoleUser, Content: "Hi"}}, nil)
 	if err != nil {
 		t.Fatalf("BuildRequest returned error: %v", err)
 	}
@@ -131,7 +131,7 @@ func TestOpenAIBuildRequestNoTools(t *testing.T) {
 		BaseURL: "https://api.openai.com/v1",
 	})
 
-	req, err := adapter.BuildRequest([]Message{{Role: RoleUser, Content: "Hi"}}, nil)
+	req, err := adapter.BuildRequest(context.Background(), []Message{{Role: RoleUser, Content: "Hi"}}, nil)
 	if err != nil {
 		t.Fatalf("BuildRequest returned error: %v", err)
 	}
@@ -340,7 +340,7 @@ func TestOpenAIBuildRequestToolResultMessage(t *testing.T) {
 		{Role: RoleUser, Content: "Thanks!"},
 	}
 
-	req, err := adapter.BuildRequest(messages, nil)
+	req, err := adapter.BuildRequest(context.Background(), messages, nil)
 	if err != nil {
 		t.Fatalf("BuildRequest returned error: %v", err)
 	}
@@ -453,7 +453,7 @@ func TestOpenAIBuildMessagesNameField(t *testing.T) {
 		{Role: RoleUser, Name: "user1", Content: "Hello with name"},
 	}
 
-	req, err := adapter.BuildRequest(messages, nil)
+	req, err := adapter.BuildRequest(context.Background(), messages, nil)
 	if err != nil {
 		t.Fatalf("BuildRequest returned error: %v", err)
 	}
@@ -490,7 +490,7 @@ func TestOpenAIBuildStreamRequest(t *testing.T) {
 		BaseURL: "https://api.openai.com/v1",
 	})
 
-	req, err := adapter.BuildStreamRequest([]Message{
+	req, err := adapter.BuildStreamRequest(context.Background(), []Message{
 		{Role: RoleUser, Content: "Hello"},
 	}, nil)
 	if err != nil {
@@ -599,7 +599,7 @@ func TestOpenAIBuildRequestResponseFormat(t *testing.T) {
 	})
 
 	messages := []Message{{Role: RoleUser, Content: "Give me JSON"}}
-	req, err := adapter.BuildRequest(messages, nil)
+	req, err := adapter.BuildRequest(context.Background(), messages, nil)
 	if err != nil {
 		t.Fatalf("BuildRequest: %v", err)
 	}
@@ -627,7 +627,7 @@ func TestOpenAIBuildStreamRequestResponseFormat(t *testing.T) {
 	})
 
 	messages := []Message{{Role: RoleUser, Content: "Give me JSON"}}
-	req, err := adapter.BuildStreamRequest(messages, nil)
+	req, err := adapter.BuildStreamRequest(context.Background(), messages, nil)
 	if err != nil {
 		t.Fatalf("BuildStreamRequest: %v", err)
 	}
