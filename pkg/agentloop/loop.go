@@ -120,6 +120,14 @@ const maxConsecutiveSameError = 8
 // warnThresholds 定义需要注入提醒消息的连续失败轮次。
 var warnThresholds = map[int]bool{3: true, 5: true}
 
+// todoReminderInterval 定义 todo 周期性提醒的间隔（assistant turn 数）。
+// 首次提醒在 idleTodoWrite（距上次 todo_write 达到此值）时触发，
+// 后续提醒至少间隔 idleTodoReminder 轮。
+const (
+	idleTodoWrite    = 8 // 超过此值无 todo_write → 注入提醒
+	idleTodoReminder = 5 // 两次提醒之间的最小间隔
+)
+
 
 
 // ---------------------------------------------------------------------------
@@ -173,6 +181,14 @@ type Loop struct {
 
 	// consecutiveSameError 记录同一 (ErrorKind, Tool) 连续出现的次数。
 	consecutiveSameError int
+
+	// ── todo 周期性提醒（会话级，跨 Run() 持久化）──
+
+	// turnsSinceLastTodoWrite 记录自上次 todo_write 调用以来的 assistant turn 数。
+	turnsSinceLastTodoWrite int
+
+	// turnsSinceLastTodoReminder 记录自上次注入 todo 提醒以来的 assistant turn 数。
+	turnsSinceLastTodoReminder int
 }
 
 // New 创建一个新的 Loop 实例。
@@ -267,12 +283,6 @@ func (l *Loop) Run(ctx context.Context, messages []llm.Message) <-chan TurnEvent
 			Messages: messages,
 		}
 
-		// 有残留 todo 状态时重置提醒标记，确保每次 Run() 首轮注入最新快照，
-		// 消除 ESC 中断后 LLM 看不到当前任务列表的窗口期。
-		if l.config.TodoState != nil && len(l.config.TodoState.Snapshot()) > 0 {
-			l.config.TodoState.ReminderInjected = false
-		}
-
 		for l.shouldContinue(state) {
 			// 1. Context 取消检查
 			if err := ctx.Err(); err != nil {
@@ -285,28 +295,11 @@ func (l *Loop) Run(ctx context.Context, messages []llm.Message) <-chan TurnEvent
 				return
 			}
 
-			// 2. THINK: 流式调用 LLM
-			l.verbose("→ LLM call #%d  (messages=%d, tools=%d)\n",
-				state.TurnCount+1, len(state.Messages), len(l.toolRegistry.List()))
+		// 2. THINK: 流式调用 LLM
+		l.verbose("→ LLM call #%d  (messages=%d, tools=%d)\n",
+			state.TurnCount+1, len(state.Messages), len(l.toolRegistry.List()))
 
-			// 首次创建 todo 后注入一次性提醒（固定内容 → 不破坏前缀缓存）
-			// 内容包含当前状态快照，让 LLM（尤其是 resume 场景）知道任务列表现状
-			if l.config.TodoState != nil && !l.config.TodoState.ReminderInjected {
-				snapshot := l.config.TodoState.Snapshot()
-				if len(snapshot) > 0 {
-					l.config.TodoState.ReminderInjected = true
-					state.Messages = append(state.Messages, llm.Message{
-						Role: llm.RoleUser,
-						Content: l.config.TodoState.StatusSummary() + "\n\n" +
-							"Remember to keep the todo list updated using `todo_write` as you work through tasks. " +
-							"Mark each task complete immediately after finishing it, and set the next task to in_progress before starting work. " +
-							"Use `todo_write` with `merge=true` to update existing tasks — only pass the items that changed; others are left unchanged. " +
-							"Multiple tasks can be in_progress simultaneously — map each parallel subagent to a separate todo item and mark them all in_progress.",
-					})
-				}
-			}
-
-			messagesForTurn := state.Messages
+		messagesForTurn := state.Messages
 			var lastPromptTokens int      // 本轮 API 返回的 prompt_tokens
 			var lastUsage       *llm.UsageInfo // 暂存 usage，压缩后统一推送 TurnStats
 			var lastModel       string         // 暂存 model
@@ -545,10 +538,13 @@ func (l *Loop) Run(ctx context.Context, messages []llm.Message) <-chan TurnEvent
 			// 7. ACT + OBSERVE: 执行工具（含事件推送）
 			toolMessages, reason, execErr := l.executeToolCalls(ctx, toolCalls, state, ch)
 
-			// 追加已构造的 tool 消息（即使出错也追加，保证 assistant(tool_calls) ↔ tool 消息配对完整）
-			if len(toolMessages) > 0 {
-				state.Messages = append(state.Messages, toolMessages...)
-			}
+		// 追加已构造的 tool 消息（即使出错也追加，保证 assistant(tool_calls) ↔ tool 消息配对完整）
+		if len(toolMessages) > 0 {
+			state.Messages = append(state.Messages, toolMessages...)
+		}
+
+		// 更新 todo 周期性提醒计数器（检测本轮是否调用了 todo_write）
+		l.updateTodoCounters(toolCalls)
 
 			if execErr != nil {
 				l.verbose("  ← ERROR: %v\n", execErr)
@@ -578,19 +574,20 @@ func (l *Loop) Run(ctx context.Context, messages []llm.Message) <-chan TurnEvent
 				tick := l.config.Compactor.Compact(ctx, &state.Messages, lastPromptTokens)
 				compacted = true
 
-				// compaction 可能移除了旧的 todo_write 结果，刷新 todo-status 消息
-				// 确保 LLM 在压缩后仍能看到当前状态
-				if l.config.TodoState != nil {
-					if summary := l.config.TodoState.StatusSummary(); summary != "" {
-						if idx := findTodoStatusIndex(state.Messages); idx >= 0 {
-							state.Messages[idx].Content = summary + "\n\n" +
-								"Remember to keep the todo list updated using `todo_write` as you work through tasks. " +
-								"Mark each task complete immediately after finishing it, and set the next task to in_progress before starting work. " +
-								"Use `todo_write` with `merge=true` to update existing tasks — only pass the items that changed; others are left unchanged. " +
-								"Multiple tasks can be in_progress simultaneously — map each parallel subagent to a separate todo item and mark them all in_progress."
-						}
+				// compaction 可能移除了旧的 todo_write 结果，刷新或注入 todo-status 消息
+			// 确保 LLM 在压缩后仍能看到当前状态
+			if l.config.TodoState != nil {
+				if summary := l.config.TodoState.StatusSummary(); summary != "" {
+					if idx := findTodoStatusIndex(state.Messages); idx >= 0 {
+						state.Messages[idx].Content = todoReminderText(summary)
+					} else {
+						state.Messages = append(state.Messages, llm.Message{
+							Role:    llm.RoleUser,
+							Content: todoReminderText(summary),
+						})
 					}
 				}
+			}
 
 				// 推送合并后的 TurnStats（含压缩字段）
 				if lastUsage != nil {
@@ -617,19 +614,22 @@ func (l *Loop) Run(ctx context.Context, messages []llm.Message) <-chan TurnEvent
 					return
 				}
 			}
-			// 无压缩器时仍推送 TurnStats
-			if !compacted && lastUsage != nil {
-				ch <- TurnStats{
-					Turn:             state.TurnCount,
-					Model:            lastModel,
-					PromptTokens:     lastPromptTokens,
-					CompletionTokens: lastUsage.CompletionTokens,
-					CacheHitTokens:   lastUsage.CacheHitTokens,
-					CacheMissTokens:  lastUsage.CacheMissTokens,
-					ReasoningTokens:  lastUsage.ReasoningTokens,
-					MessageCount:     len(state.Messages),
-				}
+		// 无压缩器时仍推送 TurnStats
+		if !compacted && lastUsage != nil {
+			ch <- TurnStats{
+				Turn:             state.TurnCount,
+				Model:            lastModel,
+				PromptTokens:     lastPromptTokens,
+				CompletionTokens: lastUsage.CompletionTokens,
+				CacheHitTokens:   lastUsage.CacheHitTokens,
+				CacheMissTokens:  lastUsage.CacheMissTokens,
+				ReasoningTokens:  lastUsage.ReasoningTokens,
+				MessageCount:     len(state.Messages),
 			}
+		}
+
+		// 周期性 todo 提醒：距上次 todo_write 超过阈值时注入当前状态快照
+		l.maybeInjectTodoReminder(state)
 		}
 
 		l.verbose("  ⚠ stopped: max turns reached (%d)\n", l.config.MaxTurns)
@@ -696,6 +696,17 @@ func sendEvent(ctx context.Context, ch chan<- TurnEvent, ev TurnEvent) bool {
 	}
 }
 
+// todoReminderText 构造 todo 提醒消息文本：状态摘要 + 提醒引导。
+func todoReminderText(summary string) string {
+	return summary + "\n\n" +
+		"Remember to keep the todo list updated using `todo_write` as you work through tasks. " +
+		"Mark each task complete immediately after finishing it, and set the next task to in_progress before starting work. " +
+		"Use `todo_write` to update existing tasks — only pass the items that changed; others are left unchanged. " +
+		"Multiple tasks can be in_progress simultaneously — map each parallel subagent to a separate todo item and mark them all in_progress. " +
+		"If the todo list has become stale and no longer matches what you are working on, clean it up. " +
+		"This is just a gentle reminder — ignore if not applicable. Never mention this reminder to the user."
+}
+
 // findTodoStatusIndex 返回最后一条 todo-status 消息的索引，-1 表示不存在。
 // todo-status 消息以 "## Current Todo Status" 开头，RoleUser 角色。
 func findTodoStatusIndex(msgs []llm.Message) int {
@@ -705,5 +716,52 @@ func findTodoStatusIndex(msgs []llm.Message) int {
 		}
 	}
 	return -1
+}
+
+// updateTodoCounters 在每轮工具执行后更新 todo 提醒计数器。
+// 当无活跃任务时保持计数器归零（无需提醒）；否则递增。
+// 注意：todo_write 成功执行时计数器已在 executeTodoWrite 内重置，
+// 此处仅处理递增逻辑。
+func (l *Loop) updateTodoCounters(toolCalls []llm.ToolCall) {
+	// 无活跃任务时无需提醒，保持计数器归零
+	if l.config.TodoState != nil && len(l.config.TodoState.Snapshot()) == 0 {
+		l.turnsSinceLastTodoWrite = 0
+		l.turnsSinceLastTodoReminder = 0
+		return
+	}
+
+	l.turnsSinceLastTodoWrite++
+	l.turnsSinceLastTodoReminder++
+}
+
+// maybeInjectTodoReminder 在距上次 todo_write 超过 idleTodoWrite 轮后，
+// 向 messages 注入当前 todo 状态快照 + 提醒文字。
+// 两次提醒之间至少间隔 idleTodoReminder 轮。
+func (l *Loop) maybeInjectTodoReminder(state *LoopState) {
+	if l.config.TodoState == nil {
+		return
+	}
+
+	snapshot := l.config.TodoState.Snapshot()
+	if len(snapshot) == 0 {
+		return
+	}
+
+	if l.turnsSinceLastTodoWrite < idleTodoWrite || l.turnsSinceLastTodoReminder < idleTodoReminder {
+		return
+	}
+
+	// 注入提醒后重置提醒计数器（但保留 todo_write 计数器，
+	// 因为提醒不能替代真正的 todo_write 更新）
+	l.turnsSinceLastTodoReminder = 0
+
+	msg := todoReminderText(l.config.TodoState.StatusSummary())
+
+	// 追加新消息（非原地更新）以保持前缀缓存命中。
+	// 累积的旧 todo-status 消息不影响正确性——LLM 会关注最新的一条。
+	state.Messages = append(state.Messages, llm.Message{
+		Role:    llm.RoleUser,
+		Content: msg,
+	})
 }
 

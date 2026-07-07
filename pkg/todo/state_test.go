@@ -339,49 +339,6 @@ func TestTodoState_SessionResume(t *testing.T) {
 	}
 }
 
-func TestTodoState_ReminderResetOnClear(t *testing.T) {
-	s := NewTodoState()
-	s.ReminderInjected = true
-
-	s.Apply(TodoWriteParams{
-		Todos: []TodoItem{
-			{Content: "Task A", Status: "completed", ActiveForm: "Did A"},
-		},
-	})
-
-	// allDone → cleared → reminder reset
-	if s.ReminderInjected {
-		t.Error("ReminderInjected should be false after allDone clear")
-	}
-
-	s.ReminderInjected = true
-	s.Apply(TodoWriteParams{
-		Todos: []TodoItem{},
-	})
-
-	// empty list → cleared → reminder reset
-	if s.ReminderInjected {
-		t.Error("ReminderInjected should be false after empty list")
-	}
-}
-
-func TestTodoState_ReminderPreserved(t *testing.T) {
-	s := NewTodoState()
-	s.ReminderInjected = true
-
-	s.Apply(TodoWriteParams{
-		Todos: []TodoItem{
-			{Content: "Task A", Status: "in_progress", ActiveForm: "Doing A"},
-			{Content: "Task B", Status: "pending", ActiveForm: "Doing B"},
-		},
-	})
-
-	// List is non-empty, not allDone → reminder stays true
-	if !s.ReminderInjected {
-		t.Error("ReminderInjected should stay true for non-empty non-allDone list")
-	}
-}
-
 func contains(s, substr string) bool {
 	for i := 0; i <= len(s)-len(substr); i++ {
 		if s[i:i+len(substr)] == substr {

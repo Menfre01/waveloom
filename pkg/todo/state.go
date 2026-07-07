@@ -47,9 +47,6 @@ type TodoWriteParams struct {
 type TodoState struct {
 	mu    sync.RWMutex
 	items []TodoItem
-
-	// ReminderInjected 标记是否已向 LLM 注入过 todo 更新提醒。
-	ReminderInjected bool
 }
 
 // NewTodoState 创建一个新的空 TodoState。
@@ -65,15 +62,9 @@ func (s *TodoState) Apply(params TodoWriteParams) (oldItems, newItems []TodoItem
 	oldItems = cloneItems(s.items)
 	s.items = cloneItems(params.Todos)
 
-	// allDone：全部 completed → 清空 + 重置提醒标记
+	// allDone：全部 completed → 清空
 	if s.allDoneLocked() {
 		s.items = nil
-		s.ReminderInjected = false
-	}
-
-	// 列表清空时重置提醒标记
-	if len(s.items) == 0 {
-		s.ReminderInjected = false
 	}
 
 	newItems = cloneItems(s.items)
