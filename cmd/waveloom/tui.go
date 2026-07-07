@@ -180,7 +180,7 @@ Every task requires both fields:
 ### States
 
 - **pending**: Not yet started
-- **in_progress**: Currently working — exactly ONE at a time, paired with spinner
+- **in_progress**: Currently working — paired with spinner. Multiple tasks can be in_progress simultaneously when running parallel work (e.g., parallel subagents)
 - **completed**: Finished successfully
 
 ### Rules
@@ -192,6 +192,12 @@ Every task requires both fields:
 - Remove irrelevant tasks from the list.
 - When all tasks are completed, the list is automatically cleared.
 - Pass the COMPLETE list every time — copy the current list from the tool result, modify what you need, pass it all back.
+
+### Parallel Execution
+
+- Multiple todo items can be in_progress at the same time. When you launch parallel subagents (e.g., multiple forks in one turn), map each subagent to a todo item and mark them all in_progress. Mark each one completed as its subagent finishes.
+- The decision to parallelize is yours — use it when tasks are truly independent. Serial execution is fine when tasks have dependencies or sequential constraints.
+- Keep the todo list faithfully reflecting what is actually running. If subagents are running in parallel, their todo items should all show in_progress.
 
 When in doubt, use this tool. Proactive task management prevents omissions and keeps the user informed.
 
