@@ -701,7 +701,7 @@ func todoReminderText(summary string) string {
 	return summary + "\n\n" +
 		"Remember to keep the todo list updated using `todo_write` as you work through tasks. " +
 		"Mark each task complete immediately after finishing it, and set the next task to in_progress before starting work. " +
-		"Use `todo_write` to update existing tasks — only pass the items that changed; others are left unchanged. " +
+		"Use `todo_write` to update task statuses — pass the COMPLETE list every time (copy from the previous result, change only status fields). " +
 		"Multiple tasks can be in_progress simultaneously — map each parallel subagent to a separate todo item and mark them all in_progress. " +
 		"If the todo list has become stale and no longer matches what you are working on, clean it up. " +
 		"This is just a gentle reminder — ignore if not applicable. Never mention this reminder to the user."
