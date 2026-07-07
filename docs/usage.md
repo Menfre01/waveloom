@@ -73,6 +73,20 @@ waveloom --resume <session-id>  # 恢复指定会话
 
 ### AGENTS.md 自动加载
 
+## / 命令面板
+
+在输入框打 `/` 会弹出命令面板，支持模糊搜索。
+
+| 命令 | 别名 | 说明 |
+|------|------|------|
+| `/new` | `/clear` | 创建全新 session |
+| `/model` | — | 显示或切换模型，可输入模型名快速过滤 |
+| `/theme` | — | 选择主题（Auto / Dark / Light） |
+| `/locale` | `/lang` | 切换语言（zh-CN / en-US） |
+| `/help` | — | 显示所有可用命令 |
+
+`.claude/skills/` 中 `user-invocable: true` 的 Skill 也会自动注册为 `/` 命令，命令名即 Skill 名。
+
 ## Plan 模式
 
 Plan 模式是"先规划后执行"的二阶段工作流。适合 3 个以上文件改动、涉及架构决策、或存在多种可行方案的任务。

@@ -19,7 +19,7 @@
 
 ---
 
-**The most polished terminal Code Agent for DeepSeek.** Claude Code-level TUI — streaming reasoning, rich diff, permission dialogs, `@` file picker, `/` command palette — combined with architecture-level prefix cache optimization. Your `.claude/skills/` work out of the box. DeepSeek charges up to 120× more for cache misses than hits — Waveloom keeps the longest common prefix cache-hot across turns.
+**A DeepSeek-native terminal code agent engineered for cache economics.** Prefix-cache architecture keeps the longest common prefix cache-hot across turns; LLM auto-selects pro for deep reasoning and flash for routine tasks — maximizing cache hits and minimizing token cost. Claude Code-level TUI with `.claude/skills/` and `.claude.json` MCP configs drop in — zero-friction replacement. One Go binary.
 
 **curl one-liner (macOS / Linux)**
 
@@ -69,16 +69,17 @@ waveloom
 |---|---|---|---|
 | Skill format | Drop-in: `.claude/skills/` SKILL.md, 9/15 frontmatter fields (`$ARGUMENTS`, `paths`, `` !`cmd` `` injection, etc.) | Native SKILL.md + commands | 6/15 fields, no variable substitution in skills (commands only) |
 | Cache design | DeepSeek prefix matching: 4-tier watermark (Snip → Prune → Summarize), compaction bytes never change | Anthropic `cache_control`: `cache_edits` API, dynamic system prompt sections | DeepSeek prefix matching: 4-tier (notice → snip → compact → force), `session.Replace()` bumps rewrite version |
-| Compaction | Monotonic — `compactionDecisionSet` + dual cursor, each message compacted once | Per-turn independent, no durability guarantee | Prefix bytes preserved across compact, but no per-message decision tracking |
+| Compaction | Monotonic — `compactionDecisionSet` + triple cursor, each message compacted once | Per-turn independent, no durability guarantee | Prefix bytes preserved across compact, but no per-message decision tracking |
 | Plan mode | Guard restricts writes to plan file only; build tools auto-allowed | Full write block at permission layer; rich exit UI | `planmode.Policy` with trust gates for bash/MCP; Marker string injected; no plan file |
 | Sub-agents | Fork (inherits context) / Cold (filtered tools) / Explore (read-only) | Fork + Cold + In-process + Coordinator (tmux spawn) | `task` tool with nested agent, background via job manager |
 | Runtime | Go binary ~18MB, zero deps | Node.js | Go binary + Desktop app, external plugin host |
+| MCP | Full client (config, transport, tool proxy), registered alongside built-in tools | Native MCP support | Native MCP support |
 | Permission | 8-step pipeline, 3-tier command safety (RiskNone/RiskLow/RiskHigh) | 8-source rule merge + LLM classifier auto-approval | Policy + Approver, 9-stage execute pipeline, shellsafe readOnly detect |
 | TUI polish | Streaming reasoning, rich diff, permission dialogs, `@` fuzzy picker, `/` palette, i18n, theme toggle — Claude Code parity | Native TUI (Ink/React), gold standard | Basic TUI, functional but no diff/syntax highlight polish |
 
 **Choose Waveloom if**: you use DeepSeek, have `.claude/skills/`, want Premium terminal UX without the cache miss cost.  
-**Choose Claude Code if**: you use Anthropic, need MCP + coordinator mode, deep in the Claude ecosystem.  
-**Choose Reasonix if**: you want a desktop GUI, bot integrations (Feishu/WeChat/QQ), or LSP integration.
+**Choose Claude Code if**: you use Anthropic, need coordinator mode, deep in the Claude ecosystem.  
+**Choose Reasonix if**: you want a desktop GUI, QQ Bot integration, or a larger community ecosystem.
 
 ---
 
@@ -94,7 +95,7 @@ waveloom
 - **Permission safety** — Three-tier decisions (allow / deny / ask) with pattern-matching rule engine. Every write operation requires your confirmation.
 - **Session persistence** — Close the terminal, come back days later with `waveloom --continue`. The agent remembers all prior context.
 - **Plan Mode** — Two-stage workflow: explore & design first, implement after approval. `Shift+Tab` to enter/exit, Guard-enforced write protection.
-- **10 built-in tools** — `read_file` / `write_file` / `edit_file` / `shell` / `web_fetch` / `ask_user_question` / `enter_plan_mode` / `exit_plan_mode` / `skill` / `agent`.
+- **12 built-in tools** — `read_file` / `write_file` / `edit_file` / `bash` / `web_fetch` / `ask_user_question` / `enter_plan_mode` / `exit_plan_mode` / `skill` / `agent` / `kill_background_task` / `todo_write`.
 - **i18n multilingual** — Full zh-CN / en-US bilingual UI. `--locale` CLI flag, `/locale` command, auto-detect from LANG.
 
 ---

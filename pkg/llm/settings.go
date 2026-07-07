@@ -14,7 +14,7 @@ import (
 // 所有 LLM Client 的构造参数均通过此结构表达，支持任意嵌套的 extra_params。
 type LLMSettings struct {
 	APIKey      string            `json:"api_key"`      // API Key；为空时回退到 LLM_API_KEY 环境变量
-	Provider    string            `json:"provider"`     // "openai" / "deepseek"，默认 "openai"
+	Provider    string            `json:"provider"`     // "openai" / "deepseek"，默认 "deepseek"
 	Model       string            `json:"model"`        // 模型名称（主模型）
 	SubModel    string            `json:"sub_model"`    // subagent 默认模型，仅 DeepSeek 下自动填充为空则用 Model
 	BaseURL     string            `json:"base_url"`     // API 端点，留空使用默认

@@ -42,9 +42,17 @@ waveloom/
 │   ├── context/           # Cross-turn message history
 │   ├── environment/       # Build/runtime toolchain probing
 │   ├── llm/               # LLM Client (DeepSeek + OpenAI)
+│   ├── mcp/               # MCP client
 │   ├── memory/            # AGENTS.md hierarchical loading
+│   ├── pathutil/          # Path utilities
 │   ├── permission/        # Permission gatekeeper
 │   ├── reference/         # @ file reference expansion
+│   ├── shellutil/         # Shell utilities
+│   ├── skill/             # Skill system
+│   ├── slashcommand/      # / command palette
+│   ├── subagent/          # Sub-agent delegation
+│   ├── task/              # Background task management
+│   ├── todo/              # Todo state management
 │   └── tool/              # Built-in tool system
 ├── specs/                 # Component design specs (read before modifying)
 ├── docs/                  # Documentation
@@ -90,5 +98,5 @@ Follow [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/) v1
 ## Reference Docs
 
 - [`docs/system-prompt.md`](./docs/system-prompt.md) — Full System Prompt content and design principles
-- [`docs/tool-descriptions.md`](./docs/tool-descriptions.md) — Schema definitions for all 16 built-in tools
+- [`docs/tool-descriptions.md`](./docs/tool-descriptions.md) — Schema definitions for all 12 built-in tools
 - [`specs/`](./specs/) — Component design specs (read before modifying)

@@ -19,7 +19,7 @@
 
 ---
 
-**DeepSeek 生态中最精致的终端 Code Agent。** Claude Code 级别的 TUI 打磨 — 流式推理渲染、rich diff、权限确认对话框、`@` 模糊文件选择器、`/` 命令面板 — 同时从架构层面深度优化 DeepSeek 前缀缓存。`.claude/skills/` 开箱即用。DeepSeek 缓存命中与未命中价格差高达 120 倍，Waveloom 让最长公共前缀跨轮次持续命中。
+**DeepSeek 原生终端编码代理，围绕缓存经济学设计。** 前缀缓存架构让最长公共前缀跨轮次持续命中；LLM 自动按任务选模型——pro 做深度推理，flash 处理常规任务——最大化缓存命中，最小化 token 成本。Claude Code 级 TUI，`.claude/skills/` 和 `.claude.json` MCP 配置开箱兼容，零摩擦替换。单一 Go 二进制。
 
 **curl 一键安装（推荐）**
 
@@ -69,16 +69,17 @@ waveloom
 |---|---|---|---|
 | Skill 格式 | 开箱即用：`.claude/skills/` SKILL.md，9/15 个 frontmatter 字段（`$ARGUMENTS`、`paths`、`` !`cmd` `` 注入等） | 原生 SKILL.md + commands | 6/15 字段，Skill 无变量替换（仅 commands 支持） |
 | 缓存设计 | DeepSeek 前缀匹配：四级水位线（Snip → Prune → Summarize），压缩后字节永不变化 | Anthropic `cache_control`：`cache_edits` API，System Prompt 含动态段 | DeepSeek 前缀匹配：四级（notice → snip → compact → force），`session.Replace()` 触发 rewrite 版本号 |
-| 上下文压缩 | 单调不变式 — `compactionDecisionSet` + 双游标，每条消息只压缩一次 | 每轮独立压缩，无持久性保证 | 前缀字节跨压缩保留，但无逐消息决策追踪 |
+| 上下文压缩 | 单调不变式 — `compactionDecisionSet` + 三游标，每条消息只压缩一次 | 每轮独立压缩，无持久性保证 | 前缀字节跨压缩保留，但无逐消息决策追踪 |
 | Plan 模式 | Guard 限制只写 plan 文件，构建工具自动放行 | 权限层全局阻止写入，富交互审批 UI | `planmode.Policy` + bash/MCP 信任门；注入 Marker 字符串；无 plan 文件 |
 | 子代理 | Fork（继承上下文）/ Cold（裁剪工具集）/ Explore（只读） | Fork + Cold + In-process + Coordinator（tmux 拉起） | `task` 工具嵌套 agent，后台任务通过 job manager |
 | 运行时 | Go 单二进制 ~18MB，零依赖 | Node.js | Go 二进制 + Desktop 应用，外部 plugin 宿主 |
+| MCP | 完整客户端（配置、传输、工具代理），与内置工具统一注册 | 原生 MCP 支持 | 原生 MCP 支持 |
 | 权限模型 | 8 步决策管线，3 级命令安全分类（RiskNone/RiskLow/RiskHigh） | 8 源规则合并 + LLM 分类器自动审批 | Policy + Approver，9 阶段执行管线，shellsafe readOnly 检测 |
 | TUI 打磨 | 流式推理、rich diff、权限对话框、`@` 模糊选择器、`/` 面板、i18n、主题切换 — Claude Code 同级 | 原生 TUI（Ink/React），标杆水平 | 基础 TUI，功能可用但无 diff/语法高亮打磨 |
 
 **选 Waveloom 如果**：用 DeepSeek、已有 `.claude/skills/`、想要 Claude Code 体验但不想白烧缓存未命中费用。  
-**选 Claude Code 如果**：用 Anthropic API、需要 MCP + coordinator 模式、重度依赖 Claude 生态。  
-**选 Reasonix 如果**：需要桌面 GUI、飞书/微信/QQ Bot 集成、或 LSP 代码分析。
+**选 Claude Code 如果**：用 Anthropic API、需要 coordinator 模式、重度依赖 Claude 生态。  
+**选 Reasonix 如果**：需要桌面 GUI、QQ Bot 集成、或更大的社区生态。
 
 ---
 
@@ -94,7 +95,7 @@ waveloom
 - **权限安全模型** — 三级决策（allow / deny / ask），规则引擎支持模式匹配，写操作和命令执行需要你确认
 - **会话持久恢复** — 关闭终端几天后 `waveloom --continue` 回来，Agent 记得所有上下文接着工作
 - **Plan 模式** — 先规划后执行的二阶段工作流：探索设计 → 审批 → 编码。`Shift+Tab` 一键进入/退出，Guard 写保护拦截。
-- **10 个内置工具** — `read_file` / `write_file` / `edit_file` / `shell` / `web_fetch` / `ask_user_question` / `enter_plan_mode` / `exit_plan_mode` / `skill` / `agent`
+- **12 个内置工具** — `read_file` / `write_file` / `edit_file` / `bash` / `web_fetch` / `ask_user_question` / `enter_plan_mode` / `exit_plan_mode` / `skill` / `agent` / `kill_background_task` / `todo_write`
 - **i18n 多语言** — 完整中英双语界面，`--locale` CLI 参数 / `/locale` 命令，LANG 环境变量自动检测
 
 ---
