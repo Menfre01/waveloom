@@ -28,7 +28,7 @@ var todoWriteSchema = json.RawMessage(`{
           "status": {
             "type": "string",
             "enum": ["pending", "in_progress", "completed"],
-            "description": "Current task status. Exactly ONE task should be in_progress at a time."
+            "description": "Current task status. Multiple tasks can be in_progress simultaneously when running parallel work."
           },
           "activeForm": {
             "type": "string",
@@ -64,7 +64,7 @@ ALWAYS pass the COMPLETE todo list — copy the current list from the previous t
 
 content = imperative ("Fix bug"). activeForm = present continuous ("Fixing bug") — displayed with spinner during in_progress state. Both required for every task.
 
-Max one in_progress at a time. When all tasks are completed, the list is automatically cleared.
+Multiple tasks can be in_progress simultaneously when running parallel work. When all tasks are completed, the list is automatically cleared.
 
 → Detailed rules and examples: see system prompt section "## Todo List".
 `)
