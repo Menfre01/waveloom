@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -10,6 +11,7 @@ import (
 	"os/exec"
 	"strings"
 	"sync"
+	"time"
 )
 
 // ---------------------------------------------------------------------------
@@ -37,11 +39,21 @@ type Transport interface {
 type StdioTransport struct {
 	cmd    *exec.Cmd
 	stdin  io.WriteCloser
-	stdout *bufio.Scanner
 	stderr io.ReadCloser
+
+	readCh   chan readResult // stdout 行读取通道（后台 goroutine 填充）
+	stdoutDone chan struct{}  // stdout 读取 goroutine 完成信号
+	stderrDone chan struct{}  // stderr 消费 goroutine 完成信号
+	stderrBuf  bytes.Buffer   // stderr 日志缓冲区
 
 	closeOnce sync.Once
 	writeMu   sync.Mutex // 保护 stdin 写入
+	stderrMu  sync.Mutex // 保护 stderrBuf
+}
+
+type readResult struct {
+	data json.RawMessage
+	err  error
 }
 
 // NewStdioTransport 创建 stdio 传输。
@@ -82,12 +94,25 @@ func NewStdioTransport(command string, args []string, env map[string]string) (*S
 		return nil, fmt.Errorf("start command %q: %w", command, err)
 	}
 
-	return &StdioTransport{
-		cmd:    cmd,
-		stdin:  stdin,
-		stdout: bufio.NewScanner(stdout),
-		stderr: stderr,
-	}, nil
+	scanner := bufio.NewScanner(stdout)
+	// MCP 响应可能很大（如包含 base64 图片的 get_screenshot），增大缓冲区到 10MB
+	scanner.Buffer(make([]byte, 0, 64*1024), 10*1024*1024)
+
+	t := &StdioTransport{
+		cmd:        cmd,
+		stdin:      stdin,
+		stderr:     stderr,
+		readCh:     make(chan readResult),
+		stdoutDone: make(chan struct{}),
+		stderrDone: make(chan struct{}),
+	}
+
+	// 后台持续读取 stdout，发送到 readCh
+	go t.readStdout(scanner)
+	// 持续消费 stderr 防止管道缓冲区满导致子进程阻塞
+	go t.drainStderr()
+
+	return t, nil
 }
 
 // Send 将 JSON-RPC 消息写入子进程 stdin。
@@ -107,34 +132,37 @@ func (t *StdioTransport) Send(ctx context.Context, msg any) error {
 	return nil
 }
 
-// Receive 从子进程 stdout 读取下一条 JSON-RPC 消息。
-func (t *StdioTransport) Receive(ctx context.Context) (json.RawMessage, error) {
-	// 在 goroutine 中等待行读取，以便响应 ctx 取消
-	type result struct {
-		data json.RawMessage
-		err  error
-	}
-	ch := make(chan result, 1)
-
-	go func() {
-		if t.stdout.Scan() {
-			line := strings.TrimSpace(t.stdout.Text())
-			if line == "" {
-				ch <- result{err: fmt.Errorf("empty line from server")}
-				return
-			}
-			ch <- result{data: json.RawMessage(line)}
-		} else {
-			err := t.stdout.Err()
-			if err == nil {
-				err = io.EOF
-			}
-			ch <- result{err: fmt.Errorf("read stdout: %w", err)}
+// readStdout 在后台 goroutine 中持续从 scanner 读取行并发送到 readCh。
+// 当 scanner 结束（EOF/错误）时关闭 readCh 并通知 stdoutDone。
+func (t *StdioTransport) readStdout(scanner *bufio.Scanner) {
+	defer close(t.stdoutDone)
+	defer close(t.readCh)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
 		}
-	}()
+		select {
+		case t.readCh <- readResult{data: json.RawMessage(line)}:
+		case <-t.stdoutDone:
+			return
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		select {
+		case t.readCh <- readResult{err: fmt.Errorf("read stdout: %w", err)}:
+		case <-t.stdoutDone:
+		}
+	}
+}
 
+// Receive 从后台读取通道获取下一条 JSON-RPC 消息，支持 context 取消。
+func (t *StdioTransport) Receive(ctx context.Context) (json.RawMessage, error) {
 	select {
-	case r := <-ch:
+	case r, ok := <-t.readCh:
+		if !ok {
+			return nil, io.EOF
+		}
 		return r.data, r.err
 	case <-ctx.Done():
 		return nil, ctx.Err()
@@ -145,16 +173,37 @@ func (t *StdioTransport) Receive(ctx context.Context) (json.RawMessage, error) {
 func (t *StdioTransport) Close() error {
 	var err error
 	t.closeOnce.Do(func() {
-		_ = t.stdin.Close()
-		_ = t.stderr.Close()
+		_ = t.stdin.Close()  // 通知子进程结束
+		_ = t.stderr.Close() // 触发 drainStderr 退出
+		<-t.stderrDone
+		<-t.stdoutDone
 		err = t.cmd.Wait()
 	})
 	return err
 }
 
-// StderrReader 返回 stderr 的读取器，供外部日志记录。
-func (t *StdioTransport) StderrReader() io.ReadCloser {
-	return t.stderr
+// drainStderr 持续读取 stderr 并缓冲，防止管道缓冲区满阻塞子进程。
+func (t *StdioTransport) drainStderr() {
+	defer close(t.stderrDone)
+	buf := make([]byte, 4096)
+	for {
+		n, err := t.stderr.Read(buf)
+		if n > 0 {
+			t.stderrMu.Lock()
+			t.stderrBuf.Write(buf[:n])
+			t.stderrMu.Unlock()
+		}
+		if err != nil {
+			return
+		}
+	}
+}
+
+// Stderr 返回 stderr 输出缓冲区的副本，用于日志记录。
+func (t *StdioTransport) Stderr() string {
+	t.stderrMu.Lock()
+	defer t.stderrMu.Unlock()
+	return t.stderrBuf.String()
 }
 
 // ---------------------------------------------------------------------------
@@ -175,9 +224,11 @@ type HTTPTransport struct {
 // NewHTTPTransport 创建 HTTP 传输。
 func NewHTTPTransport(url string, headers map[string]string) *HTTPTransport {
 	return &HTTPTransport{
-		url:        url,
-		headers:    headers,
-		httpClient: &http.Client{},
+		url:     url,
+		headers: headers,
+		httpClient: &http.Client{
+			Timeout: 60 * time.Second,
+		},
 	}
 }
 
@@ -347,21 +398,30 @@ func (t *HTTPTransport) SendAndReceive(ctx context.Context, msg any) (json.RawMe
 }
 
 // readSSE 从 SSE 流中读取并提取 JSON-RPC 响应。
+// 支持 SSE 标准字段：data、event、id、retry，以及多行 data 拼接。
 func (t *HTTPTransport) readSSE(ctx context.Context, body io.Reader) (json.RawMessage, error) {
 	scanner := bufio.NewScanner(body)
-	var lastData string
+	var dataLines []string
 
 	for scanner.Scan() {
 		line := scanner.Text()
 
-		if strings.HasPrefix(line, "data: ") {
-			lastData = strings.TrimPrefix(line, "data: ")
+		// 空行表示事件结束
+		if line == "" {
+			if len(dataLines) > 0 {
+				// 多行 data 用换行符拼接（SSE 标准）
+				return json.RawMessage(strings.Join(dataLines, "\n")), nil
+			}
+			continue
 		}
 
-		// 空行表示事件结束
-		if line == "" && lastData != "" {
-			return json.RawMessage(lastData), nil
+		// 收集 data 行（跳过 event/id/retry/注释）
+		if strings.HasPrefix(line, "data:") {
+			data := strings.TrimPrefix(line, "data:")
+			data = strings.TrimPrefix(data, " ") // 去掉冒号后的可选空格
+			dataLines = append(dataLines, data)
 		}
+		// 忽略 event:、id:、retry: 和注释行 (:)
 
 		select {
 		case <-ctx.Done():
@@ -374,8 +434,9 @@ func (t *HTTPTransport) readSSE(ctx context.Context, body io.Reader) (json.RawMe
 		return nil, fmt.Errorf("read SSE: %w", err)
 	}
 
-	if lastData != "" {
-		return json.RawMessage(lastData), nil
+	// 流结束时有未完成的数据
+	if len(dataLines) > 0 {
+		return json.RawMessage(strings.Join(dataLines, "\n")), nil
 	}
 
 	return nil, io.EOF

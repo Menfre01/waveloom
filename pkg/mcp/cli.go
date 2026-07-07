@@ -13,30 +13,34 @@ import (
 
 // RunMCPCommand 处理 waveloom mcp <subcommand> 命令。
 // args 是 mcp 后面的参数（不含 "mcp" 本身）。
-func RunMCPCommand(args []string) {
+// 返回 true 表示成功，false 表示出错（错误信息已写入 stderr）。
+func RunMCPCommand(args []string) bool {
 	if len(args) == 0 {
 		printMCPUsage()
-		return
+		return false
 	}
 
 	homeDir, _ := os.UserHomeDir()
 	cwd, _ := os.Getwd()
 
+	ok := true
 	switch args[0] {
 	case "add":
-		runAdd(args[1:], homeDir, cwd)
+		ok = runAdd(args[1:], homeDir, cwd)
 	case "add-json":
-		runAddJSON(args[1:], homeDir, cwd)
+		ok = runAddJSON(args[1:], homeDir, cwd)
 	case "list":
-		runList(homeDir, cwd)
+		ok = runList(homeDir, cwd)
 	case "get":
-		runGet(args[1:], homeDir, cwd)
+		ok = runGet(args[1:], homeDir, cwd)
 	case "remove":
-		runRemove(args[1:], homeDir, cwd)
+		ok = runRemove(args[1:], homeDir, cwd)
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown mcp subcommand: %s\n\n", args[0])
 		printMCPUsage()
+		return false
 	}
+	return ok
 }
 
 func printMCPUsage() {
@@ -63,7 +67,7 @@ Examples:
 // mcp add
 // ---------------------------------------------------------------------------
 
-func runAdd(args []string, homeDir, cwd string) {
+func runAdd(args []string, homeDir, cwd string) bool {
 	var transportType string
 	var scope string
 	var headers []string
@@ -111,7 +115,7 @@ parseRest:
 	case "http", "sse":
 		if len(remaining) < 2 {
 			fmt.Fprintf(os.Stderr, "Usage: waveloom mcp add --transport http [--scope <s>] <name> <url>\n")
-			return
+			return false
 		}
 		name := remaining[0]
 		url := remaining[1]
@@ -124,19 +128,19 @@ parseRest:
 			config.Headers = parseHeaderFlags(headers)
 		}
 
-		addServer(name, config, scope, homeDir, cwd)
+		return addServer(name, config, scope, homeDir, cwd)
 
 	case "stdio":
 		if len(remaining) < 3 {
 			fmt.Fprintf(os.Stderr, "Usage: waveloom mcp add --transport stdio [--scope <s>] <name> -- <command> [args...]\n")
-			return
+			return false
 		}
 		name := remaining[0]
 
 		// 跳过 --
 		if remaining[1] != "--" {
 			fmt.Fprintf(os.Stderr, "Error: stdio transport requires -- before the command\n")
-			return
+			return false
 		}
 		commandAndArgs := remaining[2:]
 
@@ -151,14 +155,15 @@ parseRest:
 			config.Env = parseEnvFlags(envVars)
 		}
 
-		addServer(name, config, scope, homeDir, cwd)
+		return addServer(name, config, scope, homeDir, cwd)
 
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown transport type: %s (use 'http' or 'stdio')\n", transportType)
+		return false
 	}
 }
 
-func addServer(name string, config ServerConfig, scope, homeDir, cwd string) {
+func addServer(name string, config ServerConfig, scope, homeDir, cwd string) bool {
 	if scope == "" {
 		scope = "local"
 	}
@@ -171,21 +176,22 @@ func addServer(name string, config ServerConfig, scope, homeDir, cwd string) {
 		err = AddServerToWaveloomJSON(homeDir, cwd, scope, name, config)
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown scope: %s (use 'local', 'project', or 'user')\n", scope)
-		return
+		return false
 	}
 
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error adding server: %v\n", err)
-		return
+		return false
 	}
 	fmt.Printf("Added MCP server %q (scope: %s)\n", name, scope)
+	return true
 }
 
 // ---------------------------------------------------------------------------
 // mcp add-json
 // ---------------------------------------------------------------------------
 
-func runAddJSON(args []string, homeDir, cwd string) {
+func runAddJSON(args []string, homeDir, cwd string) bool {
 	var scope string
 
 	i := 0
@@ -204,7 +210,7 @@ func runAddJSON(args []string, homeDir, cwd string) {
 	remaining := args[i:]
 	if len(remaining) < 2 {
 		fmt.Fprintf(os.Stderr, "Usage: waveloom mcp add-json [--scope <s>] <name> '<json>'\n")
-		return
+		return false
 	}
 
 	name := remaining[0]
@@ -213,21 +219,21 @@ func runAddJSON(args []string, homeDir, cwd string) {
 	var config ServerConfig
 	if err := json.Unmarshal([]byte(jsonStr), &config); err != nil {
 		fmt.Fprintf(os.Stderr, "Error parsing JSON: %v\n", err)
-		return
+		return false
 	}
 
-	addServer(name, config, scope, homeDir, cwd)
+	return addServer(name, config, scope, homeDir, cwd)
 }
 
 // ---------------------------------------------------------------------------
 // mcp list
 // ---------------------------------------------------------------------------
 
-func runList(homeDir, cwd string) {
+func runList(homeDir, cwd string) bool {
 	configs := ListServerConfigs(homeDir, cwd)
 	if len(configs) == 0 {
 		fmt.Println("No MCP servers configured.")
-		return
+		return true
 	}
 
 	for name, sources := range configs {
@@ -245,23 +251,24 @@ func runList(homeDir, cwd string) {
 			}
 		}
 	}
+	return true
 }
 
 // ---------------------------------------------------------------------------
 // mcp get
 // ---------------------------------------------------------------------------
 
-func runGet(args []string, homeDir, cwd string) {
+func runGet(args []string, homeDir, cwd string) bool {
 	if len(args) < 1 {
 		fmt.Fprintf(os.Stderr, "Usage: waveloom mcp get <name>\n")
-		return
+		return false
 	}
 	name := args[0]
 
 	sources := ListServerConfigs(homeDir, cwd)[name]
 	if len(sources) == 0 {
 		fmt.Printf("Server %q not found.\n", name)
-		return
+		return false
 	}
 
 	fmt.Printf("%s:\n", name)
@@ -285,24 +292,26 @@ func runGet(args []string, homeDir, cwd string) {
 		}
 		fmt.Println()
 	}
+	return true
 }
 
 // ---------------------------------------------------------------------------
 // mcp remove
 // ---------------------------------------------------------------------------
 
-func runRemove(args []string, homeDir, cwd string) {
+func runRemove(args []string, homeDir, cwd string) bool {
 	if len(args) < 1 {
 		fmt.Fprintf(os.Stderr, "Usage: waveloom mcp remove <name>\n")
-		return
+		return false
 	}
 	name := args[0]
 
 	if err := RemoveServer(homeDir, cwd, name); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		return
+		return false
 	}
 	fmt.Printf("Removed MCP server %q\n", name)
+	return true
 }
 
 // ---------------------------------------------------------------------------
