@@ -67,15 +67,15 @@ waveloom
 
 | | Waveloom | Claude Code | Reasonix |
 |---|---|---|---|
-| Skill format | Drop-in: `.claude/skills/` SKILL.md, 9/15 frontmatter fields (`$ARGUMENTS`, `paths`, `` !`cmd` `` injection, etc.) | Native SKILL.md + commands | 6/15 fields, no variable substitution in skills (commands only) |
+| Skill format | Drop-in: `.claude/skills/` SKILL.md, 9 frontmatter fields (`$ARGUMENTS`, `paths`, `` !`cmd` `` injection, etc.) | Native SKILL.md + commands | 13 frontmatter fields, no variable substitution in skill bodies |
 | Cache design | DeepSeek prefix matching: 4-tier watermark (Snip → Prune → Summarize), compaction bytes never change | Anthropic `cache_control`: `cache_edits` API, dynamic system prompt sections | DeepSeek prefix matching: 4-tier (notice → snip → compact → force), `session.Replace()` bumps rewrite version |
 | Compaction | Monotonic — `compactionDecisionSet` + triple cursor, each message compacted once | Per-turn independent, no durability guarantee | Prefix bytes preserved across compact, but no per-message decision tracking |
-| Plan mode | Guard restricts writes to plan file only; build tools auto-allowed | Full write block at permission layer; rich exit UI | `planmode.Policy` with trust gates for bash/MCP; Marker string injected; no plan file |
-| Sub-agents | Fork (inherits context) / Cold (filtered tools) / Explore (read-only) | Fork + Cold + In-process + Coordinator (tmux spawn) | `task` tool with nested agent, background via job manager |
+| Plan mode | Guard restricts writes to plan file only; build tools auto-allowed | Write restricted to plan file only; rich exit UI | `planmode.Policy` with trust gates for bash/MCP; Marker string injected; no plan file |
+| Sub-agents | Fork (inherits context) / Cold (filtered tools) / Explore (read-only) | Fork + Cold + In-process + Coordinator | `task` tool with nested agent, background via job manager |
 | Runtime | Go binary ~18MB, zero deps | Node.js | Go binary + Desktop app, external plugin host |
 | MCP | Full client (config, transport, tool proxy), registered alongside built-in tools | Native MCP support | Native MCP support |
 | Permission | 8-step pipeline, 3-tier command safety (RiskNone/RiskLow/RiskHigh) | 8-source rule merge + LLM classifier auto-approval | Policy + Approver, 9-stage execute pipeline, shellsafe readOnly detect |
-| TUI polish | Streaming reasoning, rich diff, permission dialogs, `@` fuzzy picker, `/` palette, i18n, theme toggle — Claude Code parity | Native TUI (Ink/React), gold standard | Basic TUI, functional but no diff/syntax highlight polish |
+| TUI polish | Streaming reasoning, rich diff, permission dialogs, `@` fuzzy picker, `/` palette, i18n, theme toggle — Claude Code parity | Native TUI (Ink/React), gold standard | Functional TUI, different UX paradigm |
 
 **Choose Waveloom if**: you use DeepSeek, have `.claude/skills/`, want Premium terminal UX without the cache miss cost.  
 **Choose Claude Code if**: you use Anthropic, need coordinator mode, deep in the Claude ecosystem.  

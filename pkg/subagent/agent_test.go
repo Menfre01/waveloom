@@ -441,8 +441,10 @@ func TestForwardEvents_EmptyStream(t *testing.T) {
 	if err != nil {
 		t.Fatalf("forwardEvents error: %v", err)
 	}
-	if aggregated != "" {
-		t.Errorf("aggregated = %q, want empty", aggregated)
+	// 空流（无任何文本输出）应返回兜底文本，而非空字符串，
+	// 防止 tool_result 内容为空导致父 agent 误解。
+	if aggregated == "" {
+		t.Errorf("aggregated is empty, want non-empty fallback")
 	}
 }
 
