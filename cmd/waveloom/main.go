@@ -564,15 +564,16 @@ func buildModelSelectionSection(defaultModel, flashModel string) string {
 	return fmt.Sprintf(`
 ## Subagent Model Selection
 
-When spawning subagents with the agent tool, you can choose the model via the optional
+When spawning subagents with the agent tool, you can override the model via the optional
 `+"`model`"+` parameter. The parameter accepts:
 
   (omit / empty)  → uses the default (%s)
-  "%s"             → full reasoning depth. Best for evaluation, verification, complex implementation.
-  "%s"             → faster and cheaper. Best for Explore, simple lookups, low-complexity tasks.
+  "%s"             → deep reasoning. Use ONLY for: evaluation, verification, complex multi-file implementation.
+  "%s"             → fast and cheap — the right choice for most tasks: Explore, research, code search, single-file edits, simple lookups.
 
-If you pass an unrecognized value, the default is used. The cost of output tokens is
-240x that of cached input — choosing `+"`%s`"+` for straightforward tasks and `+"`%s`"+`
-for deep analysis significantly reduces overall cost without compromising results.
+Prefer `+"`%s`"+` unless the task genuinely demands deep analysis.
+Output tokens cost 240x that of cached input — `+"`%s`"+` on routine tasks wastes compute with zero quality gain.
+
+If you pass an unrecognized value, the default is used.
 `, defaultModel, defaultModel, flashModel, flashModel, defaultModel)
 }
