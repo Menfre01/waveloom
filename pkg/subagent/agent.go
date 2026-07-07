@@ -588,8 +588,7 @@ func forwardEvents(ctx context.Context, subCh <-chan agentloop.TurnEvent, cb fun
 	var sb strings.Builder
 	var writeOps []writeOp
 	var currentTurn int
-	var anyText bool            // 是否收到过至少一个非空 ContentDelta
-	var lastToolCalls []string  // 最后一个 turn 的工具调用名列表（用于空文本兜底）
+	var lastToolCalls []string // 最后一个 turn 的工具调用名列表（用于空文本兜底）
 
 	// 缓冲扇出通道：解耦 subagent 事件消费与 TUI 投递。
 	// 若不隔离，pushEvent → m.program.Send() 可能因 TUI 消息通道拥塞而阻塞，
@@ -628,7 +627,6 @@ func forwardEvents(ctx context.Context, subCh <-chan agentloop.TurnEvent, cb fun
 			}
 			if e.ContentDelta != "" {
 				sb.WriteString(e.ContentDelta)
-				anyText = true
 				fanout <- SubagentEvent{ToolCallID: toolCallID, Kind: SubagentText, TextDelta: e.ContentDelta}
 			}
 
@@ -659,13 +657,9 @@ func forwardEvents(ctx context.Context, subCh <-chan agentloop.TurnEvent, cb fun
 			if e.Err != nil {
 				finalErr = e.Err
 			}
-			// 兜底：子 agent 最后一个 turn 无文本输出时（如仅含 tool 调用），
+			// 兜底：子 agent 最后一个 turn 无文本输出时，
 			// 合成非空 fallback 防止 tool_result 内容为空，避免父 agent 因空结果而误解。
-			if !anyText {
-				sb.WriteString("(no summary text produced)")
-			} else if sb.Len() == 0 && len(lastToolCalls) > 0 {
-				fmt.Fprintf(&sb, "(completed via: %s)", strings.Join(lastToolCalls, ", "))
-			}
+			ensureNonEmpty(&sb, lastToolCalls)
 			if len(writeOps) > 0 {
 				sb.WriteString("\n\n<subagent_write_operations>\n")
 				for _, op := range writeOps {
@@ -681,7 +675,26 @@ func forwardEvents(ctx context.Context, subCh <-chan agentloop.TurnEvent, cb fun
 			return sb.String(), totalTurns, promptTokens, completionTokens, finalErr
 		}
 	}
+	// Channel 关闭但未收到 LoopDone（跨包防御：当前 agentloop.Run 总是会发送 LoopDone，
+	// 但此处做兜底防止未来引入的不发送 LoopDone 的路径导致空文本传播）。
+	ensureNonEmpty(&sb, lastToolCalls)
 	return sb.String(), totalTurns, promptTokens, completionTokens, nil
+}
+
+// ensureNonEmpty 在 sb 为空时合成非空 fallback 文本。
+// 覆盖三种场景：
+//   - 全程无文本输出（!anyText 的情况由调用方保证，此处仅检查 sb）
+//   - 前序 turn 有文本但最后 turn 被重置为空，且无工具调用
+//   - 前序 turn 有文本但最后 turn 被重置为空，有工具调用
+func ensureNonEmpty(sb *strings.Builder, lastToolCalls []string) {
+	if sb.Len() > 0 {
+		return
+	}
+	if len(lastToolCalls) > 0 {
+		fmt.Fprintf(sb, "(completed via: %s)", strings.Join(lastToolCalls, ", "))
+	} else {
+		sb.WriteString("(no summary text produced)")
+	}
 }
 
 // ---------------------------------------------------------------------------
