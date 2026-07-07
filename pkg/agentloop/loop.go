@@ -297,7 +297,7 @@ func (l *Loop) Run(ctx context.Context, messages []llm.Message) <-chan TurnEvent
 							"Remember to keep the todo list updated using `todo_write` as you work through tasks. " +
 							"Mark each task complete immediately after finishing it, and set the next task to in_progress before starting work. " +
 							"Use `todo_write` with `merge=true` to update existing tasks — only pass the items that changed; others are left unchanged. " +
-							"Exactly ONE task must be in_progress at a time.",
+							"Multiple tasks can be in_progress simultaneously — map each parallel subagent to a separate todo item and mark them all in_progress.",
 					})
 				}
 			}
@@ -579,7 +579,7 @@ func (l *Loop) Run(ctx context.Context, messages []llm.Message) <-chan TurnEvent
 								"Remember to keep the todo list updated using `todo_write` as you work through tasks. " +
 								"Mark each task complete immediately after finishing it, and set the next task to in_progress before starting work. " +
 								"Use `todo_write` with `merge=true` to update existing tasks — only pass the items that changed; others are left unchanged. " +
-								"Exactly ONE task must be in_progress at a time."
+								"Multiple tasks can be in_progress simultaneously — map each parallel subagent to a separate todo item and mark them all in_progress."
 						}
 					}
 				}
