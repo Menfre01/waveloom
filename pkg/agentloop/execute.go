@@ -708,7 +708,7 @@ func (l *Loop) executeTodoWrite(ctx context.Context, tc llm.ToolCall, state *Loo
 		}
 	}
 
-	_, newItems := l.config.TodoState.Apply(params)
+	oldItems, newItems := l.config.TodoState.Apply(params)
 
 	// 成功更新后重置周期性提醒计数器
 	l.turnsSinceLastTodoWrite = 0
@@ -725,8 +725,16 @@ func (l *Loop) executeTodoWrite(ctx context.Context, tc llm.ToolCall, state *Loo
 		}
 	}
 
+	result := todo.FormatResult(newItems)
+
+	// 检测无状态变更的 no-op 调用：若新旧列表状态完全一致，追加提示
+	if todoItemsEqual(oldItems, newItems) && len(newItems) > 0 {
+		result += "\n⚠️ No status changes detected. Did you forget to update task statuses? " +
+			"Mark completed tasks as 'completed' and start the next task by setting it to 'in_progress'."
+	}
+
 	return &tool.ToolResult{
-		Content: todo.FormatResult(newItems),
+		Content: result,
 	}
 }
 
@@ -1086,4 +1094,18 @@ var nouns = []string{
 	"lemur", "marlin", "newt", "otter", "puffin",
 	"quokka", "raven", "salmon", "tapir", "urchin",
 	"viper", "weasel", "xerus", "yak", "zebra",
+}
+
+// todoItemsEqual 比较两个 todo 列表的状态是否完全一致（content + status + activeForm）。
+// 用于检测 no-op todo_write 调用（LLM 传入相同状态但未做任何变更）。
+func todoItemsEqual(a, b []todo.TodoItem) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i].Content != b[i].Content || a[i].Status != b[i].Status || a[i].ActiveForm != b[i].ActiveForm {
+			return false
+		}
+	}
+	return true
 }
