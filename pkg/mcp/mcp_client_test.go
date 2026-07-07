@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -698,5 +699,192 @@ func TestClient_SendRequestStdio_NotificationSkipped(t *testing.T) {
 	}
 	if resp == nil || *resp != "ok" {
 		t.Errorf("Result = %v, want ok", resp)
+	}
+}
+
+// ============================================================================
+// ClientStatus — 失败 server 追踪
+// ============================================================================
+
+func TestManager_ClientStatus_IncludesFailedServers(t *testing.T) {
+	registry := tool.NewRegistry()
+	m := NewManager(registry)
+
+	m.connectFunc = func(ctx context.Context, name string, config ServerConfig) (*Client, error) {
+		return nil, fmt.Errorf("connection refused")
+	}
+
+	cfg := ServerConfig{Name: "fail-srv", Type: ServerTypeStdio, Command: "echo"}
+	m.connectServer(context.Background(), cfg)
+
+	status := m.ClientStatus()
+	if info, ok := status["fail-srv"]; !ok {
+		t.Fatal("ClientStatus should include failed server")
+	} else {
+		if info.Connected {
+			t.Error("failed server should have Connected=false")
+		}
+		if info.Error == "" {
+			t.Error("failed server should have non-empty Error")
+		}
+		if !strings.Contains(info.Error, "connection refused") {
+			t.Errorf("Error = %q, want containing 'connection refused'", info.Error)
+		}
+	}
+}
+
+func TestManager_ClientStatus_SuccessClearsFailure(t *testing.T) {
+	registry := tool.NewRegistry()
+	m := NewManager(registry)
+
+	// Register a prior failure
+	m.mu.Lock()
+	m.failedErr["srv"] = fmt.Errorf("old error")
+	m.mu.Unlock()
+
+	// Then connect successfully
+	ft := newFakeTransport()
+	ft.queueResponse(rpcResult(1, `{"tools":[]}`))
+
+	m.connectFunc = func(ctx context.Context, name string, config ServerConfig) (*Client, error) {
+		return &Client{
+			name:         "srv",
+			transport:    ft,
+			requestID:    1,
+			toolTimeout:  defaultToolTimeout,
+			serverInfo:   ImplementationInfo{Name: "TestServer", Version: "1.0"},
+		}, nil
+	}
+
+	cfg := ServerConfig{Name: "srv", Type: ServerTypeHTTP, URL: "https://example.com"}
+	m.connectServer(context.Background(), cfg)
+
+	status := m.ClientStatus()
+	if info := status["srv"]; !info.Connected {
+		t.Error("server should be Connected after successful connection")
+	} else if info.Error != "" {
+		t.Errorf("Error should be empty after success, got %q", info.Error)
+	}
+}
+
+// ============================================================================
+// OnStatusChange 回调
+// ============================================================================
+
+func TestManager_OnStatusChange_TriggeredOnFailure(t *testing.T) {
+	registry := tool.NewRegistry()
+	m := NewManager(registry)
+
+	m.connectFunc = func(ctx context.Context, name string, config ServerConfig) (*Client, error) {
+		return nil, fmt.Errorf("boom")
+	}
+
+	notified := make(chan struct{}, 1)
+	m.OnStatusChange = func() {
+		notified <- struct{}{}
+	}
+
+	cfg := ServerConfig{Name: "test", Type: ServerTypeStdio, Command: "echo"}
+	m.connectServer(context.Background(), cfg)
+
+	select {
+	case <-notified:
+		// OK
+	case <-time.After(time.Second):
+		t.Error("OnStatusChange was not triggered on connect failure")
+	}
+}
+
+func TestManager_OnStatusChange_TriggeredOnSuccess(t *testing.T) {
+	registry := tool.NewRegistry()
+	m := NewManager(registry)
+
+	ft := newFakeTransport()
+	ft.queueResponse(rpcResult(1, `{"tools":[]}`))
+
+	m.connectFunc = func(ctx context.Context, name string, config ServerConfig) (*Client, error) {
+		return &Client{
+			name:         "test",
+			transport:    ft,
+			requestID:    1,
+			toolTimeout:  defaultToolTimeout,
+			serverInfo:   ImplementationInfo{Name: "TestServer", Version: "1.0"},
+		}, nil
+	}
+
+	notified := make(chan struct{}, 1)
+	m.OnStatusChange = func() {
+		notified <- struct{}{}
+	}
+
+	cfg := ServerConfig{Name: "test", Type: ServerTypeHTTP, URL: "https://example.com"}
+	m.connectServer(context.Background(), cfg)
+
+	select {
+	case <-notified:
+		// OK
+	case <-time.After(time.Second):
+		t.Error("OnStatusChange was not triggered on connect success")
+	}
+}
+
+func TestManager_OnStatusChange_TriggeredOnStop(t *testing.T) {
+	m := NewManager(tool.NewRegistry())
+
+	m.mu.Lock()
+	m.clients["a"] = &Client{name: "a", transport: &mockTransport{}}
+	m.mu.Unlock()
+
+	notified := make(chan struct{}, 1)
+	m.OnStatusChange = func() {
+		notified <- struct{}{}
+	}
+
+	_ = m.Stop()
+
+	select {
+	case <-notified:
+		// OK
+	case <-time.After(time.Second):
+		t.Error("OnStatusChange was not triggered on Stop")
+	}
+}
+
+// ============================================================================
+// refreshTools 去重
+// ============================================================================
+
+func TestManager_RefreshTools_SkipDuplicates(t *testing.T) {
+	registry := tool.NewRegistry()
+	m := NewManager(registry)
+
+	ft := newFakeTransport()
+	client := &Client{
+		name:         "test",
+		transport:    ft,
+		requestID:    1,
+		toolTimeout:  defaultToolTimeout,
+		serverInfo:   ImplementationInfo{Name: "TestServer", Version: "1.0"},
+	}
+
+	// 先注册工具（模拟首次连接）
+	proxy := NewMCPToolProxy(client, ToolDef{
+		Name:        "mytool",
+		InputSchema: json.RawMessage(`{}`),
+	})
+	registry.Register(tool.Wrap(proxy))
+	existingName := proxy.Name()
+
+	// refreshTools 尝试再次注册同名工具
+	ft.queueResponse(rpcResult(1, `{"tools":[{"name":"mytool","inputSchema":{}},{"name":"newtool","inputSchema":{}}]}`))
+	m.refreshTools(client)
+
+	// 验证: 同名工具没有触发 panic，总工具数 = 2（原有 1 + 新增 1）
+	// 注意：registry.List() / Get() 来验证
+	if _, ok := registry.Get(existingName); !ok {
+		t.Errorf("existing tool %q was removed (should not happen)", existingName)
+	}
+	if _, ok := registry.Get("mcp__test__newtool"); !ok {
+		t.Error("new tool mcp__test__newtool was not registered")
 	}
 }

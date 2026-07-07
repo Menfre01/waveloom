@@ -16,7 +16,9 @@ import (
 // ---------------------------------------------------------------------------
 
 // 默认工具调用超时。
-const defaultToolTimeout = 60 * time.Second
+// 仅对底层传输的每次读取操作设置超时。30 分钟足够覆盖 Pencil 等设计工具的复杂操作。
+// 可通过 ServerConfig.Timeout 覆盖（单位：毫秒）。
+const defaultToolTimeout = 30 * time.Minute
 
 // Client 表示与一个 MCP Server 的 1:1 连接。
 // 通过 Connect() 创建并完成初始化握手。
@@ -112,6 +114,11 @@ func (c *Client) initialize(ctx context.Context) error {
 	}
 
 	c.serverInfo = initResult.ServerInfo
+
+	// 协议版本协商：检查 server 返回的版本是否兼容
+	if initResult.ProtocolVersion != "" && initResult.ProtocolVersion != ProtocolVersion {
+		return fmt.Errorf("unsupported protocol version: server=%q client=%q", initResult.ProtocolVersion, ProtocolVersion)
+	}
 
 	// 发送 initialized 通知
 	if err := c.sendNotification(ctx, MethodInitialized, nil); err != nil {
