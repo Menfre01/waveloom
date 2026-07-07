@@ -75,6 +75,10 @@ type Config struct {
 	// TodoState session 级 todo 状态，跨 Loop 持久。
 	// nil → todo_write 工具禁用。
 	TodoState *todo.TodoState
+
+	// Model 覆盖 LLM Client 的默认 model。空 = 使用 Client 默认。
+	// 用于 subagent 按任务复杂度选择不同模型。
+	Model string
 }
 
 // DefaultToolTimeout 是单个工具执行的推荐超时时间（10 分钟）。
@@ -306,7 +310,11 @@ func (l *Loop) Run(ctx context.Context, messages []llm.Message) <-chan TurnEvent
 			var lastPromptTokens int      // 本轮 API 返回的 prompt_tokens
 			var lastUsage       *llm.UsageInfo // 暂存 usage，压缩后统一推送 TurnStats
 			var lastModel       string         // 暂存 model
-			streamCh, err := l.llmClient.SendMessageStream(ctx, messagesForTurn, toLLMToolSpecs(l.toolRegistry.List()))
+			sendCtx := ctx
+			if l.config.Model != "" {
+				sendCtx = llm.WithModelOverride(ctx, l.config.Model)
+			}
+			streamCh, err := l.llmClient.SendMessageStream(sendCtx, messagesForTurn, toLLMToolSpecs(l.toolRegistry.List()))
 			if err != nil {
 				l.verbose("  ← ERROR: %v\n", err)
 				ch <- LoopDone{
@@ -339,7 +347,7 @@ func (l *Loop) Run(ctx context.Context, messages []llm.Message) <-chan TurnEvent
 
 					// 回退到非流式调用（自带重试）
 					l.verbose("  ← falling back to non-streaming\n")
-					resp, fallbackErr := l.llmClient.SendMessage(ctx, messagesForTurn, toLLMToolSpecs(l.toolRegistry.List()))
+					resp, fallbackErr := l.llmClient.SendMessage(sendCtx, messagesForTurn, toLLMToolSpecs(l.toolRegistry.List()))
 					if fallbackErr != nil {
 						l.verbose("  ← FALLBACK ERROR: %v\n", fallbackErr)
 

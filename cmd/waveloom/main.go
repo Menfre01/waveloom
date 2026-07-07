@@ -79,7 +79,7 @@ func main() {
 	}
 
 	// 4. 加载 LLM Client（合并全局和项目配置，项目字段优先；--model 覆盖配置文件）
-	llmClient, llmClientCfg, err := createLLMClient(globalPath, projectPath, cfg.Model, loc)
+	llmClient, llmClientCfg, llmSettings, err := createLLMClient(globalPath, projectPath, cfg.Model, loc)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		if needsSetup() {
@@ -119,7 +119,8 @@ func main() {
 
 	// 6. 初始化 Tool Registry
 	registry := tool.NewRegistry()
-	registerBuiltinTools(registry, skillLoader, llmClient)
+	subModelValidation := buildValidModels(llmSettings)
+	registerBuiltinTools(registry, skillLoader, llmClient, subModelValidation)
 
 	// 8.5 启动 MCP Manager — 连接配置的 MCP Server，注册工具代理
 	// 日志输出策略：
@@ -179,6 +180,11 @@ func main() {
 	// 注入 skill 列表到 system prompt
 	if skillListing := skillLoader.FormatSkillListing(); skillListing != "" {
 		systemPrompt += skillListing
+	}
+
+	// 注入 subagent 模型选择指导（主模型 ≠ sub_model 时）
+	if llmSettings.SubModel != "" && llmSettings.Model != llmSettings.SubModel {
+		systemPrompt += buildModelSelectionSection(llmSettings.Model, llmSettings.SubModel)
 	}
 
 	// 合并 compaction 配置：默认值 + settings.json 覆盖
@@ -280,7 +286,7 @@ func main() {
 }
 
 // registerBuiltinTools 注册内置工具。
-func registerBuiltinTools(r tool.Registry, skillLoader *skill.Loader, llmClient llm.Client) {
+func registerBuiltinTools(r tool.Registry, skillLoader *skill.Loader, llmClient llm.Client, validModels []string) {
 	r.Register(tool.Wrap(&tool.ReadFile{}))
 	r.Register(tool.Wrap(&tool.WriteFile{}))
 	r.Register(tool.Wrap(&tool.EditFile{}))
@@ -303,7 +309,7 @@ func registerBuiltinTools(r tool.Registry, skillLoader *skill.Loader, llmClient 
 	r.Register(tool.Wrap(&tool.KillBackgroundTask{}))
 
 	// Agent — subagent delegation
-	at := &subagent.AgentTool{LLMClient: llmClient}
+	at := &subagent.AgentTool{LLMClient: llmClient, ValidModels: validModels}
 	r.Register(tool.Wrap(at))
 
 	// TodoWrite — 结构化任务列表管理
@@ -338,21 +344,21 @@ func resolveSettingsPaths(explicit string) (globalPath, projectPath string) {
 // createLLMClient 合并全局和项目配置创建 LLM Client。
 // 项目配置字段覆盖全局。若均无配置则生成默认项目配置。
 // cliModel 为 --model 命令行参数，非空时覆盖配置文件中的模型名。
-func createLLMClient(globalPath, projectPath, cliModel string, loc Locale) (llm.Client, llm.ClientConfig, error) {
+func createLLMClient(globalPath, projectPath, cliModel string, loc Locale) (llm.Client, llm.ClientConfig, *llm.LLMSettings, error) {
 	globalSettings, _ := llm.LoadSettingsIfExists(globalPath)
 	projectSettings, _ := llm.LoadSettingsIfExists(projectPath)
 
 	// 两边都没有配置文件 → 生成默认项目配置
 	if globalSettings == nil && projectSettings == nil {
 		if err := llm.WriteDefaultSettings(projectPath); err != nil {
-			return nil, llm.ClientConfig{}, fmt.Errorf("failed to create default settings: %w", err)
+			return nil, llm.ClientConfig{}, nil, fmt.Errorf("failed to create default settings: %w", err)
 		}
 		fmt.Fprintf(os.Stderr, messagesFor(loc).CLIDefaultConfigCreated, projectPath)
 		fmt.Fprint(os.Stderr, messagesFor(loc).CLISetupHint)
 		var loadErr error
 		projectSettings, loadErr = llm.LoadSettingsIfExists(projectPath)
 		if loadErr != nil {
-			return nil, llm.ClientConfig{}, loadErr
+			return nil, llm.ClientConfig{}, nil, loadErr
 		}
 	}
 
@@ -362,9 +368,9 @@ func createLLMClient(globalPath, projectPath, cliModel string, loc Locale) (llm.
 	}
 	client, cfg, err := llm.NewClientFromLLMSettings(merged)
 	if err != nil {
-		return nil, llm.ClientConfig{}, err
+		return nil, llm.ClientConfig{}, nil, err
 	}
-	return client, cfg, nil
+	return client, cfg, merged, nil
 }
 
 // setupVerboseLog 在 .waveloom/ 下创建滚动日志。
@@ -538,4 +544,35 @@ func (a *skillExecutorAdapter) Load(name, args string) (*tool.SkillLoadResult, e
 		Body:    loaded.Body,
 		DirPath: loaded.DirPath,
 	}, nil
+}
+
+// buildValidModels 从 LLMSettings 构造可用模型列表（用于 AgentTool 参数校验）。
+// 列表包含主模型和子模型（去重），仅在有子模型时启用校验。
+func buildValidModels(s *llm.LLMSettings) []string {
+	if s == nil || s.SubModel == "" {
+		return nil
+	}
+	models := []string{s.Model}
+	if s.SubModel != s.Model {
+		models = append(models, s.SubModel)
+	}
+	return models
+}
+
+// buildModelSelectionSection 构造注入到 system prompt 的模型选择指导。
+func buildModelSelectionSection(defaultModel, flashModel string) string {
+	return fmt.Sprintf(`
+## Subagent Model Selection
+
+When spawning subagents with the agent tool, you can choose the model via the optional
+`+"`model`"+` parameter. The parameter accepts:
+
+  (omit / empty)  → uses the default (%s)
+  "%s"             → full reasoning depth. Best for evaluation, verification, complex implementation.
+  "%s"             → faster and cheaper. Best for Explore, simple lookups, low-complexity tasks.
+
+If you pass an unrecognized value, the default is used. The cost of output tokens is
+240x that of cached input — choosing `+"`%s`"+` for straightforward tasks and `+"`%s`"+`
+for deep analysis significantly reduces overall cost without compromising results.
+`, defaultModel, defaultModel, flashModel, flashModel, defaultModel)
 }

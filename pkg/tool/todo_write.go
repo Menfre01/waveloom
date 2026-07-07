@@ -58,13 +58,18 @@ func (t *TodoWrite) RequiresUserInteraction() bool { return false }
 
 func (t *TodoWrite) Description() string {
 	return strings.TrimSpace(`
-Create and manage a structured task list. Use proactively for complex tasks (3+ steps). Skip for single straightforward tasks or informational requests.
+MANDATORY task tracker for any multi-step task (3+ distinct steps). You MUST use this — never skip.
 
-ALWAYS pass the COMPLETE todo list — copy the current list from the previous tool result, modify what you need (change status, add new items, remove done items), and pass the entire list back. The tool handles state tracking internally; you do NOT need to remember or pass any IDs.
+HARD RULES:
+1. After receiving new instructions — immediately capture all tasks before starting work.
+2. Mark in_progress BEFORE beginning each task. Update status in real-time.
+3. Mark completed IMMEDIATELY after finishing — never batch-mark.
+4. ALWAYS pass the COMPLETE list — copy from previous result, modify, pass it all back.
+5. When all tasks are completed, the list auto-clears.
 
 content = imperative ("Fix bug"). activeForm = present continuous ("Fixing bug") — displayed with spinner during in_progress state. Both required for every task.
 
-Multiple tasks can be in_progress simultaneously when running parallel work. When all tasks are completed, the list is automatically cleared.
+Multiple tasks can be in_progress simultaneously when running parallel work. Do NOT use for single straightforward tasks or informational requests.
 
 → Detailed rules and examples: see system prompt section "## Todo List".
 `)

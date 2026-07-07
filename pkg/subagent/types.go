@@ -12,9 +12,10 @@ import "github.com/Menfre01/waveloom/pkg/agentloop"
 type SubagentStart struct {
 	Turn       int    // 当前 turn 序号
 	ToolCallID string // 父级 agent 工具调用 ID
-	AgentType  string // "fork" | "general-purpose" | "Explore"
+	AgentType  string // "fork" | "evaluate" | "Explore" | "verification"
 	Prompt     string // 委派的任务描述
 	InheritCtx bool   // true = fork 热启动，false = cold 冷启动
+	Model      string // 子 agent 模型，空 = 继承主模型
 }
 
 func (SubagentStart) TurnEvent() {}

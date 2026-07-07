@@ -126,7 +126,7 @@ func FormatResult(items []TodoItem) string {
 	}
 
 	var b strings.Builder
-	b.WriteString("Todos updated successfully. Ensure that you continue to use the todo list to track your progress.\n")
+	b.WriteString("Todos updated. **Remember**: mark the next task in_progress BEFORE starting work, and mark completed immediately after finishing.\n")
 	for _, t := range items {
 		b.WriteString(formatTodoLine(t))
 		b.WriteByte('\n')
