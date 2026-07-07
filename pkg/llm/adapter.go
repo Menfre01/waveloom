@@ -11,13 +11,13 @@ import (
 type providerAdapter interface {
 	// BuildRequest 将内部类型转为 Provider 期望的 HTTP 请求（OpenAI 兼容格式为基准，
 	// 各 adapter 可在 body 和 headers 上添加 Provider 特有字段）
-	BuildRequest(messages []Message, tools []ToolSpec) (*http.Request, error)
+	BuildRequest(ctx context.Context, messages []Message, tools []ToolSpec) (*http.Request, error)
 
 	// ParseResponse 将 HTTP 响应解析为内部 Response 类型
 	ParseResponse(body []byte) (*Response, error)
 
 	// BuildStreamRequest 同 BuildRequest，但 body 中 stream=true。
-	BuildStreamRequest(messages []Message, tools []ToolSpec) (*http.Request, error)
+	BuildStreamRequest(ctx context.Context, messages []Message, tools []ToolSpec) (*http.Request, error)
 
 	// ParseStreamEvent 解析单行 SSE data JSON，返回增量事件。
 	// 入参为去除 "data: " 前缀后的原始 JSON 字节。

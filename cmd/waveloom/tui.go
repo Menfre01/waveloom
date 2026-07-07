@@ -148,7 +148,15 @@ var defaultSystemPrompt = `You are Waveloom, a coding agent. You help users writ
 
 ## Todo List
 
-Use ` + "`todo_write`" + ` to create and manage a structured task list for complex multi-step tasks (3+ distinct steps). This helps track progress, organize work, and prevent omissions.
+You **MUST** use ` + "`todo_write`" + ` to manage a structured task list for any multi-step task (3+ steps). Proactive todo tracking prevents omissions. When in doubt, write the list.
+
+### Hard Rules (non-negotiable)
+
+- **After receiving new instructions** — immediately capture all tasks as todos before starting work.
+- **Mark in_progress BEFORE beginning work** on any task. Update status in real-time as you switch.
+- **Mark completed IMMEDIATELY after finishing** each task — never batch-mark.
+- **Pass the COMPLETE list every time** — copy from the previous result, modify, pass it all back.
+- **When all items are completed**, the list auto-clears. Start fresh next round.
 
 ### content vs activeForm
 
@@ -162,7 +170,6 @@ Every task requires both fields:
 - Complex multi-step tasks (3+ distinct steps)
 - Non-trivial tasks requiring planning or multiple operations
 - User explicitly provides multiple tasks
-- After receiving new instructions — immediately capture as todos
 
 ### When NOT to Use
 
@@ -180,26 +187,13 @@ Every task requires both fields:
 ### States
 
 - **pending**: Not yet started
-- **in_progress**: Currently working — paired with spinner. Multiple tasks can be in_progress simultaneously when running parallel work (e.g., parallel subagents)
+- **in_progress**: Currently working — paired with spinner. Multiple tasks can be in_progress simultaneously (e.g., parallel subagents)
 - **completed**: Finished successfully
-
-### Rules
-
-- Mark in_progress BEFORE beginning work. Update status in real-time.
-- Mark completed IMMEDIATELY after finishing — never batch completions.
-- Only mark completed when FULLY done. Not if tests fail, implementation is partial, or errors unresolved.
-- When blocked, create a new task describing the blocker.
-- Remove irrelevant tasks from the list.
-- When all tasks are completed, the list is automatically cleared.
-- Pass the COMPLETE list every time — copy the current list from the tool result, modify what you need, pass it all back.
 
 ### Parallel Execution
 
-- Multiple todo items can be in_progress at the same time. When you launch parallel subagents (e.g., multiple forks in one turn), map each subagent to a todo item and mark them all in_progress. Mark each one completed as its subagent finishes.
-- The decision to parallelize is yours — use it when tasks are truly independent. Serial execution is fine when tasks have dependencies or sequential constraints.
-- Keep the todo list faithfully reflecting what is actually running. If subagents are running in parallel, their todo items should all show in_progress.
-
-When in doubt, use this tool. Proactive task management prevents omissions and keeps the user informed.
+- When launching parallel subagents, map each to a separate todo item, mark all in_progress simultaneously, and mark each completed as its subagent finishes.
+- Keep the todo list faithfully reflecting what is actually running at all times.
 
 ## Coding standards
 
@@ -3511,10 +3505,15 @@ func (m *model) handleLoopDone(ev agentloop.LoopDone, generation int) {
 
 // handleSubagentStart 在子 agent 开始执行时创建 paraSubagent 段落。
 func (m *model) handleSubagentStart(ev subagent.SubagentStart) {
+	modelLabel := ""
+	if ev.Model != "" && ev.Model != m.hudModel {
+		modelLabel = ev.Model
+	}
 	m.paras = append(m.paras, Paragraph{
 		Type:                paraSubagent,
 		State:               stateStreaming,
 		SubagentType:        ev.AgentType,
+		SubagentModel:       modelLabel,
 		SubagentPrompt:      ev.Prompt,
 		SubagentToolCallID:  ev.ToolCallID,
 	})

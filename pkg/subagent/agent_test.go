@@ -1478,3 +1478,108 @@ func BenchmarkForwardEvents(b *testing.B) {
 		cancel()
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Model switching tests
+// ---------------------------------------------------------------------------
+
+func TestIsValidModel_EmptyString(t *testing.T) {
+	a := &AgentTool{ValidModels: []string{"deepseek-v4-pro", "deepseek-v4-flash"}}
+	if !a.isValidModel("") {
+		t.Error("empty model should be valid (inherit default)")
+	}
+}
+
+func TestIsValidModel_ValidValue(t *testing.T) {
+	a := &AgentTool{ValidModels: []string{"deepseek-v4-pro", "deepseek-v4-flash"}}
+	if !a.isValidModel("deepseek-v4-flash") {
+		t.Error("valid model should be accepted")
+	}
+	if !a.isValidModel("deepseek-v4-pro") {
+		t.Error("valid model should be accepted")
+	}
+}
+
+func TestIsValidModel_InvalidValue(t *testing.T) {
+	a := &AgentTool{ValidModels: []string{"deepseek-v4-pro", "deepseek-v4-flash"}}
+	if a.isValidModel("garbage-model") {
+		t.Error("invalid model should be rejected")
+	}
+}
+
+func TestIsValidModel_EmptyList(t *testing.T) {
+	a := &AgentTool{ValidModels: nil}
+	if !a.isValidModel("anything") {
+		t.Error("empty ValidModels should accept any model (no restriction)")
+	}
+}
+
+func TestIsValidModel_EmptySlice(t *testing.T) {
+	a := &AgentTool{ValidModels: []string{}}
+	if !a.isValidModel("anything") {
+		t.Error("empty ValidModels slice should accept any model")
+	}
+}
+
+// REGRESSION: invalid model in AgentParams → sanitized to empty before sub-loop creation.
+func TestAgentTool_ExecuteFork_InvalidModelFallsBack(t *testing.T) {
+	ctx := context.Background()
+	msgs := []llm.Message{
+		{Role: llm.RoleSystem, Content: "sys"},
+		{Role: llm.RoleUser, Content: "hello"},
+	}
+	ctx = agentloop.WithParentMessages(ctx, msgs)
+
+	a := &AgentTool{
+		LLMClient:   &stubLLM{},
+		ValidModels: []string{"deepseek-v4-pro", "deepseek-v4-flash"},
+	}
+	result, err := a.Execute(ctx, AgentParams{
+		Description: "fork-test",
+		Prompt:      "do something",
+		Model:       "garbage", // invalid → should be cleared
+	})
+	if err != nil {
+		t.Fatalf("Execute() error: %v", err)
+	}
+	if !strings.Contains(result.Content, "fork subagent completed") {
+		t.Errorf("fork should succeed with invalid model sanitized: %s", result.Content)
+	}
+}
+
+// REGRESSION: valid model in AgentParams → passed through to sub-loop.
+func TestAgentTool_ExecuteCold_ValidModel(t *testing.T) {
+	ctx := context.Background()
+	a := &AgentTool{
+		LLMClient:   &stubLLM{},
+		ValidModels: []string{"deepseek-v4-pro", "deepseek-v4-flash"},
+	}
+	result, err := a.Execute(ctx, AgentParams{
+		SubagentType: "Explore",
+		Description:  "search",
+		Prompt:       "find it",
+		Model:        "deepseek-v4-flash",
+	})
+	if err != nil {
+		t.Fatalf("Execute() error: %v", err)
+	}
+	if !strings.Contains(result.Content, "Explore") {
+		t.Errorf("result should succeed with valid model: %s", result.Content)
+	}
+}
+
+// REGRESSION: SubagentStart carries Model field.
+func TestSubagentStart_ModelField(t *testing.T) {
+	ev := SubagentStart{
+		AgentType: "Explore",
+		Model:     "deepseek-v4-flash",
+	}
+	if ev.Model != "deepseek-v4-flash" {
+		t.Errorf("SubagentStart.Model = %q, want %q", ev.Model, "deepseek-v4-flash")
+	}
+	// Model should be empty by default (zero value)
+	ev2 := SubagentStart{}
+	if ev2.Model != "" {
+		t.Errorf("SubagentStart.Model zero value = %q, want empty", ev2.Model)
+	}
+}
