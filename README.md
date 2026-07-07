@@ -19,7 +19,7 @@
 
 ---
 
-**A terminal Code Agent purpose-built for DeepSeek prefix caching.** Feels like Claude Code — your existing Skills work out of the box. DeepSeek charges up to 120× more for cache misses than hits. Waveloom keeps the System Prompt and message prefix stable at the architecture level, so the longest common prefix stays cache-hot.
+**A DeepSeek-native terminal code agent engineered for cache economics.** Prefix-cache architecture keeps the longest common prefix cache-hot across turns; LLM auto-selects pro for deep reasoning and flash for routine tasks — maximizing cache hits and minimizing token cost. Claude Code-level TUI with `.claude/skills/` and `.claude.json` MCP configs drop in — zero-friction replacement. One Go binary.
 
 **curl one-liner (macOS / Linux)**
 
@@ -63,16 +63,29 @@ waveloom
 
 ---
 
-## How does it compare to Claude Code?
+## How does it compare?
 
-| | Waveloom | Claude Code |
-|---|---|---|
-| Cache design | Built for DeepSeek prefix matching: fixed System Prompt, append-only, in-place compaction | Built for Anthropic `cache_control`: dynamic System Prompt sections, compaction replaces messages |
-| Context compaction | In-place, prefix-stable | Replaces messages with summary |
-| Runtime | Single binary ~18MB | Node.js |
+| | Waveloom | Claude Code | Reasonix |
+|---|---|---|---|
+| Skill format | Drop-in: `.claude/skills/` SKILL.md, 9 frontmatter fields (`$ARGUMENTS`, `paths`, `` !`cmd` `` injection, etc.) | Native SKILL.md + commands | 13 frontmatter fields, no variable substitution in skill bodies |
+| Cache design | DeepSeek prefix matching: 4-tier watermark (Snip → Prune → Summarize), compaction bytes never change | Anthropic `cache_control`: `cache_edits` API, dynamic system prompt sections | DeepSeek prefix matching: 4-tier (notice → snip → compact → force), `session.Replace()` bumps rewrite version |
+| Compaction | Monotonic — `compactionDecisionSet` + triple cursor, each message compacted once | Per-turn independent, no durability guarantee | Prefix bytes preserved across compact, but no per-message decision tracking |
+| Plan mode | Guard restricts writes to plan file only; build tools auto-allowed | Write restricted to plan file only; rich exit UI | `planmode.Policy` with trust gates for bash/MCP; Marker string injected; no plan file |
+| Sub-agents | Fork (inherits context) / Cold: Evaluate (code review) • Explore (read-only) • Verification (adversarial) | Fork + Cold + In-process + Coordinator | `task` tool with nested agent, background via job manager |
+| Runtime | Go binary ~18MB, zero deps | Node.js | Go binary + Desktop app, external plugin host |
+| MCP | Full client (config, transport, tool proxy), registered alongside built-in tools | Native MCP support | Native MCP support |
+| Permission | 8-step pipeline, 3-tier command safety (RiskNone/RiskLow/RiskHigh) | 8-source rule merge + LLM classifier auto-approval | Policy + Approver, 9-stage execute pipeline, shellsafe readOnly detect |
+| TUI polish | Streaming reasoning, rich diff, permission dialogs, `@` fuzzy picker, `/` palette, i18n, theme toggle — Claude Code parity | Native TUI (Ink/React), gold standard | Functional TUI, different UX paradigm |
 
-**Choose Waveloom if**: you use DeepSeek, care about API costs, have Claude Code Skills, need a zero-dependency binary  
-**Choose Claude Code if**: you use Anthropic, need MCP, are deep in the Claude ecosystem
+**Choose Waveloom if**: you use DeepSeek, have `.claude/skills/`, want Premium terminal UX without the cache miss cost.  
+**Choose Claude Code if**: you use Anthropic, need coordinator mode, deep in the Claude ecosystem.  
+**Choose Reasonix if**: you want a desktop GUI, QQ Bot integration, or a larger community ecosystem.
+
+---
+
+## Why TUI
+
+**Waveloom is the only DeepSeek-native agent with Claude Code-level terminal polish.** Streaming reasoning with syntax highlighting, rich diff, permission dialogs, `@` fuzzy file picker, `/` command palette, light/dark theme toggle, zh-CN / en-US i18n. Most DeepSeek agents treat the TUI as an afterthought — raw text streaming, no interaction design. Fire it up and feel the difference.
 
 ---
 
@@ -81,10 +94,9 @@ waveloom
 - **Prefix cache optimized** — Fixed System Prompt, append-only message history, four-tier watermark compaction. Maximum common prefix stays cache-hot across turns.
 - **Permission safety** — Three-tier decisions (allow / deny / ask) with pattern-matching rule engine. Every write operation requires your confirmation.
 - **Session persistence** — Close the terminal, come back days later with `waveloom --continue`. The agent remembers all prior context.
-- **Plan Mode** — Two-stage workflow: explore & design first, implement after approval. `Shift+Tab` to enter/exit, Guard-enforced write protection, `[plan:start]/[plan:end]` message pairing for prefix-cache-safe context.
-- **10 built-in tools** — `read_file` / `write_file` / `edit_file` / `shell` / `web_fetch` / `ask_user_question` / `enter_plan_mode` / `exit_plan_mode` / `skill` / `agent` — invoked autonomously by the agent.
-- **i18n multilingual** — Full zh-CN / en-US bilingual UI. `--locale` CLI flag, `/locale` command, `settings.json` persistence, auto-detect from LANG env var.
-- **TUI interactions** — `@` file references / `@` fuzzy file picker / `/` command palette / `/locale` switch language / `Tab` paragraph navigation / `Shift+Tab` Plan Mode / `Ctrl+G` theme toggle
+- **Plan Mode** — Two-stage workflow: explore & design first, implement after approval. `Shift+Tab` to enter/exit, Guard-enforced write protection.
+- **12 built-in tools** — `read_file` / `write_file` / `edit_file` / `bash` / `web_fetch` / `ask_user_question` / `enter_plan_mode` / `exit_plan_mode` / `skill` / `agent` / `kill_background_task` / `todo_write`.
+- **i18n multilingual** — Full zh-CN / en-US bilingual UI. `--locale` CLI flag, `/locale` command, auto-detect from LANG.
 
 ---
 

@@ -44,20 +44,24 @@ func (a *openAIAdapter) AuthHeader() (string, string) {
 	return "Authorization", "Bearer " + a.apiKey
 }
 
-func (a *openAIAdapter) BuildRequest(messages []Message, tools []ToolSpec) (*http.Request, error) {
-	body := a.buildRequestBody(messages, tools, false)
+func (a *openAIAdapter) BuildRequest(ctx context.Context, messages []Message, tools []ToolSpec) (*http.Request, error) {
+	body := a.buildRequestBody(ctx, messages, tools, false)
 	return newJSONRequest(http.MethodPost, a.baseURL+"/chat/completions", body)
 }
 
-func (a *openAIAdapter) BuildStreamRequest(messages []Message, tools []ToolSpec) (*http.Request, error) {
-	body := a.buildRequestBody(messages, tools, true)
+func (a *openAIAdapter) BuildStreamRequest(ctx context.Context, messages []Message, tools []ToolSpec) (*http.Request, error) {
+	body := a.buildRequestBody(ctx, messages, tools, true)
 	return newJSONRequest(http.MethodPost, a.baseURL+"/chat/completions", body)
 }
 
 // buildRequestBody 构造请求 body 公共逻辑。
-func (a *openAIAdapter) buildRequestBody(messages []Message, tools []ToolSpec, stream bool) map[string]any {
+func (a *openAIAdapter) buildRequestBody(ctx context.Context, messages []Message, tools []ToolSpec, stream bool) map[string]any {
 	body := make(map[string]any)
-	body["model"] = a.model
+	if override := ModelOverrideFromContext(ctx); override != "" {
+		body["model"] = override
+	} else {
+		body["model"] = a.model
+	}
 	body["messages"] = messages
 	body["stream"] = stream
 

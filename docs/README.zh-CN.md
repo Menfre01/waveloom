@@ -19,7 +19,7 @@
 
 ---
 
-**专为 DeepSeek 前缀缓存深度优化的终端 Code Agent。** 操作习惯贴近 Claude Code，已有 Skill 零迁移。DeepSeek 缓存命中与未命中的价格差高达 120 倍，Waveloom 从架构层面确保 System Prompt 和消息前缀稳定不变，让最长公共前缀持续命中缓存。
+**DeepSeek 原生终端编码代理，围绕缓存经济学设计。** 前缀缓存架构让最长公共前缀跨轮次持续命中；LLM 自动按任务选模型——pro 做深度推理，flash 处理常规任务——最大化缓存命中，最小化 token 成本。Claude Code 级 TUI，`.claude/skills/` 和 `.claude.json` MCP 配置开箱兼容，零摩擦替换。单一 Go 二进制。
 
 **curl 一键安装（推荐）**
 
@@ -63,16 +63,29 @@ waveloom
 
 ---
 
-## 和 Claude Code 有什么区别？
+## 和其他工具相比？
 
-| | Waveloom | Claude Code |
-|---|---|---|
-| 缓存设计 | 围绕 DeepSeek 前缀匹配：System Prompt 固定、消息追加、原地压缩 | 围绕 Anthropic `cache_control`：System Prompt 含动态段、压缩替换消息 |
-| 上下文压缩 | 原地修改，前缀字节稳定 | 摘要替换消息 |
-| 运行时 | 单二进制 ~18MB | Node.js |
+| | Waveloom | Claude Code | Reasonix |
+|---|---|---|---|
+| Skill 格式 | 开箱即用：`.claude/skills/` SKILL.md，9 个 frontmatter 字段（`$ARGUMENTS`、`paths`、`` !`cmd` `` 注入等） | 原生 SKILL.md + commands | 13 个 frontmatter 字段，Skill body 无变量替换 |
+| 缓存设计 | DeepSeek 前缀匹配：四级水位线（Snip → Prune → Summarize），压缩后字节永不变化 | Anthropic `cache_control`：`cache_edits` API，System Prompt 含动态段 | DeepSeek 前缀匹配：四级（notice → snip → compact → force），`session.Replace()` 触发 rewrite 版本号 |
+| 上下文压缩 | 单调不变式 — `compactionDecisionSet` + 三游标，每条消息只压缩一次 | 每轮独立压缩，无持久性保证 | 前缀字节跨压缩保留，但无逐消息决策追踪 |
+| Plan 模式 | Guard 限制只写 plan 文件，构建工具自动放行 | 仅 plan 文件可写，富交互审批 UI | `planmode.Policy` + bash/MCP 信任门；注入 Marker 字符串；无 plan 文件 |
+| 子代理 | Fork（继承上下文）/ Cold：Evaluate（代码评审）• Explore（只读）• Verification（对抗验证） | Fork + Cold + In-process + Coordinator | `task` 工具嵌套 agent，后台任务通过 job manager |
+| 运行时 | Go 单二进制 ~18MB，零依赖 | Node.js | Go 二进制 + Desktop 应用，外部 plugin 宿主 |
+| MCP | 完整客户端（配置、传输、工具代理），与内置工具统一注册 | 原生 MCP 支持 | 原生 MCP 支持 |
+| 权限模型 | 8 步决策管线，3 级命令安全分类（RiskNone/RiskLow/RiskHigh） | 8 源规则合并 + LLM 分类器自动审批 | Policy + Approver，9 阶段执行管线，shellsafe readOnly 检测 |
+| TUI 打磨 | 流式推理、rich diff、权限对话框、`@` 模糊选择器、`/` 面板、i18n、主题切换 — Claude Code 同级 | 原生 TUI（Ink/React），标杆水平 | 功能完备的 TUI，非 Claude Code 式体验 |
 
-**选 Waveloom 如果**：用 DeepSeek、在意 API 费用、已有 Claude Code Skill、需要零依赖单二进制  
-**选 Claude Code 如果**：用 Anthropic API、需要 MCP、重度依赖 Claude 生态
+**选 Waveloom 如果**：用 DeepSeek、已有 `.claude/skills/`、想要 Claude Code 体验但不想白烧缓存未命中费用。  
+**选 Claude Code 如果**：用 Anthropic API、需要 coordinator 模式、重度依赖 Claude 生态。  
+**选 Reasonix 如果**：需要桌面 GUI、QQ Bot 集成、或更大的社区生态。
+
+---
+
+## 为什么选择 TUI
+
+**Waveloom 是唯一达到 Claude Code 级终端交互打磨的 DeepSeek 原生 Agent。** 流式推理 + 语法高亮、rich diff、权限确认对话框、`@` 模糊文件选择器、`/` 命令面板、主题切换、中英双语。大多数 DeepSeek Agent 的 TUI 只是 bare minimum — 纯文本流、无交互设计。跑一下就知道差距。
 
 ---
 
@@ -81,10 +94,9 @@ waveloom
 - **前缀缓存深度优化** — System Prompt 固定，消息只在末尾追加，四级水位线压缩后字节永不变化，最大公共前缀持续命中
 - **权限安全模型** — 三级决策（allow / deny / ask），规则引擎支持模式匹配，写操作和命令执行需要你确认
 - **会话持久恢复** — 关闭终端几天后 `waveloom --continue` 回来，Agent 记得所有上下文接着工作
-- **Plan 模式** — 先规划后执行的二阶段工作流：探索设计 → 审批 → 编码。`Shift+Tab` 一键进入/退出，Guard 写保护拦截，`[plan:start]/[plan:end]` 消息对保证前缀缓存不失效。
-- **10 个内置工具** — `read_file` / `write_file` / `edit_file` / `shell` / `web_fetch` / `ask_user_question` / `enter_plan_mode` / `exit_plan_mode` / `skill` / `agent`，Agent 自主调用
-- **i18n 多语言** — 完整中英双语界面，`--locale` CLI 参数 / `/locale` 命令 / `settings.json` 持久化，LANG 环境变量自动检测
-- **TUI 交互** — `@` 引用文件 / `@` 文件选择器 / `/` 命令面板 / `/locale` 切换语言 / `Tab` 段落导航 / `Shift+Tab` Plan 模式 / `Ctrl+G` 主题切换
+- **Plan 模式** — 先规划后执行的二阶段工作流：探索设计 → 审批 → 编码。`Shift+Tab` 一键进入/退出，Guard 写保护拦截。
+- **12 个内置工具** — `read_file` / `write_file` / `edit_file` / `bash` / `web_fetch` / `ask_user_question` / `enter_plan_mode` / `exit_plan_mode` / `skill` / `agent` / `kill_background_task` / `todo_write`
+- **i18n 多语言** — 完整中英双语界面，`--locale` CLI 参数 / `/locale` 命令，LANG 环境变量自动检测
 
 ---
 

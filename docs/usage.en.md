@@ -73,6 +73,20 @@ help me optimize the error handling in @pkg/auth/login.go
 
 ### AGENTS.md Auto-loading
 
+## / Command Palette
+
+Type `/` in the input to open the command palette with fuzzy search.
+
+| Command | Alias | Description |
+|---------|-------|-------------|
+| `/new` | `/clear` | Create a new session |
+| `/model` | — | Show or switch model, type to filter |
+| `/theme` | — | Select theme (Auto / Dark / Light) |
+| `/locale` | `/lang` | Switch language (zh-CN / en-US) |
+| `/help` | — | Show all available commands |
+
+Skills with `user-invocable: true` in `.claude/skills/` are automatically registered as `/` commands using the skill name.
+
 ## Plan Mode
 
 Plan Mode is a two-stage "design first, implement later" workflow. Ideal for tasks involving 3+ files, architectural decisions, or multiple viable approaches.

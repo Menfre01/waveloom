@@ -42,9 +42,17 @@ waveloom/
 │   ├── context/           # 跨轮次消息历史
 │   ├── environment/       # 编译/运行时工具链探测
 │   ├── llm/               # LLM Client（DeepSeek + OpenAI）
+│   ├── mcp/               # MCP 客户端
 │   ├── memory/            # AGENTS.md 层级加载
+│   ├── pathutil/          # 路径工具
 │   ├── permission/        # 权限守门人
 │   ├── reference/         # @ 文件引用展开
+│   ├── shellutil/         # Shell 工具
+│   ├── skill/             # Skill 系统
+│   ├── slashcommand/      # / 命令面板
+│   ├── subagent/          # 子代理
+│   ├── task/              # 后台任务管理
+│   ├── todo/              # Todo 状态管理
 │   └── tool/              # 内置工具系统
 ├── specs/                 # 各组件设计规格书（修改前先阅读）
 ├── docs/                  # 文档
@@ -90,5 +98,5 @@ waveloom/
 ## 参考文档
 
 - [`docs/system-prompt.md`](./docs/system-prompt.md) — System Prompt 完整内容及设计原则
-- [`docs/tool-descriptions.md`](./docs/tool-descriptions.md) — 16 个内置工具的 Schema 定义
+- [`docs/tool-descriptions.md`](./docs/tool-descriptions.md) — 12 个内置工具的 Schema 定义
 - [`specs/`](./specs/) — 各组件设计规格书（修改前先阅读）

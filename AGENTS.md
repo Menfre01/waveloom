@@ -14,14 +14,22 @@
 cmd/waveloom/    CLI 入口（main, config, runner, tui）
 pkg/
   agentloop/     Think-Act-Observe 循环（Run → <-chan TurnEvent）
-  llm/           LLM Client（DeepSeek + OpenAI 适配、流式、重试）
-  tool/          工具系统（内置工具，TypedTool[P] 泛型接口）
-  permission/    权限守门人（规则引擎、路径/命令安全）
-  context/       跨轮次消息历史（PrepareRun / CompleteRun）
   compaction/    四级水位线上下文压缩（Snip/Prune/Summarize）
+  context/       跨轮次消息历史（PrepareRun / CompleteRun）
   environment/   工具链探测
+  llm/           LLM Client（DeepSeek + OpenAI 适配、流式、重试）
+  mcp/           MCP 客户端（配置、传输、工具代理）
   memory/        AGENTS.md 层级加载
+  pathutil/      路径工具
+  permission/    权限守门人（规则引擎、路径/命令安全）
   reference/     @ 文件引用展开
+  shellutil/     Shell 工具
+  skill/         Skill 系统（.claude/skills/ 加载执行）
+  slashcommand/  / 命令面板
+  subagent/      子代理（Fork/Cold/Explore）
+  task/          后台任务管理
+  todo/          Todo 状态管理
+  tool/          工具系统（内置工具，TypedTool[P] 泛型接口）
 specs/           各组件规格书（修改前先阅读）
 ```
 

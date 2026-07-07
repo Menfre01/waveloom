@@ -8,6 +8,7 @@ import (
 
 	"github.com/Menfre01/waveloom/pkg/llm"
 	"github.com/Menfre01/waveloom/pkg/pathutil"
+	"github.com/Menfre01/waveloom/pkg/todo"
 	"github.com/Menfre01/waveloom/pkg/tool"
 
 	"charm.land/bubbles/v2/spinner"
@@ -79,11 +80,13 @@ type Paragraph struct {
 	NotifKind systemNotifKind // 通知类型（仅 paraSystem 有效）
 
 	// Subagent 专用字段
-	SubagentType      string // "fork" | "general-purpose" | "Explore"
-	SubagentPrompt    string // 委派任务描述
-	SubagentTurns     int    // 总轮次
-	SubagentPromptTok int    // ↑ 输入 token
-	SubagentComplTok  int    // ↓ 输出 token
+	SubagentType       string // "fork" | "evaluate" | "Explore" | "verification"
+	SubagentModel      string // 模型名，与主模型不同时显示在 suffix
+	SubagentPrompt     string // 委派任务描述
+	SubagentTurns      int    // 总轮次
+	SubagentPromptTok  int    // ↑ 输入 token
+	SubagentComplTok   int    // ↓ 输出 token
+	SubagentToolCallID string // 父级 tool_call ID，用于并发 subagent 事件路由
 
 	// 渲染缓存（避免每次 buildViewportContent 时重复 Glamour 渲染）
 	renderedCache string
@@ -699,6 +702,7 @@ func buildViewportContent(paras []Paragraph, ctx ViewportCtx, focusIndex int, li
 
 	for i := range paras {
 		p := &paras[i]
+
 		lineStarts[i] = currentLine
 
 		// 设置当前段落的焦点状态
@@ -785,12 +789,13 @@ func renderUserPara(sb *strings.Builder, p *Paragraph, ctx ViewportCtx) {
 		textWidth = 1
 	}
 
-	lines := strings.Split(p.Text, "\n")
-	for _, line := range lines {
+	first := true
+	for _, line := range strings.Split(p.Text, "\n") {
 		wrapped := wrapLine(line, textWidth)
-		for i, wl := range wrapped {
-			if i == 0 {
+		for _, wl := range wrapped {
+			if first {
 				sb.WriteString(prefixStr)
+				first = false
 			} else {
 				sb.WriteString(indentStr)
 			}
@@ -2037,11 +2042,14 @@ func subagentSuffix(p *Paragraph) string {
 		return "(interrupted)"
 	}
 	suffix := ""
+	if p.SubagentModel != "" {
+		suffix = p.SubagentModel + ", "
+	}
 	if p.SubagentTurns > 0 {
-		suffix = fmt.Sprintf("%d轮", p.SubagentTurns)
+		suffix += fmt.Sprintf("%d轮", p.SubagentTurns)
 	}
 	if p.ToolDurMs > 0 {
-		if suffix != "" {
+		if suffix != "" && p.SubagentTurns > 0 {
 			suffix += ", "
 		}
 		suffix += formatDuration(p.ToolDurMs)
@@ -2061,3 +2069,170 @@ func subagentSuffix(p *Paragraph) string {
 // ---------------------------------------------------------------------------
 // 格式辅助函数
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// Todo 面板渲染
+// ---------------------------------------------------------------------------
+
+// renderTodoPanel 渲染固定在底部的 todo 面板。
+// spinnerView 是 bubbletea spinner 的当前渲染帧（用于 in_progress 项）。
+// 返回渲染后的字符串和面板所占行数。
+func renderTodoPanel(lc *Messages, todos []todo.TodoItem, width int, expanded bool, focused bool, spinnerView string) (string, int) {
+	if len(todos) == 0 {
+		return "", 0
+	}
+
+	// 排序：in_progress > pending > completed
+	sorted := make([]todo.TodoItem, len(todos))
+	copy(sorted, todos)
+	sortTodos(sorted)
+
+	// 统计各状态数量
+	var inProgressCount, pendingCount, completedCount int
+	for _, t := range sorted {
+		switch t.Status {
+		case "in_progress":
+			inProgressCount++
+		case "pending":
+			pendingCount++
+		case "completed":
+			completedCount++
+		}
+	}
+	totalCount := len(sorted)
+
+	// 缩略显示：默认 5 项
+	maxVisible := 5
+	if expanded {
+		maxVisible = totalCount
+	}
+	visibleItems := sorted
+	hidden := 0
+	if totalCount > maxVisible {
+		visibleItems = sorted[:maxVisible]
+		hidden = totalCount - maxVisible
+	}
+
+	// 边框
+	borderColor := colorFooterFg
+	if focused {
+		borderColor = colorHeaderAccent
+	}
+	boxStyle := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(borderColor).
+		Padding(0, 1).
+		Width(width)
+
+	innerWidth := width - 2 - 2 // border(2) + padding(2)
+
+	// ── 标题行 ──
+	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(colorHeaderAccent).Width(innerWidth)
+	title := titleStyle.Render(fmt.Sprintf(lc.TodoTitle, completedCount, totalCount))
+
+	// ── 每项渲染 ──
+	var itemLines []string
+	for _, t := range visibleItems {
+		itemLines = append(itemLines, renderTodoItem(t, innerWidth, spinnerView))
+	}
+
+	// ── 折叠提示（仅显示 hidden 项的类型分解） ──
+	if hidden > 0 {
+		hintStyle := lipgloss.NewStyle().Foreground(colorMuted).Width(innerWidth)
+		hiddenItems := sorted[maxVisible:]
+		hint := formatHiddenSummary(lc, hiddenItems, hidden)
+		itemLines = append(itemLines, hintStyle.Render(hint))
+	}
+
+	// ── 组装 ──
+	var parts []string
+	parts = append(parts, title, "")
+	parts = append(parts, itemLines...)
+
+	content := strings.Join(parts, "\n")
+	rendered := boxStyle.Render(content)
+
+	return rendered, strings.Count(rendered, "\n") + 1
+}
+
+// renderTodoItem 渲染单条 todo 项。
+func renderTodoItem(t todo.TodoItem, width int, spinnerView string) string {
+	switch t.Status {
+	case "in_progress":
+		return renderTodoInProgress(t, width, spinnerView)
+	case "completed":
+		return renderTodoCompleted(t, width)
+	default:
+		return renderTodoPending(t, width)
+	}
+}
+
+func renderTodoInProgress(t todo.TodoItem, width int, spinnerView string) string {
+	// spinner + bold + colorAccentGold
+	spinnerPart := lipgloss.NewStyle().Foreground(colorAccentGold).Render(spinnerView)
+	textPart := lipgloss.NewStyle().Foreground(colorAccentGold).Bold(true).Render(t.ActiveForm)
+	line := spinnerPart + " " + textPart
+	return lipgloss.NewStyle().Width(width).Render(line)
+}
+
+func renderTodoPending(t todo.TodoItem, width int) string {
+	// dim circle + default text
+	marker := lipgloss.NewStyle().Foreground(colorMuted).Render("○")
+	text := t.Content
+	line := marker + " " + text
+	return lipgloss.NewStyle().Width(width).Render(line)
+}
+
+func renderTodoCompleted(t todo.TodoItem, width int) string {
+	// green check + strikethrough
+	marker := lipgloss.NewStyle().Foreground(colorOK).Render("✓")
+	text := lipgloss.NewStyle().Foreground(colorOK).Strikethrough(true).Render(t.Content)
+	line := marker + " " + text
+	return lipgloss.NewStyle().Width(width).Render(line)
+}
+
+// formatHiddenSummary 格式化隐藏项提示，仅显示隐藏项的类型分解。
+func formatHiddenSummary(lc *Messages, hiddenItems []todo.TodoItem, hiddenCount int) string {
+	var doneCount, inProgCount, pendCount int
+	for _, t := range hiddenItems {
+		switch t.Status {
+		case "completed":
+			doneCount++
+		case "in_progress":
+			inProgCount++
+		case "pending":
+			pendCount++
+		}
+	}
+	parts := []string{fmt.Sprintf(lc.TodoHiddenCount, hiddenCount)}
+	if doneCount > 0 {
+		parts = append(parts, fmt.Sprintf(lc.TodoDoneCount, doneCount))
+	}
+	if inProgCount > 0 {
+		parts = append(parts, fmt.Sprintf(lc.TodoInProgCount, inProgCount))
+	}
+	if pendCount > 0 {
+		parts = append(parts, fmt.Sprintf(lc.TodoPendingCount, pendCount))
+	}
+	return strings.Join(parts, " · ")
+}
+
+func sortTodos(todos []todo.TodoItem) {
+	rank := func(s string) int {
+		switch s {
+		case "in_progress":
+			return 0
+		case "pending":
+			return 1
+		default:
+			return 2
+		}
+	}
+	for i := 0; i < len(todos); i++ {
+		for j := i + 1; j < len(todos); j++ {
+			if rank(todos[i].Status) > rank(todos[j].Status) {
+				todos[i], todos[j] = todos[j], todos[i]
+			}
+		}
+	}
+}

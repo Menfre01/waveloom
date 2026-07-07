@@ -11,11 +11,12 @@ import (
 	"github.com/Menfre01/waveloom/pkg/llm"
 	"github.com/Menfre01/waveloom/pkg/permission"
 	"github.com/Menfre01/waveloom/pkg/reference"
+	"github.com/Menfre01/waveloom/pkg/todo"
 	"github.com/Menfre01/waveloom/pkg/tool"
 )
 
 // runOneShot 执行单次/管道模式（无 TUI，纯文本输出）。
-func runOneShot(cfg CLIConfig, llmClient llm.Client, registry tool.Registry, guard permission.Guard, expander *reference.Expander, cwd string, verboseLog io.Writer, cm *ctxpkg.ContextManager, agentsMdText string, loc Locale) {
+func runOneShot(cfg CLIConfig, llmClient llm.Client, registry tool.Registry, guard permission.Guard, expander *reference.Expander, cwd string, verboseLog io.Writer, cm *ctxpkg.ContextManager, agentsMdText string, loc Locale, todoState *todo.TodoState) {
 	lc := messagesFor(loc)
 	// Context Manager 已管理 system prompt，Loop 无需重复注入
 	loopCfg := agentloop.Config{
@@ -25,6 +26,7 @@ func runOneShot(cfg CLIConfig, llmClient llm.Client, registry tool.Registry, gua
 		VerboseWriter: verboseLog,
 		ToolTimeout:   cfg.ToolTimeout,
 		AgentsMD:      agentsMdText,
+		TodoState:     todoState,
 	}
 	// 单次模式无 UserResponder，ask 降级为 deny
 	loop := agentloop.New(llmClient, registry, loopCfg)
@@ -33,6 +35,7 @@ func runOneShot(cfg CLIConfig, llmClient llm.Client, registry tool.Registry, gua
 	if cfg.BypassPerm {
 		guard = permission.NewGuard(permission.WithBypassMode(true))
 		loopCfg.Guard = guard
+		loopCfg.TodoState = todoState
 		loop = agentloop.New(llmClient, registry, loopCfg)
 	}
 

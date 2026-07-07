@@ -61,6 +61,7 @@ import (
 	"github.com/Menfre01/waveloom/pkg/skill"
 	"github.com/Menfre01/waveloom/pkg/slashcommand"
 	"github.com/Menfre01/waveloom/pkg/subagent"
+	"github.com/Menfre01/waveloom/pkg/todo"
 	"github.com/Menfre01/waveloom/pkg/tool"
 )
 
@@ -82,7 +83,7 @@ var defaultSystemPrompt = `You are Waveloom, a coding agent. You help users writ
 
 ## How you work
 
-- Read before you write — explore with grep/find using shell. edit_file old_string must match file content exactly (indentation, whitespace, punctuation). Reliable source: a read_file return within the last 2 turns where the file hasn't been edited since. Unreliable: memory, reads from earlier turns, or stale reads after other edits. When uncertain, re-read — a wasted call is cheaper than a no_match loop.
+- Read before you write — explore with grep/find using shell. edit_file old_string should match the file content as closely as possible; the system auto-corrects minor whitespace/Unicode differences. Reliable source: a read_file return within the last 2 turns where the file hasn't been edited since. Unreliable: memory, reads from earlier turns, or stale reads after other edits. When uncertain, re-read — a wasted call is cheaper than a no_match loop.
   - Search codebase: {"command":"grep -rn 'pattern' --include='*.go' .", "working_dir":"/project"}
   - Find files: {"command":"find . -name '*.go' -not -path '*/.git/*' | head -100"}
   - List directory: {"command":"ls -la pkg/tool/"}
@@ -97,24 +98,47 @@ var defaultSystemPrompt = `You are Waveloom, a coding agent. You help users writ
 - Use shell('ls') or shell('find') to explore directories before reading files — never pass a directory path to read_file. Paths without a file extension (e.g., pkg/tool) are likely directories: use shell('ls') first, then pass the actual filename to read_file.
 - For throwaway verification scripts: prefer python, write to the system temp directory, and clean up after.
 
+## DO NOT
+
+- Do NOT fabricate or predict tool results — only report what tools actually returned.
+- Do NOT skip verification after editing code. If you edited, you must build to verify.
+- Do NOT delegate understanding to subagents. Write prompts with file paths, line numbers, and specific changes — never "based on your findings, fix the bug."
+- Do NOT batch-mark todo tasks as complete. Update each one immediately after finishing.
+
 ## Agent Tool
 
 ### When to use the agent tool
 
 - Use the agent tool for complex, multi-step tasks that require exploring multiple files, making several edits, or independent research.
-- Launch multiple agents concurrently whenever possible — send a single message with multiple agent tool calls.
 - Explore agent: use proactively for codebase exploration (finding files by pattern, searching for code, answering questions about the codebase). Invoke without the user having to ask.
+
+### Parallel-first principle
+
+- ALWAYS parallelize independent agent calls. The system executes concurrent-safe tools in parallel goroutines — serial agent calls waste wall-clock time with zero benefit.
+- Launch multiple agents in a single message whenever subtasks have no dependency on each other.
+
+Trigger patterns — dispatch in parallel when:
+- User asks about multiple independent topics → one agent per topic
+- Codebase exploration across multiple packages/directories → one Explore agent each
+- Research decomposable into independent questions → parallel forks
+- Post-implementation checks: verification + code review → launch evaluate and verification agents together
+
+Anti-pattern — DO NOT:
+- Call agent A, wait for result, then call agent B when A and B have no dependency
+- Use a single agent to sequentially explore N packages
 
 ### When NOT to use the agent tool
 
 - Reading a specific known file path → use read_file instead.
 - Searching within 1-3 specific files → use read_file instead.
 - Simple file pattern matching (e.g. ` + "`" + `find . -name '*.go'` + "`" + `) → use shell instead.
+- Serial agent calls for independent tasks → launch them together in parallel instead.
 
 ### When to fork (omit subagent_type)
 
 - Fork when the intermediate tool output isn't worth keeping in your context — "will I need this output again", not task size.
-- Research: fork open-ended questions. If research can be broken into independent questions, launch parallel forks in one message.
+- Fork is the DEFAULT and cheapest option — prefer it over cold agents.
+- Launch parallel forks in one message for any decomposable task: research, implementation, analysis, exploration.
 - Implementation: prefer to fork work that requires more than a couple of edits.
 - Fork results are returned synchronously — wait for the tool result before acting on the fork's findings.
 
@@ -137,6 +161,93 @@ var defaultSystemPrompt = `You are Waveloom, a coding agent. You help users writ
 - Do NOT use plan mode for: code review, bug analysis, performance investigation, explaining code, answering questions, or any task that does not involve writing implementation code.
 - Skip for single-file fixes, trivial bugs, or when the user gives precise step-by-step instructions.
 - Once in plan mode, follow the instructions in the [plan:start] system message.
+
+## Todo List
+
+Use ` + "`todo_write`" + ` for tasks that have **meaningful dependencies or parallelism** — not as a mechanical checklist for every interaction. The goal is preventing omissions in complex work, not adding process overhead to trivial edits.
+
+### Trigger test (BOTH must be true)
+
+1. The work has ≥3 steps with **real dependencies** (B depends on A) or **parallelizable units** (subagents)
+2. The work spans ≥2 turns OR dispatches parallel subagents
+
+→ If either condition is false, skip the todo list and just do the work.
+
+### Hard Rules
+
+- **After receiving new instructions** — capture all tasks before starting work.
+- **Mark in_progress BEFORE beginning** each task. Update status in real-time.
+- **Mark completed IMMEDIATELY after finishing** — never batch-mark.
+- **Pass the COMPLETE list every time** — copy from the previous result, modify, pass it all back.
+- **When all items are completed**, the list auto-clears. Start fresh next round.
+
+### content vs activeForm
+
+Every task requires both fields:
+- **content**: Imperative, describes WHAT to do ("Fix login bug", "Run tests")
+- **activeForm**: Present continuous, displayed DURING execution with spinner ("Fixing login bug", "Running tests")
+- **description**: Optional details, context, or notes about the task
+
+### When NOT to Use
+
+- Single-file fixes (typos, one-line changes, adding a function) — just do it
+- Linear micro-tasks even if 3 steps ("locate → edit → build") — these are one atomic operation
+- Purely conversational or informational requests ("what does X do?")
+- **When uncertain — skip it.** A missed todo is cheaper than noise.
+
+### Examples
+
+**Use todo** — User: "Add dark mode toggle, make sure tests pass." → Multiple files, state management, components, tests — real dependencies.
+**Use todo** — User: "Rename getCwd across my project." → Search first, then parallel edits per file.
+**Skip todo** — User: "What does git status do?" → Informational.
+**Skip todo** — User: "Add a comment to calculateTotal." → Single straightforward task.
+**Skip todo** — User: "Fix the off-by-one in pagination." → Single-file bug fix, even though it may involve locate → edit → test.
+
+### States
+
+- **pending**: Not yet started
+- **in_progress**: Currently working — paired with spinner. Multiple tasks can be in_progress simultaneously (e.g., parallel subagents)
+- **completed**: Finished successfully
+
+### Workflow Pattern
+
+Follow this call sequence when using todos — never skip steps or batch-update statuses:
+
+**Step 1 — Initialize**: first ` + "`todo_write`" + ` call creates ALL tasks as ` + "`pending`" + `:
+  todo_write([{content:"Fix login",status:"pending",activeForm:"Fixing login"}, {content:"Add tests",status:"pending",activeForm:"Adding tests"}])
+
+**Step 2 — Start work**: before working on task 1, mark it ` + "`in_progress`" + ` (pass the COMPLETE list — every item, only status changed):
+  todo_write([{content:"Fix login",status:"in_progress",activeForm:"Fixing login"}, {content:"Add tests",status:"pending",activeForm:"Adding tests"}])
+
+**Step 3 — Task done, start next**: mark completed task ` + "`completed`" + ` AND next task ` + "`in_progress`" + ` IN THE SAME CALL:
+  todo_write([{content:"Fix login",status:"completed",activeForm:"Fixing login"}, {content:"Add tests",status:"in_progress",activeForm:"Adding tests"}])
+
+**Step 4 — All done**: mark all ` + "`completed`" + ` (list auto-clears):
+  todo_write([{content:"Fix login",status:"completed",activeForm:"Fixing login"}, {content:"Add tests",status:"completed",activeForm:"Adding tests"}])
+
+**Iron rule**: every ` + "`todo_write`" + ` call must include EVERY task from the previous state. Only change ` + "`status`" + ` — never drop items, never change ` + "`content`" + ` or ` + "`activeForm`" + ` between calls. The list you receive in the tool result IS the reference — copy it, change only status fields, pass it back.
+
+### Parallel Workflow (subagents)
+
+When dispatching parallel subagents, start with ALL items ` + "`in_progress`" + ` at once — unlike the sequential pattern above. Example with 3 parallel agents:
+
+**Before dispatch** — create items and mark ALL in_progress:
+  todo_write([{content:"Explore auth flow",status:"in_progress",activeForm:"Exploring auth flow"}, {content:"Fix login bug",status:"in_progress",activeForm:"Fixing login bug"}, {content:"Add rate limiter",status:"in_progress",activeForm:"Adding rate limiter"}])
+
+**As each agent returns** — mark it completed, keep others in_progress. Agent 1 returns first:
+  todo_write([{content:"Explore auth flow",status:"completed",activeForm:"Exploring auth flow"}, {content:"Fix login bug",status:"in_progress",activeForm:"Fixing login bug"}, {content:"Add rate limiter",status:"in_progress",activeForm:"Adding rate limiter"}])
+
+Agent 2 returns next:
+  todo_write([{content:"Explore auth flow",status:"completed",activeForm:"Exploring auth flow"}, {content:"Fix login bug",status:"completed",activeForm:"Fixing login bug"}, {content:"Add rate limiter",status:"in_progress",activeForm:"Adding rate limiter"}])
+
+Agent 3 returns last (all completed → auto-clears):
+  todo_write([{content:"Explore auth flow",status:"completed",activeForm:"Exploring auth flow"}, {content:"Fix login bug",status:"completed",activeForm:"Fixing login bug"}, {content:"Add rate limiter",status:"completed",activeForm:"Adding rate limiter"}])
+
+### Parallel Execution
+
+- When launching parallel subagents, map each to a separate todo item, mark all in_progress simultaneously BEFORE dispatching, and mark each completed IMMEDIATELY as its subagent returns.
+- Never wait for all agents to finish before updating status — update after EACH agent returns so the list always reflects reality.
+- Keep the todo list faithfully reflecting what is actually running at all times.
 
 ## Coding standards
 
@@ -396,6 +507,11 @@ type model struct {
 	verboseLog io.Writer // --verbose 日志输出（nil = 不记录）
 	loop       *agentloop.Loop
 
+	// Todo 任务列表
+	todoState    *todo.TodoState // session 级 todo 状态（跨 Loop 持久）
+	todoExpanded bool            // 是否展开全部（默认 false）
+	todoFocused  bool            // 是否聚焦到 todo panel（Tab 键导航）
+
 	// 国际化
 	lc *Messages // 当前语言的文案实例（nil 时回退到 enUS）
 
@@ -507,6 +623,7 @@ type model struct {
 	spThought      spinner.Model  // thought 流式前缀动画
 	spTool         spinner.Model  // tool 执行中前缀动画
 	spSubagent     spinner.Model  // subagent 执行中前缀动画（独立视觉）
+	spTodo         spinner.Model  // todo in_progress 前缀动画
 	ctxProgress    progress.Model // ctx 窗口进度条（bubbles progress 组件）
 	input          textarea.Model
 
@@ -625,7 +742,7 @@ func colorHex(c color.Color) string {
 // ---------------------------------------------------------------------------
 
 // newTUIModel 创建 TUI model，依赖由外部注入（LLM client / tool registry / guard / expander / verboseLog / locale）。
-func newTUIModel(llmClient llm.Client, registry tool.Registry, guard permission.Guard, expander *reference.Expander, modelName string, theme string, verboseLog io.Writer, contextLimit int, maxTurns int, toolTimeout time.Duration, toolTimeoutSource string, loc Locale) *model {
+func newTUIModel(llmClient llm.Client, registry tool.Registry, guard permission.Guard, expander *reference.Expander, modelName string, theme string, verboseLog io.Writer, contextLimit int, maxTurns int, toolTimeout time.Duration, toolTimeoutSource string, loc Locale, todoState *todo.TodoState) *model {
 	if modelName == "" {
 		modelName = "deepseek-v4"
 	}
@@ -683,6 +800,11 @@ func newTUIModel(llmClient llm.Client, registry tool.Registry, guard permission.
 	spSubagent.Spinner = spinner.Jump
 	spSubagent.Style = lipgloss.NewStyle().Foreground(darkPalette.Gray) // 初始值，initTheme 同步
 
+	// 初始化 todo in_progress 前缀 spinner（Dot — 小巧不抢眼）
+	spTodo := spinner.New()
+	spTodo.Spinner = spinner.Dot
+	spTodo.Style = lipgloss.NewStyle().Foreground(darkPalette.AccentGold) // 初始值，initTheme 同步
+
 	// 初始化 ctx 进度条（bubbles progress 组件，全块字符 █  提供清晰的逐格填充）
 	// 宽度在 renderCtxBarCompact() 中每次设置（20 列，每列 5%）。
 	cp := progress.New(
@@ -731,6 +853,7 @@ func newTUIModel(llmClient llm.Client, registry tool.Registry, guard permission.
 		spThought:       spThought,
 		spTool:          spTool,
 		spSubagent:      spSubagent,
+		spTodo:          spTodo,
 		ctxProgress:     cp,
 		input:           ti,
 		otherInput:      otherTi,
@@ -741,6 +864,7 @@ func newTUIModel(llmClient llm.Client, registry tool.Registry, guard permission.
 		focusIndex:      -1,
 		pinnedToBottom:  true,
 		lc:              lc,
+		todoState:       todoState,
 	}
 }
 
@@ -772,6 +896,7 @@ func (m *model) wireLoop() {
 				m.program.Send(ev)
 			}
 		},
+		TodoState: m.todoState,
 	})
 }
 
@@ -788,6 +913,7 @@ func (m *model) Init() tea.Cmd {
 		m.spThought.Tick,
 		m.spTool.Tick,
 		m.spSubagent.Tick,
+		m.spTodo.Tick,
 		m.checkUpdateCmd(),
 	)
 }
@@ -919,6 +1045,9 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.spSubagent, cmd = m.spSubagent.Update(msg)
 		cmds = append(cmds, cmd)
 
+		m.spTodo, cmd = m.spTodo.Update(msg)
+		cmds = append(cmds, cmd)
+
 		return m, tea.Batch(cmds...)
 
 	// ------------------------------------------------------------------
@@ -930,6 +1059,10 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case agentloop.ToolCallStart:
+		// todo_write 调用不显示在消息流中
+		if msg.ToolCallName == "todo_write" {
+			return m, nil
+		}
 		m.handleToolStart(msg)
 		m.flushTranscript()
 		return m, nil
@@ -939,6 +1072,10 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case agentloop.ToolCallResult:
+		// todo_write 结果已在面板渲染，消息流中静默
+		if msg.ToolCallName == "todo_write" {
+			return m, nil
+		}
 		m.handleToolResult(msg)
 		m.flushTranscript()
 		return m, nil
@@ -1030,6 +1167,10 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case agentloop.LoopDoneWithGen:
 		m.handleLoopDone(msg.LoopDone, msg.Generation)
 		m.flushTranscript()
+		return m, nil
+
+	case agentloop.TodoUpdateEvent:
+		// Todo 面板更新，仅更新本地引用（renderTodoPanel 从 todoState 读取）
 		return m, nil
 
 	case agentloop.LoopDone:
@@ -3290,6 +3431,8 @@ func (m *model) handleLoopDone(ev agentloop.LoopDone, generation int) {
 		loopOut = m.loopCompl
 
 		// 提交到 ContextManager（stats 累加 + 落盘；压缩已在 Loop 内完成）
+		// 先同步当前 todo 列表到持久化层
+		m.cm.SetTodoItems(serializeTodoItems(m.todoState))
 		result := m.cm.CompleteRun(ev.Messages, m.loopPrompt, m.lastTurnPrompt, m.loopCompl, m.loopCacheHit, m.loopCacheMiss, m.loopReasoning, m.hudModel, elapsedMs, string(ev.Reason))
 
 		// loop 级增量归零，准备下一个 loop
@@ -3416,20 +3559,26 @@ func (m *model) handleLoopDone(ev agentloop.LoopDone, generation int) {
 
 // handleSubagentStart 在子 agent 开始执行时创建 paraSubagent 段落。
 func (m *model) handleSubagentStart(ev subagent.SubagentStart) {
+	modelLabel := ""
+	if ev.Model != "" && ev.Model != m.hudModel {
+		modelLabel = ev.Model
+	}
 	m.paras = append(m.paras, Paragraph{
-		Type:           paraSubagent,
-		State:          stateStreaming,
-		SubagentType:   ev.AgentType,
-		SubagentPrompt: ev.Prompt,
+		Type:                paraSubagent,
+		State:               stateStreaming,
+		SubagentType:        ev.AgentType,
+		SubagentModel:       modelLabel,
+		SubagentPrompt:      ev.Prompt,
+		SubagentToolCallID:  ev.ToolCallID,
 	})
 }
 
 // handleSubagentEvent 处理子 agent 的内部事件——追加文本或记录工具调用。
+// 按 ToolCallID 精确路由到对应的 subagent 段落，支持多个 subagent 并发执行。
 func (m *model) handleSubagentEvent(ev subagent.SubagentEvent) {
-	// 找到最后一个 paraSubagent 段落（stateStreaming）
 	for i := len(m.paras) - 1; i >= 0; i-- {
 		p := &m.paras[i]
-		if p.Type == paraSubagent && p.State == stateStreaming {
+		if p.Type == paraSubagent && p.State == stateStreaming && p.SubagentToolCallID == ev.ToolCallID {
 			switch ev.Kind {
 			case subagent.SubagentText:
 				p.Text += ev.TextDelta
@@ -3456,10 +3605,11 @@ func (m *model) handleSubagentEvent(ev subagent.SubagentEvent) {
 }
 
 // handleSubagentEnd 在子 agent 结束时更新段落状态。
+// 按 ToolCallID 精确匹配，支持多个 subagent 并发结束。
 func (m *model) handleSubagentEnd(ev subagent.SubagentEnd) {
 	for i := len(m.paras) - 1; i >= 0; i-- {
 		p := &m.paras[i]
-		if p.Type == paraSubagent && p.State == stateStreaming {
+		if p.Type == paraSubagent && p.State == stateStreaming && p.SubagentToolCallID == ev.ToolCallID {
 			p.SubagentTurns = ev.TotalTurns
 			p.SubagentPromptTok = ev.PromptTokens
 			p.SubagentComplTok = ev.CompletionTokens
@@ -4272,6 +4422,17 @@ func (m *model) View() tea.View {
 	// separator(1) + input(inputHeight) + footer(footerHeight)
 	fixedBottomHeight := 1 + inputHeight + footerHeight
 
+	// Todo 面板（仅 overlayNone 且 todos >= 3 时显示）
+	var todoPanelContent string
+	var todoPanelHeight int
+	if m.overlay == overlayNone {
+		todos := m.todoState.Snapshot()
+		if len(todos) >= 3 {
+			todoPanelContent, todoPanelHeight = renderTodoPanel(m.lc, todos, contentWidth, m.todoExpanded, m.todoFocused, m.spTodo.View())
+			fixedBottomHeight += todoPanelHeight
+		}
+	}
+
 	// styleApp 顶部 padding 1 行，底部 0；内区可用高度 = m.height - 1
 	innerHeight := m.height - 1
 	bodyHeight := innerHeight - headerHeight - fixedBottomHeight - overlayLines - pickerLines - commandPickerLines
@@ -4281,6 +4442,8 @@ func (m *model) View() tea.View {
 	m.bodyHeight = bodyHeight
 
 	// 4. 根据滚动偏移裁剪可见内容
+	filteredLines := allLines
+	allLines = filteredLines
 	totalLines := len(allLines)
 	maxScrollTop := max(0, totalLines-bodyHeight)
 
@@ -4323,6 +4486,9 @@ func (m *model) View() tea.View {
 	if overlayContent != "" {
 		parts = append(parts, overlayContent)
 	}
+	if todoPanelContent != "" {
+		parts = append(parts, todoPanelContent)
+	}
 	if pickerContent != "" {
 		parts = append(parts, pickerContent)
 	}
@@ -4341,8 +4507,8 @@ func (m *model) View() tea.View {
 	// real cursor 模式：定位输入光标
 	if m.overlay == overlayNone {
 		if cur := m.input.Cursor(); cur != nil {
-			// 布局：styleApp top(1) + header + 空行 + body + overlays + picker + separator(1)
-			cur.Y += 1 + headerHeight + bodyHeight + overlayLines + pickerLines + commandPickerLines + 1
+			// 布局：styleApp top(1) + header + 空行 + body + overlays + todo + picker + separator(1)
+			cur.Y += 1 + headerHeight + bodyHeight + overlayLines + todoPanelHeight + pickerLines + commandPickerLines + 1
 			cur.X += 2 // styleApp 左 padding
 			if cur.X > m.width-2 {
 				cur.X = m.width - 2
@@ -4855,6 +5021,7 @@ func (m *model) syncThemeComponents() {
 	m.spThought.Style = lipgloss.NewStyle().Foreground(colorGray)
 	m.spTool.Style = lipgloss.NewStyle().Foreground(colorGray)
 	m.spSubagent.Style = lipgloss.NewStyle().Foreground(colorGray)
+	m.spTodo.Style = lipgloss.NewStyle().Foreground(colorAccentGold)
 
 	// 同步 ctx 进度条轨道颜色
 	m.ctxProgress.EmptyColor = colorFooterFg
@@ -5624,8 +5791,8 @@ func (m *model) closeModelPicker() {
 // ---------------------------------------------------------------------------
 
 // runTUI 启动交互式 TUI 模式。依赖由 main() 统一初始化后传入，无需重复创建。
-func runTUI(llmClient llm.Client, registry tool.Registry, guard permission.Guard, expander *reference.Expander, modelName string, theme string, verboseLog io.Writer, contextLimit int, maxTurns int, toolTimeout time.Duration, toolTimeoutSource string, bypassPerm bool, ctxMgr *ctxpkg.ContextManager, isResume bool, sessionDir string, globalPath string, projectPath string, agentsMdText string, loc Locale) {
-	m := newTUIModel(llmClient, registry, guard, expander, modelName, theme, verboseLog, contextLimit, maxTurns, toolTimeout, toolTimeoutSource, loc)
+func runTUI(llmClient llm.Client, registry tool.Registry, guard permission.Guard, expander *reference.Expander, modelName string, theme string, verboseLog io.Writer, contextLimit int, maxTurns int, toolTimeout time.Duration, toolTimeoutSource string, bypassPerm bool, ctxMgr *ctxpkg.ContextManager, isResume bool, sessionDir string, globalPath string, projectPath string, agentsMdText string, loc Locale, todoState *todo.TodoState) {
+	m := newTUIModel(llmClient, registry, guard, expander, modelName, theme, verboseLog, contextLimit, maxTurns, toolTimeout, toolTimeoutSource, loc, todoState)
 	m.agentsMdText = agentsMdText
 	m.sessionDir = sessionDir
 
@@ -5682,6 +5849,8 @@ func runTUI(llmClient llm.Client, registry tool.Registry, guard permission.Guard
 	}
 
 	// 正常退出时保存 session 并提示 session ID
+	// 序列化 TodoState 到 ContextManager 以便持久化
+	m.cm.SetTodoItems(serializeTodoItems(m.todoState))
 	m.cm.Save()
 	if sid := m.cm.SessionID(); sid != "" {
 		// 退出时用最终统计更新 recent.json（覆盖启动时写入的初始值）
@@ -5874,4 +6043,22 @@ var tuiNouns = []string{
 	"lemur", "marlin", "newt", "otter", "puffin",
 	"quokka", "raven", "salmon", "tapir", "urchin",
 	"viper", "weasel", "xerus", "yak", "zebra",
+}
+
+// serializeTodoItems 将 TodoState 快照序列化为 JSON，供 ContextManager 持久化。
+func serializeTodoItems(ts *todo.TodoState) []json.RawMessage {
+	if ts == nil {
+		return nil
+	}
+	snapshot := ts.Snapshot()
+	if len(snapshot) == 0 {
+		// 返回空切片（非 nil），表示"显式清空"，与"从未设置"(nil) 区分
+		return []json.RawMessage{}
+	}
+	rawItems := make([]json.RawMessage, len(snapshot))
+	for i, item := range snapshot {
+		data, _ := json.Marshal(item)
+		rawItems[i] = data
+	}
+	return rawItems
 }

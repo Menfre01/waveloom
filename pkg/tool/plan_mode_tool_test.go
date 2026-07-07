@@ -139,11 +139,13 @@ func TestExitPlanMode_Execute(t *testing.T) {
 }
 
 // ============================================================================
-// 验证 EnterPlanMode / ExitPlanMode 在 DefaultRegistry 中注册
+// 验证 EnterPlanMode / ExitPlanMode 注册
 // ============================================================================
 
-func TestDefaultRegistryIncludesPlanModeTools(t *testing.T) {
-	r := NewDefaultRegistry()
+func TestRegistryIncludesPlanModeTools(t *testing.T) {
+	r := NewRegistry()
+	r.Register(Wrap(&EnterPlanMode{}))
+	r.Register(Wrap(&ExitPlanMode{}))
 
 	enter, ok := r.Get("enter_plan_mode")
 	if !ok {
