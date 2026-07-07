@@ -131,22 +131,22 @@ func (l *Loop) executeToolCalls(ctx context.Context, calls []llm.ToolCall, state
 			wg.Add(1)
 			go func(tc llm.ToolCall) {
 				defer wg.Done()
-				defer func() {
-					if r := recover(); r != nil {
-						resultsCh <- execResult{
-							tc: tc,
-							result: &tool.ToolResult{
-								Error: &tool.ToolError{
-									Class:   tool.ErrorClassFatal,
-									Kind:    tool.ErrKindUnknownTool,
-									Message: fmt.Sprintf("panic: %v", r),
-								},
+			defer func() {
+				if r := recover(); r != nil {
+					safeSend(resultsCh, execResult{
+						tc: tc,
+						result: &tool.ToolResult{
+							Error: &tool.ToolError{
+								Class:   tool.ErrorClassFatal,
+								Kind:    tool.ErrKindUnknownTool,
+								Message: fmt.Sprintf("panic: %v", r),
 							},
-							err:   fmt.Errorf("panic in tool %q: %v", tc.Name, r),
-							start: time.Now(),
-						}
-					}
-				}()
+						},
+						err:   fmt.Errorf("panic in tool %q: %v", tc.Name, r),
+						start: time.Now(),
+					})
+				}
+			}()
 				start := time.Now()
 				execCtx := ctx
 				if l.config.ToolTimeout > 0 {
@@ -167,7 +167,7 @@ func (l *Loop) executeToolCalls(ctx context.Context, calls []llm.ToolCall, state
 				} else {
 					result, execErr = l.toolRegistry.Execute(execCtx, tc.Name, json.RawMessage(tc.Arguments))
 				}
-				resultsCh <- execResult{tc: tc, result: result, err: execErr, start: start}
+				safeSend(resultsCh, execResult{tc: tc, result: result, err: execErr, start: start})
 			}(tc)
 		}
 		// REGRESSION: wg.Wait() 无超时保护。每个 goroutine 有 ToolTimeout，
@@ -782,11 +782,13 @@ func (l *Loop) executeAskUserQuestion(ctx context.Context, tc llm.ToolCall, stat
 	}
 
 	// 发送通知事件（非阻塞，TUI 可据此做渲染准备）
-	sendEvent(ctx, ch, AskUserQuestionEvent{
+	if !sendEvent(ctx, ch, AskUserQuestionEvent{
 		Turn:       state.TurnCount,
 		ToolCallID: tc.ID,
 		Questions:  prompts,
-	})
+	}) {
+		return nil, ctx.Err()
+	}
 
 	// 通过 UserResponder 阻塞等待用户回答
 	if l.config.UserResponder == nil {
@@ -890,7 +892,9 @@ Remember: DO NOT write or edit any source files — these operations will be blo
 	// 启用 plan 模式
 	l.plan = true
 	l.planPairID = generatePairID()
-	l.config.Guard.EnterPlanMode(l.config.PlanFile)
+	if l.config.Guard != nil {
+		l.config.Guard.EnterPlanMode(l.config.PlanFile)
+	}
 
 	emitPlanEnter(ch, state.TurnCount, l.config.PlanFile, l.planPairID)
 
@@ -978,7 +982,9 @@ func (l *Loop) executeExitPlanMode(ctx context.Context, tc llm.ToolCall, state *
 	l.plan = false
 	l.approvedPlan = planStr // 暂存，由 executeToolCalls 在 tool 消息后注入 [plan:end]
 	l.config.PlanFile = ""   // 清除，确保下次进入生成新文件
-	l.config.Guard.ExitPlanMode()
+	if l.config.Guard != nil {
+		l.config.Guard.ExitPlanMode()
+	}
 
 	emitPlanExit(ch, state.TurnCount, planStr, l.config.PlanFile)
 
@@ -1108,4 +1114,12 @@ func todoItemsEqual(a, b []todo.TodoItem) bool {
 		}
 	}
 	return true
+}
+
+// safeSend 向 channel 安全发送，channel 已关闭时静默丢弃（不 panic）。
+// REGRESSION: 工具 goroutine 可能在 resultsCh 关闭后仍尝试发送（工具忽略 context 取消），
+// 导致 panic-in-recover 的 double-panic 使进程崩溃。
+func safeSend[T any](ch chan<- T, v T) {
+	defer func() { _ = recover() }()
+	ch <- v
 }
