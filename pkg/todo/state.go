@@ -120,6 +120,22 @@ func FormatResult(items []TodoItem) string {
 	b.WriteString("Todos updated. **CRITICAL**: always pass the COMPLETE list on every call: copy the list above, change only status fields. " +
 		"Mark the next task in_progress BEFORE starting work, and mark completed immediately after finishing. " +
 		"Never drop items or change content/activeForm between calls.\n")
+
+	// 智能引导：如果有 pending 任务但没有 in_progress 任务，提示下一个应启动的任务
+	hasInProgress := false
+	var firstPending string
+	for _, t := range items {
+		if t.Status == "in_progress" {
+			hasInProgress = true
+		}
+		if t.Status == "pending" && firstPending == "" {
+			firstPending = t.Content
+		}
+	}
+	if !hasInProgress && firstPending != "" {
+		b.WriteString(fmt.Sprintf("Next task to start: %q — call todo_write to set its status to in_progress before proceeding.\n", firstPending))
+	}
+
 	for _, t := range items {
 		b.WriteString(formatTodoLine(t))
 		b.WriteByte('\n')

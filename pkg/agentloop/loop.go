@@ -124,8 +124,8 @@ var warnThresholds = map[int]bool{3: true, 5: true}
 // 首次提醒在 idleTodoWrite（距上次 todo_write 达到此值）时触发，
 // 后续提醒至少间隔 idleTodoReminder 轮。
 const (
-	idleTodoWrite    = 8 // 超过此值无 todo_write → 注入提醒
-	idleTodoReminder = 5 // 两次提醒之间的最小间隔
+	idleTodoWrite    = 3 // 超过此值无 todo_write → 注入提醒
+	idleTodoReminder = 2 // 两次提醒之间的最小间隔
 )
 
 
@@ -300,6 +300,14 @@ func (l *Loop) Run(ctx context.Context, messages []llm.Message) <-chan TurnEvent
 			state.TurnCount+1, len(state.Messages), len(l.toolRegistry.List()))
 
 		messagesForTurn := state.Messages
+			// messagesForTurn 与 state.Messages 共享底层数组（slice header copy）。
+			// injectTodoStatus 在找到已有 todo-status 消息时原地更新 Content，
+			// 此时 state.Messages 同步受益（共享数组）；追加时仅影响 messagesForTurn，
+			// 新增消息在下一轮被 assistant 消息的同索引 append 覆盖，不会泄漏到持久化历史。
+
+			// 每轮注入当前 todo 状态，确保 LLM 始终可见活跃任务
+			l.injectTodoStatus(&messagesForTurn)
+
 			var lastPromptTokens int      // 本轮 API 返回的 prompt_tokens
 			var lastUsage       *llm.UsageInfo // 暂存 usage，压缩后统一推送 TurnStats
 			var lastModel       string         // 暂存 model
@@ -696,6 +704,37 @@ func sendEvent(ctx context.Context, ch chan<- TurnEvent, ev TurnEvent) bool {
 	}
 }
 
+// injectTodoStatus 在每轮 LLM 调用前将当前 todo 状态注入消息列表。
+// 若已有 todo-status 消息则原地更新，否则追加。无活跃任务时不做任何操作。
+// 与 maybeInjectTodoReminder 不同：此函数每轮都更新状态视图（不附带提醒文字），
+// 而 maybeInjectTodoReminder 仅在长时间未更新时注入带提醒文字的版本。
+func (l *Loop) injectTodoStatus(msgs *[]llm.Message) {
+	if l.config.TodoState == nil {
+		return
+	}
+	summary := l.config.TodoState.StatusSummary()
+	if summary == "" {
+		return
+	}
+	text := todoStatusText(summary)
+	if idx := findTodoStatusIndex(*msgs); idx >= 0 {
+		(*msgs)[idx].Content = text
+	} else {
+		*msgs = append(*msgs, llm.Message{
+			Role:    llm.RoleUser,
+			Content: text,
+		})
+	}
+}
+
+// todoStatusText 构造紧凑的 todo 状态文本（不含提醒文字，仅展示当前状态）。
+func todoStatusText(summary string) string {
+	return summary + "\n\n" +
+		"Keep the todo list updated using `todo_write`. " +
+		"Mark each task complete immediately after finishing, and set the next task to in_progress before starting. " +
+		"Pass the COMPLETE list every call — copy from the previous result, change only status fields."
+}
+
 // todoReminderText 构造 todo 提醒消息文本：状态摘要 + 提醒引导。
 func todoReminderText(summary string) string {
 	return summary + "\n\n" +
@@ -757,11 +796,15 @@ func (l *Loop) maybeInjectTodoReminder(state *LoopState) {
 
 	msg := todoReminderText(l.config.TodoState.StatusSummary())
 
-	// 追加新消息（非原地更新）以保持前缀缓存命中。
-	// 累积的旧 todo-status 消息不影响正确性——LLM 会关注最新的一条。
-	state.Messages = append(state.Messages, llm.Message{
-		Role:    llm.RoleUser,
-		Content: msg,
-	})
+	// 原地更新最后一条 todo-status 消息，避免消息累积。
+	// 若 compaction 路径已在本轮注入了 todo-status，此处更新而非追加。
+	if idx := findTodoStatusIndex(state.Messages); idx >= 0 {
+		state.Messages[idx].Content = msg
+	} else {
+		state.Messages = append(state.Messages, llm.Message{
+			Role:    llm.RoleUser,
+			Content: msg,
+		})
+	}
 }
 
