@@ -710,6 +710,10 @@ func (l *Loop) executeTodoWrite(ctx context.Context, tc llm.ToolCall, state *Loo
 
 	_, newItems := l.config.TodoState.Apply(params)
 
+	// 成功更新后重置周期性提醒计数器
+	l.turnsSinceLastTodoWrite = 0
+	l.turnsSinceLastTodoReminder = 0
+
 	// 推送更新事件给 TUI
 	if !sendEvent(ctx, ch, TodoUpdateEvent{Items: newItems}) {
 		return &tool.ToolResult{
