@@ -58,10 +58,16 @@ func (t *TodoWrite) RequiresUserInteraction() bool { return false }
 
 func (t *TodoWrite) Description() string {
 	return strings.TrimSpace(`
-MANDATORY task tracker for any multi-step task (3+ distinct steps). You MUST use this — never skip.
+Task tracker for complex multi-step work. Use only when tasks have meaningful dependencies or run in parallel — skip for linear single-file changes.
 
-HARD RULES:
-1. After receiving new instructions — immediately capture all tasks before starting work.
+Trigger test (BOTH must be true before using this tool):
+1. ≥3 steps with real dependencies (B depends on A) or parallelizable units (subagents)
+2. Work spans ≥2 turns OR dispatches parallel subagents
+
+→ If either is false, skip the todo list and just do the work.
+
+RULES:
+1. After receiving new instructions — capture all tasks before starting work.
 2. Mark in_progress BEFORE beginning each task. Update status in real-time.
 3. Mark completed IMMEDIATELY after finishing — never batch-mark.
 4. ALWAYS pass the COMPLETE list — copy from previous result, modify, pass it all back.
@@ -69,7 +75,9 @@ HARD RULES:
 
 content = imperative ("Fix bug"). activeForm = present continuous ("Fixing bug") — displayed with spinner during in_progress state. Both required for every task.
 
-Multiple tasks can be in_progress simultaneously when running parallel work. Do NOT use for single straightforward tasks or informational requests.
+Multiple tasks can be in_progress simultaneously when running parallel work.
+
+Skip this tool for: single-file fixes, linear micro-tasks (locate→edit→build), informational requests. When uncertain, skip — a missed todo is cheaper than noise.
 
 → Detailed rules and examples: see system prompt section "## Todo List".
 `)
