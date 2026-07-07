@@ -117,7 +117,9 @@ func FormatResult(items []TodoItem) string {
 	}
 
 	var b strings.Builder
-	b.WriteString("Todos updated. **Remember**: mark the next task in_progress BEFORE starting work, and mark completed immediately after finishing.\n")
+	b.WriteString("Todos updated. **CRITICAL**: always pass the COMPLETE list on every call: copy the list above, change only status fields. " +
+		"Mark the next task in_progress BEFORE starting work, and mark completed immediately after finishing. " +
+		"Never drop items or change content/activeForm between calls.\n")
 	for _, t := range items {
 		b.WriteString(formatTodoLine(t))
 		b.WriteByte('\n')

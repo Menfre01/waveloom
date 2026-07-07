@@ -193,9 +193,44 @@ Every task requires both fields:
 - **in_progress**: Currently working — paired with spinner. Multiple tasks can be in_progress simultaneously (e.g., parallel subagents)
 - **completed**: Finished successfully
 
+### Workflow Pattern
+
+Follow this call sequence when using todos — never skip steps or batch-update statuses:
+
+**Step 1 — Initialize**: first ` + "`todo_write`" + ` call creates ALL tasks as ` + "`pending`" + `:
+  todo_write([{content:"Fix login",status:"pending",activeForm:"Fixing login"}, {content:"Add tests",status:"pending",activeForm:"Adding tests"}])
+
+**Step 2 — Start work**: before working on task 1, mark it ` + "`in_progress`" + ` (pass the COMPLETE list — every item, only status changed):
+  todo_write([{content:"Fix login",status:"in_progress",activeForm:"Fixing login"}, {content:"Add tests",status:"pending",activeForm:"Adding tests"}])
+
+**Step 3 — Task done, start next**: mark completed task ` + "`completed`" + ` AND next task ` + "`in_progress`" + ` IN THE SAME CALL:
+  todo_write([{content:"Fix login",status:"completed",activeForm:"Fixing login"}, {content:"Add tests",status:"in_progress",activeForm:"Adding tests"}])
+
+**Step 4 — All done**: mark all ` + "`completed`" + ` (list auto-clears):
+  todo_write([{content:"Fix login",status:"completed",activeForm:"Fixing login"}, {content:"Add tests",status:"completed",activeForm:"Adding tests"}])
+
+**Iron rule**: every ` + "`todo_write`" + ` call must include EVERY task from the previous state. Only change ` + "`status`" + ` — never drop items, never change ` + "`content`" + ` or ` + "`activeForm`" + ` between calls. The list you receive in the tool result IS the reference — copy it, change only status fields, pass it back.
+
+### Parallel Workflow (subagents)
+
+When dispatching parallel subagents, start with ALL items ` + "`in_progress`" + ` at once — unlike the sequential pattern above. Example with 3 parallel agents:
+
+**Before dispatch** — create items and mark ALL in_progress:
+  todo_write([{content:"Explore auth flow",status:"in_progress",activeForm:"Exploring auth flow"}, {content:"Fix login bug",status:"in_progress",activeForm:"Fixing login bug"}, {content:"Add rate limiter",status:"in_progress",activeForm:"Adding rate limiter"}])
+
+**As each agent returns** — mark it completed, keep others in_progress. Agent 1 returns first:
+  todo_write([{content:"Explore auth flow",status:"completed",activeForm:"Exploring auth flow"}, {content:"Fix login bug",status:"in_progress",activeForm:"Fixing login bug"}, {content:"Add rate limiter",status:"in_progress",activeForm:"Adding rate limiter"}])
+
+Agent 2 returns next:
+  todo_write([{content:"Explore auth flow",status:"completed",activeForm:"Exploring auth flow"}, {content:"Fix login bug",status:"completed",activeForm:"Fixing login bug"}, {content:"Add rate limiter",status:"in_progress",activeForm:"Adding rate limiter"}])
+
+Agent 3 returns last (all completed → auto-clears):
+  todo_write([{content:"Explore auth flow",status:"completed",activeForm:"Exploring auth flow"}, {content:"Fix login bug",status:"completed",activeForm:"Fixing login bug"}, {content:"Add rate limiter",status:"completed",activeForm:"Adding rate limiter"}])
+
 ### Parallel Execution
 
-- When launching parallel subagents, map each to a separate todo item, mark all in_progress simultaneously, and mark each completed as its subagent finishes.
+- When launching parallel subagents, map each to a separate todo item, mark all in_progress simultaneously BEFORE dispatching, and mark each completed IMMEDIATELY as its subagent returns.
+- Never wait for all agents to finish before updating status — update after EACH agent returns so the list always reflects reality.
 - Keep the todo list faithfully reflecting what is actually running at all times.
 
 ## Coding standards
