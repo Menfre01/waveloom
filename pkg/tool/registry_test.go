@@ -134,8 +134,19 @@ func TestRegistryExecuteSuccess(t *testing.T) {
 	}
 }
 
-func TestNewDefaultRegistry(t *testing.T) {
-	r := NewDefaultRegistry()
+func TestRegistry_RegisterAndList(t *testing.T) {
+	r := NewRegistry()
+	r.Register(Wrap(&ReadFile{}))
+	r.Register(Wrap(&WriteFile{}))
+	r.Register(Wrap(&EditFile{}))
+	r.Register(Wrap(&Shell{AllowBg: true}))  // "bash"
+	r.Register(Wrap(&Shell{AllowBg: false})) // "bash_subagent"
+	r.Register(Wrap(&WebFetch{}))
+	r.Register(Wrap(&AskUserQuestion{}))
+	r.Register(Wrap(&EnterPlanMode{}))
+	r.Register(Wrap(&ExitPlanMode{}))
+	r.Register(Wrap(&KillBackgroundTask{}))
+
 	specs := r.List()
 
 	expectedTools := []string{
