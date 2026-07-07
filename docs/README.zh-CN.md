@@ -67,15 +67,15 @@ waveloom
 
 | | Waveloom | Claude Code | Reasonix |
 |---|---|---|---|
-| Skill 格式 | 开箱即用：`.claude/skills/` SKILL.md，9/15 个 frontmatter 字段（`$ARGUMENTS`、`paths`、`` !`cmd` `` 注入等） | 原生 SKILL.md + commands | 6/15 字段，Skill 无变量替换（仅 commands 支持） |
+| Skill 格式 | 开箱即用：`.claude/skills/` SKILL.md，9 个 frontmatter 字段（`$ARGUMENTS`、`paths`、`` !`cmd` `` 注入等） | 原生 SKILL.md + commands | 13 个 frontmatter 字段，Skill body 无变量替换 |
 | 缓存设计 | DeepSeek 前缀匹配：四级水位线（Snip → Prune → Summarize），压缩后字节永不变化 | Anthropic `cache_control`：`cache_edits` API，System Prompt 含动态段 | DeepSeek 前缀匹配：四级（notice → snip → compact → force），`session.Replace()` 触发 rewrite 版本号 |
 | 上下文压缩 | 单调不变式 — `compactionDecisionSet` + 三游标，每条消息只压缩一次 | 每轮独立压缩，无持久性保证 | 前缀字节跨压缩保留，但无逐消息决策追踪 |
-| Plan 模式 | Guard 限制只写 plan 文件，构建工具自动放行 | 权限层全局阻止写入，富交互审批 UI | `planmode.Policy` + bash/MCP 信任门；注入 Marker 字符串；无 plan 文件 |
-| 子代理 | Fork（继承上下文）/ Cold（裁剪工具集）/ Explore（只读） | Fork + Cold + In-process + Coordinator（tmux 拉起） | `task` 工具嵌套 agent，后台任务通过 job manager |
+| Plan 模式 | Guard 限制只写 plan 文件，构建工具自动放行 | 仅 plan 文件可写，富交互审批 UI | `planmode.Policy` + bash/MCP 信任门；注入 Marker 字符串；无 plan 文件 |
+| 子代理 | Fork（继承上下文）/ Cold（裁剪工具集）/ Explore（只读） | Fork + Cold + In-process + Coordinator | `task` 工具嵌套 agent，后台任务通过 job manager |
 | 运行时 | Go 单二进制 ~18MB，零依赖 | Node.js | Go 二进制 + Desktop 应用，外部 plugin 宿主 |
 | MCP | 完整客户端（配置、传输、工具代理），与内置工具统一注册 | 原生 MCP 支持 | 原生 MCP 支持 |
 | 权限模型 | 8 步决策管线，3 级命令安全分类（RiskNone/RiskLow/RiskHigh） | 8 源规则合并 + LLM 分类器自动审批 | Policy + Approver，9 阶段执行管线，shellsafe readOnly 检测 |
-| TUI 打磨 | 流式推理、rich diff、权限对话框、`@` 模糊选择器、`/` 面板、i18n、主题切换 — Claude Code 同级 | 原生 TUI（Ink/React），标杆水平 | 基础 TUI，功能可用但无 diff/语法高亮打磨 |
+| TUI 打磨 | 流式推理、rich diff、权限对话框、`@` 模糊选择器、`/` 面板、i18n、主题切换 — Claude Code 同级 | 原生 TUI（Ink/React），标杆水平 | 功能完备的 TUI，非 Claude Code 式体验 |
 
 **选 Waveloom 如果**：用 DeepSeek、已有 `.claude/skills/`、想要 Claude Code 体验但不想白烧缓存未命中费用。  
 **选 Claude Code 如果**：用 Anthropic API、需要 coordinator 模式、重度依赖 Claude 生态。  
