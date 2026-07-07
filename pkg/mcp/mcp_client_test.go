@@ -417,8 +417,10 @@ func TestMCPToolProxy_Execute_Success(t *testing.T) {
 	if result.Content != "result from server" {
 		t.Errorf("Content = %q, want 'result from server'", result.Content)
 	}
-	if result.Meta.Duration == 0 {
-		t.Error("Duration should be non-zero")
+	// Duration may be zero on platforms with low timer resolution (e.g. Windows)
+	// when the fake transport responds instantaneously.
+	if result.Meta.Duration < 0 {
+		t.Error("Duration should not be negative")
 	}
 }
 
