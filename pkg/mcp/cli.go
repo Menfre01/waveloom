@@ -23,7 +23,7 @@ func RunMCPCommand(args []string) bool {
 	homeDir, _ := os.UserHomeDir()
 	cwd, _ := os.Getwd()
 
-	ok := true
+	var ok bool
 	switch args[0] {
 	case "add":
 		ok = runAdd(args[1:], homeDir, cwd)

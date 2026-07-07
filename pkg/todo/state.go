@@ -133,7 +133,7 @@ func FormatResult(items []TodoItem) string {
 		}
 	}
 	if !hasInProgress && firstPending != "" {
-		b.WriteString(fmt.Sprintf("Next task to start: %q — call todo_write to set its status to in_progress before proceeding.\n", firstPending))
+		fmt.Fprintf(&b, "Next task to start: %q — call todo_write to set its status to in_progress before proceeding.\n", firstPending)
 	}
 
 	for _, t := range items {
