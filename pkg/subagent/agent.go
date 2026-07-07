@@ -97,10 +97,11 @@ func (a *AgentTool) Description() string {
 		"Do NOT use cold agents just to parallelize work — fork multiple times instead.",
 		"Each fork shares the same cache prefix; each cold agent pays the full input cost.",
 		"",
-		"- Launch multiple agents concurrently whenever possible — use a single message",
-		"  with multiple tool calls. Map each agent to a separate todo item via todo_write",
-		"  and mark them all in_progress BEFORE dispatching. Mark each completed",
-		"  immediately as its agent returns.",
+		"- Launch multiple agents concurrently WHENEVER tasks are independent — use a single",
+		"  message with multiple tool calls. The system runs them in parallel goroutines.",
+		"  Map each agent to a separate todo item via todo_write and mark them all",
+		"  in_progress BEFORE dispatching. Mark each completed immediately as its agent returns.",
+		"  Never serialize independent agent calls — wait only when there is a real dependency.",
 		"",
 		"Usage: for forks, write a directive (context is inherited); for cold agents, provide",
 		"a self-contained prompt with full background — the agent hasn't seen this conversation.",
@@ -168,6 +169,8 @@ bash_subagent is for READ-ONLY operations: inspecting files, searching code, che
 NEVER use bash_subagent for: mkdir, touch, rm, cp, mv, chmod, chown, echo > (redirect), tee, git add, git commit, npm install, pip install, or any filesystem modification.
 NEVER: write_file, edit_file, mkdir, rm, cp, mv, chmod, git add, git commit, or any filesystem write.
 
+CRITICAL: Your final message MUST contain a non-empty summary. Never end with a silent response — even if you only ran searches, describe what you found.
+
 OUTPUT RULES (output tokens are the most expensive resource — 
 240x the cost of cached input, 2x the cost of uncached input):
 - Be concise, but not at the expense of correctness. Include details when they matter.
@@ -230,7 +233,8 @@ Before reporting FAIL, verify:
 === OUTPUT RULES ===
 - Evidence over narration. Every claim must be backed by a command run and its output.
 - If you catch yourself writing an explanation instead of a command, stop. Run the command.
-- No conversational filler. Output the checks, then the verdict.`
+- No conversational filler. Output the checks, then the verdict.
+- CRITICAL: Your final message MUST contain the check results and a VERDICT line. Never end with a silent/empty response.`
 }
 
 func evaluateSystemPrompt() string {
@@ -253,6 +257,7 @@ Approach:
 - Distinguish between "this is wrong" (must fix) and "this could be improved" (nice to have)
 
 OUTPUT RULES (output tokens are the most expensive — 240x cached input, 2x uncached):
+- CRITICAL: Your final message MUST contain a non-empty assessment. Never end with a silent response.
 - Aim for under 300 words unless the assessment genuinely demands more detail.
 - Do not echo back code you just read — reference paths and line numbers.
 - No conversational filler: no "great!", no "I reviewed the code and here's what I found".
@@ -583,6 +588,8 @@ func forwardEvents(ctx context.Context, subCh <-chan agentloop.TurnEvent, cb fun
 	var sb strings.Builder
 	var writeOps []writeOp
 	var currentTurn int
+	var anyText bool            // 是否收到过至少一个非空 ContentDelta
+	var lastToolCalls []string  // 最后一个 turn 的工具调用名列表（用于空文本兜底）
 
 	// 缓冲扇出通道：解耦 subagent 事件消费与 TUI 投递。
 	// 若不隔离，pushEvent → m.program.Send() 可能因 TUI 消息通道拥塞而阻塞，
@@ -617,13 +624,16 @@ func forwardEvents(ctx context.Context, subCh <-chan agentloop.TurnEvent, cb fun
 				// 进入新 turn：只保留最后一个 turn 的文本，丢弃中间推理过程
 				currentTurn = e.Turn
 				sb.Reset()
+				lastToolCalls = lastToolCalls[:0]
 			}
 			if e.ContentDelta != "" {
 				sb.WriteString(e.ContentDelta)
+				anyText = true
 				fanout <- SubagentEvent{ToolCallID: toolCallID, Kind: SubagentText, TextDelta: e.ContentDelta}
 			}
 
 		case agentloop.ToolCallStart:
+			lastToolCalls = append(lastToolCalls, e.ToolCallName)
 			args := formatArgs(e.ToolCallName, e.Arguments)
 			fanout <- SubagentEvent{ToolCallID: toolCallID, Kind: SubagentToolStart, ToolName: e.ToolCallName, ToolArgs: args}
 
@@ -648,6 +658,13 @@ func forwardEvents(ctx context.Context, subCh <-chan agentloop.TurnEvent, cb fun
 			totalTurns = e.Turn
 			if e.Err != nil {
 				finalErr = e.Err
+			}
+			// 兜底：子 agent 最后一个 turn 无文本输出时（如仅含 tool 调用），
+			// 合成非空 fallback 防止 tool_result 内容为空，避免父 agent 因空结果而误解。
+			if !anyText {
+				sb.WriteString("(no summary text produced)")
+			} else if sb.Len() == 0 && len(lastToolCalls) > 0 {
+				fmt.Fprintf(&sb, "(completed via: %s)", strings.Join(lastToolCalls, ", "))
 			}
 			if len(writeOps) > 0 {
 				sb.WriteString("\n\n<subagent_write_operations>\n")
@@ -816,11 +833,12 @@ You are a fork child process. The message history above is inherited from your p
 understand the context, then execute the task below.
 
 Rules:
-1. Output tokens are expensive (240x cached input, 2x uncached). Be concise. Aim for under 300 words unless findings genuinely demand more detail.
-2. Do NOT call the agent tool (you ARE the fork — execute directly)
-3. No conversation, no questions, no commentary. Use tools silently, report once at the end.
-4. Stay within the task scope. Related observations outside scope deserve at most one sentence.
-5. Preferred format (English labels; adapt as needed):
+1. Your final message MUST contain a non-empty summary of what you did. Never end with a silent/empty response — even if all work was done via tool calls, summarize the outcome.
+2. Output tokens are expensive (240x cached input, 2x uncached). Be concise. Aim for under 300 words unless findings genuinely demand more detail.
+3. Do NOT call the agent tool (you ARE the fork — execute directly)
+4. No conversation, no questions, no commentary. Use tools silently, report once at the end.
+5. Stay within the task scope. Related observations outside scope deserve at most one sentence.
+6. Preferred format (English labels; adapt as needed):
 
 Scope: <one sentence echoing the task>
 Result: <findings or work done — details when they matter>
