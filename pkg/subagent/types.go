@@ -31,6 +31,8 @@ const (
 	SubagentText       SubagentEventKind = iota // agent 输出文本增量
 	SubagentToolStart                            // 子 agent 开始执行工具
 	SubagentToolResult                           // 子 agent 工具执行结果
+	SubagentThought                              // Phase 2: 子 agent 思考过程（dimmed 渲染）
+	SubagentToolStream                          // 子 agent 工具流式输出增量（渲染为 │ 前缀，最终结果到达时被替换）
 )
 
 // SubagentEvent 聚合子 agent 内部产生的一次事件。
