@@ -565,15 +565,15 @@ func buildModelSelectionSection(defaultModel, flashModel string) string {
 ## Subagent Model Selection
 
 When spawning subagents with the agent tool, you can override the model via the optional
-`+"`model`"+` parameter. The parameter accepts:
+`+"`model`"+` parameter.
 
-  (omit / empty)  → uses the default (%s)
-  "%s"             → deep reasoning. Use ONLY for: evaluation, verification, complex multi-file implementation.
-  "%s"             → fast and cheap — the right choice for most tasks: Explore, research, code search, single-file edits, simple lookups.
+  (omit / empty)  → %s — full reasoning capability, higher per-token cost.
+  "%s"             → %s — ~2x cheaper per token, optimized for speed.
 
-Prefer `+"`%s`"+` unless the task genuinely demands deep analysis.
-Output tokens cost 240x that of cached input — `+"`%s`"+` on routine tasks wastes compute with zero quality gain.
+Choose based on the task:
+- Tasks requiring analysis, judgment, or multi-step planning → prefer %s. Deep reasoning justifies the higher cost.
+- Tasks requiring search, lookup, single-step edits, or pattern matching → prefer %s. For these tasks, %s matches %s in output quality while costing significantly less — no quality trade-off.
 
 If you pass an unrecognized value, the default is used.
-`, defaultModel, defaultModel, flashModel, flashModel, defaultModel)
+`, defaultModel, flashModel, flashModel, defaultModel, flashModel, flashModel, defaultModel)
 }
