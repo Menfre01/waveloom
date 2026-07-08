@@ -1,5 +1,21 @@
 # Changelog
 
+## [v0.1.0-beta.2] — 2026-07-08
+
+### 新增功能
+- **子代理结构化事件渲染**：TUI 展开态按事件类型差异化渲染 — thought 以 dimmed 斜体显示思考过程、tool 名绿色粗体 + args 代码色、工具输出 │ 前缀缩进；新增 `SubagentThought` 和 `SubagentToolStream` 事件类型
+- **Layer 3 事后安全分类器**：子代理执行完成后自动扫描事件列表，检测危险命令（rm/chmod/sudo/shutdown 等）和敏感文件操作（.env 写入），生成 `HIGH`/`MEDIUM`/`LOW` 三级安全警告，以 `<subagent_security_warning>` XML 块注入父 LLM 结果
+- **Explore 自动小模型**：`Explore` 类型子代理未指定模型时自动选用 `sub_model` 配置（如 `deepseek-v4-flash`），降低探索类任务的 token 成本
+- **Footer thinking 档位显示**：模型名旁显示 `(think high)` / `(think max)`，自动从 `reasoning_effort` 配置解析，thinking 关闭时不显示
+- **Subagent Transcript 持久化**：`TranscriptLine` 新增 8 个 subagent 字段（类型/模型/轮次/token/事件 JSON），支持 `--resume` 完整恢复子代理段落状态
+
+### 修复
+- `extractPath` edit_file 格式适配：从 emoji 前缀 `"✅ Edit applied to"` 改为 `"Edited file:"` 前缀解析
+- `ToolCallStream` 事件 Kind 从 `SubagentToolResult` 修正为独立的 `SubagentToolStream`，避免流式 chunk 与最终结果重复渲染
+
+### 重构
+- 精简 system prompt 与 tool description，分离职责减少 token 消耗
+
 ## [v0.1.0-beta.1] — 2026-07-07
 
 ### 新增功能
