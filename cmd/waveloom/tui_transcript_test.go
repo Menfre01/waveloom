@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	ctxpkg "github.com/Menfre01/waveloom/pkg/context"
+	"github.com/Menfre01/waveloom/pkg/subagent"
 )
 
 func TestParagraphToTranscriptLineRoundTrip(t *testing.T) {
@@ -37,6 +38,26 @@ func TestParagraphToTranscriptLineRoundTrip(t *testing.T) {
 			name: "system paragraph",
 			p:    Paragraph{Type: paraSystem, State: stateDone, Text: "执行被中断。"},
 		},
+		{
+			name: "subagent paragraph with events",
+			p: Paragraph{
+				Type:                paraSubagent,
+				State:               stateDone,
+				Text:                "● read_file  /tmp/x.go\npackage main\nanalysis complete",
+				SubagentType:        "Explore",
+				SubagentModel:       "deepseek-v4-flash",
+				SubagentPrompt:      "Search Go files",
+				SubagentTurns:       3,
+				SubagentPromptTok:   1200,
+				SubagentComplTok:    800,
+				SubagentToolCallID:  "call-abc123",
+				SubagentEvents: []subagent.SubagentEvent{
+					{Kind: subagent.SubagentToolStart, ToolName: "read_file", ToolArgs: "/tmp/x.go"},
+					{Kind: subagent.SubagentToolResult, ToolName: "read_file", ToolResult: "package main"},
+					{Kind: subagent.SubagentText, TextDelta: "analysis complete"},
+				},
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -64,6 +85,33 @@ func TestParagraphToTranscriptLineRoundTrip(t *testing.T) {
 			}
 			if restored.ToolDurMs != tt.p.ToolDurMs {
 				t.Errorf("ToolDurMs: %d != %d", restored.ToolDurMs, tt.p.ToolDurMs)
+			}
+			// Phase 2: verify subagent fields round-trip
+			if tt.p.Type == paraSubagent {
+				if restored.SubagentType != tt.p.SubagentType {
+					t.Errorf("SubagentType: %q != %q", restored.SubagentType, tt.p.SubagentType)
+				}
+				if restored.SubagentModel != tt.p.SubagentModel {
+					t.Errorf("SubagentModel: %q != %q", restored.SubagentModel, tt.p.SubagentModel)
+				}
+				if restored.SubagentTurns != tt.p.SubagentTurns {
+					t.Errorf("SubagentTurns: %d != %d", restored.SubagentTurns, tt.p.SubagentTurns)
+				}
+				if restored.SubagentPromptTok != tt.p.SubagentPromptTok {
+					t.Errorf("SubagentPromptTok: %d != %d", restored.SubagentPromptTok, tt.p.SubagentPromptTok)
+				}
+				if restored.SubagentComplTok != tt.p.SubagentComplTok {
+					t.Errorf("SubagentComplTok: %d != %d", restored.SubagentComplTok, tt.p.SubagentComplTok)
+				}
+				if len(restored.SubagentEvents) != len(tt.p.SubagentEvents) {
+					t.Errorf("SubagentEvents len: %d != %d", len(restored.SubagentEvents), len(tt.p.SubagentEvents))
+				} else {
+					for i := range restored.SubagentEvents {
+						if restored.SubagentEvents[i].Kind != tt.p.SubagentEvents[i].Kind {
+							t.Errorf("SubagentEvents[%d].Kind: %d != %d", i, restored.SubagentEvents[i].Kind, tt.p.SubagentEvents[i].Kind)
+						}
+					}
+				}
 			}
 		})
 	}

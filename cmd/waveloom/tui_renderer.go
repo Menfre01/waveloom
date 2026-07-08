@@ -8,6 +8,7 @@ import (
 
 	"github.com/Menfre01/waveloom/pkg/llm"
 	"github.com/Menfre01/waveloom/pkg/pathutil"
+	"github.com/Menfre01/waveloom/pkg/subagent"
 	"github.com/Menfre01/waveloom/pkg/todo"
 	"github.com/Menfre01/waveloom/pkg/tool"
 
@@ -87,6 +88,9 @@ type Paragraph struct {
 	SubagentPromptTok  int    // ↑ 输入 token
 	SubagentComplTok   int    // ↓ 输出 token
 	SubagentToolCallID string // 父级 tool_call ID，用于并发 subagent 事件路由
+
+	// Phase 2: 结构化事件列表（展开态渲染使用，完成/折叠态仍用 Text 兜底）
+	SubagentEvents []subagent.SubagentEvent
 
 	// 渲染缓存（避免每次 buildViewportContent 时重复 Glamour 渲染）
 	renderedCache string
@@ -1968,7 +1972,9 @@ func renderSubagentPara(sb *strings.Builder, p *Paragraph, ctx ViewportCtx) {
 	sb.WriteString(suffixRendered)
 	sb.WriteString("\n")
 
-	// ── 流式输出：活跃中普通字体（对齐 shell 流式） ──
+	// ── 流式输出：对齐主 TUI shell 流式，用 p.Text 尾 5 行渲染 ──
+	// 注意：不能用 renderSubagentBody 遍历全部事件——流式期间 SubagentEvents 包含
+	// 大量 SubagentToolStream 增量块，全量渲染会导致段落无限膨胀（输出泄漏）。
 	if p.State == stateStreaming && p.Text != "" {
 		renderSubagentStreamLines(sb, p.Text, textWidth, indentStr, 5, false)
 		return
@@ -1989,12 +1995,9 @@ func renderSubagentPara(sb *strings.Builder, p *Paragraph, ctx ViewportCtx) {
 		return
 	}
 
-	// ── 展开态：完整输出 ──
+	// ── 展开态：结构化渲染（Phase 2） ──
 	if p.State == stateExpanded {
-		saved := p.ToolResult
-		p.ToolResult = p.Text
-		renderToolFullOutput(sb, p, textWidth, indentStr, ctx.LC)
-		p.ToolResult = saved
+		renderSubagentBody(sb, p, textWidth, indentStr)
 	}
 }
 
@@ -2064,6 +2067,106 @@ func subagentSuffix(p *Paragraph) string {
 		return ""
 	}
 	return "(" + suffix + ")"
+}
+
+// renderSubagentBody 按结构化事件列表渲染子 agent body（Phase 2）。
+// 样式完全对标主 TUI 段落渲染：thought dimmed 斜体、tool 名绿色粗体 + args 代码色、
+// tool 输出 │ 前缀 muted + 内容默认色、text 默认色。
+// 无结构化事件时降级到 p.Text 纯文本渲染。
+func renderSubagentBody(sb *strings.Builder, p *Paragraph, textWidth int, indent string) {
+	events := p.SubagentEvents
+	if len(events) == 0 {
+		// 降级：无结构化事件时回退到 Text 渲染
+		if p.Text != "" {
+			renderSubagentStreamLines(sb, p.Text, textWidth, indent, 2000, true)
+		}
+		return
+	}
+	contentWidth := textWidth - 2 // "│ " 前缀占 2 列
+	if contentWidth < 1 {
+		contentWidth = 1
+	}
+	isExpanded := p.State == stateExpanded
+
+	var prevKind subagent.SubagentEventKind
+	for _, ev := range events {
+		// 展开态跳过流式增量块：它们仅用于流式实时显示，
+		// 最终结果已由同名 SubagentToolResult 承载（handleSubagentEvent 会移除它们）。
+		// 若工具尚未完成时用户展开，跳过可避免碎片化渲染。
+		if ev.Kind == subagent.SubagentToolStream {
+			continue
+		}
+
+		// 事件类型切换时添加空行分隔（提升可读性）
+		if prevKind != 0 && prevKind != ev.Kind {
+			sb.WriteString(indent)
+			sb.WriteString("\n")
+		}
+		prevKind = ev.Kind
+
+		switch ev.Kind {
+		case subagent.SubagentThought:
+			// 对标主 TUI 的 renderThoughtPara：dimmed 斜体
+			for _, line := range strings.Split(strings.TrimRight(ev.TextDelta, "\n"), "\n") {
+				for _, wl := range wrapLineStable(line, contentWidth) {
+					sb.WriteString(indent)
+					sb.WriteString(styleThoughtContent.Render(wl))
+					sb.WriteString("\n")
+				}
+			}
+		case subagent.SubagentText:
+			// 对标主 TUI 的 renderAssistantPara：默认色
+			for _, line := range strings.Split(strings.TrimRight(ev.TextDelta, "\n"), "\n") {
+				for _, wl := range wrapLineStable(line, contentWidth) {
+					sb.WriteString(indent)
+					sb.WriteString(wl)
+					sb.WriteString("\n")
+				}
+			}
+		case subagent.SubagentToolStart:
+			// 对标主 TUI renderToolPara 摘要行：● + tool 名绿色粗体 + args 代码色
+			sb.WriteString(indent)
+			sb.WriteString(styleToolPrefixDone.Render("●"))
+			sb.WriteString(" ")
+			sb.WriteString(styleToolPrefixDone.Render(ev.ToolName))
+			sb.WriteString("  ")
+			sb.WriteString(styleToolArgs.Render(ev.ToolArgs))
+			sb.WriteString("\n")
+		case subagent.SubagentToolResult:
+			// 对标主 TUI renderToolStreamOutput / renderToolFullOutput：
+			// "│ " 前缀 muted，内容默认色。展开态不限行数。
+			renderSubagentToolOutput(sb, ev.ToolResult, contentWidth, indent, isExpanded)
+		}
+	}
+}
+
+// renderSubagentToolOutput 渲染工具输出行（│ 前缀 muted，展开态不限行数，折叠态 tail-5）。
+func renderSubagentToolOutput(sb *strings.Builder, output string, contentWidth int, indent string, isExpanded bool) {
+	if output == "" {
+		return
+	}
+	lines := strings.Split(strings.TrimRight(output, "\n"), "\n")
+	maxLines := 5 // 非展开态：对齐主 TUI 流式 tail-5
+	if isExpanded {
+		maxLines = 2000 // 展开态：对齐主 TUI renderToolFullOutput
+	}
+	truncated := len(lines) > maxLines
+	if truncated {
+		lines = lines[len(lines)-maxLines:]
+	}
+	for _, line := range lines {
+		for _, wl := range wrapLineStable(line, contentWidth) {
+			sb.WriteString(indent)
+			sb.WriteString(styleToolPreview.Render("│ "))
+			sb.WriteString(wl)
+			sb.WriteString("\n")
+		}
+	}
+	if truncated {
+		sb.WriteString(indent)
+		sb.WriteString(styleToolPreviewHint.Render("│ ..."))
+		sb.WriteString("\n")
+	}
 }
 
 // ---------------------------------------------------------------------------
