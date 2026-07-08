@@ -28,16 +28,7 @@ func (t *EnterPlanMode) RequiresUserInteraction() bool { return true }
 func (t *EnterPlanMode) Description() string {
 	return strings.TrimSpace(`
 Enter plan mode for complex tasks requiring exploration and design before coding.
-Use this proactively when:
-- Implementing new features with architectural ambiguity
-- Multiple valid approaches exist and the choice matters
-- Changes affect 3+ files or restructure existing behavior
-- User preferences matter for the implementation approach
-
-Skip plan mode for:
-- Single-line or few-line fixes (typos, obvious bugs)
-- Tasks with very specific, detailed instructions from the user
-- Adding a single function with clear requirements
+→ When to use (or not use): see system prompt ## Plan Mode.
 
 In plan mode you CAN: read/search/explore code, ask questions, use shell for analysis commands (lint, test, version checks, git log/diff), and write/edit the plan file.
 In plan mode you CANNOT: write or edit source files — those operations will be blocked by the permission system and must wait until after plan approval.

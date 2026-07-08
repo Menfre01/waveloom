@@ -58,28 +58,24 @@ func (t *TodoWrite) RequiresUserInteraction() bool { return false }
 
 func (t *TodoWrite) Description() string {
 	return strings.TrimSpace(`
-Task tracker for complex multi-step work. Use only when tasks have meaningful dependencies or run in parallel — skip for linear single-file changes.
+Task tracker for complex multi-step work. Skip for single-file fixes, linear micro-tasks, or informational requests.
 
-Trigger test (BOTH must be true before using this tool):
-1. ≥3 steps with real dependencies (B depends on A) or parallelizable units (subagents)
-2. Work spans ≥2 turns OR dispatches parallel subagents
+Trigger test (BOTH must be true): ≥3 steps with real dependencies, AND work spans ≥2 turns or dispatches parallel subagents. If either is false, skip.
 
-→ If either is false, skip the todo list and just do the work.
+Fields:
+- content: imperative, WHAT to do ("Fix login bug")
+- activeForm: present continuous, shown during execution ("Fixing login bug")
+- status: pending → in_progress → completed (multiple can be in_progress simultaneously)
 
 RULES:
 1. After receiving new instructions — capture all tasks before starting work.
-2. Mark in_progress BEFORE beginning each task. Update status in real-time.
-3. Mark completed IMMEDIATELY after finishing — never batch-mark.
-4. ALWAYS pass the COMPLETE list — copy from previous result, modify, pass it all back.
-5. When all tasks are completed, the list auto-clears.
+2. ALWAYS pass the COMPLETE list — copy from previous result, change only status fields. Never drop items, never change content or activeForm between calls.
+3. Mark completed immediately, set next to in_progress before starting. Auto-clears when all completed.
 
-content = imperative ("Fix bug"). activeForm = present continuous ("Fixing bug") — displayed with spinner during in_progress state. Both required for every task.
+Example (initialize 2 tasks, start working on first):
+  todo_write([{content:"Fix login",status:"in_progress",activeForm:"Fixing login"},{content:"Add tests",status:"pending",activeForm:"Adding tests"}])
 
-Multiple tasks can be in_progress simultaneously when running parallel work.
-
-Skip this tool for: single-file fixes, linear micro-tasks (locate→edit→build), informational requests. When uncertain, skip — a missed todo is cheaper than noise.
-
-→ Detailed rules and examples: see system prompt section "## Todo List".
+→ When to use / not use: see system prompt ## Todo List.
 `)
 }
 
