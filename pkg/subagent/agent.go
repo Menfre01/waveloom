@@ -37,8 +37,10 @@ type AgentParams struct {
 
 // AgentTool 实现 tool.TypedTool[AgentParams]，将任务委派给子 agent 执行。
 type AgentTool struct {
-	LLMClient   llm.Client
-	ValidModels []string // 可用模型列表，空 = 不限制
+	LLMClient       llm.Client
+	ValidModels     []string // 可用模型列表，空 = 不限制
+	DefaultSubModel string   // Phase 2: Explore 等轻量 agent 的默认模型
+	WorkspaceDir    string   // 工作目录，用于分类器路径检查
 }
 
 func (a *AgentTool) Name() string              { return "agent" }
@@ -299,7 +301,7 @@ func (a *AgentTool) executeFork(ctx context.Context, p AgentParams) (*tool.ToolR
 		cb(SubagentStart{Prompt: p.Description, AgentType: "fork", InheritCtx: true, ToolCallID: toolCallID, Model: model})
 	}
 
-	lastTurnText, totalTurns, promptTok, complTok, err := forwardEvents(subCtx, subLoop.Run(subCtx, messages), cb, toolCallID)
+	lastTurnText, totalTurns, promptTok, complTok, events, err := forwardEvents(subCtx, subLoop.Run(subCtx, messages), cb, toolCallID)
 	if err != nil {
 		if cb != nil {
 			cb(SubagentEnd{ToolCallID: toolCallID, DurationMs: time.Since(startTime).Milliseconds(), Error: err.Error()})
@@ -310,12 +312,15 @@ func (a *AgentTool) executeFork(ctx context.Context, p AgentParams) (*tool.ToolR
 		}, nil
 	}
 
+	// Phase 2: Layer 3 事后分类器
+	classified := classify(events, a.WorkspaceDir)
+
 	if cb != nil {
 		cb(SubagentEnd{ToolCallID: toolCallID, TotalTurns: totalTurns, PromptTokens: promptTok, CompletionTokens: complTok, DurationMs: time.Since(startTime).Milliseconds()})
 	}
 
 	return &tool.ToolResult{
-		Content: fmt.Sprintf("(fork subagent completed, %d turns, %d+%d tokens)\n\n%s", totalTurns, promptTok, complTok, lastTurnText),
+		Content: fmt.Sprintf("(fork subagent completed, %d turns, %d+%d tokens)\n\n%s%s", totalTurns, promptTok, complTok, lastTurnText, formatFindings(classified)),
 		Meta:    tool.ToolMeta{Duration: time.Since(startTime)},
 	}, nil
 }
@@ -327,8 +332,14 @@ func (a *AgentTool) executeFork(ctx context.Context, p AgentParams) (*tool.ToolR
 func (a *AgentTool) executeCold(ctx context.Context, p AgentParams) (*tool.ToolResult, error) {
 	cb := agentloop.EventCallbackFromContext(ctx)
 
-	// 模型安全兜底：无效/空 → 继承主模型
+	// 模型安全兜底：无效/空 → 自动选择
 	model := p.Model
+	if model == "" {
+		// Phase 2: Explore 自动用小模型
+		if p.SubagentType == "Explore" && a.DefaultSubModel != "" {
+			model = a.DefaultSubModel
+		}
+	}
 	if !a.isValidModel(model) {
 		model = ""
 	}
@@ -374,7 +385,7 @@ func (a *AgentTool) executeCold(ctx context.Context, p AgentParams) (*tool.ToolR
 		cb(SubagentStart{Prompt: p.Description, AgentType: p.SubagentType, InheritCtx: false, ToolCallID: toolCallID, Model: model})
 	}
 
-	lastTurnText, totalTurns, promptTok, complTok, err := forwardEvents(subCtx, subLoop.Run(subCtx, messages), cb, toolCallID)
+	lastTurnText, totalTurns, promptTok, complTok, events, err := forwardEvents(subCtx, subLoop.Run(subCtx, messages), cb, toolCallID)
 	if err != nil {
 		if cb != nil {
 			cb(SubagentEnd{ToolCallID: toolCallID, DurationMs: time.Since(startTime).Milliseconds(), Error: err.Error()})
@@ -385,12 +396,15 @@ func (a *AgentTool) executeCold(ctx context.Context, p AgentParams) (*tool.ToolR
 		}, nil
 	}
 
+	// Phase 2: Layer 3 事后分类器
+	classified := classify(events, a.WorkspaceDir)
+
 	if cb != nil {
 		cb(SubagentEnd{ToolCallID: toolCallID, TotalTurns: totalTurns, PromptTokens: promptTok, CompletionTokens: complTok, DurationMs: time.Since(startTime).Milliseconds()})
 	}
 
 	return &tool.ToolResult{
-		Content: fmt.Sprintf("(subagent [%s] completed, %d turns, %d+%d tokens)\n\n%s", p.SubagentType, totalTurns, promptTok, complTok, lastTurnText),
+		Content: fmt.Sprintf("(subagent [%s] completed, %d turns, %d+%d tokens)\n\n%s%s", p.SubagentType, totalTurns, promptTok, complTok, lastTurnText, formatFindings(classified)),
 		Meta:    tool.ToolMeta{Duration: time.Since(startTime)},
 	}, nil
 }
@@ -550,7 +564,7 @@ type writeOp struct {
 	LinesDel int
 }
 
-func forwardEvents(ctx context.Context, subCh <-chan agentloop.TurnEvent, cb func(agentloop.TurnEvent), toolCallID string) (lastTurnText string, totalTurns int, promptTokens int, completionTokens int, finalErr error) {
+func forwardEvents(ctx context.Context, subCh <-chan agentloop.TurnEvent, cb func(agentloop.TurnEvent), toolCallID string) (lastTurnText string, totalTurns int, promptTokens int, completionTokens int, events []SubagentEvent, finalErr error) {
 	var sb strings.Builder
 	var writeOps []writeOp
 	var currentTurn int
@@ -591,21 +605,35 @@ func forwardEvents(ctx context.Context, subCh <-chan agentloop.TurnEvent, cb fun
 				sb.Reset()
 				lastToolCalls = lastToolCalls[:0]
 			}
+			// Phase 2: 转发思考过程（dimmed 渲染）
+			if e.ReasoningDelta != "" {
+				ev := SubagentEvent{ToolCallID: toolCallID, Kind: SubagentThought, TextDelta: e.ReasoningDelta}
+				fanout <- ev
+				events = append(events, ev)
+			}
 			if e.ContentDelta != "" {
 				sb.WriteString(e.ContentDelta)
-				fanout <- SubagentEvent{ToolCallID: toolCallID, Kind: SubagentText, TextDelta: e.ContentDelta}
+				ev := SubagentEvent{ToolCallID: toolCallID, Kind: SubagentText, TextDelta: e.ContentDelta}
+				fanout <- ev
+				events = append(events, ev)
 			}
 
 		case agentloop.ToolCallStart:
 			lastToolCalls = append(lastToolCalls, e.ToolCallName)
 			args := formatArgs(e.ToolCallName, e.Arguments)
-			fanout <- SubagentEvent{ToolCallID: toolCallID, Kind: SubagentToolStart, ToolName: e.ToolCallName, ToolArgs: args}
+			ev := SubagentEvent{ToolCallID: toolCallID, Kind: SubagentToolStart, ToolName: e.ToolCallName, ToolArgs: args}
+			fanout <- ev
+			events = append(events, ev)
 
 		case agentloop.ToolCallStream:
-			fanout <- SubagentEvent{ToolCallID: toolCallID, Kind: SubagentToolResult, ToolName: e.ToolCallName, ToolResult: e.Chunk}
+			ev := SubagentEvent{ToolCallID: toolCallID, Kind: SubagentToolStream, ToolName: e.ToolCallName, ToolResult: e.Chunk}
+			fanout <- ev
+			events = append(events, ev)
 
 		case agentloop.ToolCallResult:
-			fanout <- SubagentEvent{ToolCallID: toolCallID, Kind: SubagentToolResult, ToolName: e.ToolCallName, ToolResult: e.Result, ToolDurMs: e.DurationMs, ToolError: e.Error}
+			ev := SubagentEvent{ToolCallID: toolCallID, Kind: SubagentToolResult, ToolName: e.ToolCallName, ToolResult: e.Result, ToolDurMs: e.DurationMs, ToolError: e.Error}
+			fanout <- ev
+			events = append(events, ev)
 			if e.ToolCallName == "write_file" || e.ToolCallName == "edit_file" {
 				op := writeOp{ToolName: e.ToolCallName, FilePath: extractPath(e.Result), BytesIn: len(e.Result)}
 				if e.ToolCallName == "edit_file" {
@@ -638,13 +666,13 @@ func forwardEvents(ctx context.Context, subCh <-chan agentloop.TurnEvent, cb fun
 				}
 				sb.WriteString("</subagent_write_operations>")
 			}
-			return sb.String(), totalTurns, promptTokens, completionTokens, finalErr
+			return sb.String(), totalTurns, promptTokens, completionTokens, events, finalErr
 		}
 	}
 	// Channel 关闭但未收到 LoopDone（跨包防御：当前 agentloop.Run 总是会发送 LoopDone，
 	// 但此处做兜底防止未来引入的不发送 LoopDone 的路径导致空文本传播）。
 	ensureNonEmpty(&sb, lastToolCalls)
-	return sb.String(), totalTurns, promptTokens, completionTokens, nil
+	return sb.String(), totalTurns, promptTokens, completionTokens, events, nil
 }
 
 // ensureNonEmpty 在 sb 为空时合成非空 fallback 文本。
@@ -714,9 +742,9 @@ func extractPath(result string) string {
 			return path
 		}
 	}
-	// edit_file: "✅ Edit applied to /path ..."
-	if idx := strings.Index(result, " to "); idx >= 0 {
-		path := strings.TrimSpace(result[idx+4:])
+	// edit_file: "Edited file: /path\n"
+	if idx := strings.Index(result, "Edited file: "); idx >= 0 {
+		path := strings.TrimSpace(result[idx+len("Edited file: "):])
 		if end := strings.IndexAny(path, "\n "); end >= 0 {
 			path = path[:end]
 		}
