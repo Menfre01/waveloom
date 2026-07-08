@@ -120,7 +120,7 @@ func main() {
 	// 6. 初始化 Tool Registry
 	registry := tool.NewRegistry()
 	subModelValidation := buildValidModels(llmSettings)
-	registerBuiltinTools(registry, skillLoader, llmClient, subModelValidation)
+	registerBuiltinTools(registry, skillLoader, llmClient, subModelValidation, llmSettings.SubModel, cwd)
 
 	// 8.5 启动 MCP Manager — 连接配置的 MCP Server，注册工具代理
 	// 日志输出策略：
@@ -286,7 +286,7 @@ func main() {
 }
 
 // registerBuiltinTools 注册内置工具。
-func registerBuiltinTools(r tool.Registry, skillLoader *skill.Loader, llmClient llm.Client, validModels []string) {
+func registerBuiltinTools(r tool.Registry, skillLoader *skill.Loader, llmClient llm.Client, validModels []string, subModel string, cwd string) {
 	r.Register(tool.Wrap(&tool.ReadFile{}))
 	r.Register(tool.Wrap(&tool.WriteFile{}))
 	r.Register(tool.Wrap(&tool.EditFile{}))
@@ -309,7 +309,12 @@ func registerBuiltinTools(r tool.Registry, skillLoader *skill.Loader, llmClient 
 	r.Register(tool.Wrap(&tool.KillBackgroundTask{}))
 
 	// Agent — subagent delegation
-	at := &subagent.AgentTool{LLMClient: llmClient, ValidModels: validModels}
+	at := &subagent.AgentTool{
+		LLMClient:       llmClient,
+		ValidModels:     validModels,
+		DefaultSubModel: subModel,
+		WorkspaceDir:    cwd,
+	}
 	r.Register(tool.Wrap(at))
 
 	// TodoWrite — 结构化任务列表管理
