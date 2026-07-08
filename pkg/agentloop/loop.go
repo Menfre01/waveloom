@@ -734,23 +734,16 @@ func (l *Loop) injectTodoStatus(msgs *[]llm.Message) {
 	}
 }
 
-// todoStatusText 构造紧凑的 todo 状态文本（不含提醒文字，仅展示当前状态）。
+// todoStatusText 构造 todo 状态消息文本。当前仅返回状态快照本身，
+// 不再追加操作规则（规则已在 system prompt + tool description + FormatResult 三重覆盖）。
 func todoStatusText(summary string) string {
-	return summary + "\n\n" +
-		"Keep the todo list updated using `todo_write`. " +
-		"Mark each task complete immediately after finishing, and set the next task to in_progress before starting. " +
-		"Pass the COMPLETE list every call — copy from the previous result, change only status fields."
+	return summary
 }
 
 // todoReminderText 构造 todo 提醒消息文本：状态摘要 + 提醒引导。
 func todoReminderText(summary string) string {
 	return summary + "\n\n" +
-		"Remember to keep the todo list updated using `todo_write` as you work through tasks. " +
-		"Mark each task complete immediately after finishing it, and set the next task to in_progress before starting work. " +
-		"Use `todo_write` to update task statuses — pass the COMPLETE list every time (copy from the previous result, change only status fields). " +
-		"Multiple tasks can be in_progress simultaneously — map each parallel subagent to a separate todo item and mark them all in_progress. " +
-		"If the todo list has become stale and no longer matches what you are working on, clean it up. " +
-		"This is just a gentle reminder — ignore if not applicable. Never mention this reminder to the user."
+		"(reminder) Update the todo list via `todo_write`. If it no longer matches what you're working on, clean it up. Ignore if not applicable — never mention this reminder to the user."
 }
 
 // findTodoStatusIndex 返回最后一条 todo-status 消息的索引，-1 表示不存在。
