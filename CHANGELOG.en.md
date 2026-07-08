@@ -1,5 +1,21 @@
 # Changelog
 
+## [v0.1.0-beta.2] — 2026-07-08
+
+### Added
+- **Subagent structured event rendering**: TUI expanded view now renders events with distinct styles — thought processes in dimmed italic, tool names in green bold + args in code color, tool output with │ prefix indentation; new `SubagentThought` and `SubagentToolStream` event types
+- **Layer 3 post-hoc security classifier**: Automatically scans subagent events after execution, detecting dangerous commands (rm/chmod/sudo/shutdown etc.) and sensitive file operations (.env writes), generating `HIGH`/`MEDIUM`/`LOW` security warnings injected as `<subagent_security_warning>` XML block into the parent LLM result
+- **Explore auto light-model**: `Explore` subagents now automatically use the configured `sub_model` (e.g., `deepseek-v4-flash`) when no model is explicitly specified, reducing token costs for discovery tasks
+- **Footer thinking effort display**: Model name now shows `(think high)` / `(think max)` badge, auto-resolved from `reasoning_effort` config; hidden when thinking is disabled
+- **Subagent transcript persistence**: `TranscriptLine` gains 8 subagent fields (type/model/turns/tokens/events JSON), enabling full subagent paragraph state restoration on `--resume`
+
+### Fixed
+- `extractPath` edit_file format adaptation: switched from emoji prefix `"✅ Edit applied to"` to `"Edited file:"` prefix parsing
+- `ToolCallStream` event Kind corrected from `SubagentToolResult` to independent `SubagentToolStream`, preventing duplicate rendering of stream chunks and final results
+
+### Changed
+- Streamlined system prompt and tool descriptions, separating concerns to reduce token consumption
+
 ## [v0.1.0-beta.1] — 2026-07-07
 
 ### Added
