@@ -523,9 +523,10 @@ type model struct {
 	commandPickerLastValue    string
 
 	// HUD 会话级累积（footer 显示用，跨 loop 不归零）
-	hudModel      string
-	hudTurns      int
-	hudMessages   int
+	hudModel           string
+	hudThinkingEffort  string // thinking 档位，空表示关闭
+	hudTurns           int
+	hudMessages        int
 	hudCacheHit   int
 	hudCacheMiss  int
 	hudLatMs      int64
@@ -3525,29 +3526,81 @@ func (m *model) handleSubagentEvent(ev subagent.SubagentEvent) {
 	for i := len(m.paras) - 1; i >= 0; i-- {
 		p := &m.paras[i]
 		if p.Type == paraSubagent && p.State == stateStreaming && p.SubagentToolCallID == ev.ToolCallID {
+			// Phase 2: 追加到结构化事件列表（Text/Thought 合并到前一个同类型事件，避免膨胀）
 			switch ev.Kind {
-			case subagent.SubagentText:
-				p.Text += ev.TextDelta
-				p.renderDirty = true
-			case subagent.SubagentToolStart:
-				// 内联工具调用摘要
-				line := fmt.Sprintf("● %s  %s", ev.ToolName, ev.ToolArgs)
-				if p.Text == "" {
-					p.Text = line
+			case subagent.SubagentText, subagent.SubagentThought:
+				// 合并到前一个同类型事件：LLM 流式输出产生大量 TextDelta，
+				// 逐一存储会导致展开态渲染时事件数量爆炸。
+				n := len(p.SubagentEvents)
+				if n > 0 && p.SubagentEvents[n-1].Kind == ev.Kind {
+					p.SubagentEvents[n-1].TextDelta += ev.TextDelta
 				} else {
-					p.Text += "\n" + line
+					p.SubagentEvents = append(p.SubagentEvents, ev)
 				}
-				p.renderDirty = true
-			case subagent.SubagentToolResult:
-				if ev.ToolResult != "" {
-					// 追加工具结果
-					p.Text += "\n" + ev.ToolResult
-					p.renderDirty = true
+				p.Text += ev.TextDelta
+			default:
+				p.SubagentEvents = append(p.SubagentEvents, ev)
+				// 同步维护 Text（向后兼容：折叠/完成态预览仍用 Text 渲染）
+				switch ev.Kind {
+				case subagent.SubagentToolStart:
+					line := fmt.Sprintf("● %s  %s", ev.ToolName, ev.ToolArgs)
+					if p.Text == "" {
+						p.Text = line
+					} else {
+						p.Text += "\n" + line
+					}
+				case subagent.SubagentToolStream:
+					if ev.ToolResult != "" {
+						p.Text += ev.ToolResult
+					}
+				case subagent.SubagentToolResult:
+					prevLen := len(p.SubagentEvents)
+					p.SubagentEvents = removeToolStreamEvents(p.SubagentEvents, ev.ToolName)
+					if prevLen == len(p.SubagentEvents) && ev.ToolResult != "" {
+						p.Text += "\n" + ev.ToolResult
+					}
 				}
 			}
+			p.renderDirty = true
 			return
 		}
 	}
+}
+
+// removeToolStreamEvents 从事件列表中移除指定工具名的所有 SubagentToolStream 事件。
+// 当 SubagentToolResult 到达时调用，避免流式 chunk 与最终结果重复渲染。
+func removeToolStreamEvents(events []subagent.SubagentEvent, toolName string) []subagent.SubagentEvent {
+	if len(events) == 0 {
+		return events
+	}
+	// 从尾部向前扫描：找到最后一个 SubagentToolStart（同名工具），删除其后所有 SubagentToolStream。
+	// 这样只影响当前工具调用的流式块，不误删其他工具的流式块。
+	cutIdx := -1
+	for i := len(events) - 1; i >= 0; i-- {
+		if events[i].Kind == subagent.SubagentToolStart && events[i].ToolName == toolName {
+			cutIdx = i + 1 // ToolStart 之后开始可能包含 ToolStream
+			break
+		}
+	}
+	if cutIdx < 0 {
+		// 没有找到同名 ToolStart：安全兜底，删除列表中所有同名 ToolStream
+		filtered := events[:0]
+		for _, ev := range events {
+			if ev.Kind != subagent.SubagentToolStream || ev.ToolName != toolName {
+				filtered = append(filtered, ev)
+			}
+		}
+		return filtered
+	}
+	// 从 cutIdx 开始删除所有 SubagentToolStream（同名工具）
+	filtered := events[:cutIdx]
+	for i := cutIdx; i < len(events); i++ {
+		ev := events[i]
+		if ev.Kind != subagent.SubagentToolStream || ev.ToolName != toolName {
+			filtered = append(filtered, ev)
+		}
+	}
+	return filtered
 }
 
 // handleSubagentEnd 在子 agent 结束时更新段落状态。
@@ -3619,6 +3672,20 @@ func paragraphToTranscriptLine(p *Paragraph) ctxpkg.TranscriptLine {
 		ToolDurMs:     p.ToolDurMs,
 		ThoughtTokens: p.ThoughtTokens,
 	}
+	// Phase 2: subagent 字段持久化
+	if p.Type == paraSubagent {
+		line.SubagentType = p.SubagentType
+		line.SubagentModel = p.SubagentModel
+		line.SubagentPrompt = p.SubagentPrompt
+		line.SubagentTurns = p.SubagentTurns
+		line.SubagentPromptTok = p.SubagentPromptTok
+		line.SubagentComplTok = p.SubagentComplTok
+		line.SubagentToolCallID = p.SubagentToolCallID
+		if len(p.SubagentEvents) > 0 {
+			data, _ := json.Marshal(p.SubagentEvents)
+			line.SubagentEventsJSON = string(data)
+		}
+	}
 	switch p.NotifKind {
 	case notifWarn:
 		line.NotifKind = "warn"
@@ -3686,6 +3753,20 @@ func transcriptLineToParagraph(line ctxpkg.TranscriptLine) Paragraph {
 		p.Type = paraSystem
 	case "subagent":
 		p.Type = paraSubagent
+		// Phase 2: 恢复 subagent 结构化字段
+		p.SubagentType = line.SubagentType
+		p.SubagentModel = line.SubagentModel
+		p.SubagentPrompt = line.SubagentPrompt
+		p.SubagentTurns = line.SubagentTurns
+		p.SubagentPromptTok = line.SubagentPromptTok
+		p.SubagentComplTok = line.SubagentComplTok
+		p.SubagentToolCallID = line.SubagentToolCallID
+		if line.SubagentEventsJSON != "" {
+			var events []subagent.SubagentEvent
+			if err := json.Unmarshal([]byte(line.SubagentEventsJSON), &events); err == nil {
+				p.SubagentEvents = events
+			}
+		}
 	}
 	switch line.State {
 	case "done":
@@ -4663,6 +4744,13 @@ func (m *model) renderFooter() string {
 		indicator = m.spinner.View() + " "
 	}
 	modelPart := indicator + styleFooterModel.Render(m.hudModel)
+	if m.hudThinkingEffort != "" {
+		effStyle := styleThinkHigh
+		if m.hudThinkingEffort == "max" {
+			effStyle = styleThinkMax
+		}
+		modelPart += styleFooterLabel.Render("(think ") + effStyle.Render(m.hudThinkingEffort) + styleFooterLabel.Render(")")
+	}
 	ctxPart := m.renderCtxBarCompact()
 
 	line1Parts := []string{modelPart, ctxPart}
@@ -5715,6 +5803,23 @@ func (m *model) handleModelPickerKey(msg tea.KeyPressMsg) (bool, tea.Cmd) {
 	return false, nil
 }
 
+// resolveThinkingEffort 从 LLM 配置中提取 thinking 档位。
+// thinking 关闭时返回空字符串。
+func resolveThinkingEffort(settings *llm.LLMSettings) string {
+	if settings == nil || settings.ExtraParams == nil {
+		return ""
+	}
+	if thinking, ok := settings.ExtraParams["thinking"].(map[string]any); ok {
+		if t, ok := thinking["type"].(string); ok && t == "disabled" {
+			return ""
+		}
+	}
+	if effort, ok := settings.ExtraParams["reasoning_effort"].(string); ok {
+		return effort
+	}
+	return "high"
+}
+
 // commitModelSwitch 确认模型切换：写 settings + 热替换。
 func (m *model) commitModelSwitch(modelID string) {
 	settings, err := m.settingsStore.LoadLLM()
@@ -5724,6 +5829,7 @@ func (m *model) commitModelSwitch(modelID string) {
 	settings.Model = modelID
 	_ = m.settingsStore.SaveLLM(settings) // 忽略写入错误，用户感知到 HUD 已更新
 	m.hudModel = normalizeWidth(modelID)
+	m.hudThinkingEffort = resolveThinkingEffort(settings)
 	m.reconfigureLLMClient(modelID)
 }
 
@@ -5745,6 +5851,10 @@ func runTUI(llmClient llm.Client, registry tool.Registry, guard permission.Guard
 	// 构造 slash command registry（TUI 侧依赖实现）
 	store := &tuiSettingsStore{projectPath: projectPath, globalPath: globalPath}
 	m.settingsStore = store
+	// 初始化 thinking 档位显示
+	if s, err := store.LoadLLM(); err == nil {
+		m.hudThinkingEffort = resolveThinkingEffort(s)
+	}
 	lister := &tuiModelLister{client: llmClient}
 	sessionCreator := &tuiSessionCreator{m: m}
 
