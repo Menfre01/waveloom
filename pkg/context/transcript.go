@@ -19,7 +19,7 @@ const maxTranscriptLines = 500
 
 // TranscriptLine 是 transcript JSONL 文件中一行的结构。
 type TranscriptLine struct {
-	Type          string `json:"type"`                    // user / thought / assistant / tool / system
+	Type          string `json:"type"`                    // user / thought / assistant / tool / system / subagent
 	State         string `json:"state"`                   // done / collapsed / expanded / error
 	Text          string `json:"text,omitempty"`          // 文本内容
 	ToolName      string `json:"name,omitempty"`          // 工具名
@@ -29,6 +29,16 @@ type TranscriptLine struct {
 	ToolDurMs     int64  `json:"dur_ms,omitempty"`        // 工具耗时
 	ThoughtTokens int    `json:"thought_tokens,omitempty"` // thought token 数
 	NotifKind     string `json:"notif,omitempty"`          // 系统通知类型: info / warn / error
+
+	// Phase 2: subagent 结构化持久化
+	SubagentType        string `json:"sa_type,omitempty"`        // subagent 类型（fork / Explore / ...）
+	SubagentModel       string `json:"sa_model,omitempty"`       // 子 agent 模型名
+	SubagentPrompt      string `json:"sa_prompt,omitempty"`      // 委派任务描述
+	SubagentTurns       int    `json:"sa_turns,omitempty"`       // 总轮次
+	SubagentPromptTok   int    `json:"sa_ptok,omitempty"`        // ↑ 输入 token
+	SubagentComplTok    int    `json:"sa_ctok,omitempty"`        // ↓ 输出 token
+	SubagentToolCallID  string `json:"sa_tcid,omitempty"`        // 父级 tool_call ID
+	SubagentEventsJSON  string `json:"sa_events,omitempty"`      // 结构化事件列表（JSON 数组）
 }
 
 // TranscriptPath 返回给定 session 对应的 transcript 文件路径。
