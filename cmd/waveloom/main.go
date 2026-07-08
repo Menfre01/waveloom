@@ -120,7 +120,7 @@ func main() {
 	// 6. 初始化 Tool Registry
 	registry := tool.NewRegistry()
 	subModelValidation := buildValidModels(llmSettings)
-	registerBuiltinTools(registry, skillLoader, llmClient, subModelValidation)
+	registerBuiltinTools(registry, skillLoader, llmClient, subModelValidation, llmSettings.SubModel, cwd)
 
 	// 8.5 启动 MCP Manager — 连接配置的 MCP Server，注册工具代理
 	// 日志输出策略：
@@ -286,7 +286,7 @@ func main() {
 }
 
 // registerBuiltinTools 注册内置工具。
-func registerBuiltinTools(r tool.Registry, skillLoader *skill.Loader, llmClient llm.Client, validModels []string) {
+func registerBuiltinTools(r tool.Registry, skillLoader *skill.Loader, llmClient llm.Client, validModels []string, subModel string, cwd string) {
 	r.Register(tool.Wrap(&tool.ReadFile{}))
 	r.Register(tool.Wrap(&tool.WriteFile{}))
 	r.Register(tool.Wrap(&tool.EditFile{}))
@@ -309,7 +309,12 @@ func registerBuiltinTools(r tool.Registry, skillLoader *skill.Loader, llmClient 
 	r.Register(tool.Wrap(&tool.KillBackgroundTask{}))
 
 	// Agent — subagent delegation
-	at := &subagent.AgentTool{LLMClient: llmClient, ValidModels: validModels}
+	at := &subagent.AgentTool{
+		LLMClient:       llmClient,
+		ValidModels:     validModels,
+		DefaultSubModel: subModel,
+		WorkspaceDir:    cwd,
+	}
 	r.Register(tool.Wrap(at))
 
 	// TodoWrite — 结构化任务列表管理
@@ -565,15 +570,15 @@ func buildModelSelectionSection(defaultModel, flashModel string) string {
 ## Subagent Model Selection
 
 When spawning subagents with the agent tool, you can override the model via the optional
-`+"`model`"+` parameter. The parameter accepts:
+`+"`model`"+` parameter.
 
-  (omit / empty)  → uses the default (%s)
-  "%s"             → deep reasoning. Use ONLY for: evaluation, verification, complex multi-file implementation.
-  "%s"             → fast and cheap — the right choice for most tasks: Explore, research, code search, single-file edits, simple lookups.
+  (omit / empty)  → %s — full reasoning capability, higher per-token cost.
+  "%s"             → %s — ~2x cheaper per token, optimized for speed.
 
-Prefer `+"`%s`"+` unless the task genuinely demands deep analysis.
-Output tokens cost 240x that of cached input — `+"`%s`"+` on routine tasks wastes compute with zero quality gain.
+Choose based on the task:
+- Tasks requiring analysis, judgment, or multi-step planning → prefer %s. Deep reasoning justifies the higher cost.
+- Tasks requiring search, lookup, single-step edits, or pattern matching → prefer %s. For these tasks, %s matches %s in output quality while costing significantly less — no quality trade-off.
 
 If you pass an unrecognized value, the default is used.
-`, defaultModel, defaultModel, flashModel, flashModel, defaultModel)
+`, defaultModel, flashModel, flashModel, defaultModel, flashModel, flashModel, defaultModel)
 }

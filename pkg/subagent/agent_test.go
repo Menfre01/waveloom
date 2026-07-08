@@ -294,7 +294,7 @@ func TestForwardEvents_TextAggregation(t *testing.T) {
 		close(ch)
 	}()
 
-	aggregated, turns, promptTok, complTok, err := forwardEvents(ctx, ch, nil, "")
+	aggregated, turns, promptTok, complTok, _, err := forwardEvents(ctx, ch, nil, "")
 	if err != nil {
 		t.Fatalf("forwardEvents error: %v", err)
 	}
@@ -306,6 +306,56 @@ func TestForwardEvents_TextAggregation(t *testing.T) {
 	}
 	if promptTok != 0 || complTok != 0 {
 		t.Errorf("promptTokens = %d, complTokens = %d, want 0, 0", promptTok, complTok)
+	}
+}
+
+// REGRESSION: ReasoningDelta must be forwarded as SubagentThought event (Phase 2).
+// Without this, the TUI thought-dimmed rendering silently breaks.
+func TestForwardEvents_ReasoningDelta_SubagentThought(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	var events []SubagentEvent
+	cb := func(ev agentloop.TurnEvent) {
+		if se, ok := ev.(SubagentEvent); ok {
+			events = append(events, se)
+		}
+	}
+
+	ch := make(chan agentloop.TurnEvent, 10)
+	go func() {
+		ch <- agentloop.StreamDelta{ReasoningDelta: "let me think about this..."}
+		ch <- agentloop.StreamDelta{ContentDelta: "the answer is 42"}
+		ch <- agentloop.StreamDelta{ReasoningDelta: "actually, double-checking..."}
+		ch <- agentloop.StreamDelta{ContentDelta: " yes, 42"}
+		ch <- agentloop.LoopDone{Turn: 1}
+		close(ch)
+	}()
+
+	aggregated, _, _, _, _, err := forwardEvents(ctx, ch, cb, "")
+	if err != nil {
+		t.Fatalf("forwardEvents error: %v", err)
+	}
+	// Aggregated text should only contain content, not reasoning.
+	if aggregated != "the answer is 42 yes, 42" {
+		t.Errorf("aggregated = %q, want only content deltas (no reasoning)", aggregated)
+	}
+
+	// Verify SubagentThought events were emitted.
+	var thoughtCount, textCount int
+	for _, ev := range events {
+		switch ev.Kind {
+		case SubagentThought:
+			thoughtCount++
+		case SubagentText:
+			textCount++
+		}
+	}
+	if thoughtCount != 2 {
+		t.Errorf("thought events = %d, want 2", thoughtCount)
+	}
+	if textCount != 2 {
+		t.Errorf("text events = %d, want 2", textCount)
 	}
 }
 
@@ -329,7 +379,7 @@ func TestForwardEvents_ToolEventsProduceCallback(t *testing.T) {
 		close(ch)
 	}()
 
-	_, _, _, _, err := forwardEvents(ctx, ch, cb, "")
+	_, _, _, _, _, err := forwardEvents(ctx, ch, cb, "")
 	if err != nil {
 		t.Fatalf("forwardEvents error: %v", err)
 	}
@@ -367,7 +417,7 @@ func TestForwardEvents_WriteOperationsTracking(t *testing.T) {
 		close(ch)
 	}()
 
-	aggregated, _, _, _, err := forwardEvents(ctx, ch, nil, "")
+	aggregated, _, _, _, _, err := forwardEvents(ctx, ch, nil, "")
 	if err != nil {
 		t.Fatalf("forwardEvents error: %v", err)
 	}
@@ -395,7 +445,7 @@ func TestForwardEvents_TurnStatsAccumulation(t *testing.T) {
 		close(ch)
 	}()
 
-	_, turns, promptTok, complTok, err := forwardEvents(ctx, ch, nil, "")
+	_, turns, promptTok, complTok, _, err := forwardEvents(ctx, ch, nil, "")
 	if err != nil {
 		t.Fatalf("forwardEvents error: %v", err)
 	}
@@ -418,7 +468,7 @@ func TestForwardEvents_LoopDoneError(t *testing.T) {
 		close(ch)
 	}()
 
-	_, _, _, _, err := forwardEvents(ctx, ch, nil, "")
+	_, _, _, _, _, err := forwardEvents(ctx, ch, nil, "")
 	if err == nil {
 		t.Fatal("expected error from LoopDone")
 	}
@@ -437,7 +487,7 @@ func TestForwardEvents_EmptyStream(t *testing.T) {
 		close(ch)
 	}()
 
-	aggregated, _, _, _, err := forwardEvents(ctx, ch, nil, "")
+	aggregated, _, _, _, _, err := forwardEvents(ctx, ch, nil, "")
 	if err != nil {
 		t.Fatalf("forwardEvents error: %v", err)
 	}
@@ -467,7 +517,7 @@ func TestForwardEvents_ToolCallStreamEvent(t *testing.T) {
 		close(ch)
 	}()
 
-	_, _, _, _, err := forwardEvents(ctx, ch, cb, "")
+	_, _, _, _, _, err := forwardEvents(ctx, ch, cb, "")
 	if err != nil {
 		t.Fatalf("forwardEvents error: %v", err)
 	}
@@ -476,8 +526,8 @@ func TestForwardEvents_ToolCallStreamEvent(t *testing.T) {
 		t.Fatalf("expected 2 ToolCallStream events, got %d", len(events))
 	}
 	for i, ev := range events {
-		if ev.Kind != SubagentToolResult {
-			t.Errorf("event[%d].Kind = %v, want SubagentToolResult", i, ev.Kind)
+		if ev.Kind != SubagentToolStream {
+			t.Errorf("event[%d].Kind = %v, want SubagentToolStream", i, ev.Kind)
 		}
 		if ev.ToolName != "bash_subagent" {
 			t.Errorf("event[%d].ToolName = %q, want bash_subagent", i, ev.ToolName)
@@ -510,7 +560,7 @@ func TestForwardEvents_ToolCallResultError(t *testing.T) {
 		close(ch)
 	}()
 
-	_, _, _, _, err := forwardEvents(ctx, ch, cb, "")
+	_, _, _, _, _, err := forwardEvents(ctx, ch, cb, "")
 	if err != nil {
 		t.Fatalf("forwardEvents error: %v", err)
 	}
@@ -539,7 +589,7 @@ func TestForwardEvents_ChannelCloseWithoutLoopDone(t *testing.T) {
 		close(ch)
 	}()
 
-	aggregated, turns, _, _, err := forwardEvents(ctx, ch, nil, "")
+	aggregated, turns, _, _, _, err := forwardEvents(ctx, ch, nil, "")
 	if err != nil {
 		t.Fatalf("forwardEvents error: %v", err)
 	}
@@ -571,7 +621,7 @@ func TestRegression_ForwardEvents_OnlyLastTurnText(t *testing.T) {
 		close(ch)
 	}()
 
-	lastTurnText, turns, _, _, err := forwardEvents(ctx, ch, nil, "")
+	lastTurnText, turns, _, _, _, err := forwardEvents(ctx, ch, nil, "")
 	if err != nil {
 		t.Fatalf("forwardEvents error: %v", err)
 	}
@@ -802,10 +852,13 @@ func TestSubagentStartEvent(t *testing.T) {
 
 func TestSubagentEventTypes(t *testing.T) {
 	// Ensure constants are distinct
-	if SubagentText == SubagentToolStart || SubagentText == SubagentToolResult {
+	if SubagentText == SubagentToolStart || SubagentText == SubagentToolResult || SubagentText == SubagentToolStream {
 		t.Error("SubagentEventKind constants should be distinct")
 	}
-	if SubagentToolStart == SubagentToolResult {
+	if SubagentToolStart == SubagentToolResult || SubagentToolStart == SubagentToolStream {
+		t.Error("SubagentEventKind constants should be distinct")
+	}
+	if SubagentToolResult == SubagentToolStream {
 		t.Error("SubagentEventKind constants should be distinct")
 	}
 }
@@ -910,8 +963,8 @@ func TestExtractPath_CreatedFile(t *testing.T) {
 }
 
 func TestExtractPath_EditFile(t *testing.T) {
-	// edit_file "✅ Edit applied to /path"
-	got := extractPath("✅ Edit applied to /src/main.go (+5 -2 lines)")
+	// edit_file "Edited file: /path\n"
+	got := extractPath("Edited file: /src/main.go\n   Replaced 1 occurrence\n   +5 -2 lines")
 	if got != "/src/main.go" {
 		t.Errorf("extractPath(edit_file) = %q, want %q", got, "/src/main.go")
 	}
@@ -1476,7 +1529,7 @@ func BenchmarkForwardEvents(b *testing.B) {
 			ch <- agentloop.LoopDone{Turn: 3}
 			close(ch)
 		}()
-		_, _, _, _, _ = forwardEvents(ctx, ch, nil, "")
+		_, _, _, _, _, _ = forwardEvents(ctx, ch, nil, "")
 		cancel()
 	}
 }
@@ -1583,5 +1636,74 @@ func TestSubagentStart_ModelField(t *testing.T) {
 	ev2 := SubagentStart{}
 	if ev2.Model != "" {
 		t.Errorf("SubagentStart.Model zero value = %q, want empty", ev2.Model)
+	}
+}
+
+// REGRESSION: Explore auto-model — when SubagentType is "Explore" and no model
+// is specified, executeCold must automatically select DefaultSubModel (Phase 2).
+func TestAgentTool_ExecuteCold_ExploreAutoModel(t *testing.T) {
+	ctx := context.Background()
+	a := &AgentTool{
+		LLMClient:       &stubLLM{},
+		ValidModels:     []string{"deepseek-v4-pro", "deepseek-v4-flash"},
+		DefaultSubModel: "deepseek-v4-flash",
+	}
+
+	var capturedModel string
+	cb := func(ev agentloop.TurnEvent) {
+		if start, ok := ev.(SubagentStart); ok {
+			capturedModel = start.Model
+		}
+	}
+	ctx = agentloop.WithEventCallback(ctx, cb)
+	ctx = agentloop.WithToolCallID(ctx, "call-explore-auto")
+
+	result, err := a.Execute(ctx, AgentParams{
+		SubagentType: "Explore",
+		Description:  "auto model test",
+		Prompt:       "find it",
+	})
+	if err != nil {
+		t.Fatalf("Execute() error: %v", err)
+	}
+	if !strings.Contains(result.Content, "Explore") {
+		t.Errorf("result should succeed: %s", result.Content)
+	}
+	if capturedModel != "deepseek-v4-flash" {
+		t.Errorf("SubagentStart.Model = %q, want %q (Explore auto flash)", capturedModel, "deepseek-v4-flash")
+	}
+}
+
+// REGRESSION: Explore auto-model — empty DefaultSubModel means no auto-selection.
+func TestAgentTool_ExecuteCold_ExploreAutoModel_EmptyDefault(t *testing.T) {
+	ctx := context.Background()
+	a := &AgentTool{
+		LLMClient:       &stubLLM{},
+		ValidModels:     []string{"deepseek-v4-pro"},
+		DefaultSubModel: "",
+	}
+
+	var capturedModel string
+	cb := func(ev agentloop.TurnEvent) {
+		if start, ok := ev.(SubagentStart); ok {
+			capturedModel = start.Model
+		}
+	}
+	ctx = agentloop.WithEventCallback(ctx, cb)
+	ctx = agentloop.WithToolCallID(ctx, "call-explore-no-sub")
+
+	result, err := a.Execute(ctx, AgentParams{
+		SubagentType: "Explore",
+		Description:  "no sub model",
+		Prompt:       "find it",
+	})
+	if err != nil {
+		t.Fatalf("Execute() error: %v", err)
+	}
+	if !strings.Contains(result.Content, "Explore") {
+		t.Errorf("result should succeed: %s", result.Content)
+	}
+	if capturedModel != "" {
+		t.Errorf("SubagentStart.Model = %q, want empty (no DefaultSubModel configured)", capturedModel)
 	}
 }

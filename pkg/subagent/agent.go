@@ -37,8 +37,10 @@ type AgentParams struct {
 
 // AgentTool 实现 tool.TypedTool[AgentParams]，将任务委派给子 agent 执行。
 type AgentTool struct {
-	LLMClient   llm.Client
-	ValidModels []string // 可用模型列表，空 = 不限制
+	LLMClient       llm.Client
+	ValidModels     []string // 可用模型列表，空 = 不限制
+	DefaultSubModel string   // Phase 2: Explore 等轻量 agent 的默认模型
+	WorkspaceDir    string   // 工作目录，用于分类器路径检查
 }
 
 func (a *AgentTool) Name() string              { return "agent" }
@@ -65,51 +67,17 @@ func (a *AgentTool) Description() string {
 	return strings.Join([]string{
 		"Launch a subagent to handle complex, multi-step tasks autonomously.",
 		"",
-		"Available subagent types and the tools they have access to:",
-		"- evaluate: read-only evaluation (read_file, bash_subagent, web_fetch).",
-		"  Assesses correctness, quality, and security — reports issues with severity.",
-		"- Explore: read-only exploration (read_file, bash_subagent, web_fetch)",
-		"- verification: read-only verification (read_file, bash_subagent, web_fetch).",
-		"  Attempts to BREAK the implementation — runs builds, tests, and adversarial probes.",
+		"subagent_type parameter (omit to fork — the DEFAULT):",
+		"  (omit / empty)  → fork: inherits your full conversation context. Tools: all except agent/bash/enter_plan_mode/exit_plan_mode/ask_user_question/kill_background_task.",
+		"  \"Explore\"       → cold, read-only discovery. Tools: read_file, bash_subagent, web_fetch. Use for finding code patterns and locations.",
+		"  \"evaluate\"      → cold, read-only assessment. Tools: read_file, bash_subagent, web_fetch. Use for code review, security audit, second opinion.",
+		"  \"verification\"  → cold, read-only testing. Tools: read_file, bash_subagent, web_fetch. Use to run builds/tests and try to BREAK an implementation.",
 		"",
-		"Omit subagent_type to fork yourself — the fork inherits your conversation context",
-		"(minus the agent call itself). This is the DEFAULT choice: it shares your prompt",
-		"cache (cheap) and already knows the background. Use fork for research, implementation,",
-		"and any task where the context you've built up is useful.",
+		"Fork vs cold — affects how you write the prompt:",
+		"  Fork: the subagent already knows the conversation background. Write a directive — no need to re-explain context.",
+		"  Cold: the subagent starts with NO prior context. Provide a self-contained prompt with full background.",
 		"",
-		"Specify subagent_type for a cold agent that starts with fresh context and filtered tools.",
-		"Cold agents CANNOT reuse your prompt cache — they are EXPENSIVE. Only use them when",
-		"you specifically need an independent perspective uncontaminated by your own analysis.",
-		"",
-		"Cold agent types:",
-		"- evaluate: for assessment, not implementation. Code review, security audit,",
-		"  second opinion on architecture, or any task that requires evaluating",
-		"  correctness or quality — NOT writing or editing code. Reports issues with",
-		"  severity (CRITICAL / WARNING / NOTE) and specific file:line references.",
-		"- Explore: for discovery, not judgment. Find where things are defined, map out",
-		"  unfamiliar subsystems, locate patterns across the codebase. Use when you need",
-		"  to answer \"where is X?\" or \"how is Y structured?\" — NOT \"is this code correct?\".",
-		"- verification: for post-implementation verification. Use after completing a",
-		"  non-trivial task (3+ file edits, backend/API changes, infrastructure changes).",
-		"  The agent runs builds, tests, and adversarial probes, then reports PASS/FAIL",
-		"  with evidence. Pass the original task, files changed, and approach taken.",
-		"",
-		"Do NOT use cold agents just to parallelize work — fork multiple times instead.",
-		"Each fork shares the same cache prefix; each cold agent pays the full input cost.",
-		"",
-		"- Launch multiple agents concurrently WHENEVER tasks are independent — use a single",
-		"  message with multiple tool calls. The system runs them in parallel goroutines.",
-		"  Map each agent to a separate todo item via todo_write and mark them all",
-		"  in_progress BEFORE dispatching. Mark each completed immediately as its agent returns.",
-		"  Never serialize independent agent calls — wait only when there is a real dependency.",
-		"",
-		"Usage: for forks, write a directive (context is inherited); for cold agents, provide",
-		"a self-contained prompt with full background — the agent hasn't seen this conversation.",
-		"You will receive the subagent's final output as the tool result.",
-		"",
-		"Do NOT use the agent tool for: reading a known file path (use read_file),",
-		"searching within 1-3 files (use read_file), or simple file pattern matching (use shell).",
-		"Explore agent should be used proactively for codebase exploration without the user having to ask.",
+		"Refer to the system prompt for detailed rules on when to use (or not use) each agent type.",
 	}, "\n")
 }
 
@@ -333,7 +301,7 @@ func (a *AgentTool) executeFork(ctx context.Context, p AgentParams) (*tool.ToolR
 		cb(SubagentStart{Prompt: p.Description, AgentType: "fork", InheritCtx: true, ToolCallID: toolCallID, Model: model})
 	}
 
-	lastTurnText, totalTurns, promptTok, complTok, err := forwardEvents(subCtx, subLoop.Run(subCtx, messages), cb, toolCallID)
+	lastTurnText, totalTurns, promptTok, complTok, events, err := forwardEvents(subCtx, subLoop.Run(subCtx, messages), cb, toolCallID)
 	if err != nil {
 		if cb != nil {
 			cb(SubagentEnd{ToolCallID: toolCallID, DurationMs: time.Since(startTime).Milliseconds(), Error: err.Error()})
@@ -344,12 +312,15 @@ func (a *AgentTool) executeFork(ctx context.Context, p AgentParams) (*tool.ToolR
 		}, nil
 	}
 
+	// Phase 2: Layer 3 事后分类器
+	classified := classify(events, a.WorkspaceDir)
+
 	if cb != nil {
 		cb(SubagentEnd{ToolCallID: toolCallID, TotalTurns: totalTurns, PromptTokens: promptTok, CompletionTokens: complTok, DurationMs: time.Since(startTime).Milliseconds()})
 	}
 
 	return &tool.ToolResult{
-		Content: fmt.Sprintf("(fork subagent completed, %d turns, %d+%d tokens)\n\n%s", totalTurns, promptTok, complTok, lastTurnText),
+		Content: fmt.Sprintf("(fork subagent completed, %d turns, %d+%d tokens)\n\n%s%s", totalTurns, promptTok, complTok, lastTurnText, formatFindings(classified)),
 		Meta:    tool.ToolMeta{Duration: time.Since(startTime)},
 	}, nil
 }
@@ -361,8 +332,14 @@ func (a *AgentTool) executeFork(ctx context.Context, p AgentParams) (*tool.ToolR
 func (a *AgentTool) executeCold(ctx context.Context, p AgentParams) (*tool.ToolResult, error) {
 	cb := agentloop.EventCallbackFromContext(ctx)
 
-	// 模型安全兜底：无效/空 → 继承主模型
+	// 模型安全兜底：无效/空 → 自动选择
 	model := p.Model
+	if model == "" {
+		// Phase 2: Explore 自动用小模型
+		if p.SubagentType == "Explore" && a.DefaultSubModel != "" {
+			model = a.DefaultSubModel
+		}
+	}
 	if !a.isValidModel(model) {
 		model = ""
 	}
@@ -408,7 +385,7 @@ func (a *AgentTool) executeCold(ctx context.Context, p AgentParams) (*tool.ToolR
 		cb(SubagentStart{Prompt: p.Description, AgentType: p.SubagentType, InheritCtx: false, ToolCallID: toolCallID, Model: model})
 	}
 
-	lastTurnText, totalTurns, promptTok, complTok, err := forwardEvents(subCtx, subLoop.Run(subCtx, messages), cb, toolCallID)
+	lastTurnText, totalTurns, promptTok, complTok, events, err := forwardEvents(subCtx, subLoop.Run(subCtx, messages), cb, toolCallID)
 	if err != nil {
 		if cb != nil {
 			cb(SubagentEnd{ToolCallID: toolCallID, DurationMs: time.Since(startTime).Milliseconds(), Error: err.Error()})
@@ -419,12 +396,15 @@ func (a *AgentTool) executeCold(ctx context.Context, p AgentParams) (*tool.ToolR
 		}, nil
 	}
 
+	// Phase 2: Layer 3 事后分类器
+	classified := classify(events, a.WorkspaceDir)
+
 	if cb != nil {
 		cb(SubagentEnd{ToolCallID: toolCallID, TotalTurns: totalTurns, PromptTokens: promptTok, CompletionTokens: complTok, DurationMs: time.Since(startTime).Milliseconds()})
 	}
 
 	return &tool.ToolResult{
-		Content: fmt.Sprintf("(subagent [%s] completed, %d turns, %d+%d tokens)\n\n%s", p.SubagentType, totalTurns, promptTok, complTok, lastTurnText),
+		Content: fmt.Sprintf("(subagent [%s] completed, %d turns, %d+%d tokens)\n\n%s%s", p.SubagentType, totalTurns, promptTok, complTok, lastTurnText, formatFindings(classified)),
 		Meta:    tool.ToolMeta{Duration: time.Since(startTime)},
 	}, nil
 }
@@ -584,7 +564,7 @@ type writeOp struct {
 	LinesDel int
 }
 
-func forwardEvents(ctx context.Context, subCh <-chan agentloop.TurnEvent, cb func(agentloop.TurnEvent), toolCallID string) (lastTurnText string, totalTurns int, promptTokens int, completionTokens int, finalErr error) {
+func forwardEvents(ctx context.Context, subCh <-chan agentloop.TurnEvent, cb func(agentloop.TurnEvent), toolCallID string) (lastTurnText string, totalTurns int, promptTokens int, completionTokens int, events []SubagentEvent, finalErr error) {
 	var sb strings.Builder
 	var writeOps []writeOp
 	var currentTurn int
@@ -625,21 +605,35 @@ func forwardEvents(ctx context.Context, subCh <-chan agentloop.TurnEvent, cb fun
 				sb.Reset()
 				lastToolCalls = lastToolCalls[:0]
 			}
+			// Phase 2: 转发思考过程（dimmed 渲染）
+			if e.ReasoningDelta != "" {
+				ev := SubagentEvent{ToolCallID: toolCallID, Kind: SubagentThought, TextDelta: e.ReasoningDelta}
+				fanout <- ev
+				events = append(events, ev)
+			}
 			if e.ContentDelta != "" {
 				sb.WriteString(e.ContentDelta)
-				fanout <- SubagentEvent{ToolCallID: toolCallID, Kind: SubagentText, TextDelta: e.ContentDelta}
+				ev := SubagentEvent{ToolCallID: toolCallID, Kind: SubagentText, TextDelta: e.ContentDelta}
+				fanout <- ev
+				events = append(events, ev)
 			}
 
 		case agentloop.ToolCallStart:
 			lastToolCalls = append(lastToolCalls, e.ToolCallName)
 			args := formatArgs(e.ToolCallName, e.Arguments)
-			fanout <- SubagentEvent{ToolCallID: toolCallID, Kind: SubagentToolStart, ToolName: e.ToolCallName, ToolArgs: args}
+			ev := SubagentEvent{ToolCallID: toolCallID, Kind: SubagentToolStart, ToolName: e.ToolCallName, ToolArgs: args}
+			fanout <- ev
+			events = append(events, ev)
 
 		case agentloop.ToolCallStream:
-			fanout <- SubagentEvent{ToolCallID: toolCallID, Kind: SubagentToolResult, ToolName: e.ToolCallName, ToolResult: e.Chunk}
+			ev := SubagentEvent{ToolCallID: toolCallID, Kind: SubagentToolStream, ToolName: e.ToolCallName, ToolResult: e.Chunk}
+			fanout <- ev
+			events = append(events, ev)
 
 		case agentloop.ToolCallResult:
-			fanout <- SubagentEvent{ToolCallID: toolCallID, Kind: SubagentToolResult, ToolName: e.ToolCallName, ToolResult: e.Result, ToolDurMs: e.DurationMs, ToolError: e.Error}
+			ev := SubagentEvent{ToolCallID: toolCallID, Kind: SubagentToolResult, ToolName: e.ToolCallName, ToolResult: e.Result, ToolDurMs: e.DurationMs, ToolError: e.Error}
+			fanout <- ev
+			events = append(events, ev)
 			if e.ToolCallName == "write_file" || e.ToolCallName == "edit_file" {
 				op := writeOp{ToolName: e.ToolCallName, FilePath: extractPath(e.Result), BytesIn: len(e.Result)}
 				if e.ToolCallName == "edit_file" {
@@ -672,13 +666,13 @@ func forwardEvents(ctx context.Context, subCh <-chan agentloop.TurnEvent, cb fun
 				}
 				sb.WriteString("</subagent_write_operations>")
 			}
-			return sb.String(), totalTurns, promptTokens, completionTokens, finalErr
+			return sb.String(), totalTurns, promptTokens, completionTokens, events, finalErr
 		}
 	}
 	// Channel 关闭但未收到 LoopDone（跨包防御：当前 agentloop.Run 总是会发送 LoopDone，
 	// 但此处做兜底防止未来引入的不发送 LoopDone 的路径导致空文本传播）。
 	ensureNonEmpty(&sb, lastToolCalls)
-	return sb.String(), totalTurns, promptTokens, completionTokens, nil
+	return sb.String(), totalTurns, promptTokens, completionTokens, events, nil
 }
 
 // ensureNonEmpty 在 sb 为空时合成非空 fallback 文本。
@@ -748,9 +742,9 @@ func extractPath(result string) string {
 			return path
 		}
 	}
-	// edit_file: "✅ Edit applied to /path ..."
-	if idx := strings.Index(result, " to "); idx >= 0 {
-		path := strings.TrimSpace(result[idx+4:])
+	// edit_file: "Edited file: /path\n"
+	if idx := strings.Index(result, "Edited file: "); idx >= 0 {
+		path := strings.TrimSpace(result[idx+len("Edited file: "):])
 		if end := strings.IndexAny(path, "\n "); end >= 0 {
 			path = path[:end]
 		}

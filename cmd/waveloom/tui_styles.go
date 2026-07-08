@@ -177,6 +177,8 @@ var (
 	styleFooterLabel       lipgloss.Style
 	styleFooterValue       lipgloss.Style
 	styleFooterValueMuted  lipgloss.Style
+	styleThinkHigh         lipgloss.Style // thinking high 档位
+	styleThinkMax          lipgloss.Style // thinking max 档位
 	styleFooterLatRed      lipgloss.Style
 	styleCtxBarGreenFg     lipgloss.Style
 	styleCtxBarGoldFg      lipgloss.Style
@@ -263,6 +265,8 @@ func applyTheme(p palette) {
 	styleFooterLabel = lipgloss.NewStyle().Foreground(colorGray)
 	styleFooterValue = lipgloss.NewStyle().Foreground(colorFooterValue)
 	styleFooterValueMuted = lipgloss.NewStyle().Foreground(colorGray)
+	styleThinkHigh = lipgloss.NewStyle().Foreground(colorOK).Bold(true)
+	styleThinkMax = lipgloss.NewStyle().Foreground(colorToolCode).Bold(true)
 	styleFooterLatRed = lipgloss.NewStyle().Foreground(colorErr)
 
 	// 上下文进度条百分比文字（仅前景色，无背景）
