@@ -148,3 +148,19 @@ var killBackgroundTaskSchema = json.RawMessage(`{
   },
   "required": ["task_id"]
 }`)
+
+var webSearchSchema = json.RawMessage(`{
+  "type": "object",
+  "properties": {
+    "query": {
+      "type": "string",
+      "description": "Search query — keywords, natural language, or technical terms",
+      "minLength": 1
+    },
+    "max_results": {
+      "type": "integer",
+      "description": "Maximum number of results to return (default: 10, max: 20)"
+    }
+  },
+  "required": ["query"]
+}`)

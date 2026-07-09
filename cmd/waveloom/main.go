@@ -292,6 +292,7 @@ func registerBuiltinTools(r tool.Registry, skillLoader *skill.Loader, llmClient 
 	r.Register(tool.Wrap(&tool.EditFile{}))
 	r.Register(tool.Wrap(&tool.Shell{AllowBg: true})) // "bash"
 	r.Register(tool.Wrap(&tool.WebFetch{}))
+	r.Register(tool.Wrap(&tool.WebSearch{}))
 
 	// Skill 工具
 	if skillLoader != nil {

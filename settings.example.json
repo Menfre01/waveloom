@@ -38,5 +38,8 @@
             "go": "D:\\go\\go\\bin\\go",
             "python": "/usr/local/bin/python3"
         }
+    },
+    "web_search": {
+        "brave_api_key": ""
     }
 }

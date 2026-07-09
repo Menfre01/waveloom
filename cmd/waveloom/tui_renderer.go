@@ -160,6 +160,10 @@ func formatToolArgs(toolName string, argsJSON string, cwd string) string {
 			return u
 		}
 		return truncateStr(argsJSON, 50)
+	case "web_search":
+		q := extractField(argsJSON, "query")
+		// query 为空也正常展示（空查询会被工具拒绝并返回 error）
+		return q
 	case "skill":
 		name := extractField(argsJSON, "name")
 		args := extractField(argsJSON, "arguments")
@@ -180,6 +184,23 @@ func formatToolArgs(toolName string, argsJSON string, cwd string) string {
 	case "enter_plan_mode", "exit_plan_mode":
 		return "" // 无参数工具，不显示 {}
 	default:
+		if strings.HasPrefix(toolName, "mcp__") {
+			// MCP 工具: mcp__<server>__<tool> → 展示第一个有意义参数值
+			label := mcpToolLabel(toolName)
+			if v := extractField(argsJSON, "query"); v != "" {
+				return label + " " + v
+			}
+			if v := extractField(argsJSON, "pattern"); v != "" {
+				return label + " " + v
+			}
+			if v := extractField(argsJSON, "prompt"); v != "" {
+				return label + " " + v
+			}
+			if v := extractField(argsJSON, "name"); v != "" {
+				return label + " " + v
+			}
+			return label
+		}
 		return truncateStr(argsJSON, 50)
 	}
 }
@@ -368,6 +389,8 @@ func toolSuffix(p *Paragraph, lc *Messages) string {
 			}
 		case "web_fetch":
 			return webFetchErrorSuffix(p.ToolErrorKind, p.ToolError)
+		case "web_search":
+			return webSearchErrorSuffix(p.ToolErrorKind, p.ToolError)
 		case "edit_file":
 			return editFileErrorSuffix(p.ToolErrorKind, p.ToolError)
 		case "exit_plan_mode":
@@ -411,6 +434,13 @@ func toolSuffix(p *Paragraph, lc *Messages) string {
 		size := formatBytes(len(p.ToolResult))
 		dur := formatDuration(p.ToolDurMs)
 		return fmt.Sprintf("(%s, %s)", size, dur)
+	case "web_search":
+		n := countSearchResults(p.ToolResult)
+		dur := formatDuration(p.ToolDurMs)
+		if n > 0 {
+			return fmt.Sprintf("(%d results, %s)", n, dur)
+		}
+		return fmt.Sprintf("(%s)", dur)
 	case "ask_user_question":
 		n := parseQuestionCount(p.ToolResult)
 		if n <= 0 {
@@ -671,6 +701,114 @@ truncate:
 
 // ---------------------------------------------------------------------------
 // Markdown 行类型
+// ---------------------------------------------------------------------------
+// MCP 工具通用渲染
+// ---------------------------------------------------------------------------
+
+// mcpToolLabel 从 MCP 工具名 mcp__<server>__<tool> 提取可读标签。
+func mcpToolLabel(toolName string) string {
+	// 去掉 mcp__ 前缀
+	rest := strings.TrimPrefix(toolName, "mcp__")
+	parts := strings.SplitN(rest, "__", 2)
+	if len(parts) == 2 {
+		return parts[0] + ":" + parts[1]
+	}
+	return rest
+}
+
+// ---------------------------------------------------------------------------
+// web_search 专用渲染
+// ---------------------------------------------------------------------------
+
+// webSearchErrorSuffix 返回 web_search 错误的简短后缀。
+func webSearchErrorSuffix(kind, msg string) string {
+	switch kind {
+	case "timeout":
+		return "(timeout)"
+	case "invalid_args":
+		return "(empty query)"
+	case "command_failed":
+		if strings.Contains(msg, "HTTP") {
+			return "(search API error)"
+		}
+		return "(search failed)"
+	default:
+		return fmt.Sprintf("(%s)", kind)
+	}
+}
+
+// countSearchResults 从 web_search 输出中统计结果条数。
+// 结果格式为 "N. Title"，通过匹配行首数字计数。
+func countSearchResults(output string) int {
+	count := 0
+	lines := strings.Split(output, "\n")
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if len(trimmed) > 2 && trimmed[0] >= '1' && trimmed[0] <= '9' && trimmed[1] == '.' && trimmed[2] == ' ' {
+			count++
+		}
+	}
+	return count
+}
+
+// parseWebSearchBody 从 web_search 输出中剥离元数据头部，返回纯结果列表。
+// 头部格式: "Search results for: \"query\"  (DuckDuckGo)  1.3s\n\n"
+func parseWebSearchBody(output string) string {
+	idx := strings.Index(output, "\n\n")
+	if idx < 0 {
+		return output
+	}
+	return strings.TrimLeft(output[idx+2:], "\n")
+}
+
+// renderWebSearchFull 渲染 web_search 的完整展开视图。
+// 头部使用强调色，结果列表保留编号格式。
+func renderWebSearchFull(sb *strings.Builder, result string, textWidth int, indent string, lc *Messages) {
+	wrapped := 0
+
+	// 分离头部与正文
+	parts := strings.SplitN(result, "\n\n", 2)
+	headerLines := strings.Split(parts[0], "\n")
+	for _, line := range headerLines {
+		styled := styleHeaderAccent.Render(line)
+		for _, wl := range wrapLine(styled, textWidth) {
+			if wrapped >= maxExpandedWrapped {
+				goto truncate
+			}
+			sb.WriteString(indent)
+			sb.WriteString(wl)
+			sb.WriteString("\n")
+			wrapped++
+		}
+	}
+	// 空行分隔
+	sb.WriteString(indent)
+	sb.WriteString("\n")
+	// 正文（结果列表）
+	if len(parts) > 1 {
+		body := strings.TrimSpace(parts[1])
+		bodyLines := strings.Split(body, "\n")
+		for _, line := range bodyLines {
+			for _, wl := range wrapLine(line, textWidth) {
+				if wrapped >= maxExpandedWrapped {
+					goto truncate
+				}
+				sb.WriteString(indent)
+				sb.WriteString(wl)
+				sb.WriteString("\n")
+				wrapped++
+			}
+		}
+	}
+
+	return
+
+truncate:
+	sb.WriteString(indent)
+	sb.WriteString(styleToolPreviewHint.Render(fmt.Sprintf(lc.ToolTruncatedLines, maxExpandedWrapped)))
+	sb.WriteString("\n")
+}
+
 // ---------------------------------------------------------------------------
 // Viewport 内容构建
 // ---------------------------------------------------------------------------
@@ -1464,8 +1602,33 @@ func renderToolPreview(sb *strings.Builder, p *Paragraph, textWidth int, indent 
 				break
 			}
 		}
+
+	case "web_search":
+		body := parseWebSearchBody(result)
+		lines := strings.Split(body, "\n")
+		for _, line := range lines {
+			if line == "" {
+				continue
+			}
+			if writeWrappedPreview(line, styleToolPreview, &wrapped) {
+				truncated = true
+				break
+			}
+		}
+
 	default:
-		// 无预览（read_file, grep, search_file, ls 等成功态不展示预览）
+		// MCP 工具：显示输出前几行作为预览
+		if strings.HasPrefix(p.ToolName, "mcp__") {
+			lines := strings.Split(result, "\n")
+			for _, line := range lines {
+				line = strings.TrimLeft(line, " ")
+				if writeWrappedPreview(line, styleToolPreview, &wrapped) {
+					truncated = true
+					break
+				}
+			}
+		}
+		// 否则无预览（read_file 等成功态不展示预览）
 	}
 
 	if truncated {
@@ -1473,7 +1636,7 @@ func renderToolPreview(sb *strings.Builder, p *Paragraph, textWidth int, indent 
 		// 仅可段落聚焦的工具展示 Enter 提示（shell / web_fetch），
 		// write_file / edit_file 等不可聚焦的工具仅显示截断标记。
 		switch p.ToolName {
-		case "bash", "web_fetch", "skill":
+		case "bash", "web_fetch", "web_search", "skill":
 			sb.WriteString(styleToolPreviewHint.Render(lc.ToolExpandAllHint))
 		default:
 			sb.WriteString(styleToolPreviewHint.Render(lc.ToolTruncated))
@@ -1629,6 +1792,10 @@ func renderToolFullOutput(sb *strings.Builder, p *Paragraph, textWidth int, inde
 		renderWebFetchFull(sb, result, textWidth, indent, lc)
 		return
 
+	case "web_search":
+		renderWebSearchFull(sb, result, textWidth, indent, lc)
+		return
+
 	default:
 		for _, line := range strings.Split(result, "\n") {
 			wlines := wrapLine(line, textWidth)
@@ -1655,9 +1822,9 @@ func renderToolFullOutput(sb *strings.Builder, p *Paragraph, textWidth int, inde
 		sb.WriteString("\n")
 	}
 
-	// 折叠提示 — 仅可段落聚焦的工具（shell / web_fetch）展示 Enter 提示
+	// 折叠提示 — 仅可段落聚焦的工具（shell / web_fetch / web_search）展示 Enter 提示
 	switch p.ToolName {
-	case "bash", "web_fetch":
+	case "bash", "web_fetch", "web_search":
 		sb.WriteString(indent)
 		sb.WriteString(styleToolPreviewHint.Render(lc.ToolCollapseHint))
 		sb.WriteString("\n")

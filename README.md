@@ -125,6 +125,7 @@ Waveloom works with any text-based project. Code verification uses each language
 | [`settings`](./docs/settings.en.md) | API key, model, timeout, compaction |
 | [`prefix-cache`](./docs/prefix-cache.en.md) | DeepSeek caching, four-tier compaction |
 | [`environment`](./docs/environment.en.md) | Toolchain probing |
+| [`mcp`](./docs/mcp.en.md) | MCP client, config sources, CLI management |
 | [`faq`](./docs/faq.en.md) | Frequently asked questions |
 
 ---
