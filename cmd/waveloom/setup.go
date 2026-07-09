@@ -185,6 +185,10 @@ func (m *setupModel) handleStepComplete() {
 			applyTheme(lightPalette)
 		case "dark":
 			applyTheme(darkPalette)
+		case "darkcolorblind":
+			applyTheme(darkColorBlindPalette)
+		case "lightcolorblind":
+			applyTheme(lightColorBlindPalette)
 		default:
 			applyTheme(darkPalette)
 		}
@@ -250,6 +254,8 @@ func (m *setupModel) buildForm() {
 				huh.NewOption(lc.PickerThemeAuto, "auto"),
 				huh.NewOption("Dark", "dark"),
 				huh.NewOption("Light", "light"),
+				huh.NewOption("Dark CB", "darkcolorblind"),
+				huh.NewOption("Light CB", "lightcolorblind"),
 			).
 			Value(&m.state.theme)
 		m.form = huh.NewForm(huh.NewGroup(sel)).
