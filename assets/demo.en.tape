@@ -1,32 +1,35 @@
 # Waveloom Demo (English)
-# Thought → Tool call → Streaming → Plan Mode
-# Upgrade highlights: stable streaming (wrapLineStable), 2-line textarea, smoother overall flow
+# Showcase: Logo+HUD → Parallel Subagent Explore → Todo Panel → Permission Dialog → Plan Mode
+# Key highlights: 6-color gradient Logo, parallel Subagent execution, real-time Todo panel, ▌Plan indicator
 
 Output assets/demo.en.gif
 
-Set FontSize 15
-Set Width 800
+Set FontSize 14
+Set Width 820
 Set Height 700
 Set Theme "Atom"
 Set Padding 12
 Set Framerate 24
 Set PlaybackSpeed 1
 
-# Start in English locale
-Type "./bin/waveloom --locale en-US"
+# ── Startup ──
+Type "waveloom --locale en-US"
 Enter
 
-# Wait for TUI to start
+# Wait for Logo render + Footer HUD ready
 Sleep 2.5s
 
-# ── Q1: Long input shows 2-line textarea + trigger reasoning, show thought panel ──
-Type "Explain in one sentence how the four-tier watermark compaction works in pkg/compaction/compactor.go, including the trigger condition and fallback strategy for each tier"
+# ── Act 1: Parallel Subagent Explore + Todo Panel ──
+Type "Use 3 Explore agents in parallel to explore pkg/llm, pkg/tool, and pkg/subagent — one agent per package. Summarize each package's responsibilities, core interfaces, and dependencies."
 Enter
 
-# Wait for thought + streaming response (stable, no jitter)
-Sleep 20s
+# Wait for agent to create todos + spawn parallel subagents
+Sleep 8s
 
-# ── Q2: Trigger shell tool call ──
+# Wait for subagent execution + result aggregation + streaming output
+Sleep 45s
+
+# ── Act 2: Shell tool call + permission confirmation overlay ──
 Type "Use shell to run head -80 pkg/llm/client.go, show me the NewClient implementation"
 Enter
 
@@ -34,38 +37,23 @@ Enter
 Sleep 2.5s
 Enter
 
-# Wait for tool call + streaming output
+# Wait for tool output + streaming response
 Sleep 25s
 
-# ── Manually enter Plan Mode (Shift+Tab) ──
+# ── Act 3: Plan Mode toggle, show ▌Plan indicator ──
 Shift+Tab
 Sleep 0.8s
 
-# Shift+Tab to exit Plan Mode
+Sleep 1.5s
+
 Shift+Tab
 Sleep 0.8s
 
-# ── Q3: Conversational Plan Mode trigger ──
-Type "Plan and add a 'Star History' section to the bottom of README.md, referencing a star-history.com chart link"
-Enter
-
-# Wait for LLM to enter Plan Mode (confirmation overlay), confirm
-Sleep 4s
-Enter
-
-# Wait for LLM to write plan and submit for approval, approve
-Sleep 12s
-Enter
-
-# Wait for LLM to execute plan in Normal mode (edit_file README.md)
-Sleep 20s
-
-# ── Q4: Wrap up ──
-Type "In one sentence, what's the biggest change Plan Mode brings to the development workflow"
+# ── Act 4: Wrap up ──
+Type "Summarize what problems the subagent system and todo system each solve in Waveloom"
 Enter
 
 Sleep 12s
 
-# Quit
 Ctrl+C
 Sleep 0.8s

@@ -9,7 +9,7 @@
 ### Changed
 - **`todo_write` trigger threshold optimization**: Trigger tightened from ≥2 turns to ≥5 turns, parallel subagents → serial subagents, idleTodoReminder adjusted from 2 to 3, reducing abuse on trivial tasks
 
-## [v0.1.0-beta.3] — 2026-07-11
+## [v0.1.0-beta.3] — 2026-07-09
 
 ### Added
 - **Color-blind dual themes**: ColorBlind split into Dark CB (dark terminal) and Light CB (light terminal), preserving blue/orange diff colors with full dedicated palettes
