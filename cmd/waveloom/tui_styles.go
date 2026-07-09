@@ -20,6 +20,7 @@ type palette struct {
 	Error color.Color // 失败态红
 	Gray  color.Color // 次要文字/thought 灰
 	Muted color.Color // 更暗一级/折叠摘要
+	Body  color.Color // Glamour 正文段落色（需与背景有足够对比度）
 
 	// 工具输出内颜色
 	DiffAdd   color.Color
@@ -54,6 +55,7 @@ var darkPalette = palette{
 	Error: lipgloss.Color("#d75f5f"),
 	Gray:  lipgloss.Color("#777777"),
 	Muted: lipgloss.Color("#6a6a6a"),
+	Body:  lipgloss.Color("#d4d4d4"),
 
 	DiffAdd:   lipgloss.Color("#8cc250"),
 	DiffDel:   lipgloss.Color("#fa5555"),
@@ -89,6 +91,7 @@ var lightPalette = palette{
 	Error: lipgloss.Color("#c0392b"),
 	Gray:  lipgloss.Color("#666666"),
 	Muted: lipgloss.Color("#777777"),
+	Body:  lipgloss.Color("#2a2a2a"),
 
 	DiffAdd:   lipgloss.Color("#3a7a00"),
 	DiffDel:   lipgloss.Color("#d1242f"),
@@ -125,6 +128,7 @@ var darkColorBlindPalette = palette{
 	Error: lipgloss.Color("#ff6b6b"), // 亮红 = 失败
 	Gray:  lipgloss.Color("#888888"),
 	Muted: lipgloss.Color("#777777"),
+	Body:  lipgloss.Color("#d4d4d4"),
 
 	DiffAdd:   lipgloss.Color("#5fafff"), // 蓝 = 新增
 	DiffDel:   lipgloss.Color("#ff8c42"), // 橙 = 删除（替代红色）
@@ -161,6 +165,7 @@ var lightColorBlindPalette = palette{
 	Error: lipgloss.Color("#cc3333"), // 深红 = 失败
 	Gray:  lipgloss.Color("#5a5a5a"),
 	Muted: lipgloss.Color("#666666"),
+	Body:  lipgloss.Color("#2a2a2a"),
 
 	DiffAdd:   lipgloss.Color("#2d6fa0"), // 蓝 = 新增
 	DiffDel:   lipgloss.Color("#cc6633"), // 橙 = 删除（替代红色）

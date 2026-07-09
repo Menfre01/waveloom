@@ -659,42 +659,73 @@ func waveloomGlamourStyle(p palette) ansi.StyleConfig {
 	base.Heading.Margin = &zero
 
 	// 提取 Waveloom 色板 hex 值
+	bodyColor := colorHex(p.Body)
+	grayColor := colorHex(p.Gray)
+	mutedColor := colorHex(p.Muted)
 	toolCode := colorHex(p.ToolCode)
 	toolCodeBg := colorHex(p.ToolCodeBg)
 	accent := colorHex(p.AccentGold)
 	headerAccent := colorHex(p.HeaderAccent)
 
-	// 行内代码 → ToolCode / ToolCodeBg
+	// ── 正文段落 ──
+	base.Paragraph.Color = &bodyColor
+
+	// ── 引用块 ──
+	base.BlockQuote.Color = &grayColor
+	base.BlockQuote.Prefix = "│ "
+
+	// ── 强调 / 加粗 ──
+	base.Emph.Color = &accent
+	base.Emph.Italic = boolPtr(true)
+	base.Strong.Color = &headerAccent
+	base.Strong.Bold = boolPtr(true)
+
+	// ── 删除线 ──
+	base.Strikethrough.Color = &mutedColor
+	base.Strikethrough.CrossedOut = boolPtr(true)
+
+	// ── 水平分割线 ──
+	base.HorizontalRule.Color = &grayColor
+	base.HorizontalRule.Format = "\n────\n"
+
+	// ── 列表符号 / 编号 ──
+	base.Item.Color = &accent
+	base.Enumeration.Color = &accent
+
+	// ── 表格 ──
+	base.Table.Color = &grayColor
+
+	// ── 行内代码 ──
 	base.Code.Color = &toolCode
 	base.Code.BackgroundColor = &toolCodeBg
 
-	// 代码块文本 → ToolCode
+	// ── 代码块 ──
 	base.CodeBlock.Color = &toolCode
-
-	// 代码块 Chroma 背景 → ToolCodeBg，文本 → ToolCode
 	if base.CodeBlock.Chroma != nil {
 		base.CodeBlock.Chroma.Background.BackgroundColor = &toolCodeBg
 		base.CodeBlock.Chroma.Text.Color = &toolCode
-
-		// 覆盖 Chroma Error token 样式：默认 Dark/Light 主题使用红底白字
-		// （#F05B5B / #FF5555 背景），在 Waveloom 主题中不适用。
-		// 改为无色背景、前景用工具代码色，避免刺眼的红色底色块。
 		base.CodeBlock.Chroma.Error.Color = &toolCode
 		base.CodeBlock.Chroma.Error.BackgroundColor = &emptyHex
 	}
 
-	// 标题 → HeaderAccent
+	// ── 标题 H1–H6 ──
 	base.Heading.Color = &headerAccent
-
-	// H1 背景 → AccentGold
 	base.H1.BackgroundColor = &accent
+	base.H2.Color = &headerAccent
+	base.H3.Color = &headerAccent
+	base.H4.Color = &headerAccent
+	base.H5.Color = &headerAccent
+	base.H6.Color = &headerAccent
 
-	// 链接 → AccentGold
+	// ── 链接 ──
 	base.Link.Color = &accent
 	base.LinkText.Color = &accent
 
 	return base
 }
+
+// boolPtr 返回 *bool，用于 Glamour style 字段。
+func boolPtr(b bool) *bool { return &b }
 
 // colorHex 从 color.Color 提取 hex 字符串。
 func colorHex(c color.Color) string {
@@ -789,6 +820,8 @@ func newTUIModel(llmClient llm.Client, registry tool.Registry, guard permission.
 	glamourR, err := glamour.NewTermRenderer(
 		glamour.WithWordWrap(80),
 		glamour.WithStyles(waveloomGlamourStyle(darkPalette)),
+		glamour.WithEmoji(),
+		glamour.WithChromaFormatter("terminal16m"),
 	)
 	if err != nil {
 		// 降级：nil renderer 时回退到纯文本
@@ -958,6 +991,8 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		glamourR, err := glamour.NewTermRenderer(
 			glamour.WithWordWrap(max(m.width-6, 20)),
 			glamour.WithStyles(waveloomGlamourStyle(m.palette)),
+			glamour.WithEmoji(),
+			glamour.WithChromaFormatter("terminal16m"),
 		)
 		if err == nil {
 			m.glamourRenderer = glamourR
@@ -5281,6 +5316,8 @@ func (m *model) syncThemeComponents() {
 	glamourR, err := glamour.NewTermRenderer(
 		glamour.WithWordWrap(contentWidth),
 		glamour.WithStyles(waveloomGlamourStyle(m.palette)),
+		glamour.WithEmoji(),
+		glamour.WithChromaFormatter("terminal16m"),
 	)
 	if err == nil {
 		m.glamourRenderer = glamourR
