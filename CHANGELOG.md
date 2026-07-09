@@ -1,5 +1,14 @@
 # Changelog
 
+## [v0.1.0-beta.4] — 2026-07-09
+
+### 新增功能
+- **`web_search` 内置工具**：DDG（默认）+ Brave（可选）双后端搜索引擎，与 `web_fetch` 联动形成搜索→读取闭环；TUI 专用段落渲染支持参数展示、摘要预览和结果展开
+- **MCP 桌面版自动发现**：自动识别 Claude 桌面版配置（macOS/Windows/Linux 三平台路径），无需手动配置即可接入已有 MCP Server
+
+### 重构
+- **`todo_write` 触发阈值优化**：触发条件从 ≥2 turns 收紧为 ≥5 turns，parallel subagents 改为 serial subagents，idleTodoReminder 从 2 调整为 3，减少小型任务滥用
+
 ## [v0.1.0-beta.3] — 2026-07-11
 
 ### 新增功能
