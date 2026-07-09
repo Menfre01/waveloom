@@ -173,6 +173,24 @@ func TestSplitPathParts(t *testing.T) {
 	}
 }
 
+// REGRESSION: Windows 路径 C:\Users\... 在 splitPathParts 中无限循环。
+// filepath.Split("C:") 返回 ("C:", "") — dir 非空、非分隔符，
+// TrimRight 无法去除任何字符，导致循环永不终止。
+// 根因：缺少"未前进则终止"的守卫条件。
+func TestRegression_SplitPathParts_WindowsRoot(t *testing.T) {
+	// 模拟典型 Windows temp 目录路径。splitPathParts 必须在合理时间完成。
+	winPath := filepath.Join("C:", "Users", "runner", "AppData", "Local", "Temp", "test", "main.go")
+	// splitPathParts 不应 panic 或无限循环
+	_ = splitPathParts(winPath)
+
+	// 关键：只有盘符无分隔符（不带反斜杠的卷名）
+	// filepath.VolumeName("C:") == "C:" on Windows
+	result := splitPathParts("C:")
+	if result == nil {
+		t.Error(`splitPathParts("C:") should return empty or valid parts, not hang`)
+	}
+}
+
 func TestPathSafetyCheck_EmptyWorkingDirs(t *testing.T) {
 	// 没有 workingDirs，所有路径都在工作目录外
 	got := PathSafetyCheck("/home/user/file.txt", nil)
