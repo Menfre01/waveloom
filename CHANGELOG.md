@@ -9,7 +9,7 @@
 ### 重构
 - **`todo_write` 触发阈值优化**：触发条件从 ≥2 turns 收紧为 ≥5 turns，parallel subagents 改为 serial subagents，idleTodoReminder 从 2 调整为 3，减少小型任务滥用
 
-## [v0.1.0-beta.3] — 2026-07-11
+## [v0.1.0-beta.3] — 2026-07-09
 
 ### 新增功能
 - **色盲友好双主题**：ColorBlind 拆分为 Dark CB（深色终端）和 Light CB（浅色终端），保留蓝/橙 diff 配色，各有一套完整色板
