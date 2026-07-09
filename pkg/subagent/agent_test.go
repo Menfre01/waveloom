@@ -294,7 +294,7 @@ func TestForwardEvents_TextAggregation(t *testing.T) {
 		close(ch)
 	}()
 
-	aggregated, turns, promptTok, complTok, _, err := forwardEvents(ctx, ch, nil, "")
+	aggregated, turns, promptTok, complTok, _, _, _, err := forwardEvents(ctx, ch, nil, "")
 	if err != nil {
 		t.Fatalf("forwardEvents error: %v", err)
 	}
@@ -332,7 +332,7 @@ func TestForwardEvents_ReasoningDelta_SubagentThought(t *testing.T) {
 		close(ch)
 	}()
 
-	aggregated, _, _, _, _, err := forwardEvents(ctx, ch, cb, "")
+	aggregated, _, _, _, _, _, _, err := forwardEvents(ctx, ch, cb, "")
 	if err != nil {
 		t.Fatalf("forwardEvents error: %v", err)
 	}
@@ -379,7 +379,7 @@ func TestForwardEvents_ToolEventsProduceCallback(t *testing.T) {
 		close(ch)
 	}()
 
-	_, _, _, _, _, err := forwardEvents(ctx, ch, cb, "")
+	_, _, _, _, _, _, _, err := forwardEvents(ctx, ch, cb, "")
 	if err != nil {
 		t.Fatalf("forwardEvents error: %v", err)
 	}
@@ -417,7 +417,7 @@ func TestForwardEvents_WriteOperationsTracking(t *testing.T) {
 		close(ch)
 	}()
 
-	aggregated, _, _, _, _, err := forwardEvents(ctx, ch, nil, "")
+	aggregated, _, _, _, _, _, _, err := forwardEvents(ctx, ch, nil, "")
 	if err != nil {
 		t.Fatalf("forwardEvents error: %v", err)
 	}
@@ -439,21 +439,24 @@ func TestForwardEvents_TurnStatsAccumulation(t *testing.T) {
 
 	ch := make(chan agentloop.TurnEvent, 10)
 	go func() {
-		ch <- agentloop.TurnStats{PromptTokens: 100, CompletionTokens: 50}
-		ch <- agentloop.TurnStats{PromptTokens: 200, CompletionTokens: 75}
+		ch <- agentloop.TurnStats{PromptTokens: 100, CompletionTokens: 50, CacheHitTokens: 60, CacheMissTokens: 40}
+		ch <- agentloop.TurnStats{PromptTokens: 200, CompletionTokens: 75, CacheHitTokens: 120, CacheMissTokens: 80}
 		ch <- agentloop.LoopDone{Turn: 2}
 		close(ch)
 	}()
 
-	_, turns, promptTok, complTok, _, err := forwardEvents(ctx, ch, nil, "")
+	_, turns, promptTok, complTok, cacheHitTok, cacheMissTok, _, err := forwardEvents(ctx, ch, nil, "")
 	if err != nil {
 		t.Fatalf("forwardEvents error: %v", err)
 	}
 	if turns != 2 {
 		t.Errorf("turns = %d, want 2", turns)
 	}
-	if promptTok != 300 || complTok != 125 { // 100+200=300, 50+75=125
+	if promptTok != 300 || complTok != 125 {
 		t.Errorf("promptTokens = %d, complTokens = %d, want 300, 125", promptTok, complTok)
+	}
+	if cacheHitTok != 180 || cacheMissTok != 120 {
+		t.Errorf("cacheHitTokens = %d, cacheMissTokens = %d, want 180, 120", cacheHitTok, cacheMissTok)
 	}
 }
 
@@ -468,7 +471,7 @@ func TestForwardEvents_LoopDoneError(t *testing.T) {
 		close(ch)
 	}()
 
-	_, _, _, _, _, err := forwardEvents(ctx, ch, nil, "")
+	_, _, _, _, _, _, _, err := forwardEvents(ctx, ch, nil, "")
 	if err == nil {
 		t.Fatal("expected error from LoopDone")
 	}
@@ -487,7 +490,7 @@ func TestForwardEvents_EmptyStream(t *testing.T) {
 		close(ch)
 	}()
 
-	aggregated, _, _, _, _, err := forwardEvents(ctx, ch, nil, "")
+	aggregated, _, _, _, _, _, _, err := forwardEvents(ctx, ch, nil, "")
 	if err != nil {
 		t.Fatalf("forwardEvents error: %v", err)
 	}
@@ -517,7 +520,7 @@ func TestForwardEvents_ToolCallStreamEvent(t *testing.T) {
 		close(ch)
 	}()
 
-	_, _, _, _, _, err := forwardEvents(ctx, ch, cb, "")
+	_, _, _, _, _, _, _, err := forwardEvents(ctx, ch, cb, "")
 	if err != nil {
 		t.Fatalf("forwardEvents error: %v", err)
 	}
@@ -560,7 +563,7 @@ func TestForwardEvents_ToolCallResultError(t *testing.T) {
 		close(ch)
 	}()
 
-	_, _, _, _, _, err := forwardEvents(ctx, ch, cb, "")
+	_, _, _, _, _, _, _, err := forwardEvents(ctx, ch, cb, "")
 	if err != nil {
 		t.Fatalf("forwardEvents error: %v", err)
 	}
@@ -589,7 +592,7 @@ func TestForwardEvents_ChannelCloseWithoutLoopDone(t *testing.T) {
 		close(ch)
 	}()
 
-	aggregated, turns, _, _, _, err := forwardEvents(ctx, ch, nil, "")
+	aggregated, turns, _, _, _, _, _, err := forwardEvents(ctx, ch, nil, "")
 	if err != nil {
 		t.Fatalf("forwardEvents error: %v", err)
 	}
@@ -621,7 +624,7 @@ func TestRegression_ForwardEvents_OnlyLastTurnText(t *testing.T) {
 		close(ch)
 	}()
 
-	lastTurnText, turns, _, _, _, err := forwardEvents(ctx, ch, nil, "")
+	lastTurnText, turns, _, _, _, _, _, err := forwardEvents(ctx, ch, nil, "")
 	if err != nil {
 		t.Fatalf("forwardEvents error: %v", err)
 	}
@@ -1529,7 +1532,7 @@ func BenchmarkForwardEvents(b *testing.B) {
 			ch <- agentloop.LoopDone{Turn: 3}
 			close(ch)
 		}()
-		_, _, _, _, _, _ = forwardEvents(ctx, ch, nil, "")
+		_, _, _, _, _, _, _, _ = forwardEvents(ctx, ch, nil, "")
 		cancel()
 	}
 }

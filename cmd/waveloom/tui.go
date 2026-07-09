@@ -235,6 +235,14 @@ Use ` + "`todo_write`" + ` for tasks with meaningful dependencies or parallelism
 // 自定义消息类型
 // ---------------------------------------------------------------------------
 
+// overlayMaxWidth 定义各覆盖层的最大宽度，保证在不同终端宽度下视觉一致。
+const (
+	overlayMaxWidthCompact = 50 // 主题/语言选择器（列表项短）
+	overlayMaxWidthMedium  = 60 // 模型选择器
+	overlayMaxWidthNormal  = 70 // 权限确认 / 问题选择 / plan 进入
+	overlayMaxWidthWide    = 80 // plan 退出审批（plan 内容区更宽）
+)
+
 // maxParas 是段落列表的硬上限，超出时从头部淘汰旧段落。
 // 200 个段落 ≈ 40–60 个典型 turn，保证渲染性能稳定。
 const maxParas = 200
@@ -1741,8 +1749,8 @@ const otherOptionKey = "___other___"
 func (m *model) overlayInnerWidth() int {
 	contentWidth := max(m.width-4, 20)
 	boxWidth := contentWidth
-	if boxWidth > 70 {
-		boxWidth = 70
+	if boxWidth > overlayMaxWidthNormal {
+		boxWidth = overlayMaxWidthNormal
 	}
 	return boxWidth - 2 - 4 // border(左右各1) + padding(左右各2)
 }
@@ -1750,8 +1758,15 @@ func (m *model) overlayInnerWidth() int {
 // overlayMaxFormHeight 返回 huh 表单在 overlay 内的自适应最大高度。
 // 选项少时紧凑显示全部，选项多时撑开到合理上限，超出由 huh 内部滚动。
 func (m *model) overlayMaxFormHeight(optionCount int) int {
-	// 固定外壳开销：styleApp padding(1) + header(8) + 底部(5) + overlay chrome(8)
-	const fixedOverhead = 1 + 8 + 5 + 8
+	// 固定外壳开销 = styleApp padding(1) + header(8) + footer(2) + input(2) + separator(1) + overlay chrome(8) = 22
+	// 简化：header + 底部固定 + overlay box 开销
+	const (
+		overlayFormTopOverhead    = 1  // styleApp padding
+		overlayFormHeaderOverhead = 8  // header 区域
+		overlayFormBottomOverhead = 5  // 底部区域（footer + input + separator）
+		overlayFormChromeOverhead = 8  // overlay 边框 + padding + title + hint
+	)
+	fixedOverhead := overlayFormTopOverhead + overlayFormHeaderOverhead + overlayFormBottomOverhead + overlayFormChromeOverhead
 	maxAvailable := m.height - fixedOverhead
 	if maxAvailable < 5 {
 		maxAvailable = 5
@@ -1762,10 +1777,10 @@ func (m *model) overlayMaxFormHeight(optionCount int) int {
 		needed = 5
 	}
 	// 取 needed 和 maxAvailable 的较小值，但不超过 20 行（约 15+ 选项可见，不侵占聊天区）
-	const absoluteMax = 20
+	const overlayFormAbsoluteMax = 20
 	h := min(needed, maxAvailable)
-	if h > absoluteMax {
-		h = absoluteMax
+	if h > overlayFormAbsoluteMax {
+		h = overlayFormAbsoluteMax
 	}
 	return h
 }
@@ -2121,18 +2136,18 @@ func (m *model) renderPickerDropdown(contentWidth int) string {
 		boxStyle := lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
 			BorderForeground(colorHeaderAccent).
-			Padding(0, 1).
+			Padding(1, 1).
 			Width(contentWidth)
 		return boxStyle.Render(spinner + " " + m.msg().PickerScanning)
 	}
 
 	// 扫描完成但无结果 → 显示空状态
 	if len(m.pickerItems) == 0 {
-		emptyStyle := lipgloss.NewStyle().Foreground(colorGray)
+		emptyStyle := lipgloss.NewStyle().Foreground(colorMuted)
 		boxStyle := lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
 			BorderForeground(colorHeaderAccent).
-			Padding(0, 1).
+			Padding(1, 1).
 			Width(contentWidth)
 		return boxStyle.Render(emptyStyle.Render(m.msg().PickerNoResults))
 	}
@@ -3620,6 +3635,16 @@ func (m *model) handleSubagentEnd(ev subagent.SubagentEnd) {
 				p.State = stateDone
 			}
 			p.renderDirty = true
+			// 子 agent token 累加到父 loop 累加器，确保 ContextManager 累计统计、
+			// 缓存命中率（HUD footer）和 session 总成本包含子 agent 的 API 消耗。
+			// 注意：m.lastPromptTokens（ctx bar）有意不累加——子 agent 持有独立上
+			// 下文窗口，其 prompt_tokens 不代表主 agent 的上下文占用。
+			m.loopPrompt += ev.PromptTokens
+			m.loopCompl += ev.CompletionTokens
+			m.loopCacheHit += ev.CacheHitTokens
+			m.loopCacheMiss += ev.CacheMissTokens
+			m.hudCacheHit += ev.CacheHitTokens
+			m.hudCacheMiss += ev.CacheMissTokens
 			return
 		}
 	}
@@ -4360,47 +4385,47 @@ func (m *model) View() tea.View {
 	case overlayPermission:
 		if m.permReq != nil {
 			boxWidth := contentWidth
-			if boxWidth > 70 {
-				boxWidth = 70
+			if boxWidth > overlayMaxWidthNormal {
+				boxWidth = overlayMaxWidthNormal
 			}
 			overlayContent = m.renderPermOverlay(boxWidth)
 		}
 	case overlayQuestion:
 		if m.questionReq != nil {
 			boxWidth := contentWidth
-			if boxWidth > 70 {
-				boxWidth = 70
+			if boxWidth > overlayMaxWidthNormal {
+				boxWidth = overlayMaxWidthNormal
 			}
 			overlayContent = m.renderQuestionOverlay(boxWidth)
 		}
 	case overlayThemePicker:
 		boxWidth := contentWidth
-		if boxWidth > 50 {
-			boxWidth = 50
+		if boxWidth > overlayMaxWidthCompact {
+			boxWidth = overlayMaxWidthCompact
 		}
 		overlayContent = m.renderThemePickerOverlay(boxWidth)
 	case overlayModelPicker:
 		boxWidth := contentWidth
-		if boxWidth > 60 {
-			boxWidth = 60
+		if boxWidth > overlayMaxWidthMedium {
+			boxWidth = overlayMaxWidthMedium
 		}
 		overlayContent = m.renderModelPickerOverlay(boxWidth)
 	case overlayLocalePicker:
 		boxWidth := contentWidth
-		if boxWidth > 50 {
-			boxWidth = 50
+		if boxWidth > overlayMaxWidthCompact {
+			boxWidth = overlayMaxWidthCompact
 		}
 		overlayContent = m.renderLocalePickerOverlay(boxWidth)
 	case overlayPlanEnter:
 		boxWidth := contentWidth
-		if boxWidth > 70 {
-			boxWidth = 70
+		if boxWidth > overlayMaxWidthNormal {
+			boxWidth = overlayMaxWidthNormal
 		}
 		overlayContent = m.renderPlanEnterOverlay(boxWidth)
 	case overlayPlanExit:
 		boxWidth := contentWidth
-		if boxWidth > 80 {
-			boxWidth = 80
+		if boxWidth > overlayMaxWidthWide {
+			boxWidth = overlayMaxWidthWide
 		}
 		overlayContent = m.renderPlanExitOverlay(boxWidth)
 	}
@@ -4608,25 +4633,20 @@ var asciiArt = []string{
 func (m *model) renderInputSeparator(contentWidth int) string {
 	if m.focusIndex >= 0 {
 		hint := m.msg().FocusSeparatorHint
-		hintStyle := lipgloss.NewStyle().Foreground(colorAccentGold)
-		lineStyle := lipgloss.NewStyle().Foreground(colorMuted)
 		pad := contentWidth - lipgloss.Width(hint)
 		if pad < 2 {
 			pad = 2
 		}
 		left := strings.Repeat("─", pad/2)
 		right := strings.Repeat("─", pad-pad/2)
-		return lineStyle.Render(left) + hintStyle.Render(hint) + lineStyle.Render(right)
+		return styleInputSeparatorLine.Render(left) + styleInputSeparatorHint.Render(hint) + styleInputSeparatorLine.Render(right)
 	}
 	if m.inPlanMode {
-		prefix := lipgloss.NewStyle().Foreground(colorAccentGold).Render("▌Plan")
-		lineStyle := lipgloss.NewStyle().Foreground(colorMuted)
+		prefix := styleInputSeparatorPlan.Render("▌Plan")
 		rest := strings.Repeat("─", max(contentWidth-lipgloss.Width(prefix), 0))
-		return prefix + lineStyle.Render(rest)
+		return prefix + styleInputSeparatorLine.Render(rest)
 	}
-	return lipgloss.NewStyle().
-		Foreground(colorMuted).
-		Render(strings.Repeat("─", contentWidth))
+	return styleInputSeparatorLine.Render(strings.Repeat("─", contentWidth))
 }
 
 // ---------------------------------------------------------------------------
