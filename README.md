@@ -95,7 +95,7 @@ waveloom
 - **Permission safety** — Three-tier decisions (allow / deny / ask) with pattern-matching rule engine. Every write operation requires your confirmation.
 - **Session persistence** — Close the terminal, come back days later with `waveloom --continue`. The agent remembers all prior context.
 - **Plan Mode** — Two-stage workflow: explore & design first, implement after approval. `Shift+Tab` to enter/exit, Guard-enforced write protection.
-- **12 built-in tools** — `read_file` / `write_file` / `edit_file` / `bash` / `web_fetch` / `ask_user_question` / `enter_plan_mode` / `exit_plan_mode` / `skill` / `agent` / `kill_background_task` / `todo_write`.
+- **13 built-in tools** — `read_file` / `write_file` / `edit_file` / `bash` / `web_fetch` / `web_search` / `ask_user_question` / `enter_plan_mode` / `exit_plan_mode` / `skill` / `agent` / `kill_background_task` / `todo_write`.
 - **i18n multilingual** — Full zh-CN / en-US bilingual UI. `--locale` CLI flag, `/locale` command, auto-detect from LANG.
 
 ---
@@ -125,6 +125,7 @@ Waveloom works with any text-based project. Code verification uses each language
 | [`settings`](./docs/settings.en.md) | API key, model, timeout, compaction |
 | [`prefix-cache`](./docs/prefix-cache.en.md) | DeepSeek caching, four-tier compaction |
 | [`environment`](./docs/environment.en.md) | Toolchain probing |
+| [`mcp`](./docs/mcp.en.md) | MCP client, config sources, CLI management |
 | [`faq`](./docs/faq.en.md) | Frequently asked questions |
 
 ---
