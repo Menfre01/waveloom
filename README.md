@@ -85,7 +85,7 @@ waveloom
 
 ## Why TUI
 
-**Waveloom is the only DeepSeek-native agent with Claude Code-level terminal polish.** Streaming reasoning with syntax highlighting, rich diff, permission dialogs, `@` fuzzy file picker, `/` command palette, light/dark theme toggle, zh-CN / en-US i18n. Most DeepSeek agents treat the TUI as an afterthought — raw text streaming, no interaction design. Fire it up and feel the difference.
+**Waveloom is the only DeepSeek-native agent with Claude Code-level terminal polish.** Streaming reasoning with syntax highlighting, rich diff, permission dialogs, `@` fuzzy file picker, `/` command palette, light/dark/color-blind theme toggle, `?` shortcut help, zh-CN / en-US i18n. Most DeepSeek agents treat the TUI as an afterthought — raw text streaming, no interaction design. Fire it up and feel the difference.
 
 ---
 
