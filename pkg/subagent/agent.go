@@ -301,7 +301,7 @@ func (a *AgentTool) executeFork(ctx context.Context, p AgentParams) (*tool.ToolR
 		cb(SubagentStart{Prompt: p.Description, AgentType: "fork", InheritCtx: true, ToolCallID: toolCallID, Model: model})
 	}
 
-	lastTurnText, totalTurns, promptTok, complTok, events, err := forwardEvents(subCtx, subLoop.Run(subCtx, messages), cb, toolCallID)
+	lastTurnText, totalTurns, promptTok, complTok, cacheHitTok, cacheMissTok, events, err := forwardEvents(subCtx, subLoop.Run(subCtx, messages), cb, toolCallID)
 	if err != nil {
 		if cb != nil {
 			cb(SubagentEnd{ToolCallID: toolCallID, DurationMs: time.Since(startTime).Milliseconds(), Error: err.Error()})
@@ -316,7 +316,7 @@ func (a *AgentTool) executeFork(ctx context.Context, p AgentParams) (*tool.ToolR
 	classified := classify(events, a.WorkspaceDir)
 
 	if cb != nil {
-		cb(SubagentEnd{ToolCallID: toolCallID, TotalTurns: totalTurns, PromptTokens: promptTok, CompletionTokens: complTok, DurationMs: time.Since(startTime).Milliseconds()})
+		cb(SubagentEnd{ToolCallID: toolCallID, TotalTurns: totalTurns, PromptTokens: promptTok, CompletionTokens: complTok, CacheHitTokens: cacheHitTok, CacheMissTokens: cacheMissTok, DurationMs: time.Since(startTime).Milliseconds()})
 	}
 
 	return &tool.ToolResult{
@@ -385,7 +385,7 @@ func (a *AgentTool) executeCold(ctx context.Context, p AgentParams) (*tool.ToolR
 		cb(SubagentStart{Prompt: p.Description, AgentType: p.SubagentType, InheritCtx: false, ToolCallID: toolCallID, Model: model})
 	}
 
-	lastTurnText, totalTurns, promptTok, complTok, events, err := forwardEvents(subCtx, subLoop.Run(subCtx, messages), cb, toolCallID)
+	lastTurnText, totalTurns, promptTok, complTok, cacheHitTok, cacheMissTok, events, err := forwardEvents(subCtx, subLoop.Run(subCtx, messages), cb, toolCallID)
 	if err != nil {
 		if cb != nil {
 			cb(SubagentEnd{ToolCallID: toolCallID, DurationMs: time.Since(startTime).Milliseconds(), Error: err.Error()})
@@ -400,7 +400,7 @@ func (a *AgentTool) executeCold(ctx context.Context, p AgentParams) (*tool.ToolR
 	classified := classify(events, a.WorkspaceDir)
 
 	if cb != nil {
-		cb(SubagentEnd{ToolCallID: toolCallID, TotalTurns: totalTurns, PromptTokens: promptTok, CompletionTokens: complTok, DurationMs: time.Since(startTime).Milliseconds()})
+		cb(SubagentEnd{ToolCallID: toolCallID, TotalTurns: totalTurns, PromptTokens: promptTok, CompletionTokens: complTok, CacheHitTokens: cacheHitTok, CacheMissTokens: cacheMissTok, DurationMs: time.Since(startTime).Milliseconds()})
 	}
 
 	return &tool.ToolResult{
@@ -564,7 +564,7 @@ type writeOp struct {
 	LinesDel int
 }
 
-func forwardEvents(ctx context.Context, subCh <-chan agentloop.TurnEvent, cb func(agentloop.TurnEvent), toolCallID string) (lastTurnText string, totalTurns int, promptTokens int, completionTokens int, events []SubagentEvent, finalErr error) {
+func forwardEvents(ctx context.Context, subCh <-chan agentloop.TurnEvent, cb func(agentloop.TurnEvent), toolCallID string) (lastTurnText string, totalTurns int, promptTokens int, completionTokens int, cacheHitTokens int, cacheMissTokens int, events []SubagentEvent, finalErr error) {
 	var sb strings.Builder
 	var writeOps []writeOp
 	var currentTurn int
@@ -645,6 +645,8 @@ func forwardEvents(ctx context.Context, subCh <-chan agentloop.TurnEvent, cb fun
 		case agentloop.TurnStats:
 			promptTokens += e.PromptTokens
 			completionTokens += e.CompletionTokens
+			cacheHitTokens += e.CacheHitTokens
+			cacheMissTokens += e.CacheMissTokens
 
 		case agentloop.LoopDone:
 			totalTurns = e.Turn
@@ -666,13 +668,13 @@ func forwardEvents(ctx context.Context, subCh <-chan agentloop.TurnEvent, cb fun
 				}
 				sb.WriteString("</subagent_write_operations>")
 			}
-			return sb.String(), totalTurns, promptTokens, completionTokens, events, finalErr
+			return sb.String(), totalTurns, promptTokens, completionTokens, cacheHitTokens, cacheMissTokens, events, finalErr
 		}
 	}
 	// Channel 关闭但未收到 LoopDone（跨包防御：当前 agentloop.Run 总是会发送 LoopDone，
 	// 但此处做兜底防止未来引入的不发送 LoopDone 的路径导致空文本传播）。
 	ensureNonEmpty(&sb, lastToolCalls)
-	return sb.String(), totalTurns, promptTokens, completionTokens, events, nil
+	return sb.String(), totalTurns, promptTokens, completionTokens, cacheHitTokens, cacheMissTokens, events, nil
 }
 
 // ensureNonEmpty 在 sb 为空时合成非空 fallback 文本。

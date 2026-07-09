@@ -32,6 +32,11 @@ type Messages struct {
 	InputFocusModePlaceholder string
 	InputPlanModePlaceholder  string
 
+	// ── Welcome ────────────────────────────────────────────
+	WelcomeHint      string // 空状态时 body 区域的欢迎引导文案
+	NewContentHint   string // 向上滚动时新内容到达的提示
+	TerminalTooSmall string // 终端高度 < 10 行时的提示
+
 	// ── System notifications ──────────────────────────────
 	SysCompactionDone    string
 	SysContextHardLimit  string
@@ -110,6 +115,8 @@ type Messages struct {
 	KeyJumpBottom  string
 	KeyPicker      string
 	KeyPaste       string
+	KeyHelp        string
+	KeyHelpTitle   string // ? 帮助 overlay 标题
 
 	// ── Focus separator ──────────────────────────────────
 	FocusSeparatorHint string
@@ -226,6 +233,11 @@ var zhCN = Messages{
 	InputFocusModePlaceholder: "段落已聚焦 · ⏎ 展开/折叠 · Esc 回到输入",
 	InputPlanModePlaceholder:  "[Plan] 输入消息, ⏎ 发送 · Shift+Tab 退出",
 
+	// Welcome
+	WelcomeHint:      "输入提示词，按 ⏎ 开始",
+	NewContentHint:   "↓ 新内容 (Ctrl+E 跳回底部)",
+	TerminalTooSmall: "终端窗口太小，请调大后重试（最少 10 行）",
+
 	// System
 	SysCompactionDone:    "压缩完成。",
 	SysContextHardLimit:  "上下文已满（98%）。/reset 重建。",
@@ -302,6 +314,8 @@ var zhCN = Messages{
 	KeyJumpBottom:  "跳到底部",
 	KeyPicker:      "选择文件/目录",
 	KeyPaste:       "粘贴",
+	KeyHelp:        "快捷键",
+	KeyHelpTitle:   "快捷键帮助",
 
 	// Focus separator
 	FocusSeparatorHint: " ◆ 段落已聚焦 · ⏎ 展开/折叠 · Esc 退出 ◆ ",
@@ -367,7 +381,7 @@ var zhCN = Messages{
 	SlashModelConfigReadFailed: "读取配置失败: %v",
 	SlashModelConfigSaveFailed: "保存配置失败: %v",
 	SlashModelSwitched:         "模型已切换为 %s。",
-	SlashThemeDescription:      "选择主题（Auto / Dark / Light）",
+	SlashThemeDescription:      "选择主题（Auto / Dark / Light / ColorBlind）",
 	SlashLocaleDescription:     "切换语言（zh-CN / en-US）",
 	SlashHelpDescription:       "显示所有可用命令",
 	SlashHelpText: `使用技巧:
@@ -382,12 +396,13 @@ var zhCN = Messages{
 
   可用命令：在输入框输入 / 即可弹出命令列表。
 
-  —— 以下任意时刻生效 ——
-  Ctrl+G          循环切换主题（dark → light → auto）
-  Ctrl+E / End    跳到底部
-  Ctrl+C          退出
-  PgUp / PgDn     上下翻页
-  Esc（运行中）     中断当前 Agent 执行
+   —— 以下任意时刻生效 ——
+   Ctrl+G          循环切换主题（dark → light → colorblind → auto）
+   ?               快捷键帮助 overlay
+   Ctrl+E / End    跳到底部
+   Ctrl+C          退出
+   PgUp / PgDn     上下翻页
+   Esc（运行中）     中断当前 Agent 执行
 
   会话结束时 session 自动保存，使用 waveloom --continue 恢复最近会话。
   单次执行：waveloom "解释这段代码"`,
@@ -480,6 +495,11 @@ var enUS = Messages{
 	InputFocusModePlaceholder: "Paragraph focused · ⏎ expand/collapse · Esc back to input",
 	InputPlanModePlaceholder:  "[Plan] Type a message, ⏎ to send · Shift+Tab to exit",
 
+	// Welcome
+	WelcomeHint:      "Type a prompt and press ⏎ to start",
+	NewContentHint:   "↓ New content (Ctrl+E to jump back)",
+	TerminalTooSmall: "Terminal too small, please resize (min 10 rows)",
+
 	// System
 	SysCompactionDone:    "Compaction complete.",
 	SysContextHardLimit:  "Context full (98%). /reset to rebuild.",
@@ -556,6 +576,8 @@ var enUS = Messages{
 	KeyJumpBottom:  "Jump to bottom",
 	KeyPicker:      "Pick file/directory",
 	KeyPaste:       "Paste",
+	KeyHelp:        "Shortcuts",
+	KeyHelpTitle:   "Keyboard Shortcuts",
 
 	// Focus separator
 	FocusSeparatorHint: " ◆ Paragraph focused · ⏎ expand/collapse · Esc exit ◆ ",
@@ -621,7 +643,7 @@ var enUS = Messages{
 	SlashModelConfigReadFailed: "Failed to read config: %v",
 	SlashModelConfigSaveFailed: "Failed to save config: %v",
 	SlashModelSwitched:         "Model switched to %s.",
-	SlashThemeDescription:      "Select theme (Auto / Dark / Light)",
+	SlashThemeDescription:      "Select theme (Auto / Dark / Light / ColorBlind)",
 	SlashLocaleDescription:     "Switch language (zh-CN / en-US)",
 	SlashHelpDescription:       "Show all available commands",
 	SlashHelpText: `Usage tips:
@@ -636,12 +658,13 @@ var enUS = Messages{
 
   Available commands: type / in the input to see the command list.
 
-  —— Anytime ——
-  Ctrl+G          Cycle theme (dark → light → auto)
-  Ctrl+E / End    Jump to bottom
-  Ctrl+C          Quit
-  PgUp / PgDn     Page up / down
-  Esc (running)   Interrupt current agent execution
+   —— Anytime ——
+   Ctrl+G          Cycle theme (dark → light → colorblind → auto)
+   ?               Shortcut help overlay
+   Ctrl+E / End    Jump to bottom
+   Ctrl+C          Quit
+   PgUp / PgDn     Page up / down
+   Esc (running)   Interrupt current agent execution
 
   Sessions are auto-saved on exit. Use waveloom --continue to resume.`,
 
