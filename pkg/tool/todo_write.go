@@ -58,14 +58,13 @@ func (t *TodoWrite) RequiresUserInteraction() bool { return false }
 
 func (t *TodoWrite) Description() string {
 	return strings.TrimSpace(`
-Task tracker for complex multi-step work. Skip for single-file fixes, linear micro-tasks, or informational requests.
-
-Trigger test (BOTH must be true): ≥3 steps with real dependencies, AND work spans ≥2 turns or dispatches parallel subagents. If either is false, skip.
+Task tracker for complex multi-step work.
 
 Fields:
 - content: imperative, WHAT to do ("Fix login bug")
 - activeForm: present continuous, shown during execution ("Fixing login bug")
 - status: pending → in_progress → completed (multiple can be in_progress simultaneously)
+- description: optional longer description with task details, context, or notes
 
 RULES:
 1. After receiving new instructions — capture all tasks before starting work.

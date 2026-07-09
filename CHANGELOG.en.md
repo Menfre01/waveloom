@@ -1,5 +1,14 @@
 # Changelog
 
+## [v0.1.0-beta.4] — 2026-07-09
+
+### Added
+- **`web_search` built-in tool**: Dual-backend search (DDG default + Brave optional), forming a search→read loop with `web_fetch`; dedicated TUI paragraph rendering with query display, snippet preview, and expandable results
+- **MCP desktop auto-discovery**: Automatically detects Claude desktop config (macOS/Windows/Linux paths), no manual setup needed to connect existing MCP servers
+
+### Changed
+- **`todo_write` trigger threshold optimization**: Trigger tightened from ≥2 turns to ≥5 turns, parallel subagents → serial subagents, idleTodoReminder adjusted from 2 to 3, reducing abuse on trivial tasks
+
 ## [v0.1.0-beta.3] — 2026-07-11
 
 ### Added

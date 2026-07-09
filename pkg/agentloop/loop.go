@@ -125,7 +125,7 @@ var warnThresholds = map[int]bool{3: true, 5: true}
 // 后续提醒至少间隔 idleTodoReminder 轮。
 const (
 	idleTodoWrite    = 3 // 超过此值无 todo_write → 注入提醒
-	idleTodoReminder = 2 // 两次提醒之间的最小间隔
+	idleTodoReminder = 3 // 两次提醒之间的最小间隔
 )
 
 
