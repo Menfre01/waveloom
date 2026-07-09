@@ -117,7 +117,7 @@ func parseCLI() CLIConfig {
 
 	// 校验 theme 值
 	switch cfg.Theme {
-	case "auto", "dark", "light":
+	case "auto", "dark", "light", "darkcolorblind", "lightcolorblind":
 		// ok
 	default:
 		fmt.Fprintf(os.Stderr, "Warning: unknown theme '%s', falling back to auto\n", cfg.Theme)

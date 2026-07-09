@@ -117,6 +117,78 @@ var lightPalette = palette{
 	GlamourStyle: "light",
 }
 
+// darkColorBlindPalette 色盲友好深色主题 — 以蓝/橙替代绿/红，避免红绿色盲混淆。
+// 适配深色终端背景。
+var darkColorBlindPalette = palette{
+	User:  lipgloss.Color("#5fafff"),
+	OK:    lipgloss.Color("#5fafff"), // 蓝 = 成功（替代绿色）
+	Error: lipgloss.Color("#ff6b6b"), // 亮红 = 失败
+	Gray:  lipgloss.Color("#888888"),
+	Muted: lipgloss.Color("#777777"),
+
+	DiffAdd:   lipgloss.Color("#5fafff"), // 蓝 = 新增
+	DiffDel:   lipgloss.Color("#ff8c42"), // 橙 = 删除（替代红色）
+	DiffAddBg: lipgloss.Color("#0a1a2a"),
+	DiffDelBg: lipgloss.Color("#2a1a0a"),
+
+	HeaderFg:     lipgloss.Color("#e0e0e0"),
+	HeaderAccent: lipgloss.Color("#5fafd7"),
+	FooterFg:     lipgloss.Color("#a0a0a0"),
+	FooterValue:  lipgloss.Color("#f2f2f2"),
+
+	AccentGold: lipgloss.Color("#ffb347"), // 暖橙金
+
+	ToolCode:   lipgloss.Color("#d7af5f"),
+	ToolCodeBg: lipgloss.Color("#3a3a3a"),
+
+	LogoGradient: [6]color.Color{
+		lipgloss.Color("#6366f1"),
+		lipgloss.Color("#818cf8"),
+		lipgloss.Color("#06b6d4"),
+		lipgloss.Color("#22d3ee"),
+		lipgloss.Color("#a78bfa"),
+		lipgloss.Color("#a0a0c0"),
+	},
+
+	GlamourStyle: "dark",
+}
+
+// lightColorBlindPalette 色盲友好浅色主题 — 以蓝/橙替代绿/红，避免红绿色盲混淆。
+// 适配浅色终端背景。Diff 蓝/橙色、AccentGold 暖橙金保持不变。
+var lightColorBlindPalette = palette{
+	User:  lipgloss.Color("#0066cc"),
+	OK:    lipgloss.Color("#2d6fa0"), // 蓝 = 成功（替代绿色）
+	Error: lipgloss.Color("#cc3333"), // 深红 = 失败
+	Gray:  lipgloss.Color("#5a5a5a"),
+	Muted: lipgloss.Color("#666666"),
+
+	DiffAdd:   lipgloss.Color("#2d6fa0"), // 蓝 = 新增
+	DiffDel:   lipgloss.Color("#cc6633"), // 橙 = 删除（替代红色）
+	DiffAddBg: lipgloss.Color("#d8eaf8"),
+	DiffDelBg: lipgloss.Color("#fce4d6"),
+
+	HeaderFg:     lipgloss.Color("#2a2a2a"),
+	HeaderAccent: lipgloss.Color("#2d6fa0"),
+	FooterFg:     lipgloss.Color("#555555"),
+	FooterValue:  lipgloss.Color("#1a1a1a"),
+
+	AccentGold: lipgloss.Color("#b8730b"), // 暖橙金（深色底用亮色、浅色底用深色）
+
+	ToolCode:   lipgloss.Color("#8b4513"),
+	ToolCodeBg: lipgloss.Color("#e8e8e8"),
+
+	LogoGradient: [6]color.Color{
+		lipgloss.Color("#4f46e5"),
+		lipgloss.Color("#6366f1"),
+		lipgloss.Color("#0891b2"),
+		lipgloss.Color("#06b6d4"),
+		lipgloss.Color("#7c3aed"),
+		lipgloss.Color("#6b7280"),
+	},
+
+	GlamourStyle: "light",
+}
+
 // ---------------------------------------------------------------------------
 // 可设置的全局变量（由 applyTheme 初始化）
 // ---------------------------------------------------------------------------
@@ -195,6 +267,22 @@ var (
 	styleAsstPrefixDone     lipgloss.Style
 	styleThoughtPrefixDone  lipgloss.Style
 	styleFocusIndicator     lipgloss.Style
+
+	// 输入分隔线预定义样式（热路径，每帧 View() 调用一次）
+	styleInputSeparatorLine lipgloss.Style
+	styleInputSeparatorHint lipgloss.Style
+	styleInputSeparatorPlan lipgloss.Style
+
+	// 覆盖层预定义样式
+	styleOverlayHint lipgloss.Style
+	styleOverlayBody lipgloss.Style
+
+	// Todo 面板预定义样式
+	styleTodoInProgressSpinner lipgloss.Style
+	styleTodoInProgressText    lipgloss.Style
+	styleTodoPendingMarker     lipgloss.Style
+	styleTodoCompletedMarker   lipgloss.Style
+	styleTodoCompletedText     lipgloss.Style
 )
 
 // ---------------------------------------------------------------------------
@@ -294,6 +382,24 @@ func applyTheme(p palette) {
 	styleAsstPrefixDone = lipgloss.NewStyle().Foreground(colorGray)
 	styleThoughtPrefixDone = lipgloss.NewStyle().Foreground(colorGray)
 	styleFocusIndicator = lipgloss.NewStyle().Foreground(colorAccentGold).Bold(true)
+
+	// 输入分隔线预定义样式（热路径，每帧 View() 调用一次）
+	styleInputSeparatorLine     = lipgloss.NewStyle().Foreground(colorMuted)
+	styleInputSeparatorHint     = lipgloss.NewStyle().Foreground(colorAccentGold)
+	styleInputSeparatorPlan     = lipgloss.NewStyle().Foreground(colorAccentGold)
+
+	// 覆盖层 hint 预定义样式
+	styleOverlayHint = lipgloss.NewStyle().Foreground(colorMuted)
+
+	// Picker 空状态 / 覆盖层正文预定义样式
+	styleOverlayBody = lipgloss.NewStyle().Foreground(colorFooterFg)
+
+	// Todo 面板预定义样式
+	styleTodoInProgressSpinner = lipgloss.NewStyle().Foreground(colorAccentGold)
+	styleTodoInProgressText    = lipgloss.NewStyle().Foreground(colorAccentGold).Bold(true)
+	styleTodoPendingMarker     = lipgloss.NewStyle().Foreground(colorMuted)
+	styleTodoCompletedMarker   = lipgloss.NewStyle().Foreground(colorOK)
+	styleTodoCompletedText     = lipgloss.NewStyle().Foreground(colorOK).Strikethrough(true)
 }
 
 // ---------------------------------------------------------------------------
@@ -362,11 +468,9 @@ func userPrefix() string {
 	return styleUserPrefix.Render("›")
 }
 
-// asstPrefix 返回 assistant 前缀。流式时返回 spinner 动画字符，完成后返回静态灰色 · 占位。
+// asstPrefix 返回 assistant 前缀。始终使用静态灰色 · 占位；
+// 流式输出中由闪烁光标 ▊ 作为唯一的进行中指示器（避免 spinner + 光标双重动画）。
 func asstPrefix(sp spinner.Model, streaming bool) string {
-	if streaming {
-		return sp.View()
-	}
 	return styleAsstPrefixDone.Render("·")
 }
 
