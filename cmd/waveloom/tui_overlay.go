@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"charm.land/bubbles/v2/help"
 	"charm.land/bubbles/v2/key"
 	"charm.land/lipgloss/v2"
 )
@@ -25,7 +26,29 @@ const (
 	overlayCommandPicker                 // / 命令补全（预留）
 	overlayPlanEnter                     // 进入 plan 模式确认（阻断式）
 	overlayPlanExit                      // plan 审批（阻断式，展示 plan 内容）
+	overlayHelp                          // ? 快捷键帮助
 )
+
+// renderOverlayBox 渲染覆盖层的外框。
+// animFrame: 0=刚弹出（muted 边框），1+= 正常色。
+func renderOverlayBox(boxWidth int, animFrame int, content string) string {
+	borderColor := colorHeaderAccent
+	if animFrame == 0 {
+		borderColor = colorMuted
+	}
+	return lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(borderColor).
+		Padding(1, 2).
+		Width(boxWidth).
+		Render(content)
+}
+
+// renderOverlayHint 渲染覆盖层底部的快捷键提示。
+func renderOverlayHint(helpModel *help.Model, innerWidth int, bindings []key.Binding) string {
+	helpModel.SetWidth(innerWidth)
+	return styleOverlayHint.Width(innerWidth).Render(helpModel.ShortHelpView(bindings))
+}
 
 // ---------------------------------------------------------------------------
 // 权限确认框状态
@@ -54,7 +77,6 @@ func (m *model) renderPermOverlay(boxWidth int) string {
 	m.permList.SetSize(innerWidth, 3) // 3 项，无间距
 
 	overlayContentStyle := lipgloss.NewStyle().Width(innerWidth)
-	overlayFgStyle := lipgloss.NewStyle().Foreground(colorFooterFg).Width(innerWidth)
 
 	title := styleOverlayTitle.Width(innerWidth).Render(m.msg().PermRequired)
 
@@ -72,7 +94,7 @@ func (m *model) renderPermOverlay(boxWidth int) string {
 	// 构建内容行列表
 	contentLines := []string{title, ""}
 	for _, wl := range wrappedToolArgs {
-		contentLines = append(contentLines, overlayFgStyle.Render(wl))
+		contentLines = append(contentLines, styleOverlayBody.Width(innerWidth).Render(wl))
 	}
 
 	// reason 仅在非默认原因时展示（安全检查、规则匹配等）
@@ -89,9 +111,9 @@ func (m *model) renderPermOverlay(boxWidth int) string {
 		}
 		for i, wl := range wrappedReason {
 			if i == 0 {
-				contentLines = append(contentLines, overlayFgStyle.Render(m.msg().PermReason+wl))
+				contentLines = append(contentLines, styleOverlayBody.Width(innerWidth).Render(m.msg().PermReason+wl))
 			} else {
-				contentLines = append(contentLines, overlayFgStyle.Render("        "+wl))
+				contentLines = append(contentLines, styleOverlayBody.Width(innerWidth).Render("        "+wl))
 			}
 		}
 	}
@@ -101,19 +123,10 @@ func (m *model) renderPermOverlay(boxWidth int) string {
 	contentLines = append(contentLines, overlayContentStyle.Render(m.permList.View()))
 	contentLines = append(contentLines, "")
 
-	m.help.SetWidth(innerWidth) // 对齐内容区宽度
-	hintWrapper := lipgloss.NewStyle().Foreground(colorMuted).Width(innerWidth)
-	hint := hintWrapper.Render(m.help.ShortHelpView(permKeyBindings(m.msg())))
+	hint := renderOverlayHint(&m.help, innerWidth, permKeyBindings(m.msg()))
 	contentLines = append(contentLines, hint)
 
-	// 动态宽度：不超出可用空间
-	boxStyle := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(colorHeaderAccent).
-		Padding(1, 2).
-		Width(boxWidth)
-
-	return boxStyle.Render(strings.Join(contentLines, "\n"))
+	return renderOverlayBox(boxWidth, m.overlayAnimFrame, strings.Join(contentLines, "\n"))
 }
 
 // ---------------------------------------------------------------------------
@@ -154,19 +167,10 @@ func (m *model) renderQuestionOverlay(boxWidth int) string {
 	}
 
 	// 底部快捷键提示（与权限面板一致）
-	m.help.SetWidth(innerWidth)
-	hintWrapper := lipgloss.NewStyle().Foreground(colorMuted).Width(innerWidth)
-	hint := hintWrapper.Render(m.help.ShortHelpView(hintKeys))
+	hint := renderOverlayHint(&m.help, innerWidth, hintKeys)
 
 	content := strings.Join([]string{title, "", body, "", hint}, "\n")
-
-	boxStyle := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(colorHeaderAccent).
-		Padding(1, 2).
-		Width(boxWidth)
-
-	return boxStyle.Render(content)
+	return renderOverlayBox(boxWidth, m.overlayAnimFrame, content)
 }
 
 // ---------------------------------------------------------------------------
@@ -238,28 +242,18 @@ func modelPickerKeyBindings(lc *Messages) []key.Binding {
 
 func (m *model) renderThemePickerOverlay(boxWidth int) string {
 	innerWidth := boxWidth - 2 - 4
-	m.themeList.SetSize(innerWidth, 3)
-	overlayFgStyle := lipgloss.NewStyle().Foreground(colorFooterFg).Width(innerWidth)
+	m.themeList.SetSize(innerWidth, len(themeItems))
 
 	title := styleOverlayTitle.Width(innerWidth).Render(m.msg().PickerSelectTheme)
 	contentLines := []string{title, ""}
 
-	// 高亮当前选择
-	contentLines = append(contentLines, overlayFgStyle.Render(m.themeList.View()))
+	contentLines = append(contentLines, styleOverlayBody.Width(innerWidth).Render(m.themeList.View()))
 	contentLines = append(contentLines, "")
 
-	m.help.SetWidth(innerWidth)
-	hintWrapper := lipgloss.NewStyle().Foreground(colorMuted).Width(innerWidth)
-	hint := hintWrapper.Render(m.help.ShortHelpView(themePickerKeyBindings(m.msg())))
+	hint := renderOverlayHint(&m.help, innerWidth, themePickerKeyBindings(m.msg()))
 	contentLines = append(contentLines, hint)
 
-	boxStyle := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(colorHeaderAccent).
-		Padding(1, 2).
-		Width(boxWidth)
-
-	return boxStyle.Render(strings.Join(contentLines, "\n"))
+	return renderOverlayBox(boxWidth, m.overlayAnimFrame, strings.Join(contentLines, "\n"))
 }
 
 // ---------------------------------------------------------------------------
@@ -279,26 +273,17 @@ func (m *model) renderModelPickerOverlay(boxWidth int) string {
 		height = 1
 	}
 	m.modelPickerList.SetSize(innerWidth, height)
-	overlayFgStyle := lipgloss.NewStyle().Foreground(colorFooterFg).Width(innerWidth)
 
 	title := styleOverlayTitle.Width(innerWidth).Render(m.msg().PickerSelectModel)
 	contentLines := []string{title, ""}
 
-	contentLines = append(contentLines, overlayFgStyle.Render(m.modelPickerList.View()))
+	contentLines = append(contentLines, styleOverlayBody.Width(innerWidth).Render(m.modelPickerList.View()))
 	contentLines = append(contentLines, "")
 
-	m.help.SetWidth(innerWidth)
-	hintWrapper := lipgloss.NewStyle().Foreground(colorMuted).Width(innerWidth)
-	hint := hintWrapper.Render(m.help.ShortHelpView(modelPickerKeyBindings(m.msg())))
+	hint := renderOverlayHint(&m.help, innerWidth, modelPickerKeyBindings(m.msg()))
 	contentLines = append(contentLines, hint)
 
-	boxStyle := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(colorHeaderAccent).
-		Padding(1, 2).
-		Width(boxWidth)
-
-	return boxStyle.Render(strings.Join(contentLines, "\n"))
+	return renderOverlayBox(boxWidth, m.overlayAnimFrame, strings.Join(contentLines, "\n"))
 }
 
 // ---------------------------------------------------------------------------
@@ -308,26 +293,17 @@ func (m *model) renderModelPickerOverlay(boxWidth int) string {
 func (m *model) renderLocalePickerOverlay(boxWidth int) string {
 	innerWidth := boxWidth - 2 - 4
 	m.localeList.SetSize(innerWidth, 2)
-	overlayFgStyle := lipgloss.NewStyle().Foreground(colorFooterFg).Width(innerWidth)
 
 	title := styleOverlayTitle.Width(innerWidth).Render(m.msg().PickerSelectLocale)
 	contentLines := []string{title, ""}
 
-	contentLines = append(contentLines, overlayFgStyle.Render(m.localeList.View()))
+	contentLines = append(contentLines, styleOverlayBody.Width(innerWidth).Render(m.localeList.View()))
 	contentLines = append(contentLines, "")
 
-	m.help.SetWidth(innerWidth)
-	hintWrapper := lipgloss.NewStyle().Foreground(colorMuted).Width(innerWidth)
-	hint := hintWrapper.Render(m.help.ShortHelpView(localePickerKeyBindings(m.msg())))
+	hint := renderOverlayHint(&m.help, innerWidth, localePickerKeyBindings(m.msg()))
 	contentLines = append(contentLines, hint)
 
-	boxStyle := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(colorHeaderAccent).
-		Padding(1, 2).
-		Width(boxWidth)
-
-	return boxStyle.Render(strings.Join(contentLines, "\n"))
+	return renderOverlayBox(boxWidth, m.overlayAnimFrame, strings.Join(contentLines, "\n"))
 }
 
 // ---------------------------------------------------------------------------
@@ -336,30 +312,21 @@ func (m *model) renderLocalePickerOverlay(boxWidth int) string {
 
 func (m *model) renderPlanEnterOverlay(boxWidth int) string {
 	innerWidth := boxWidth - 2 - 4
-	overlayFgStyle := lipgloss.NewStyle().Foreground(colorFooterFg).Width(innerWidth)
 
 	msg := m.msg()
 	title := styleOverlayTitle.Width(innerWidth).Render(msg.PlanEnterTitle)
 	contentLines := []string{title, ""}
-	contentLines = append(contentLines, overlayFgStyle.Render(msg.PlanEnterDesc1))
-	contentLines = append(contentLines, overlayFgStyle.Render(msg.PlanEnterDesc2))
+	contentLines = append(contentLines, styleOverlayBody.Width(innerWidth).Render(msg.PlanEnterDesc1))
+	contentLines = append(contentLines, styleOverlayBody.Width(innerWidth).Render(msg.PlanEnterDesc2))
 	contentLines = append(contentLines, "")
 
-	m.help.SetWidth(innerWidth)
-	hintWrapper := lipgloss.NewStyle().Foreground(colorMuted).Width(innerWidth)
-	hint := hintWrapper.Render(m.help.ShortHelpView([]key.Binding{
+	hint := renderOverlayHint(&m.help, innerWidth, []key.Binding{
 		key.NewBinding(key.WithKeys("enter"), key.WithHelp("Enter", msg.PlanEnterConfirm)),
 		key.NewBinding(key.WithKeys("esc"), key.WithHelp("Esc", msg.PlanEnterCancel)),
-	}))
+	})
 	contentLines = append(contentLines, hint)
 
-	boxStyle := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(colorHeaderAccent).
-		Padding(1, 2).
-		Width(boxWidth)
-
-	return boxStyle.Render(strings.Join(contentLines, "\n"))
+	return renderOverlayBox(boxWidth, m.overlayAnimFrame, strings.Join(contentLines, "\n"))
 }
 
 // ---------------------------------------------------------------------------
@@ -368,26 +335,52 @@ func (m *model) renderPlanEnterOverlay(boxWidth int) string {
 
 func (m *model) renderPlanExitOverlay(boxWidth int) string {
 	innerWidth := boxWidth - 2 - 4
-	titleStyle := styleOverlayTitle.Width(innerWidth)
 
 	msg := m.msg()
-	title := titleStyle.Render(msg.PlanExitTitle)
+	title := styleOverlayTitle.Width(innerWidth).Render(msg.PlanExitTitle)
 	contentLines := []string{title}
 
-	m.help.SetWidth(innerWidth)
-	hintWrapper := lipgloss.NewStyle().Foreground(colorMuted).Width(innerWidth)
-	hint := hintWrapper.Render(m.help.ShortHelpView([]key.Binding{
+	hint := renderOverlayHint(&m.help, innerWidth, []key.Binding{
 		key.NewBinding(key.WithKeys("enter"), key.WithHelp("Enter", msg.PlanExitApprove)),
 		key.NewBinding(key.WithKeys("esc"), key.WithHelp("Esc", msg.PlanExitReject)),
-	}))
+	})
 	contentLines = append(contentLines, "")
 	contentLines = append(contentLines, hint)
 
-	boxStyle := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(colorHeaderAccent).
-		Padding(1, 2).
-		Width(boxWidth)
+	return renderOverlayBox(boxWidth, m.overlayAnimFrame, strings.Join(contentLines, "\n"))
+}
 
-	return boxStyle.Render(strings.Join(contentLines, "\n"))
+// ---------------------------------------------------------------------------
+// 快捷键帮助覆盖层渲染
+// ---------------------------------------------------------------------------
+
+func (m *model) renderHelpOverlay(boxWidth int) string {
+	innerWidth := boxWidth - 2 - 4
+
+	msg := m.msg()
+	title := styleOverlayTitle.Width(innerWidth).Render(msg.KeyHelpTitle)
+	m.help.SetWidth(innerWidth)
+
+	// 纵向渲染各组快捷键，避免 FullHelpView 列布局在窄终端下截断末尾组。
+	var groups []string
+	for _, g := range keyMapToGroups(m.keys) {
+		groups = append(groups, m.help.ShortHelpView(g))
+	}
+	contentLines := []string{title, "", strings.Join(groups, "\n\n")}
+
+	hint := renderOverlayHint(&m.help, innerWidth, []key.Binding{
+		key.NewBinding(key.WithKeys("?, esc"), key.WithHelp("?/Esc", msg.KeyCancel)),
+	})
+	contentLines = append(contentLines, "", hint)
+
+	return renderOverlayBox(boxWidth, m.overlayAnimFrame, strings.Join(contentLines, "\n"))
+}
+
+// keyMapToGroups 将 keyMap 转换为 help.ShortHelpView 所需的 [][]key.Binding 格式。
+func keyMapToGroups(km keyMap) [][]key.Binding {
+	return [][]key.Binding{
+		{km.Enter, km.Interrupt, km.Quit},
+		{km.FocusNext, km.FocusPrev, km.Picker, km.Paste, km.ToggleTheme, km.Help},
+		{km.Up, km.Down, km.PageUp, km.PageDown, km.JumpBottom},
+	}
 }

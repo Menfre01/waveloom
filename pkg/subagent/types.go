@@ -65,6 +65,8 @@ type SubagentEnd struct {
 	TotalTurns       int
 	PromptTokens     int // ↑ 输入 token
 	CompletionTokens int // ↓ 输出 token
+	CacheHitTokens   int // 子 agent 累计缓存命中 token
+	CacheMissTokens  int // 子 agent 累计缓存未命中 token
 	DurationMs       int64
 	Error            string // 非空表示异常终止
 }
