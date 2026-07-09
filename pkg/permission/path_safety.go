@@ -285,16 +285,22 @@ func PathSafetyDecision(pathCheck PathCheckResult, isWriteOp bool) DecisionResul
 // 例如 "/home/user/project/.git/refs" → ["home", "user", "project", ".git", "refs"]
 func splitPathParts(path string) []string {
 	var parts []string
+	sep := string(filepath.Separator)
 	for {
 		dir, file := filepath.Split(path)
 		if file != "" {
 			parts = append(parts, file)
 		}
-		if dir == "" || dir == string(filepath.Separator) {
+		if dir == "" || dir == sep {
 			break
 		}
-		// 去掉尾部分隔符继续
-		path = strings.TrimRight(dir, string(filepath.Separator))
+		// 去掉尾部分隔符继续。Windows 上 C: 没有分隔符，
+		// TrimRight 无法去除任何字符，需要检测是否到达根。
+		path = strings.TrimRight(dir, sep)
+		if path == dir {
+			// 根目录（如 Windows C: 或 \\server\share），无法继续分解
+			break
+		}
 	}
 	// 反转顺序（从根到叶）
 	for i, j := 0, len(parts)-1; i < j; i, j = i+1, j-1 {
