@@ -95,7 +95,7 @@ waveloom
 - **权限安全模型** — 三级决策（allow / deny / ask），规则引擎支持模式匹配，写操作和命令执行需要你确认
 - **会话持久恢复** — 关闭终端几天后 `waveloom --continue` 回来，Agent 记得所有上下文接着工作
 - **Plan 模式** — 先规划后执行的二阶段工作流：探索设计 → 审批 → 编码。`Shift+Tab` 一键进入/退出，Guard 写保护拦截。
-- **12 个内置工具** — `read_file` / `write_file` / `edit_file` / `bash` / `web_fetch` / `ask_user_question` / `enter_plan_mode` / `exit_plan_mode` / `skill` / `agent` / `kill_background_task` / `todo_write`
+- **13 个内置工具** — `read_file` / `write_file` / `edit_file` / `bash` / `web_fetch` / `web_search` / `ask_user_question` / `enter_plan_mode` / `exit_plan_mode` / `skill` / `agent` / `kill_background_task` / `todo_write`
 - **i18n 多语言** — 完整中英双语界面，`--locale` CLI 参数 / `/locale` 命令，LANG 环境变量自动检测
 
 ---
