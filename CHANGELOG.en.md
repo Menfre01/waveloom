@@ -1,5 +1,25 @@
 # Changelog
 
+## [v0.1.0-beta.3] — 2026-07-11
+
+### Added
+- **Color-blind dual themes**: ColorBlind split into Dark CB (dark terminal) and Light CB (light terminal), preserving blue/orange diff colors with full dedicated palettes
+- **Theme persistence**: Theme changes via Ctrl+G / `/theme` are saved to settings.json and restored on next launch
+- **Glamour full theme sync**: 12+ Markdown element colors (paragraphs, blockquotes, tables, horizontal rules, emphasis/strikethrough, list bullets, etc.) now fully synchronized with Waveloom palettes
+- **Emoji rendering**: `:rocket:` shortcodes now render as Unicode emoji
+- **True color syntax highlighting**: Chroma upgraded to `terminal16m` (16.7M colors)
+- **`?` shortcut help overlay**: Press `?` to see all keyboard shortcuts in a vertically-laid overlay that fits narrow terminals
+
+### Fixed
+- Subagent token usage and cache hit rates now accumulated into main agent HUD stats
+- Windows `splitPathParts` infinite loop on drive letters causing 5-minute timeout
+- Welcome hint not reappearing after `/new` (now ignores system-only paragraphs)
+- New-content notification incorrectly occupying a render line causing cursor drift
+
+### Changed
+- Help overlay switched from FullHelpView column layout to ShortHelpView vertical rendering, eliminating narrow-terminal clipping
+- Empty-state check generalized to ignore system paragraphs, preventing future system messages from blocking the welcome hint
+
 ## [v0.1.0-beta.2] — 2026-07-08
 
 ### Added

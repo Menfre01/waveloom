@@ -1,5 +1,25 @@
 # Changelog
 
+## [v0.1.0-beta.3] — 2026-07-11
+
+### 新增功能
+- **色盲友好双主题**：ColorBlind 拆分为 Dark CB（深色终端）和 Light CB（浅色终端），保留蓝/橙 diff 配色，各有一套完整色板
+- **主题持久化**：Ctrl+G / `/theme` 切换主题后自动保存到 settings.json，下次启动恢复
+- **Glamour Markdown 全面同步主题色板**：段落正文、引用块、表格、分割线、斜体/加粗/删除线、列表符号等 12 类元素色全部与 Waveloom 主题同步
+- **emoji 渲染**：支持 `:rocket:` 等短码渲染为 Unicode emoji
+- **True Color 代码高亮**：Chroma 语法高亮升级为 `terminal16m`（1670 万色）
+- **`?` 快捷键帮助 overlay**：按 `?` 弹出所有快捷键列表，纵向排版确保窄终端完整显示
+
+### 修复
+- 子 agent token 消耗和缓存命中率累加到主 agent HUD 统计
+- Windows `splitPathParts` 盘符死循环导致 5 分钟超时
+- `/new` 后欢迎提示不重现（现已忽略纯系统消息段落）
+- 新内容到达提示误占渲染行导致光标上移
+
+### 重构
+- 帮助 overlay 从 FullHelpView 列布局改为 ShortHelpView 纵向渲染，消除窄终端截断
+- 空状态判断逻辑泛化为忽略系统段落，后续新增系统消息不再影响欢迎提示
+
 ## [v0.1.0-beta.2] — 2026-07-08
 
 ### 新增功能

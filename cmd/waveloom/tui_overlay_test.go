@@ -817,6 +817,51 @@ func TestThemeWaveloom_ReturnsNonNil(t *testing.T) {
 	}
 }
 
+func TestKeyMapToGroups_AllBindingsPresent(t *testing.T) {
+	lc := messagesFor("zh-CN")
+	km := makeKeyMap(lc)
+
+	groups := keyMapToGroups(km)
+	if len(groups) != 3 {
+		t.Fatalf("expected 3 groups, got %d", len(groups))
+	}
+
+	// 收集所有 binding，验证 14 个快捷键齐全
+	seen := make(map[string]bool)
+	total := 0
+	for _, g := range groups {
+		for _, b := range g {
+			// 验证每个 binding 都有 keys 和 help text
+			if !b.Enabled() {
+				t.Errorf("binding in group should be enabled")
+			}
+			keys := b.Keys()
+			if len(keys) == 0 {
+				t.Errorf("binding should have at least one key")
+			}
+			for _, k := range keys {
+				if k == "" {
+					t.Errorf("binding key should not be empty")
+				}
+				seen[k] = true
+			}
+			total++
+		}
+	}
+
+	if total != 14 {
+		t.Errorf("expected 14 total bindings across all groups, got %d", total)
+	}
+
+	// 验证 Tab 和 Shift+Tab 在 groups 中
+	if !seen["tab"] {
+		t.Error("Tab key not found in any group")
+	}
+	if !seen["shift+tab"] {
+		t.Error("Shift+Tab key not found in any group")
+	}
+}
+
 func TestBuildQuestionForm_SingleSelect(t *testing.T) {
 	m := newTestModelForQuestion()
 	m.buildQuestionForm()

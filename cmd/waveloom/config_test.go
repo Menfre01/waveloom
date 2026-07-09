@@ -390,6 +390,20 @@ func TestParseCLI_ThemeInvalid(t *testing.T) {
 	}
 }
 
+func TestParseCLI_ThemeDarkColorBlind(t *testing.T) {
+	cfg := parseCLIForTest([]string{"--theme", "darkcolorblind", "test"})
+	if cfg.Theme != "darkcolorblind" {
+		t.Errorf("expected theme='darkcolorblind', got %q", cfg.Theme)
+	}
+}
+
+func TestParseCLI_ThemeLightColorBlind(t *testing.T) {
+	cfg := parseCLIForTest([]string{"--theme", "lightcolorblind", "test"})
+	if cfg.Theme != "lightcolorblind" {
+		t.Errorf("expected theme='lightcolorblind', got %q", cfg.Theme)
+	}
+}
+
 func TestParseCLI_ContextLimitDefault(t *testing.T) {
 	cfg := parseCLIForTest([]string{"test"})
 	if cfg.ContextLimit != 1000000 {
