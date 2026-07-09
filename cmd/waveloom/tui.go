@@ -296,6 +296,7 @@ type keyMap struct {
 	JumpBottom    key.Binding
 	Picker        key.Binding
 	Paste         key.Binding
+	Help          key.Binding
 }
 
 // permKeyBindings / questionSingleKeyBindings 等已移至 tui_overlay.go，
@@ -315,6 +316,7 @@ var defaultKeys = keyMap{
 	JumpBottom:    key.NewBinding(key.WithKeys("ctrl+e", "end"), key.WithHelp("Ctrl+E/End", "跳到底部")),
 	Picker:        key.NewBinding(key.WithKeys("@"), key.WithHelp("@", "选择文件/目录")),
 	Paste:         key.NewBinding(key.WithKeys("ctrl+v"), key.WithHelp("Ctrl+V", "粘贴")),
+	Help:          key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "快捷键帮助")),
 }
 
 // makeKeyMap 根据 locale 生成带翻译帮助文本的 keyMap。
@@ -333,6 +335,7 @@ func makeKeyMap(lc *Messages) keyMap {
 		JumpBottom:  key.NewBinding(key.WithKeys("ctrl+e", "end"), key.WithHelp("Ctrl+E/End", lc.KeyJumpBottom)),
 		Picker:      key.NewBinding(key.WithKeys("@"), key.WithHelp("@", lc.KeyPicker)),
 		Paste:       key.NewBinding(key.WithKeys("ctrl+v"), key.WithHelp("Ctrl+V", lc.KeyPaste)),
+		Help:        key.NewBinding(key.WithKeys("?"), key.WithHelp("?", lc.KeyHelp)),
 	}
 }
 
@@ -367,6 +370,9 @@ type enterPlanModeByUserMsg struct{}
 
 // exitPlanModeByUserMsg 用户通过审批界面批准退出 plan 模式的消息。
 type exitPlanModeByUserMsg struct{}
+
+// overlayAnimTickMsg 覆盖层动画帧推进（~50ms tick），用于淡入效果。
+type overlayAnimTickMsg struct{}
 
 // pickerScanDoneMsg 文件扫描完成消息（异步）。
 type pickerScanDoneMsg struct {
@@ -479,7 +485,8 @@ type model struct {
 	glamourRenderer *glamour.TermRenderer
 
 	// 覆盖层状态
-	overlay      Overlay
+	overlay          Overlay
+	overlayAnimFrame int // overlay 弹出动画帧: 0=刚弹出, 1=过渡, 2=完成
 	permReq      *permissionReqMsg     // 当前待确认的权限请求
 	permList     list.Model            // 权限选项列表（bubbles/list）
 	permDelegate *list.DefaultDelegate // 权限列表的 delegate 指针，主题切换时更新样式
@@ -617,6 +624,7 @@ type model struct {
 	scrollTop      int  // body 内容区第一可见行在 lines 中的索引
 	pinnedToBottom bool // 是否锁定在底部（自动跟随最新内容）
 	bodyHeight     int  // 上次渲染时 body 区域可用高度（行数），用于翻页计算
+	hasNewContent  bool // 用户向上滚动查看历史时，有新内容到达
 
 	updateCache environment.UpdateCache // 版本更新检查结果缓存
 
@@ -981,7 +989,19 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// 未消费 → 继续执行下方子组件更新（input / viewport）
 
 	// ------------------------------------------------------------------
-	// Spinner 帧动画（全部 4 个 spinner 统一路由）
+	// Overlay 动画帧推进
+	// ------------------------------------------------------------------
+	case overlayAnimTickMsg:
+		if m.overlayAnimFrame < 2 {
+			m.overlayAnimFrame++
+			if m.overlayAnimFrame < 2 {
+				cmds = append(cmds, m.overlayAnimTick())
+			}
+		}
+		return m, tea.Batch(cmds...)
+
+	// ------------------------------------------------------------------
+	// Spinner 帧动画（全部 6 个 spinner 统一路由）
 	// ------------------------------------------------------------------
 	case spinner.TickMsg:
 		var cmd tea.Cmd
@@ -1010,6 +1030,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// ------------------------------------------------------------------
 	case agentloop.StreamDelta:
 		m.handleStreamDelta(msg)
+		m.markNewContent()
 		m.flushTranscript()
 		return m, nil
 
@@ -1019,11 +1040,13 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.handleToolStart(msg)
+		m.markNewContent()
 		m.flushTranscript()
 		return m, nil
 
 	case agentloop.ToolCallStream:
 		m.handleToolStream(msg)
+		m.markNewContent()
 		return m, nil
 
 	case agentloop.ToolCallResult:
@@ -1140,10 +1163,12 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// ------------------------------------------------------------------
 	case subagent.SubagentStart:
 		m.handleSubagentStart(msg)
+		m.markNewContent()
 		return m, nil
 
 	case subagent.SubagentEvent:
 		m.handleSubagentEvent(msg)
+		m.markNewContent()
 		return m, nil
 
 	case subagent.SubagentEnd:
@@ -1155,17 +1180,15 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// 权限确认请求（由 tuiUserResponder 通过 p.Send 推送）
 	// ------------------------------------------------------------------
 	case permissionReqMsg:
-		m.overlay = overlayPermission
 		m.permReq = &msg
 		m.input.Blur()
 		m.permList = m.buildPermList()
-		return m, nil
+		return m, m.activateOverlay(overlayPermission)
 
 	// ------------------------------------------------------------------
 	// AskUserQuestion 请求（由 tuiUserResponder.AnswerQuestion 推送）
 	// ------------------------------------------------------------------
 	case questionReqMsg:
-		m.overlay = overlayQuestion
 		m.questionReq = &msg
 		m.questionIdx = 0
 		m.questionAnswers = make([]agentloop.QuestionResponse, 0, len(msg.questions))
@@ -1173,28 +1196,27 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.buildQuestionForm()
 		initCmd := m.questionFormInitCmd
 		m.questionFormInitCmd = nil
-		return m, initCmd
+		return m, tea.Batch(m.activateOverlay(overlayQuestion), initCmd)
 
 	// ------------------------------------------------------------------
 	// Plan 模式进入确认 / 退出审批（由 tuiUserResponder 推送）
 	// ------------------------------------------------------------------
 	case planEnterReqMsg:
-		m.overlay = overlayPlanEnter
 		m.planEnterReply = msg.reply
 		m.input.Blur()
-		return m, nil
+		return m, m.activateOverlay(overlayPlanEnter)
 
 	case planExitReqMsg:
+		m.closePickable()
 		// plan 内容作为段落插入消息流（Markdown 渲染），审批框仅显示确认提示
 		m.paras = append(m.paras, Paragraph{
 			Type:  paraAssistant,
 			State: stateDone,
 			Text:  msg.plan,
 		})
-		m.overlay = overlayPlanExit
 		m.planExitReply = msg.reply
 		m.input.Blur()
-		return m, nil
+		return m, m.activateOverlay(overlayPlanExit)
 
 	// ------------------------------------------------------------------
 	// Plan 模式用户快捷键消息
@@ -1365,6 +1387,19 @@ func (m *model) handleKeyPress(msg tea.KeyPressMsg) (bool, tea.Cmd) {
 
 	case key.Matches(msg, m.keys.ToggleTheme):
 		m.toggleTheme()
+		return true, nil
+
+	case key.Matches(msg, m.keys.Help):
+		if m.overlay == overlayHelp {
+			m.overlay = overlayNone
+			m.input.Focus()
+			return true, nil
+		}
+		if m.overlay == overlayNone {
+			m.overlay = overlayHelp
+			m.input.Blur()
+			return true, nil
+		}
 		return true, nil
 	}
 
@@ -1580,6 +1615,12 @@ m.input.Reset()
 return true, m.doTurn(userInput)
 
 	case key.Matches(msg, m.keys.Interrupt):
+		// 帮助 overlay 打开时 Esc 关闭
+		if m.overlay == overlayHelp {
+			m.overlay = overlayNone
+			m.input.Focus()
+			return true, nil
+		}
 		// 焦点在段落上 → 归位到输入框
 		if m.focusIndex >= 0 {
 			m.focusIndex = -1
@@ -1810,7 +1851,7 @@ func themeWaveloom() huh.Theme {
 	// 未聚焦字段
 	t.Blurred.Title = t.Blurred.Title.Foreground(colorHeaderFg)
 	t.Blurred.Description = t.Blurred.Description.Foreground(colorFooterFg)
-	t.Blurred.Base = t.Blurred.Base.BorderForeground(lipgloss.Color("#444444"))
+	t.Blurred.Base = t.Blurred.Base.BorderForeground(colorMuted)
 	return t
 	})
 }
@@ -2082,6 +2123,27 @@ func (m *model) closePicker() {
 	m.pickerLastValue = ""
 	m.pickerLastScannedBase = ""
 	m.pickerAllItems = nil
+}
+
+// closePickable 关闭文件选择器和命令选择器（overlay 激活前调用，避免弹层叠加）。
+func (m *model) closePickable() {
+	m.closePicker()
+	m.closeCommandPicker()
+}
+
+// overlayAnimTick 返回下一个 overlay 动画帧的 tick 命令（~50ms）。
+func (m *model) overlayAnimTick() tea.Cmd {
+	return tea.Tick(50*time.Millisecond, func(t time.Time) tea.Msg {
+		return overlayAnimTickMsg{}
+	})
+}
+
+// activateOverlay 激活覆盖层，关闭 picker 并启动淡入动画。
+func (m *model) activateOverlay(o Overlay) tea.Cmd {
+	m.closePickable()
+	m.overlay = o
+	m.overlayAnimFrame = 0
+	return m.overlayAnimTick()
 }
 
 // completePickerFilter 将选中路径补全到 @ 过滤器，保持选择器打开。
@@ -3345,7 +3407,7 @@ func truncateToolResult(result string) string {
 	if len(result) <= maxToolResultBytes {
 		return result
 	}
-	return result[:maxToolResultBytes] + "\n... (output truncated)"
+	return result[:maxToolResultBytes] + "\n[stored truncated at 100KB]"
 }
 
 // maxToolStreamLines 是流式输出在 TUI 中保留的最大行数。
@@ -4307,8 +4369,16 @@ func (m *model) scrollDown(delta int) {
 
 // scrollToBottom 滚动到底部并锁定自动跟随。
 func (m *model) scrollToBottom() {
-	m.scrollTop = 0
 	m.pinnedToBottom = true
+	m.hasNewContent = false
+	// scrollTop 由 View() 根据 maxScrollTop 自动计算
+}
+
+// markNewContent 在用户向上滚动查看历史且有新内容到达时设置提示标记。
+func (m *model) markNewContent() {
+	if !m.pinnedToBottom {
+		m.hasNewContent = true
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -4366,10 +4436,16 @@ func (m *model) syncOtherInputVisibleStart() {
 
 func (m *model) View() tea.View {
 	if m.height < 10 {
-		// 终端太小，无法正常布局，返回空视图
-		v := tea.NewView("")
+		// 终端太小，无法正常布局，显示提示信息
+		msg := m.msg().TerminalTooSmall
+		padded := lipgloss.NewStyle().
+			Width(m.width).
+			Height(m.height).
+			Align(lipgloss.Center, lipgloss.Center).
+			Foreground(colorMuted).
+			Render(msg)
+		v := tea.NewView(padded)
 		v.AltScreen = true
-		v.MouseMode = tea.MouseModeCellMotion
 		return v
 	}
 
@@ -4428,6 +4504,12 @@ func (m *model) View() tea.View {
 			boxWidth = overlayMaxWidthWide
 		}
 		overlayContent = m.renderPlanExitOverlay(boxWidth)
+	case overlayHelp:
+		boxWidth := contentWidth
+		if boxWidth > overlayMaxWidthMedium {
+			boxWidth = overlayMaxWidthMedium
+		}
+		overlayContent = m.renderHelpOverlay(boxWidth)
 	}
 	var pickerContent string
 	if m.pickerVisible {
@@ -4531,8 +4613,45 @@ func (m *model) View() tea.View {
 
 	// 用空行补足 body 区域到 bodyHeight 行，确保 footer 位置固定
 	padLines := bodyHeight - len(visibleLines)
-	for i := 0; i < padLines; i++ {
-		parts = append(parts, "")
+	// 空状态：body 无用户内容时显示欢迎引导（居中，muted 色）。忽略纯系统消息段落。
+	hasContent := false
+	for _, p := range m.paras {
+		if p.Type != paraSystem {
+			hasContent = true
+			break
+		}
+	}
+	if !hasContent && !m.running && !m.inPlanMode && padLines > 0 {
+		welcomeStyle := lipgloss.NewStyle().
+			Foreground(colorMuted).
+			Width(contentWidth).
+			Align(lipgloss.Center)
+		welcomeLine := welcomeStyle.Render(m.msg().WelcomeHint)
+		// 将欢迎语放在 body 区域的上 1/3 处，其余为空行
+		welcomePos := padLines / 3
+		if welcomePos < 1 {
+			welcomePos = 1
+		}
+		for i := 0; i < padLines; i++ {
+			if i == welcomePos {
+				parts = append(parts, welcomeLine)
+			} else {
+				parts = append(parts, "")
+			}
+		}
+	} else {
+		for i := 0; i < padLines; i++ {
+			parts = append(parts, "")
+		}
+	}
+
+	// 新内容提示：用户向上滚动查看历史时，新内容到达显示跳回提示
+	if m.hasNewContent && m.overlay == overlayNone {
+		hintStyle := lipgloss.NewStyle().
+			Foreground(colorAccentGold).
+			Width(contentWidth).
+			Align(lipgloss.Center)
+		parts = append(parts, hintStyle.Render(m.msg().NewContentHint))
 	}
 
 	if overlayContent != "" {
@@ -4559,8 +4678,12 @@ func (m *model) View() tea.View {
 	// real cursor 模式：定位输入光标
 	if m.overlay == overlayNone {
 		if cur := m.input.Cursor(); cur != nil {
-			// 布局：styleApp top(1) + header + 空行 + body + overlays + todo + picker + separator(1)
-			cur.Y += 1 + headerHeight + bodyHeight + overlayLines + todoPanelHeight + pickerLines + commandPickerLines + 1
+			// 布局：styleApp top(1) + header + 空行 + body + newContentHint + overlays + todo + picker + separator(1)
+			newContentHintLines := 0
+			if m.hasNewContent && m.overlay == overlayNone {
+				newContentHintLines = 1
+			}
+			cur.Y += 1 + headerHeight + bodyHeight + newContentHintLines + overlayLines + todoPanelHeight + pickerLines + commandPickerLines + 1
 			cur.X += 2 // styleApp 左 padding
 			if cur.X > m.width-2 {
 				cur.X = m.width - 2
@@ -4645,6 +4768,12 @@ func (m *model) renderInputSeparator(contentWidth int) string {
 		prefix := styleInputSeparatorPlan.Render("▌Plan")
 		rest := strings.Repeat("─", max(contentWidth-lipgloss.Width(prefix), 0))
 		return prefix + styleInputSeparatorLine.Render(rest)
+	}
+	// 空闲态：绿色分隔线提示就绪，与运行中的 muted 分隔线区分
+	if !m.running {
+		return lipgloss.NewStyle().
+			Foreground(colorOK).
+			Render(strings.Repeat("─", contentWidth))
 	}
 	return styleInputSeparatorLine.Render(strings.Repeat("─", contentWidth))
 }
@@ -5029,6 +5158,10 @@ func (m *model) initTheme() {
 		p = darkPalette
 	case "light":
 		p = lightPalette
+	case "darkcolorblind":
+		p = darkColorBlindPalette
+	case "lightcolorblind":
+		p = lightColorBlindPalette
 	case "auto":
 		m.autoDark = lipgloss.HasDarkBackground(os.Stdin, os.Stdout)
 		if m.autoDark {
@@ -5044,7 +5177,7 @@ func (m *model) initTheme() {
 	m.syncThemeComponents()
 }
 
-// toggleTheme 循环切换主题: dark → light → auto → dark ...
+// toggleTheme 循环切换主题: dark → light → darkcolorblind → lightcolorblind → auto → dark ...
 func (m *model) toggleTheme() {
 	switch m.themeMode {
 	case "dark":
@@ -5052,6 +5185,14 @@ func (m *model) toggleTheme() {
 		applyTheme(lightPalette)
 		m.palette = lightPalette
 	case "light":
+		m.themeMode = "darkcolorblind"
+		applyTheme(darkColorBlindPalette)
+		m.palette = darkColorBlindPalette
+	case "darkcolorblind":
+		m.themeMode = "lightcolorblind"
+		applyTheme(lightColorBlindPalette)
+		m.palette = lightColorBlindPalette
+	case "lightcolorblind":
 		m.themeMode = "auto"
 		if m.autoDark {
 			applyTheme(darkPalette)
@@ -5066,6 +5207,9 @@ func (m *model) toggleTheme() {
 		m.palette = darkPalette
 	}
 	m.syncThemeComponents()
+	if m.settingsStore != nil {
+		_ = m.settingsStore.SaveTheme(m.themeMode)
+	}
 }
 
 // syncThemeComponents 同步 spinner、glamour 等组件的样式。
@@ -5081,7 +5225,7 @@ func (m *model) syncThemeComponents() {
 	m.ctxProgress.EmptyColor = colorFooterFg
 
 	// 同步 help 组件主题
-	isDark := m.themeMode == "dark" || (m.themeMode == "auto" && m.autoDark)
+	isDark := m.themeMode == "dark" || m.themeMode == "darkcolorblind" || (m.themeMode == "auto" && m.autoDark)
 	m.help.Styles = help.DefaultStyles(isDark)
 
 	// 同步 input 组件样式 —— 提示符与用户消息前缀联动，placeholder 使用 muted 色
@@ -5233,11 +5377,13 @@ func (m *model) handleSlashCommand(input string) tea.Cmd {
 			})
 
 		case slashcommand.SideEffectOpenThemePicker:
+			m.closePickable()
 			m.buildThemeList()
 			m.overlay = overlayThemePicker
 			m.input.Blur()
 
 		case slashcommand.SideEffectOpenLocalePicker:
+			m.closePickable()
 			m.buildLocaleList()
 			m.overlay = overlayLocalePicker
 			m.input.Blur()
@@ -5245,6 +5391,7 @@ func (m *model) handleSlashCommand(input string) tea.Cmd {
 		case slashcommand.SideEffectOpenModelPicker:
 			var models []llm.ModelInfo
 			if err := json.Unmarshal([]byte(se.Detail), &models); err == nil {
+				m.closePickable()
 				m.modelPickerItems = models
 				m.buildModelPickerList()
 				m.overlay = overlayModelPicker
@@ -5383,6 +5530,26 @@ func (s *tuiSettingsStore) SaveLLM(settings *llm.LLMSettings) error {
 
 func (s *tuiSettingsStore) SaveTheme(mode string) error {
 	return writeFullSettings(s.projectPath, nil, mode, "")
+}
+
+// LoadTheme 从 project settings.json 读取保存的主题模式，未找到时返回空字符串。
+func (s *tuiSettingsStore) LoadTheme() string {
+	for _, p := range []string{s.projectPath, s.globalPath} {
+		if p == "" {
+			continue
+		}
+		data, err := os.ReadFile(p)
+		if err != nil {
+			continue
+		}
+		var cfg struct {
+			Theme string `json:"theme"`
+		}
+		if json.Unmarshal(data, &cfg) == nil && cfg.Theme != "" {
+			return cfg.Theme
+		}
+	}
+	return ""
 }
 
 func (s *tuiSettingsStore) SaveLocale(locale string) error {
@@ -5566,6 +5733,8 @@ var themeItems = []themeItem{
 	{label: "Auto", mode: "auto"},
 	{label: "Dark", mode: "dark"},
 	{label: "Light", mode: "light"},
+	{label: "Dark CB", mode: "darkcolorblind"},
+	{label: "Light CB", mode: "lightcolorblind"},
 }
 
 // buildThemeList 构建主题选择列表覆盖层。
@@ -5589,7 +5758,7 @@ func (m *model) buildThemeList() {
 	delegate.Styles = listItemStyles()
 	m.themeDelegate = &delegate
 
-	l := list.New(items, delegate, 0, 3)
+	l := list.New(items, delegate, 0, len(items))
 	l.SetShowTitle(false)
 	l.SetShowPagination(false)
 	l.SetShowStatusBar(false)
@@ -5597,7 +5766,7 @@ func (m *model) buildThemeList() {
 	l.SetShowHelp(false)
 	l.KeyMap.Quit = key.NewBinding()
 	l.KeyMap.ForceQuit = key.NewBinding()
-	if selectedIdx < 3 {
+	if selectedIdx < len(items) {
 		l.Select(selectedIdx)
 	}
 	m.themeList = l
@@ -5634,12 +5803,18 @@ func (m *model) applyThemeMode(mode string) {
 		p = darkPalette
 	case "light":
 		p = lightPalette
+	case "darkcolorblind":
+		p = darkColorBlindPalette
+	case "lightcolorblind":
+		p = lightColorBlindPalette
 	case "auto":
 		if m.autoDark {
 			p = darkPalette
 		} else {
 			p = lightPalette
 		}
+	default:
+		p = darkPalette
 	}
 	applyTheme(p)
 	m.palette = p
@@ -5871,6 +6046,11 @@ func runTUI(llmClient llm.Client, registry tool.Registry, guard permission.Guard
 	// 构造 slash command registry（TUI 侧依赖实现）
 	store := &tuiSettingsStore{projectPath: projectPath, globalPath: globalPath}
 	m.settingsStore = store
+
+	// 从 settings.json 恢复上次保存的主题（优先级高于 CLI 默认值）
+	if savedTheme := store.LoadTheme(); savedTheme != "" {
+		m.themeMode = savedTheme
+	}
 	// 初始化 thinking 档位显示
 	if s, err := store.LoadLLM(); err == nil {
 		m.hudThinkingEffort = resolveThinkingEffort(s)

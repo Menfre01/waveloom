@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/Menfre01/waveloom/pkg/llm"
 	"github.com/Menfre01/waveloom/pkg/pathutil"
@@ -267,9 +268,8 @@ func formatQuestionPreview(resultJSON string, textWidth int, indent string, lc *
 	if len(order) == 0 {
 		return ""
 	}
-	// 与其他工具预览的 "│ " 前缀保持一致，使用灰色
-	mutedStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#666666"))
-	contentWidth := textWidth - 2 // "│ " 前缀占 2 列
+	// 与其他工具预览的 toolOutputPrefix 前缀保持一致
+	contentWidth := textWidth - lipgloss.Width(toolOutputPrefix)
 	if contentWidth < 1 {
 		contentWidth = 1
 	}
@@ -288,7 +288,7 @@ func formatQuestionPreview(resultJSON string, textWidth int, indent string, lc *
 				break
 			}
 			sb.WriteString(indent)
-			sb.WriteString(mutedStyle.Render("│ "))
+			sb.WriteString(styleMuted.Render(toolOutputPrefix))
 			sb.WriteString(wl)
 			sb.WriteString("\n")
 			wrapped++
@@ -311,8 +311,7 @@ func formatQuestionExpanded(resultJSON string, indent string, textWidth int, lc 
 	if len(order) == 0 {
 		return ""
 	}
-	mutedStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#666666"))
-	contentWidth := textWidth - 2 // "│ " 前缀占 2 列
+	contentWidth := textWidth - lipgloss.Width(toolOutputPrefix)
 	if contentWidth < 1 {
 		contentWidth = 1
 	}
@@ -331,7 +330,7 @@ func formatQuestionExpanded(resultJSON string, indent string, textWidth int, lc 
 				break
 			}
 			sb.WriteString(indent)
-			sb.WriteString(mutedStyle.Render("│ "))
+			sb.WriteString(styleMuted.Render(toolOutputPrefix))
 			sb.WriteString(wl)
 			sb.WriteString("\n")
 			wrapped++
@@ -880,6 +879,17 @@ func renderAssistantPara(sb *strings.Builder, p *Paragraph, ctx ViewportCtx) {
 			sb.WriteString("\n")
 		}
 	}
+
+	// 流式输出末尾追加闪烁光标（~500ms 周期），提示 AI 仍在输出
+	if streaming && sb.Len() > 0 {
+		out := strings.TrimSuffix(sb.String(), "\n")
+		sb.Reset()
+		sb.WriteString(out)
+		if time.Now().UnixMilli()/530%2 == 0 {
+			sb.WriteString(styleUserPrefix.Render("▊"))
+		}
+		sb.WriteString("\n")
+	}
 }
 
 
@@ -1330,13 +1340,17 @@ func renderToolPara(sb *strings.Builder, p *Paragraph, ctx ViewportCtx) {
 	}
 }
 
+// toolOutputPrefix 是工具输出预览/展开的视觉前缀（灰色竖线 + 空格，宽 2 列）。
+// 所有工具输出的折叠预览、展开态、subagent 输出均使用此前缀保持视觉一致。
+const toolOutputPrefix = "│ "
+
 // maxPreviewWrapped 是折叠预览的最大包装后行数。限制 wrapLine 膨胀后的实际显示行数，
 // 防止单条超长行（如 100KB 无换行 JSON）撑满折叠预览。
 const maxPreviewWrapped = 5
 
 // renderToolPreview 渲染工具输出的默认预览行（折叠态）。indent 由上层传入以对齐摘要行前缀。
 //
-// 错误态（ToolResult 为空但 ToolError 非空）：统一以红色 "│ " 前缀渲染错误信息，
+// 错误态（ToolResult 为空但 ToolError 非空）：统一以 toolOutputPrefix 红色前缀渲染错误信息，
 // 与 shell 错误输出布局对齐，保证所有工具的失败信息在 TUI 中一致可见。
 func renderToolPreview(sb *strings.Builder, p *Paragraph, textWidth int, indent string, lc *Messages) {
 	// ask_user_question 定制渲染：显示可读的问答摘要
@@ -1358,8 +1372,8 @@ func renderToolPreview(sb *strings.Builder, p *Paragraph, textWidth int, indent 
 		return
 	}
 
-	// "│ " 前缀占 2 列
-	contentWidth := textWidth - 2
+	// toolOutputPrefix 占 2 列
+	contentWidth := textWidth - lipgloss.Width(toolOutputPrefix)
 	if contentWidth < 1 {
 		contentWidth = 1
 	}
@@ -1372,7 +1386,7 @@ func renderToolPreview(sb *strings.Builder, p *Paragraph, textWidth int, indent 
 				return true
 			}
 			sb.WriteString(indent)
-			sb.WriteString(lineStyle.Render("│ " + wl))
+			sb.WriteString(lineStyle.Render(toolOutputPrefix + wl))
 			sb.WriteString("\n")
 			*wrapped++
 		}
@@ -1476,7 +1490,7 @@ func renderToolStreamOutput(sb *strings.Builder, p *Paragraph, textWidth int, in
 		return
 	}
 
-	contentWidth := textWidth - 2 // "│ " 前缀占 2 列
+	contentWidth := textWidth - lipgloss.Width(toolOutputPrefix)
 	if contentWidth < 1 {
 		contentWidth = 1
 	}
@@ -1500,7 +1514,7 @@ func renderToolStreamOutput(sb *strings.Builder, p *Paragraph, textWidth int, in
 
 	for _, wl := range visible {
 		sb.WriteString(indent)
-		sb.WriteString(styleToolPreview.Render("│ "))
+		sb.WriteString(styleToolPreview.Render(toolOutputPrefix))
 		sb.WriteString(wl)
 		sb.WriteString("\n")
 	}
@@ -1601,6 +1615,7 @@ func renderToolFullOutput(sb *strings.Builder, p *Paragraph, textWidth int, inde
 					break
 				}
 				sb.WriteString(indent)
+				sb.WriteString(styleToolExpanded.Render(toolOutputPrefix))
 				sb.WriteString(wl)
 				sb.WriteString("\n")
 				wrapped++
@@ -1623,6 +1638,7 @@ func renderToolFullOutput(sb *strings.Builder, p *Paragraph, textWidth int, inde
 					break
 				}
 				sb.WriteString(indent)
+				sb.WriteString(styleToolExpanded.Render(toolOutputPrefix))
 				sb.WriteString(wl)
 				sb.WriteString("\n")
 				wrapped++
@@ -1655,7 +1671,7 @@ func renderDiffPreview(sb *strings.Builder, hunks []tool.DiffHunk, textWidth int
 		return
 	}
 
-	contentWidth := textWidth - 2
+	contentWidth := textWidth - lipgloss.Width(toolOutputPrefix)
 	if contentWidth < 1 {
 		contentWidth = 1
 	}
@@ -1673,7 +1689,7 @@ func renderDiffPreview(sb *strings.Builder, hunks []tool.DiffHunk, textWidth int
 					break
 				}
 				sb.WriteString(indent)
-				sb.WriteString(style.Render("│ " + wl))
+				sb.WriteString(style.Render(toolOutputPrefix + wl))
 				sb.WriteString("\n")
 				wrapped++
 			}
@@ -2008,7 +2024,7 @@ func renderSubagentStreamLines(sb *strings.Builder, text string, textWidth int, 
 	if text == "" {
 		return
 	}
-	contentWidth := textWidth - 2
+	contentWidth := textWidth - lipgloss.Width(toolOutputPrefix)
 	if contentWidth < 1 {
 		contentWidth = 1
 	}
@@ -2027,9 +2043,9 @@ func renderSubagentStreamLines(sb *strings.Builder, text string, textWidth int, 
 	for _, wl := range visible {
 		sb.WriteString(indent)
 		if muted {
-			sb.WriteString(styleToolPreview.Render("│ " + wl))
+			sb.WriteString(styleToolPreview.Render(toolOutputPrefix + wl))
 		} else {
-			sb.WriteString(styleToolPreview.Render("│ "))
+			sb.WriteString(styleToolPreview.Render(toolOutputPrefix))
 			sb.WriteString(wl)
 		}
 		sb.WriteString("\n")
@@ -2082,7 +2098,7 @@ func renderSubagentBody(sb *strings.Builder, p *Paragraph, textWidth int, indent
 		}
 		return
 	}
-	contentWidth := textWidth - 2 // "│ " 前缀占 2 列
+	contentWidth := textWidth - lipgloss.Width(toolOutputPrefix)
 	if contentWidth < 1 {
 		contentWidth = 1
 	}
@@ -2134,7 +2150,7 @@ func renderSubagentBody(sb *strings.Builder, p *Paragraph, textWidth int, indent
 			sb.WriteString("\n")
 		case subagent.SubagentToolResult:
 			// 对标主 TUI renderToolStreamOutput / renderToolFullOutput：
-			// "│ " 前缀 muted，内容默认色。展开态不限行数。
+			// toolOutputPrefix 前缀 muted，内容默认色。展开态不限行数。
 			renderSubagentToolOutput(sb, ev.ToolResult, contentWidth, indent, isExpanded)
 		}
 	}
@@ -2157,14 +2173,14 @@ func renderSubagentToolOutput(sb *strings.Builder, output string, contentWidth i
 	for _, line := range lines {
 		for _, wl := range wrapLineStable(line, contentWidth) {
 			sb.WriteString(indent)
-			sb.WriteString(styleToolPreview.Render("│ "))
+			sb.WriteString(styleToolPreview.Render(toolOutputPrefix))
 			sb.WriteString(wl)
 			sb.WriteString("\n")
 		}
 	}
 	if truncated {
 		sb.WriteString(indent)
-		sb.WriteString(styleToolPreviewHint.Render("│ ..."))
+		sb.WriteString(styleToolPreviewHint.Render("..."))
 		sb.WriteString("\n")
 	}
 }
@@ -2224,10 +2240,10 @@ func renderTodoPanel(lc *Messages, todos []todo.TodoItem, width int, expanded bo
 	boxStyle := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(borderColor).
-		Padding(0, 1).
+		Padding(1, 2).
 		Width(width)
 
-	innerWidth := width - 2 - 2 // border(2) + padding(2)
+	innerWidth := width - 2 - 4 // border(2) + padding(2*2)
 
 	// ── 标题行 ──
 	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(colorHeaderAccent).Width(innerWidth)
@@ -2271,25 +2287,22 @@ func renderTodoItem(t todo.TodoItem, width int, spinnerView string) string {
 }
 
 func renderTodoInProgress(t todo.TodoItem, width int, spinnerView string) string {
-	// spinner + bold + colorAccentGold
-	spinnerPart := lipgloss.NewStyle().Foreground(colorAccentGold).Render(spinnerView)
-	textPart := lipgloss.NewStyle().Foreground(colorAccentGold).Bold(true).Render(t.ActiveForm)
+	spinnerPart := styleTodoInProgressSpinner.Render(spinnerView)
+	textPart := styleTodoInProgressText.Render(t.ActiveForm)
 	line := spinnerPart + " " + textPart
 	return lipgloss.NewStyle().Width(width).Render(line)
 }
 
 func renderTodoPending(t todo.TodoItem, width int) string {
-	// dim circle + default text
-	marker := lipgloss.NewStyle().Foreground(colorMuted).Render("○")
+	marker := styleTodoPendingMarker.Render("○")
 	text := t.Content
 	line := marker + " " + text
 	return lipgloss.NewStyle().Width(width).Render(line)
 }
 
 func renderTodoCompleted(t todo.TodoItem, width int) string {
-	// green check + strikethrough
-	marker := lipgloss.NewStyle().Foreground(colorOK).Render("✓")
-	text := lipgloss.NewStyle().Foreground(colorOK).Strikethrough(true).Render(t.Content)
+	marker := styleTodoCompletedMarker.Render("✓")
+	text := styleTodoCompletedText.Render(t.Content)
 	line := marker + " " + text
 	return lipgloss.NewStyle().Width(width).Render(line)
 }

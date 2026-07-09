@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"encoding/json"
+	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -61,8 +63,8 @@ func TestTruncateToolResult_OverLimit(t *testing.T) {
 	if len(result) >= len(input) {
 		t.Errorf("expected truncation, got same length %d", len(result))
 	}
-	if len(result) != maxToolResultBytes+len("\n... (output truncated)") {
-		t.Errorf("expected length %d, got %d", maxToolResultBytes+len("\n... (output truncated)"), len(result))
+	if len(result) != maxToolResultBytes+len("\n[stored truncated at 100KB]") {
+		t.Errorf("expected length %d, got %d", maxToolResultBytes+len("\n[stored truncated at 100KB]"), len(result))
 	}
 }
 
@@ -964,5 +966,86 @@ func TestRegression_RelativizePathsParentDir(t *testing.T) {
 		if result[i] != exp {
 			t.Errorf("result[%d]: expected %q, got %q", i, exp, result[i])
 		}
+	}
+}
+
+// ── Theme Persistence Tests ─────────────────────────────────────────────
+
+func TestLoadTheme_FromProjectSettings(t *testing.T) {
+	dir := t.TempDir()
+	projectPath := filepath.Join(dir, "settings.json")
+
+	// 写入包含 theme 的 settings.json
+	writeSettings(t, projectPath, `{"theme":"darkcolorblind"}`)
+
+	store := &tuiSettingsStore{projectPath: projectPath, globalPath: ""}
+	got := store.LoadTheme()
+	if got != "darkcolorblind" {
+		t.Errorf("expected 'darkcolorblind', got %q", got)
+	}
+}
+
+func TestLoadTheme_FallbackToGlobal(t *testing.T) {
+	dir := t.TempDir()
+	projectPath := filepath.Join(dir, "project.json")
+	globalPath := filepath.Join(dir, "global.json")
+
+	// project 无 theme，global 有
+	writeSettings(t, projectPath, `{}`)
+	writeSettings(t, globalPath, `{"theme":"lightcolorblind"}`)
+
+	store := &tuiSettingsStore{projectPath: projectPath, globalPath: globalPath}
+	got := store.LoadTheme()
+	if got != "lightcolorblind" {
+		t.Errorf("expected 'lightcolorblind' from global, got %q", got)
+	}
+}
+
+func TestLoadTheme_NoSettings(t *testing.T) {
+	dir := t.TempDir()
+	store := &tuiSettingsStore{
+		projectPath: filepath.Join(dir, "nonexistent.json"),
+		globalPath:  "",
+	}
+	got := store.LoadTheme()
+	if got != "" {
+		t.Errorf("expected empty string for missing settings, got %q", got)
+	}
+}
+
+func TestSaveTheme_WritesToFile(t *testing.T) {
+	dir := t.TempDir()
+	projectPath := filepath.Join(dir, "settings.json")
+
+	// 先写入已有内容
+	writeSettings(t, projectPath, `{"locale":"zh-CN"}`)
+
+	store := &tuiSettingsStore{projectPath: projectPath, globalPath: ""}
+	if err := store.SaveTheme("lightcolorblind"); err != nil {
+		t.Fatalf("SaveTheme failed: %v", err)
+	}
+
+	// 验证 theme 已写入，且原有 locale 保留
+	data, err := os.ReadFile(projectPath)
+	if err != nil {
+		t.Fatalf("read settings: %v", err)
+	}
+	var cfg map[string]any
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		t.Fatalf("unmarshal settings: %v", err)
+	}
+	if cfg["theme"] != "lightcolorblind" {
+		t.Errorf("expected theme='lightcolorblind', got %v", cfg["theme"])
+	}
+	if cfg["locale"] != "zh-CN" {
+		t.Errorf("expected locale='zh-CN' preserved, got %v", cfg["locale"])
+	}
+}
+
+// writeSettings 写入 settings.json 文件，用于测试。
+func writeSettings(t *testing.T, path, content string) {
+	t.Helper()
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("write settings: %v", err)
 	}
 }
