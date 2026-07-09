@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 )
 
@@ -27,6 +28,13 @@ func LoadConfigs(cwd, homeDir string) map[string]ServerConfig {
 	var sources []map[string]ServerConfig
 
 	// 按优先级从低到高加载（后面的覆盖前面的同名 server）
+
+	// 6. Claude 桌面版配置（自动发现 Claude 桌面版已安装的 MCP server）
+	if homeDir != "" {
+		if servers := loadClaudeDesktopConfig(homeDir); len(servers) > 0 {
+			sources = append(sources, servers)
+		}
+	}
 
 	// 5. ~/.claude.json → mcpServers（Claude Code 用户级）
 	if homeDir != "" {
@@ -124,6 +132,44 @@ func loadWaveloomJSON(homeDir, projectPath string) map[string]ServerConfig {
 	}
 
 	// 加载顶级 mcpServers
+	var cfg MCPConfigFile
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		return nil
+	}
+	return cfg.MCPServers
+}
+
+// loadClaudeDesktopConfig 加载 Claude 桌面版配置文件。
+func loadClaudeDesktopConfig(homeDir string) map[string]ServerConfig {
+	path := claudeDesktopConfigPath(homeDir)
+	if path == "" {
+		return nil
+	}
+	return loadFlatMCPConfig(path)
+}
+
+// claudeDesktopConfigPath 返回 Claude 桌面版配置文件路径（按平台）。
+func claudeDesktopConfigPath(homeDir string) string {
+	switch runtime.GOOS {
+	case "darwin":
+		return filepath.Join(homeDir, "Library", "Application Support", "Claude", "claude_desktop_config.json")
+	case "windows":
+		appData := os.Getenv("APPDATA")
+		if appData == "" {
+			appData = filepath.Join(homeDir, "AppData", "Roaming")
+		}
+		return filepath.Join(appData, "Claude", "claude_desktop_config.json")
+	default: // linux
+		return filepath.Join(homeDir, ".config", "Claude", "claude_desktop_config.json")
+	}
+}
+
+// loadFlatMCPConfig 加载扁平结构的 MCP 配置文件（顶层 mcpServers 键）。
+func loadFlatMCPConfig(path string) map[string]ServerConfig {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
 	var cfg MCPConfigFile
 	if err := json.Unmarshal(data, &cfg); err != nil {
 		return nil
