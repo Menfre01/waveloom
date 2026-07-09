@@ -60,6 +60,26 @@ Rule format: `ToolName` or `ToolName(pattern)`, e.g., `bash(ls *)` matches all c
 
 The agent auto-detects available toolchains at startup. For tools not in PATH or to pin a specific version, configure via `environment.tools`. See [`environment.en.md`](./environment.en.md) for details.
 
+### web_search Configuration
+
+The `web_search` tool defaults to DuckDuckGo — no configuration required. For better result quality, switch to the Brave Search API ([2,000 free queries/month](https://brave.com/search/api/)) via an environment variable:
+
+```bash
+export BRAVE_API_KEY="your-brave-api-key"
+```
+
+Or configure in `settings.json`:
+
+```json
+{
+    "web_search": {
+        "brave_api_key": "your-brave-api-key"
+    }
+}
+```
+
+Priority: `BRAVE_API_KEY` env var > `settings.json` `web_search.brave_api_key`. Falls back to DuckDuckGo when neither is set.
+
 ### Tool Timeout Configuration
 
 | Field | Description | Default |
