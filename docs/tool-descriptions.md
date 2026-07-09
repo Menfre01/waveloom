@@ -13,6 +13,7 @@
 | `edit_file` | ❌ | 文件 | 基于精确字符串匹配的查找替换 |
 | `bash` | ❌ | 命令 | 执行 Shell 命令（bg 变体支持后台任务） |
 | `web_fetch` | ✅ | Web | 获取 URL 内容 |
+| `web_search` | ✅ | Web | 搜索引擎查询（DDG 默认 + Brave 可选）|
 | `ask_user_question` | ❌ | 交互 | 向用户发起选择题决策 |
 | `skill` | ❌ | 系统 | 调用用户定义的 Skill |
 | `enter_plan_mode` | ❌ | Plan | 进入先规划后执行的 Plan 模式 |
@@ -156,7 +157,31 @@ Fetch content from a URL and return text. Use for consulting online docs, API re
 
 ---
 
-## ask_user_question
+## web_search
+
+```
+Search the web and return a list of results (title, URL, snippet).
+Use this to find current documentation, API references, solutions, or any information not in your training data.
+
+After searching, use web_fetch to read the full content of promising URLs.
+
+Backends (auto-selected):
+- DuckDuckGo (default, no configuration needed)
+- Brave Search (set BRAVE_API_KEY environment variable for better results)
+```
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "query":       { "type": "string",  "description": "Search query — keywords, natural language, or technical terms", "minLength": 1 },
+    "max_results": { "type": "integer", "description": "Maximum number of results to return (default: 10, max: 20)" }
+  },
+  "required": ["query"]
+}
+```
+
+---
 
 ```
 Ask the user one or more multiple-choice questions to gather preferences,

@@ -698,3 +698,18 @@ func TestParseResponse_ListTools(t *testing.T) {
 		t.Errorf("Tools[0].Name = %q", listResult.Tools[0].Name)
 	}
 }
+
+func TestClaudeDesktopConfigPath(t *testing.T) {
+	// 只验证当前平台路径非空且合理
+	path := claudeDesktopConfigPath("/home/user")
+	if path == "" {
+		t.Fatal("path should not be empty")
+	}
+	// 各平台都应包含 "Claude" 和 "claude_desktop_config.json"
+	if !strings.Contains(path, "Claude") {
+		t.Errorf("path should contain 'Claude', got %q", path)
+	}
+	if !strings.Contains(path, "claude_desktop_config.json") {
+		t.Errorf("path should contain 'claude_desktop_config.json', got %q", path)
+	}
+}
