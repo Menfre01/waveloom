@@ -668,7 +668,7 @@ func waveloomGlamourStyle(p palette) ansi.StyleConfig {
 	if p.GlamourStyle == "light" {
 		base = glamourstyles.LightStyleConfig
 	} else {
-		base = glamourstyles.DarkStyleConfig
+		base = glamourstyles.DraculaStyleConfig
 	}
 
 	// 清零 margin
