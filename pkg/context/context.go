@@ -9,9 +9,12 @@
 package context
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -40,6 +43,10 @@ type ContextManager struct {
 	messages    []llm.Message
 	stats       Stats
 	sessionPath string // session 落盘路径（空表示不落盘）
+
+	// jsonlMessageCount 记录已写入 JSONL 的消息数，
+	// 用于增量追加（避免重复写入已持久化的消息）。
+	jsonlMessageCount int
 
 	// 四级水位线上下文压缩（委托给 Compactor）
 	compactor compaction.Compactor
@@ -104,19 +111,24 @@ func (cm *ContextManager) Compactor() compaction.Compactor {
 //
 // 返回的切片是内部状态的副本——Loop 对返回值的 append/modify 不影响
 // ContextManager 的内部状态。只有通过 CompleteRun 才能更新内部状态。
-func (cm *ContextManager) PrepareRun(userInput string) []llm.Message {
+//
+// 返回值: 完整消息切片, 本条 user 消息的 UUID（供 filehistory 追踪和 rewind 使用）
+func (cm *ContextManager) PrepareRun(userInput string) ([]llm.Message, string) {
 	cm.mu.Lock()
 	defer cm.mu.Unlock()
 
 	// ── 注入后台任务完成通知 ──
 	if notification := cm.checkBackgroundTasksLocked(); notification != "" {
 		cm.messages = append(cm.messages, llm.Message{
+			ID:      newMessageID(),
 			Role:    llm.RoleUser,
 			Content: notification,
 		})
 	}
 
+	messageID := newMessageID()
 	cm.messages = append(cm.messages, llm.Message{
+		ID:      messageID,
 		Role:    llm.RoleUser,
 		Content: userInput,
 	})
@@ -125,7 +137,17 @@ func (cm *ContextManager) PrepareRun(userInput string) []llm.Message {
 
 	snapshot := make([]llm.Message, len(cm.messages))
 	copy(snapshot, cm.messages)
-	return snapshot
+	return snapshot, messageID
+}
+
+// newMessageID 生成 8 字节随机十六进制消息标识符。
+// 格式：16 个十六进制字符，如 "a1b2c3d4e5f6a7b8"。
+// 足以为每个消息提供唯一标识（64 位随机空间，冲突概率可忽略），
+// 比 UUID v4 更紧凑，在 JSONL 序列化中节省空间。
+func newMessageID() string {
+	b := make([]byte, 8)
+	rand.Read(b)
+	return hex.EncodeToString(b)
 }
 
 // checkBackgroundTasksLocked 检查后台任务状态，返回应注入的通知文本。
@@ -189,7 +211,17 @@ func (cm *ContextManager) CompleteRun(messages []llm.Message, promptTokens, cont
 	cm.mu.Lock()
 
 	// 验证和存储消息（压缩已在 Loop 内完成）
-	validated, _ := llm.ValidateMessages(messages)
+	validated, repairReport := llm.ValidateMessages(messages)
+	if len(repairReport) > 0 {
+		// 本轮产出了无效消息 → 打印修复日志并重置 JSONL 计数，
+		// 强制下次 saveToPath 全量重写 JSONL（而非增量追加），
+		// 避免已写入但被丢弃的消息残留在 JSONL 中。
+		for _, entry := range repairReport {
+			fmt.Fprintf(os.Stderr, "turn repair: msg[%d] role=%s action=%s — %s\n",
+				entry.Index, entry.Role, entry.Action, entry.Detail)
+		}
+		cm.jsonlMessageCount = 0
+	}
 	cm.messages = validated
 
 	cm.stats.TotalTurns++
@@ -239,15 +271,7 @@ func (cm *ContextManager) SessionID() string {
 	if path == "" {
 		return ""
 	}
-	base := path[len(path)-1:]
-	// 快速路径：直接扫文件名（避免 import filepath）
-	for i := len(path) - 1; i >= 0; i-- {
-		if path[i] == '/' || path[i] == '\\' {
-			base = path[i+1:]
-			break
-		}
-	}
-	return strings.TrimSuffix(base, ".json")
+	return strings.TrimSuffix(filepath.Base(path), ".json")
 }
 
 // Save 手动将当前状态落盘到已设置的 sessionPath。
@@ -261,14 +285,50 @@ func (cm *ContextManager) Save() {
 	compaction := cm.compactionData()
 	todoItems := make([]json.RawMessage, len(cm.todoItems))
 	copy(todoItems, cm.todoItems)
+	jsonlWritten := cm.jsonlMessageCount
 	cm.mu.RUnlock()
+
+	// 防御：过滤空 role 消息
+	forceRewrite := false
+	if dropped := filterInvalidMessages(messages); dropped > 0 {
+		valid := make([]llm.Message, 0, len(messages))
+		for i := range messages {
+			if messages[i].Role != "" {
+				valid = append(valid, messages[i])
+			}
+		}
+		messages = valid
+		forceRewrite = true
+	}
 
 	if path != "" {
 		_ = SaveSessionToFile(path, messages, stats, &compaction, todoItems)
+		// JSONL 落盘
+		n := len(messages)
+		jlPath := jsonlPathForJSON(path)
+		if forceRewrite || n < jsonlWritten {
+			if err := writeMessagesToJSONL(jlPath, messages); err != nil {
+				fmt.Fprintf(os.Stderr, "jsonl rewrite: %v\n", err)
+			} else {
+				cm.mu.Lock()
+				cm.jsonlMessageCount = n
+				cm.mu.Unlock()
+			}
+		} else if n > jsonlWritten {
+			if err := appendMessagesToJSONL(jlPath, messages[jsonlWritten:]); err != nil {
+				fmt.Fprintf(os.Stderr, "jsonl append: %v\n", err)
+			} else {
+				cm.mu.Lock()
+				cm.jsonlMessageCount = n
+				cm.mu.Unlock()
+			}
+		}
 	}
 }
 
-// saveToPath 内部方法：用当前状态覆盖写入指定文件。
+// saveToPath 内部方法：用当前状态覆盖写入指定 JSON 文件，
+// 并将新增消息追加写入 JSONL 文件。
+// 若消息列表因 compaction/ValidateMessages 缩短或过滤了无效消息，则全量重写 JSONL。
 func (cm *ContextManager) saveToPath(path string) {
 	cm.mu.RLock()
 	messages := make([]llm.Message, len(cm.messages))
@@ -277,9 +337,48 @@ func (cm *ContextManager) saveToPath(path string) {
 	compaction := cm.compactionData()
 	todoItems := make([]json.RawMessage, len(cm.todoItems))
 	copy(todoItems, cm.todoItems)
+	jsonlWritten := cm.jsonlMessageCount
 	cm.mu.RUnlock()
 
+	// 防御：过滤空 role 消息（避免非法数据落盘）
+	forceRewrite := false
+	if dropped := filterInvalidMessages(messages); dropped > 0 {
+		fmt.Fprintf(os.Stderr, "saveToPath: dropped %d messages with invalid role from %d total\n", dropped, len(messages))
+		valid := make([]llm.Message, 0, len(messages))
+		for i := range messages {
+			if messages[i].Role != "" {
+				valid = append(valid, messages[i])
+			}
+		}
+		messages = valid
+		forceRewrite = true
+	}
+
+	// 保存 JSON 元数据（stats / compaction / tasks / todo）
 	_ = SaveSessionToFile(path, messages, stats, &compaction, todoItems)
+
+	// JSONL 落盘
+	n := len(messages)
+	jlPath := jsonlPathForJSON(path)
+	if forceRewrite || n < jsonlWritten {
+		// 消息被过滤/移除 → 全量重写 JSONL
+		if err := writeMessagesToJSONL(jlPath, messages); err != nil {
+			fmt.Fprintf(os.Stderr, "jsonl rewrite: %v\n", err)
+		} else {
+			cm.mu.Lock()
+			cm.jsonlMessageCount = n
+			cm.mu.Unlock()
+		}
+	} else if n > jsonlWritten {
+		// 增量追加新消息
+		if err := appendMessagesToJSONL(jlPath, messages[jsonlWritten:]); err != nil {
+			fmt.Fprintf(os.Stderr, "jsonl append: %v\n", err)
+		} else {
+			cm.mu.Lock()
+			cm.jsonlMessageCount = n
+			cm.mu.Unlock()
+		}
+	}
 }
 
 // stateful 返回内部 Compactor 的持久化扩展接口。
@@ -327,12 +426,26 @@ func (cm *ContextManager) LoadFromFile(path string) bool {
 	// 反序列化后完整性校验
 	cleaned, report := llm.ValidateMessages(messages)
 	if len(report) > 0 {
-		// 静默修复：输出修复详情到 stderr，不阻塞恢复
 		for _, entry := range report {
 			fmt.Fprintf(os.Stderr, "session repair: msg[%d] role=%s action=%s — %s\n",
 				entry.Index, entry.Role, entry.Action, entry.Detail)
 		}
 		messages = cleaned
+
+		// 立即回写清理后的数据，避免下次启动重复报 repair
+		// （如果 sessionPath 在 load 之前已设置则复用；否则用当前 path）
+		_ = writeMessagesToJSONL(jsonlPathForJSON(path), messages)
+		// 同时更新 JSON 文件中的 messages 字段
+		if sf, loadErr := loadSessionFile(path); loadErr == nil && sf != nil {
+			sf.Messages = messages
+			sf.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
+			if data, marshalErr := json.MarshalIndent(sf, "", "  "); marshalErr == nil {
+				tmpPath := path + ".tmp"
+				if writeErr := os.WriteFile(tmpPath, data, 0o644); writeErr == nil {
+					_ = os.Rename(tmpPath, path)
+				}
+			}
+		}
 	}
 
 	cm.mu.Lock()
@@ -340,6 +453,7 @@ func (cm *ContextManager) LoadFromFile(path string) bool {
 	cm.messages = messages
 	cm.stats = stats
 	cm.sessionPath = path
+	cm.jsonlMessageCount = len(messages) // 标记全部已写入 JSONL
 
 	// 恢复压缩状态
 	if compactionData != nil {
@@ -385,12 +499,111 @@ func (cm *ContextManager) Reset() {
 	cm.stats = Stats{}
 	cm.instructionsInjected = false
 	cm.stateful().Reset()
+	cm.jsonlMessageCount = 0
 
 	if len(cm.messages) > 0 && cm.messages[0].Role == llm.RoleSystem {
 		cm.messages = cm.messages[:1]
 	} else {
 		cm.messages = nil
 	}
+}
+
+// RewindConversationTo 截断消息历史到指定索引（不含），用于 rewind 功能。
+// messageIndex 是保留的最后一条消息的索引+1（即 messages = messages[:messageIndex]）。
+// 截断后生成新的 conversationID，重置 stats/compaction/todo 状态，
+// 并将截断后的消息写入新的 JSONL 文件。
+// 返回新的 conversationID 和新 JSONL 文件路径。
+func (cm *ContextManager) RewindConversationTo(messageIndex int, sessionDir string) (string, string, error) {
+	cm.mu.Lock()
+	defer cm.mu.Unlock()
+
+	if messageIndex < 0 || messageIndex > len(cm.messages) {
+		return "", "", fmt.Errorf("invalid message index %d (have %d messages)", messageIndex, len(cm.messages))
+	}
+
+	// 截断消息
+	cm.messages = cm.messages[:messageIndex]
+
+	// 生成新 conversationID
+	newID := NewSessionID()
+
+	// 重置状态
+	cm.stats = Stats{}
+	cm.jsonlMessageCount = 0
+	cm.instructionsInjected = len(cm.messages) > 1 && cm.messages[1].Role == llm.RoleUser && cm.messages[1].Content != ""
+	cm.stateful().Reset()
+
+	// 写入新 JSONL（消息数据，非 transcript）
+	jsonlPath := filepath.Join(sessionDir, newID+".messages.jsonl")
+	if err := writeMessagesToJSONL(jsonlPath, cm.messages); err != nil {
+		return "", "", fmt.Errorf("write fork jsonl: %w", err)
+	}
+	cm.jsonlMessageCount = len(cm.messages)
+
+	// 写入新 JSON 元数据（零值状态）
+	jsonPath := filepath.Join(sessionDir, newID+".json")
+	compData := cm.compactionData()
+	if err := SaveSessionToFile(jsonPath, cm.messages, cm.stats, &compData, nil); err != nil {
+		return "", "", fmt.Errorf("write fork json: %w", err)
+	}
+
+	// 更新 session path 到新文件
+	cm.sessionPath = jsonPath
+
+	return newID, jsonlPath, nil
+}
+
+// filterInvalidMessages 统计消息列表中 role 为空的消息数。
+// 纯诊断函数，不修改切片（调用方负责过滤）。
+func filterInvalidMessages(msgs []llm.Message) int {
+	count := 0
+	for i := range msgs {
+		if msgs[i].Role == "" {
+			if count == 0 {
+				// 只在首次发现时打印详情，避免刷屏
+				fmt.Fprintf(os.Stderr, "corrupt message at idx %d: role=%q content=%q\n",
+					i, msgs[i].Role, truncStr(msgs[i].Content, 80))
+			}
+			count++
+		}
+	}
+	return count
+}
+
+func truncStr(s string, max int) string {
+	if len(s) <= max {
+		return s
+	}
+	return s[:max] + "..."
+}
+
+// Messages 返回当前消息历史的副本（线程安全）。
+func (cm *ContextManager) Messages() []llm.Message {
+	cm.mu.RLock()
+	defer cm.mu.RUnlock()
+	msgs := make([]llm.Message, len(cm.messages))
+	copy(msgs, cm.messages)
+	return msgs
+}
+
+// MessageCount 返回当前消息数（线程安全）。
+func (cm *ContextManager) MessageCount() int {
+	cm.mu.RLock()
+	defer cm.mu.RUnlock()
+	return len(cm.messages)
+}
+
+// LastUserMessageID 返回最后一条 user 消息的 ID（线程安全）。
+// 用于 FileHistory 在 CompleteRun 后关联 snapshot。
+func (cm *ContextManager) LastUserMessageID() string {
+	cm.mu.RLock()
+	defer cm.mu.RUnlock()
+	for i := len(cm.messages) - 1; i >= 0; i-- {
+		if cm.messages[i].Role == llm.RoleUser && cm.messages[i].ID != "" {
+			return cm.messages[i].ID
+		}
+	}
+	return ""
 }
 
 // InjectUserInstructions 注入 AGENTS.md 内容作为第一条 user 消息。

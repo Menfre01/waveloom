@@ -222,6 +222,25 @@ type Messages struct {
 
 	// ── Subagent suffix ──────────────────────────────────
 	SubagentTurnsFmt string // 含 %d，如 "%d轮" / "%d turns"
+
+	// ── Rewind overlay ────────────────────────────────────
+	RewindTitle            string // "Rewind"
+	RewindPrompt           string // "Restore the code and/or conversation to the point before…"
+	RewindNothingToRestore string // "Nothing to rewind to yet."
+	RewindCurrent          string // "(current)"
+	RewindConfirmTitle     string // "Rewind"
+	RewindConfirmPrompt    string // "Confirm you want to restore to the point before you sent this message:"
+	RewindOptionBoth       string // "Restore code and conversation"
+	RewindOptionConv       string // "Restore conversation only"
+	RewindOptionCode       string // "Restore code only"
+	RewindOptionNeverMind  string // "Never mind"
+	RewindWarning          string // "Rewinding does not affect files edited manually or via bash."
+	RewindRestoring        string // "Restoring…"
+	RewindFailed           string // "Failed to restore: %v"
+	RewindNoCodeChanges    string // "No code changes"
+	RewindFilesChanged     string // "%d files changed"
+	RewindFilesChanged1    string // "%s +%d -%d"
+	RewindSlashDescription string // "Rewind code and/or conversation to a previous point"
 }
 
 // ---------------------------------------------------------------------------
@@ -492,6 +511,25 @@ var zhCN = Messages{
 
 	// Subagent suffix
 	SubagentTurnsFmt: "%d轮",
+
+	// Rewind
+	RewindTitle:            "时间回溯",
+	RewindPrompt:           "将代码和/或对话回退到…",
+	RewindNothingToRestore: "还没有可回退的内容。",
+	RewindCurrent:          "(当前)",
+	RewindConfirmTitle:     "时间回溯",
+	RewindConfirmPrompt:    "确认要回退到发送这条消息之前吗：",
+	RewindOptionBoth:       "回退代码和对话",
+	RewindOptionConv:       "仅回退对话",
+	RewindOptionCode:       "仅回退代码",
+	RewindOptionNeverMind:  "取消",
+	RewindWarning:          "回退不会影响手动编辑或通过 bash 修改的文件。",
+	RewindRestoring:        "回退中…",
+	RewindFailed:           "回退失败: %v",
+	RewindNoCodeChanges:    "无代码变更",
+	RewindFilesChanged:     "%d 个文件变更",
+	RewindFilesChanged1:    "%s +%d -%d",
+	RewindSlashDescription: "回退代码和/或对话到之前的某个节点",
 }
 
 var enUS = Messages{
@@ -756,6 +794,25 @@ Environment variables:
 
 	// Subagent suffix
 	SubagentTurnsFmt: "%d turns",
+
+	// Rewind
+	RewindTitle:            "Rewind",
+	RewindPrompt:           "Restore the code and/or conversation to the point before…",
+	RewindNothingToRestore: "Nothing to rewind to yet.",
+	RewindCurrent:          "(current)",
+	RewindConfirmTitle:     "Rewind",
+	RewindConfirmPrompt:    "Confirm you want to restore to the point before you sent this message:",
+	RewindOptionBoth:       "Restore code and conversation",
+	RewindOptionConv:       "Restore conversation only",
+	RewindOptionCode:       "Restore code only",
+	RewindOptionNeverMind:  "Never mind",
+	RewindWarning:          "Rewinding does not affect files edited manually or via bash.",
+	RewindRestoring:        "Restoring…",
+	RewindFailed:           "Failed to restore: %v",
+	RewindNoCodeChanges:    "No code changes",
+	RewindFilesChanged:     "%d files changed",
+	RewindFilesChanged1:    "%s +%d -%d",
+	RewindSlashDescription: "Rewind code and/or conversation to a previous point",
 }
 
 // ---------------------------------------------------------------------------

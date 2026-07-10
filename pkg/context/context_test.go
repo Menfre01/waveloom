@@ -18,7 +18,7 @@ func TestNew_WithSystemPrompt(t *testing.T) {
 	if cm.Stats().MessageCount != 1 {
 		t.Fatalf("expected 1 message, got %d", cm.Stats().MessageCount)
 	}
-	msgs := cm.PrepareRun("hello")
+	msgs, _ := cm.PrepareRun("hello")
 	if len(msgs) != 2 {
 		t.Fatalf("expected 2 messages, got %d", len(msgs))
 	}
@@ -35,7 +35,7 @@ func TestNew_WithoutSystemPrompt(t *testing.T) {
 	if cm.Stats().MessageCount != 0 {
 		t.Fatalf("expected 0 messages, got %d", cm.Stats().MessageCount)
 	}
-	msgs := cm.PrepareRun("hello")
+	msgs, _ := cm.PrepareRun("hello")
 	if len(msgs) != 1 {
 		t.Fatalf("expected 1 message, got %d", len(msgs))
 	}
@@ -46,14 +46,14 @@ func TestNew_WithoutSystemPrompt(t *testing.T) {
 
 func TestPrepareRun_ReturnsCopy(t *testing.T) {
 	cm := New("system")
-	msgs1 := cm.PrepareRun("turn 1")
+	msgs1, _ := cm.PrepareRun("turn 1")
 
 	// 修改返回值不应影响 ContextManager 内部状态
 	msgs1[0].Content = "modified"
 	_ = append(msgs1, llm.Message{Role: llm.RoleAssistant, Content: "fake"})
 
 	// 第二次 PrepareRun 应基于原始内部状态
-	msgs2 := cm.PrepareRun("turn 2")
+	msgs2, _ := cm.PrepareRun("turn 2")
 	if msgs2[0].Content != "system" {
 		t.Fatalf("internal state was mutated: content=%q", msgs2[0].Content)
 	}
@@ -64,7 +64,7 @@ func TestPrepareRun_ReturnsCopy(t *testing.T) {
 
 func TestCompleteRun_ReplacesState(t *testing.T) {
 	cm := New("system")
-	cm.PrepareRun("hello")
+	_, _ = cm.PrepareRun("hello")
 
 	// 模拟 Loop 完成后的消息
 	loopMessages := []llm.Message{
@@ -79,7 +79,7 @@ func TestCompleteRun_ReplacesState(t *testing.T) {
 	}
 
 	// 下一轮 PrepareRun 应基于新状态
-	msgs := cm.PrepareRun("next")
+	msgs, _ := cm.PrepareRun("next")
 	if len(msgs) != 4 {
 		t.Fatalf("expected 4 messages, got %d", len(msgs))
 	}
@@ -93,7 +93,7 @@ func TestCompleteRun_ReplacesState(t *testing.T) {
 
 func TestCompleteRun_StatsAccumulation(t *testing.T) {
 	cm := New("system")
-	cm.PrepareRun("turn 1")
+	_, _ = cm.PrepareRun("turn 1")
 
 	// 第一轮
 	cm.CompleteRun([]llm.Message{
@@ -117,7 +117,7 @@ func TestCompleteRun_StatsAccumulation(t *testing.T) {
 	}
 
 	// 第二轮
-	cm.PrepareRun("turn 2")
+	_, _ = cm.PrepareRun("turn 2")
 	cm.CompleteRun([]llm.Message{
 		{Role: llm.RoleSystem, Content: "system"},
 		{Role: llm.RoleUser, Content: "turn 1"},
@@ -140,7 +140,7 @@ func TestCompleteRun_StatsAccumulation(t *testing.T) {
 
 func TestCompleteRun_PreservesSystemMessage(t *testing.T) {
 	cm := New("original system")
-	cm.PrepareRun("hello")
+	_, _ = cm.PrepareRun("hello")
 
 	// Loop 可能使用不同的 system prompt 内容，CompleteRun 以 Loop 产出为准
 	cm.CompleteRun([]llm.Message{
@@ -149,7 +149,7 @@ func TestCompleteRun_PreservesSystemMessage(t *testing.T) {
 		{Role: llm.RoleAssistant, Content: "hi"},
 	}, 10, 10, 5, 0, 10, 0, "", 0, "")
 
-	msgs := cm.PrepareRun("next")
+	msgs, _ := cm.PrepareRun("next")
 	if msgs[0].Role != llm.RoleSystem {
 		t.Fatalf("system message lost after CompleteRun")
 	}
@@ -160,7 +160,7 @@ func TestCompleteRun_PreservesSystemMessage(t *testing.T) {
 
 func TestReset_WithSystem(t *testing.T) {
 	cm := New("system")
-	cm.PrepareRun("hello")
+	_, _ = cm.PrepareRun("hello")
 	cm.CompleteRun([]llm.Message{
 		{Role: llm.RoleSystem, Content: "system"},
 		{Role: llm.RoleUser, Content: "hello"},
@@ -172,7 +172,7 @@ func TestReset_WithSystem(t *testing.T) {
 	if cm.Stats().MessageCount != 1 {
 		t.Fatalf("expected 1 message after reset, got %d", cm.Stats().MessageCount)
 	}
-	msgs := cm.PrepareRun("fresh start")
+	msgs, _ := cm.PrepareRun("fresh start")
 	if len(msgs) != 2 {
 		t.Fatalf("expected 2 messages after reset+prepare, got %d", len(msgs))
 	}
@@ -183,7 +183,7 @@ func TestReset_WithSystem(t *testing.T) {
 
 func TestReset_WithoutSystem(t *testing.T) {
 	cm := New("")
-	cm.PrepareRun("hello")
+	_, _ = cm.PrepareRun("hello")
 	cm.CompleteRun([]llm.Message{
 		{Role: llm.RoleUser, Content: "hello"},
 		{Role: llm.RoleAssistant, Content: "hi"},
@@ -209,7 +209,7 @@ func TestMultiTurnAccumulation(t *testing.T) {
 	cm := New("You are a code assistant.")
 
 	// Turn 1
-	cm.PrepareRun("read main.go")
+	_, _ = cm.PrepareRun("read main.go")
 	cm.CompleteRun([]llm.Message{
 		{Role: llm.RoleSystem, Content: "You are a code assistant."},
 		{Role: llm.RoleUser, Content: "read main.go"},
@@ -219,7 +219,7 @@ func TestMultiTurnAccumulation(t *testing.T) {
 	}, 200, 200, 100, 150, 50, 0, "", 0, "")
 
 	// Turn 2
-	msgs := cm.PrepareRun("now edit it")
+	msgs, _ := cm.PrepareRun("now edit it")
 	if len(msgs) != 6 {
 		t.Fatalf("expected 6 messages for turn 2, got %d", len(msgs))
 	}
@@ -251,7 +251,7 @@ func TestMultiTurnAccumulation(t *testing.T) {
 
 func TestConcurrentAccess(t *testing.T) {
 	cm := New("system")
-	cm.PrepareRun("initial")
+	_, _ = cm.PrepareRun("initial")
 
 	var wg sync.WaitGroup
 	const goroutines = 20
@@ -271,7 +271,7 @@ func TestConcurrentAccess(t *testing.T) {
 		wg.Add(1)
 		go func(idx int) {
 			defer wg.Done()
-			msgs := cm.PrepareRun("input")
+			msgs, _ := cm.PrepareRun("input")
 			cm.CompleteRun(msgs, 10, 10, 5, 0, 10, 0, "", 0, "")
 		}(i)
 	}
@@ -286,7 +286,7 @@ func TestConcurrentAccess(t *testing.T) {
 
 func TestStats_ReturnsCopy(t *testing.T) {
 	cm := New("system")
-	cm.PrepareRun("hello")
+	_, _ = cm.PrepareRun("hello")
 	cm.CompleteRun([]llm.Message{
 		{Role: llm.RoleSystem, Content: "system"},
 		{Role: llm.RoleUser, Content: "hello"},
@@ -309,7 +309,7 @@ func TestStats_ReturnsCopy(t *testing.T) {
 
 func TestReset_ResetsStats(t *testing.T) {
 	cm := New("system")
-	cm.PrepareRun("hello")
+	_, _ = cm.PrepareRun("hello")
 	cm.CompleteRun([]llm.Message{
 		{Role: llm.RoleSystem, Content: "system"},
 		{Role: llm.RoleUser, Content: "hello"},
@@ -330,7 +330,7 @@ func TestReset_ResetsStats(t *testing.T) {
 	}
 
 	// Reset 后 PrepareRun 不应携带旧历史
-	msgs := cm.PrepareRun("fresh")
+	msgs, _ := cm.PrepareRun("fresh")
 	if len(msgs) != 2 {
 		t.Fatalf("expected 2 messages after reset+prepare, got %d", len(msgs))
 	}
@@ -346,7 +346,7 @@ func TestReset_ResetsStats(t *testing.T) {
 
 func TestCompleteRun_NilMessages(t *testing.T) {
 	cm := New("system")
-	cm.PrepareRun("hello")
+	_, _ = cm.PrepareRun("hello")
 
 	cm.CompleteRun(nil, 0, 0, 0, 0, 0, 0, "", 0, "")
 
@@ -357,7 +357,7 @@ func TestCompleteRun_NilMessages(t *testing.T) {
 
 func TestCompleteRun_EmptyMessages(t *testing.T) {
 	cm := New("system")
-	cm.PrepareRun("hello")
+	_, _ = cm.PrepareRun("hello")
 
 	cm.CompleteRun([]llm.Message{}, 0, 0, 0, 0, 0, 0, "", 0, "")
 
@@ -365,7 +365,7 @@ func TestCompleteRun_EmptyMessages(t *testing.T) {
 		t.Fatalf("expected 0 messages after empty CompleteRun, got %d", cm.Stats().MessageCount)
 	}
 
-	msgs := cm.PrepareRun("next")
+	msgs, _ := cm.PrepareRun("next")
 	if len(msgs) != 1 {
 		t.Fatalf("expected 1 message after empty CompleteRun, got %d", len(msgs))
 	}
@@ -378,7 +378,7 @@ func TestInjectUserInstructions_InsertsAfterSystem(t *testing.T) {
 	cm := New("system prompt")
 	cm.InjectUserInstructions("AGENTS.md content")
 
-	msgs := cm.PrepareRun("hello")
+	msgs, _ := cm.PrepareRun("hello")
 	if len(msgs) != 3 {
 		t.Fatalf("expected 3 messages (system, instructions, user), got %d", len(msgs))
 	}
@@ -422,7 +422,7 @@ func TestInjectUserInstructions_ResetPreservesInstructions(t *testing.T) {
 	cm.Reset()
 	cm.InjectUserInstructions("AGENTS.md content reloaded")
 
-	msgs := cm.PrepareRun("hello")
+	msgs, _ := cm.PrepareRun("hello")
 	if len(msgs) != 3 {
 		t.Fatalf("expected 3 messages after reset+reload, got %d", len(msgs))
 	}
@@ -436,7 +436,7 @@ func TestInjectUserInstructions_Idempotent(t *testing.T) {
 	cm.InjectUserInstructions("first injection")
 	cm.InjectUserInstructions("second injection")
 
-	msgs := cm.PrepareRun("hello")
+	msgs, _ := cm.PrepareRun("hello")
 	if len(msgs) != 3 {
 		t.Fatalf("expected 3 messages, got %d", len(msgs))
 	}
@@ -524,7 +524,7 @@ func TestSessionID_NoExtension(t *testing.T) {
 
 func TestSave_WithoutPath(t *testing.T) {
 	cm := New("system")
-	cm.PrepareRun("hello")
+	_, _ = cm.PrepareRun("hello")
 	// 未设置 path 的 Save 应静默返回，不 panic
 	cm.Save()
 }
@@ -533,7 +533,7 @@ func TestSave_WithPath(t *testing.T) {
 	dir := t.TempDir()
 	path := dir + "/session.json"
 	cm := New("system")
-	cm.PrepareRun("hello")
+	_, _ = cm.PrepareRun("hello")
 	cm.CompleteRun([]llm.Message{
 		{Role: llm.RoleSystem, Content: "system"},
 		{Role: llm.RoleUser, Content: "hello"},
@@ -626,7 +626,7 @@ func TestRemoveSession(t *testing.T) {
 	dir := t.TempDir()
 	path := dir + "/session.json"
 	cm := New("system")
-	cm.PrepareRun("hello")
+	_, _ = cm.PrepareRun("hello")
 	cm.CompleteRun([]llm.Message{
 		{Role: llm.RoleSystem, Content: "system"},
 		{Role: llm.RoleUser, Content: "hello"},
@@ -665,7 +665,7 @@ func TestCompleteRun_AutoSave(t *testing.T) {
 	path := dir + "/autosave.json"
 	cm := New("system")
 	cm.SetSessionPath(path)
-	cm.PrepareRun("hello")
+	_, _ = cm.PrepareRun("hello")
 
 	cm.CompleteRun([]llm.Message{
 		{Role: llm.RoleSystem, Content: "system"},
@@ -695,7 +695,7 @@ func TestPrepareRun_BackgroundNotification(t *testing.T) {
 	})
 
 	cm := New("system")
-	cm.PrepareRun("first turn") // 设置 lastBackgroundCheck
+	_, _ = cm.PrepareRun("first turn") // 设置 lastBackgroundCheck
 
 	// 注册新完成的任务，使用足够晚的时间确保不被 lastBackgroundCheck 过滤
 	checkTime := time.Now()
@@ -705,7 +705,7 @@ func TestPrepareRun_BackgroundNotification(t *testing.T) {
 		StartTime: checkTime, CompletedTime: checkTime.Add(time.Millisecond), ExitCode: 0,
 	})
 
-	msgs := cm.PrepareRun("second turn")
+	msgs, _ := cm.PrepareRun("second turn")
 
 	// system + 首次 user + notification user + 第二次 user
 	if len(msgs) < 3 {
@@ -726,5 +726,186 @@ func TestPrepareRun_BackgroundNotification(t *testing.T) {
 	}
 	if !strings.Contains(notifMsg.Content, `status="running"`) {
 		t.Errorf("notification should have running status: %s", notifMsg.Content)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// RewindConversationTo 测试
+// ---------------------------------------------------------------------------
+
+func TestRewindConversationTo_TruncatesMessages(t *testing.T) {
+	dir := t.TempDir()
+	cm := New("You are a helpful assistant.")
+	cm.SetSessionPath(filepath.Join(dir, "session.json"))
+
+	// 累积几条消息
+	_, _ = cm.PrepareRun("first user message")
+	cm.mu.Lock()
+	cm.messages = append(cm.messages,
+		llm.Message{ID: "a1", Role: llm.RoleAssistant, Content: "assistant reply"},
+		llm.Message{ID: "t1", Role: llm.RoleTool, Content: "tool result", ToolCallID: "tc1"},
+	)
+	cm.mu.Unlock()
+	_, _ = cm.PrepareRun("second user message")
+
+	beforeCount := cm.MessageCount()
+
+	// 回退到索引 3（system + user "first" + assistant + tool）= 4，但索引是 4 → 保留到 tool
+	// 实际：messages = [system, user("first"), assistant, tool, user("second")] 
+	// 回退到 user("first") 那条之前 → 索引 = 1（只保留 system）
+	newID, _, err := cm.RewindConversationTo(1, dir)
+	if err != nil {
+		t.Fatalf("RewindConversationTo failed: %v", err)
+	}
+	if newID == "" {
+		t.Fatal("expected non-empty new conversation ID")
+	}
+
+	// 应该只剩 system 消息
+	if cm.MessageCount() != 1 {
+		t.Fatalf("expected 1 message after rewind, got %d", cm.MessageCount())
+	}
+
+	// 旧 session 应该有之前的消息数
+	_ = beforeCount
+}
+
+func TestRewindConversationTo_InvalidIndex(t *testing.T) {
+	dir := t.TempDir()
+	cm := New("system")
+	cm.SetSessionPath(filepath.Join(dir, "session.json"))
+
+	_, _ = cm.PrepareRun("hello")
+
+	// 负索引
+	_, _, err := cm.RewindConversationTo(-1, dir)
+	if err == nil {
+		t.Fatal("expected error for negative index")
+	}
+
+	// 超出范围
+	_, _, err = cm.RewindConversationTo(100, dir)
+	if err == nil {
+		t.Fatal("expected error for out-of-range index")
+	}
+}
+
+func TestRewindConversationTo_ResetsStats(t *testing.T) {
+	dir := t.TempDir()
+	cm := New("system")
+
+	// Do a complete run cycle
+	msgs, _ := cm.PrepareRun("hello")
+	cm.CompleteRun(append(msgs, llm.Message{Role: llm.RoleAssistant, Content: "hi"}),
+		100, 100, 50, 30, 20, 10, "model", 1000, "completed")
+
+	// Verify stats are non-zero
+	if cm.Stats().TotalTurns == 0 {
+		t.Fatal("expected non-zero turn count")
+	}
+
+	_, _, err := cm.RewindConversationTo(1, dir)
+	if err != nil {
+		t.Fatalf("RewindConversationTo failed: %v", err)
+	}
+
+	// Stats should be reset
+	if cm.Stats().TotalTurns != 0 {
+		t.Fatalf("expected 0 turns after rewind, got %d", cm.Stats().TotalTurns)
+	}
+	if cm.Stats().TotalPromptTokens != 0 {
+		t.Fatalf("expected 0 prompt tokens after rewind, got %d", cm.Stats().TotalPromptTokens)
+	}
+}
+
+func TestRewindConversationTo_PersistsForkFiles(t *testing.T) {
+	dir := t.TempDir()
+	cm := New("system")
+
+	msgs, _ := cm.PrepareRun("hello")
+	cm.CompleteRun(append(msgs, llm.Message{Role: llm.RoleAssistant, Content: "hi"}),
+		50, 50, 25, 10, 5, 0, "model", 500, "completed")
+
+	beforeCount := cm.MessageCount()
+
+	newID, jsonlPath, err := cm.RewindConversationTo(2, dir)
+	if err != nil {
+		t.Fatalf("RewindConversationTo failed: %v", err)
+	}
+
+	// JSONL should exist
+	if _, err := os.Stat(jsonlPath); os.IsNotExist(err) {
+		t.Fatalf("JSONL file not found: %s", jsonlPath)
+	}
+
+	// JSON should exist
+	jsonPath := filepath.Join(dir, newID+".json")
+	if _, err := os.Stat(jsonPath); os.IsNotExist(err) {
+		t.Fatalf("JSON file not found: %s", jsonPath)
+	}
+
+	// JSONL should contain only truncated messages
+	jlMessages, jlErr := loadMessagesFromJSONL(jsonlPath)
+	if jlErr != nil {
+		t.Fatalf("load JSONL failed: %v", jlErr)
+	}
+	if len(jlMessages) != 2 {
+		t.Fatalf("expected 2 messages in JSONL, got %d", len(jlMessages))
+	}
+
+	_ = beforeCount
+}
+
+func TestMessages(t *testing.T) {
+	cm := New("system")
+	_, _ = cm.PrepareRun("hello")
+	_, _ = cm.PrepareRun("world")
+
+	msgs := cm.Messages()
+	if len(msgs) != 3 { // system + hello + world
+		t.Fatalf("expected 3 messages, got %d", len(msgs))
+	}
+
+	// Verify copy — modifying returned slice should not affect internal
+	msgs[0] = llm.Message{Role: llm.RoleUser, Content: "modified"}
+	msgs2 := cm.Messages()
+	if msgs2[0].Role != llm.RoleSystem {
+		t.Fatal("Messages() should return a copy")
+	}
+}
+
+func TestMessageCount(t *testing.T) {
+	cm := New("system")
+	if cm.MessageCount() != 1 {
+		t.Fatalf("expected 1 message, got %d", cm.MessageCount())
+	}
+	_, _ = cm.PrepareRun("hello")
+	if cm.MessageCount() != 2 {
+		t.Fatalf("expected 2 messages, got %d", cm.MessageCount())
+	}
+}
+
+func TestLastUserMessageID(t *testing.T) {
+	cm := New("system")
+	if cm.LastUserMessageID() != "" {
+		t.Fatalf("expected empty last user message ID, got %q", cm.LastUserMessageID())
+	}
+
+	_, id1 := cm.PrepareRun("first")
+	if cm.LastUserMessageID() != id1 {
+		t.Fatalf("expected %q, got %q", id1, cm.LastUserMessageID())
+	}
+
+	_, id2 := cm.PrepareRun("second")
+	if cm.LastUserMessageID() != id2 {
+		t.Fatalf("expected %q, got %q", id2, cm.LastUserMessageID())
+	}
+
+	// Verify IDs are non-empty and distinct
+	if id1 == "" || id2 == "" {
+		t.Fatal("message IDs should not be empty")
+	}
+	if id1 == id2 {
+		t.Fatal("message IDs should be unique")
 	}
 }
