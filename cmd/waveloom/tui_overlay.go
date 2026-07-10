@@ -27,6 +27,8 @@ const (
 	overlayPlanEnter                     // 进入 plan 模式确认（阻断式）
 	overlayPlanExit                      // plan 审批（阻断式，展示 plan 内容）
 	overlayHelp                          // ? 快捷键帮助
+	overlayRewindSelect                  // rewind 消息选择
+	overlayRewindConfirm                 // rewind 确认
 )
 
 // renderOverlayBox 渲染覆盖层的外框。
@@ -383,4 +385,115 @@ func keyMapToGroups(km keyMap) [][]key.Binding {
 		{km.FocusNext, km.FocusPrev, km.Picker, km.Paste, km.ToggleTheme, km.Help},
 		{km.Up, km.Down, km.PageUp, km.PageDown, km.JumpBottom},
 	}
+}
+
+// ---------------------------------------------------------------------------
+// Rewind 覆盖层渲染
+// ---------------------------------------------------------------------------
+
+// rewindOption 是 rewind 确认界面的选项。
+type rewindOption int
+
+const (
+	rewindBoth     rewindOption = iota // 回退代码和对话
+	rewindConvOnly                     // 仅回退对话
+	rewindCodeOnly                     // 仅回退代码
+	rewindCancel                       // 取消
+)
+
+// renderRewindSelectOverlay 渲染 rewind 消息选择覆盖层。
+func (m *model) renderRewindSelectOverlay(boxWidth int) string {
+	innerWidth := boxWidth - 2 - 4
+
+	title := styleOverlayTitle.Width(innerWidth).Render(m.msg().RewindTitle)
+	prompt := styleOverlayBody.Width(innerWidth).Render(m.msg().RewindPrompt)
+
+	var lines []string
+	lines = append(lines, title, "", prompt, "")
+
+	if len(m.rewindMessages) == 0 {
+		lines = append(lines, styleOverlayBody.Width(innerWidth).Render(m.msg().RewindNothingToRestore))
+	} else {
+		for i, msg := range m.rewindMessages {
+			prefix := "  "
+			if i == m.rewindSelectedIdx {
+				prefix = "> "
+			}
+			line := prefix + msg.Content
+			if msg.FilesChanged > 0 {
+				line += "  " + fmt.Sprintf(m.msg().RewindFilesChanged, msg.FilesChanged)
+				if msg.FileSummary != "" {
+					line += "  " + msg.FileSummary
+				}
+			} else {
+				line += "  " + m.msg().RewindNoCodeChanges
+			}
+			lines = append(lines, styleOverlayBody.Width(innerWidth).Render(line))
+		}
+		// 最后加 (current) 标记
+		lines = append(lines, "")
+		lines = append(lines, styleOverlayBody.Width(innerWidth).Render(m.msg().RewindCurrent))
+	}
+
+	lines = append(lines, "")
+
+	hint := renderOverlayHint(&m.help, innerWidth, []key.Binding{
+		key.NewBinding(key.WithKeys("↑/↓"), key.WithHelp("↑/↓", m.msg().KeyNav)),
+		key.NewBinding(key.WithKeys("enter"), key.WithHelp("Enter", m.msg().KeyConfirm)),
+		key.NewBinding(key.WithKeys("esc"), key.WithHelp("Esc", m.msg().KeyCancel)),
+	})
+	lines = append(lines, hint)
+
+	return renderOverlayBox(boxWidth, m.overlayAnimFrame, strings.Join(lines, "\n"))
+}
+
+// renderRewindConfirmOverlay 渲染 rewind 确认覆盖层。
+func (m *model) renderRewindConfirmOverlay(boxWidth int) string {
+	innerWidth := boxWidth - 2 - 4
+
+	title := styleOverlayTitle.Width(innerWidth).Render(m.msg().RewindConfirmTitle)
+
+	// 找到目标消息的文本
+	targetText := ""
+	for _, msg := range m.rewindMessages {
+		if msg.MessageID == m.rewindTargetMsgID {
+			targetText = msg.Content
+			break
+		}
+	}
+
+	var lines []string
+	lines = append(lines, title, "")
+	if targetText != "" {
+		lines = append(lines, styleOverlayBody.Width(innerWidth).Render(m.msg().RewindConfirmPrompt))
+		lines = append(lines, "  │ "+targetText)
+		lines = append(lines, "")
+	}
+
+	options := []string{
+		m.msg().RewindOptionBoth,
+		m.msg().RewindOptionConv,
+		m.msg().RewindOptionCode,
+		m.msg().RewindOptionNeverMind,
+	}
+	for i, opt := range options {
+		prefix := "  "
+		if i == int(m.rewindSelectedIdx) {
+			prefix = "> "
+		}
+		lines = append(lines, styleOverlayBody.Width(innerWidth).Render(prefix+opt))
+	}
+
+	lines = append(lines, "")
+	lines = append(lines, styleOverlayBody.Width(innerWidth).Render("⚠ "+m.msg().RewindWarning))
+
+	hint := renderOverlayHint(&m.help, innerWidth, []key.Binding{
+		key.NewBinding(key.WithKeys("↑/↓"), key.WithHelp("↑/↓", m.msg().KeyNav)),
+		key.NewBinding(key.WithKeys("enter"), key.WithHelp("Enter", m.msg().KeyConfirm)),
+		key.NewBinding(key.WithKeys("esc"), key.WithHelp("Esc", m.msg().KeyCancel)),
+	})
+	lines = append(lines, "")
+	lines = append(lines, hint)
+
+	return renderOverlayBox(boxWidth, m.overlayAnimFrame, strings.Join(lines, "\n"))
 }

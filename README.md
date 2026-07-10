@@ -30,8 +30,8 @@ curl -fsSL https://raw.githubusercontent.com/Menfre01/waveloom/main/install.sh |
 **Homebrew**
 
 ```sh
-brew trust menfre01/tap
-brew install Menfre01/tap/waveloom
+brew tap menfre01/tap
+brew install waveloom
 ```
 
 > Supports macOS / Linux / Windows, AMD64 & ARM64. Installs to `~/.local/bin`, no sudo needed.
@@ -94,6 +94,7 @@ waveloom
 - **Prefix cache optimized** — Fixed System Prompt, append-only message history, four-tier watermark compaction. Maximum common prefix stays cache-hot across turns.
 - **Permission safety** — Three-tier decisions (allow / deny / ask) with pattern-matching rule engine. Every write operation requires your confirmation.
 - **Session persistence** — Close the terminal, come back days later with `waveloom --continue`. The agent remembers all prior context.
+- **Checkpoint/Rewind** — Rewind to any previous message with full file state restoration. Fork mode preserves original session intact — history never lost.
 - **Plan Mode** — Two-stage workflow: explore & design first, implement after approval. `Shift+Tab` to enter/exit, Guard-enforced write protection.
 - **13 built-in tools** — `read_file` / `write_file` / `edit_file` / `bash` / `web_fetch` / `web_search` / `ask_user_question` / `enter_plan_mode` / `exit_plan_mode` / `skill` / `agent` / `kill_background_task` / `todo_write`.
 - **i18n multilingual** — Full zh-CN / en-US bilingual UI. `--locale` CLI flag, `/locale` command, auto-detect from LANG.

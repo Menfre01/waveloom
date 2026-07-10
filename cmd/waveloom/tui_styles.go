@@ -53,8 +53,8 @@ var darkPalette = palette{
 	User:  lipgloss.Color("#5fafff"),
 	OK:    lipgloss.Color("#5faf5f"),
 	Error: lipgloss.Color("#d75f5f"),
-	Gray:  lipgloss.Color("#777777"),
-	Muted: lipgloss.Color("#6a6a6a"),
+	Gray:  lipgloss.Color("#9a9a9a"),
+	Muted: lipgloss.Color("#888888"),
 	Body:  lipgloss.Color("#d4d4d4"),
 
 	DiffAdd:   lipgloss.Color("#8cc250"),
@@ -126,8 +126,8 @@ var darkColorBlindPalette = palette{
 	User:  lipgloss.Color("#5fafff"),
 	OK:    lipgloss.Color("#5fafff"), // 蓝 = 成功（替代绿色）
 	Error: lipgloss.Color("#ff6b6b"), // 亮红 = 失败
-	Gray:  lipgloss.Color("#888888"),
-	Muted: lipgloss.Color("#777777"),
+	Gray:  lipgloss.Color("#9a9a9a"),
+	Muted: lipgloss.Color("#888888"),
 	Body:  lipgloss.Color("#d4d4d4"),
 
 	DiffAdd:   lipgloss.Color("#5fafff"), // 蓝 = 新增

@@ -1768,10 +1768,14 @@ func renderToolFullOutput(sb *strings.Builder, p *Paragraph, textWidth int, inde
 		}
 
 	case "bash":
+		contentWidth := textWidth - lipgloss.Width(toolOutputPrefix)
+		if contentWidth < 1 {
+			contentWidth = 1
+		}
 		rawLines := strings.Split(result, "\n")
 		for _, line := range rawLines {
 			line = strings.TrimLeft(line, " ")
-			wlines := wrapLine(line, textWidth)
+			wlines := wrapLine(line, contentWidth)
 			for _, wl := range wlines {
 				if wrapped >= maxExpandedWrapped {
 					truncated = true
@@ -1797,8 +1801,12 @@ func renderToolFullOutput(sb *strings.Builder, p *Paragraph, textWidth int, inde
 		return
 
 	default:
+		contentWidth := textWidth - lipgloss.Width(toolOutputPrefix)
+		if contentWidth < 1 {
+			contentWidth = 1
+		}
 		for _, line := range strings.Split(result, "\n") {
-			wlines := wrapLine(line, textWidth)
+			wlines := wrapLine(line, contentWidth)
 			for _, wl := range wlines {
 				if wrapped >= maxExpandedWrapped {
 					truncated = true
@@ -2134,7 +2142,7 @@ func renderSubagentPara(sb *strings.Builder, p *Paragraph, ctx ViewportCtx) {
 	argsText := agentLabel + " · " + desc
 
 	// ── suffix（对齐 bash 的 toolSuffix 格式） ──
-	suffixRendered := subagentSuffix(p)
+	suffixRendered := subagentSuffix(p, ctx.LC)
 
 	// ── 摘要行宽度自适应 ──
 	fixedWidth := lipgloss.Width(toolNameRendered) + lipgloss.Width("  ") + lipgloss.Width("  ") + lipgloss.Width(suffixRendered)
@@ -2220,7 +2228,7 @@ func renderSubagentStreamLines(sb *strings.Builder, text string, textWidth int, 
 }
 
 // subagentSuffix 返回子 agent 摘要行后缀，对齐 bash 的 toolSuffix 格式。
-func subagentSuffix(p *Paragraph) string {
+func subagentSuffix(p *Paragraph, lc *Messages) string {
 	if p.State == stateStreaming {
 		return ""
 	}
@@ -2232,7 +2240,7 @@ func subagentSuffix(p *Paragraph) string {
 		suffix = p.SubagentModel + ", "
 	}
 	if p.SubagentTurns > 0 {
-		suffix += fmt.Sprintf("%d轮", p.SubagentTurns)
+		suffix += fmt.Sprintf(lc.SubagentTurnsFmt, p.SubagentTurns)
 	}
 	if p.ToolDurMs > 0 {
 		if suffix != "" && p.SubagentTurns > 0 {

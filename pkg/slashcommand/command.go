@@ -68,7 +68,8 @@ const (
 	SideEffectOpenThemePicker  SideEffectKind = "open_theme_picker"
 	SideEffectOpenModelPicker  SideEffectKind = "open_model_picker"
 	SideEffectOpenLocalePicker SideEffectKind = "open_locale_picker"
-	SideEffectInvokeSkill     SideEffectKind = "invoke_skill" // TUI: 注入 skill body → doTurn
+	SideEffectInvokeSkill     SideEffectKind = "invoke_skill"     // TUI: 注入 skill body → doTurn
+	SideEffectOpenRewind      SideEffectKind = "open_rewind"      // TUI: 打开 rewind 消息选择覆盖层
 )
 
 // SideEffect 描述命令执行后需要 TUI 执行的副作用。
