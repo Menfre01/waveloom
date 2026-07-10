@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/Menfre01/waveloom/pkg/filehistory"
 	"github.com/Menfre01/waveloom/pkg/pathutil"
 )
 
@@ -38,6 +39,15 @@ func (t *WriteFile) Execute(ctx context.Context, p WriteFileParams) (*ToolResult
 	if err != nil {
 		return toolError(ErrorClassRecoverable, ErrKindInvalidArgs,
 			fmt.Sprintf("invalid path: %v", err), err), nil
+	}
+
+	// ── Step 1.5: FileHistory 追踪（在文件被修改前备份原始内容）──
+	if fh := filehistory.FromContext(ctx); fh != nil {
+		if msgID := filehistory.MessageIDFromContext(ctx); msgID != "" {
+			if sd := filehistory.SessionDirFromContext(ctx); sd != "" {
+				fh.TrackEdit(path, msgID, sd)
+			}
+		}
 	}
 
 	// ── Step 2: 大小保护 ──

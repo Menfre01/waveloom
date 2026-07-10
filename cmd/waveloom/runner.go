@@ -57,7 +57,7 @@ func runOneShot(cfg CLIConfig, llmClient llm.Client, registry tool.Registry, gua
 	}
 
 	// 通过 Context Manager 获取完整消息历史
-	messages := cm.PrepareRun(expandedInput)
+	messages, _ := cm.PrepareRun(expandedInput)
 
 	ctx = context.Background()
 	fmt.Fprintf(os.Stderr, lc.OneShotHeader, cfg.Model, cwd)

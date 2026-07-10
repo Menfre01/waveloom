@@ -118,9 +118,7 @@ func FormatResult(items []TodoItem) string {
 	}
 
 	var b strings.Builder
-	b.WriteString("Todos updated. **CRITICAL**: always pass the COMPLETE list on every call: copy the list above, change only status fields. " +
-		"Mark the next task in_progress BEFORE starting work, and mark completed immediately after finishing. " +
-		"Never drop items or change content/activeForm between calls.\n")
+	b.WriteString("Todos updated.\n")
 
 	// 智能引导：如果有 pending 任务但没有 in_progress 任务，提示下一个应启动的任务
 	hasInProgress := false

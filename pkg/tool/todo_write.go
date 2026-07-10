@@ -63,18 +63,13 @@ Task tracker for complex multi-step work.
 Fields:
 - content: imperative, WHAT to do ("Fix login bug")
 - activeForm: present continuous, shown during execution ("Fixing login bug")
-- status: pending → in_progress → completed (multiple can be in_progress simultaneously)
+- status: pending → in_progress → completed
 - description: optional longer description with task details, context, or notes
 
-RULES:
-1. After receiving new instructions — capture all tasks before starting work.
-2. ALWAYS pass the COMPLETE list — copy from previous result, change only status fields. Never drop items, never change content or activeForm between calls.
-3. Mark completed immediately, set next to in_progress before starting. Auto-clears when all completed.
-
-Example (initialize 2 tasks, start working on first):
+Example:
   todo_write([{content:"Fix login",status:"in_progress",activeForm:"Fixing login"},{content:"Add tests",status:"pending",activeForm:"Adding tests"}])
 
-→ When to use / not use: see system prompt ## Todo List.
+→ When to use / not use, and all rules: see system prompt ## Todo List.
 `)
 }
 

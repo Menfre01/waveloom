@@ -10,6 +10,7 @@ type (
 	parentSystemPromptKey  struct{}
 	agentsMDKey            struct{}
 	toolCallIDKey          struct{}
+	messageIDKey           struct{}
 )
 
 // WithEventCallback injects a callback for subagent events into ctx.
@@ -67,5 +68,16 @@ func WithToolCallID(ctx context.Context, id string) context.Context {
 // ToolCallIDFromContext extracts the tool call ID from ctx.
 func ToolCallIDFromContext(ctx context.Context) string {
 	s, _ := ctx.Value(toolCallIDKey{}).(string)
+	return s
+}
+
+// WithMessageID injects the current user message ID into ctx for filehistory tracking.
+func WithMessageID(ctx context.Context, id string) context.Context {
+	return context.WithValue(ctx, messageIDKey{}, id)
+}
+
+// MessageIDFromContext extracts the user message ID from ctx.
+func MessageIDFromContext(ctx context.Context) string {
+	s, _ := ctx.Value(messageIDKey{}).(string)
 	return s
 }

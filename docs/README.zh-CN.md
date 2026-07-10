@@ -30,8 +30,8 @@ curl -fsSL https://raw.githubusercontent.com/Menfre01/waveloom/main/install.sh |
 **Homebrew**
 
 ```sh
-brew trust menfre01/tap
-brew install Menfre01/tap/waveloom
+brew tap menfre01/tap
+brew install waveloom
 ```
 
 > 支持 macOS / Linux / Windows，AMD64 & ARM64。安装到 `~/.local/bin`，无需 sudo。
@@ -94,6 +94,7 @@ waveloom
 - **前缀缓存深度优化** — System Prompt 固定，消息只在末尾追加，四级水位线压缩后字节永不变化，最大公共前缀持续命中
 - **权限安全模型** — 三级决策（allow / deny / ask），规则引擎支持模式匹配，写操作和命令执行需要你确认
 - **会话持久恢复** — 关闭终端几天后 `waveloom --continue` 回来，Agent 记得所有上下文接着工作
+- **Checkpoint/Rewind 时间旅行** — 回退到任意历史消息，同时恢复所有文件变更。Fork 模式原 session 完整保留，历史永不丢失
 - **Plan 模式** — 先规划后执行的二阶段工作流：探索设计 → 审批 → 编码。`Shift+Tab` 一键进入/退出，Guard 写保护拦截。
 - **13 个内置工具** — `read_file` / `write_file` / `edit_file` / `bash` / `web_fetch` / `web_search` / `ask_user_question` / `enter_plan_mode` / `exit_plan_mode` / `skill` / `agent` / `kill_background_task` / `todo_write`
 - **i18n 多语言** — 完整中英双语界面，`--locale` CLI 参数 / `/locale` 命令，LANG 环境变量自动检测
