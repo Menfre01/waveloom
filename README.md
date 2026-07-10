@@ -30,8 +30,8 @@ curl -fsSL https://raw.githubusercontent.com/Menfre01/waveloom/main/install.sh |
 **Homebrew**
 
 ```sh
-brew trust menfre01/tap
-brew install Menfre01/tap/waveloom
+brew tap menfre01/tap
+brew install waveloom
 ```
 
 > Supports macOS / Linux / Windows, AMD64 & ARM64. Installs to `~/.local/bin`, no sudo needed.
