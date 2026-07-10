@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/Menfre01/waveloom/pkg/filehistory"
 	"github.com/Menfre01/waveloom/pkg/pathutil"
 )
 
@@ -48,6 +49,15 @@ func (t *EditFile) Execute(ctx context.Context, p EditFileParams) (*ToolResult, 
 	if err != nil {
 		return toolError(ErrorClassRecoverable, ErrKindInvalidArgs,
 			fmt.Sprintf("invalid path: %v", err), err), nil
+	}
+
+	// ── Step 2.4: FileHistory 追踪（在文件被修改前备份原始内容）──
+	if fh := filehistory.FromContext(ctx); fh != nil {
+		if msgID := filehistory.MessageIDFromContext(ctx); msgID != "" {
+			if sd := filehistory.SessionDirFromContext(ctx); sd != "" {
+				fh.TrackEdit(path, msgID, sd)
+			}
+		}
 	}
 
 	// ── Step 2.5: 目录检查 ──
