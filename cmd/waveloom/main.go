@@ -211,7 +211,7 @@ func main() {
 	}
 	if cfg.ToolTimeout == 0 {
 		cfg.ToolTimeout = agentloop.DefaultToolTimeout
-		cfg.ToolTimeoutSource = "默认"
+		cfg.ToolTimeoutSource = "default"
 	}
 	ctxMgr := ctxpkg.NewWithCompaction(systemPrompt, compactionConfig, compaction.NewCompactionSummarizer(summarizerClient, 0))
 

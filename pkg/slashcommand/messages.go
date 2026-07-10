@@ -26,4 +26,7 @@ type SlashMessages struct {
 	// ── /help ──
 	HelpDescription string
 	HelpText        string // /help 执行时返回的完整帮助文本
+
+	// ── /rewind ──
+	RewindDescription string
 }

@@ -85,7 +85,7 @@ func parseCLI() CLIConfig {
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: cannot parse --tool-timeout '%s' (%v), falling back to 10m\n", cfg.ToolTimeoutRaw, err)
 			cfg.ToolTimeout = agentloop.DefaultToolTimeout
-			cfg.ToolTimeoutSource = "默认"
+			cfg.ToolTimeoutSource = "default"
 		} else {
 			cfg.ToolTimeout = d
 			cfg.ToolTimeoutSource = "CLI"

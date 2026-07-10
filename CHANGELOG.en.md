@@ -1,5 +1,19 @@
 # Changelog
 
+## [v0.1.0-beta.5] — 2026-07-10
+
+### Added
+- **Checkpoint/Rewind time travel**: Rewind conversation to any previous user message with full file state restoration. Automatic file backup to `.waveloom/file-history/` before each edit, checkpoint creation per user turn. TUI selection interface (message list + confirmation dialog) with Fork mode (original session preserved intact)
+- **Glamour Dracula syntax highlighting**: Dark theme Glamour Markdown code blocks switched from DarkStyle to Dracula palette — 25+ token types (Comment, Keyword, LiteralString, etc.) now render with significantly improved contrast
+
+### Fixed
+- **Dark theme readability**: Gray / Muted colors brightened for better text contrast on dark terminals
+- **HUD layout fixes**: New-content notification no longer displaces HUD display line; fixed expanded-view width overflow; tool output truncation now respects UTF-8 rune boundaries, preventing multi-byte character corruption
+- **i18n completion**: Filled in 4 hardcoded Chinese strings including subagent suffix, unifying Messages internationalization
+
+### Changed
+- Streamlined `todo_write` prompts, centralizing rules in system prompt to reduce tool description token cost
+
 ## [v0.1.0-beta.4] — 2026-07-09
 
 ### Added
