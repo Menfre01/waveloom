@@ -54,6 +54,7 @@ import (
 	"github.com/Menfre01/waveloom/pkg/agentloop"
 	ctxpkg "github.com/Menfre01/waveloom/pkg/context"
 	"github.com/Menfre01/waveloom/pkg/environment"
+	"github.com/Menfre01/waveloom/pkg/filehistory"
 	"github.com/Menfre01/waveloom/pkg/llm"
 	"github.com/Menfre01/waveloom/pkg/pathutil"
 	"github.com/Menfre01/waveloom/pkg/permission"
@@ -186,6 +187,7 @@ Use ` + "`todo_write`" + ` for tasks with meaningful dependencies or parallelism
 - **After receiving new instructions** — capture all tasks before starting work. When the user changes topic, re-evaluate the entire list: remove tasks that no longer apply.
 - **Mark in_progress BEFORE beginning** each task. **Mark completed IMMEDIATELY after finishing** — never defer status updates.
 - **Pass the COMPLETE list every time** — copy from previous result, change only status fields. Never drop items, never change content or activeForm between calls.
+- **Only ONE task in_progress at a time** during serial work. Mark several in_progress ONLY when genuinely launching parallel subagents in the same turn. If the plan is sequential (T1 → T2 → T3), keep only the current task in_progress — complete it, then start the next.
 - When all completed, the list auto-clears. Start fresh next round.
 - Launching parallel subagents → mark all in_progress at once, update after each returns. Never wait for all to finish.
 
@@ -379,6 +381,15 @@ type overlayAnimTickMsg struct{}
 type pickerScanDoneMsg struct {
 	items []pickerItem
 	gen   int // 扫描代数，用于丢弃过期结果
+}
+
+// rewindMsg 表示 rewind 消息选择器中可回退的一条用户消息。
+type rewindMsg struct {
+	MessageID   string // 消息 UUID
+	Content     string // 消息文本摘要
+	TimeAgo     string // 相对时间描述
+	FilesChanged int   // 该消息变更的文件数
+	FileSummary string // 文件变更摘要
 }
 
 // ---------------------------------------------------------------------------
@@ -633,6 +644,15 @@ type model struct {
 	noticeBanner  string // 非空时在 footer 显示通知（版本更新等）
 	updating      bool   // 更新进行中
 	latestVersion string // 缓存的最新版本号
+
+	// FileHistory — checkpoint/rewind 文件备份
+	fh           *filehistory.FileHistoryState
+	fhSessionDir string // session 目录路径（用于 filehistory 备份存储）
+
+	// Rewind 覆盖层状态
+	rewindMessages    []rewindMsg // 可回退的消息列表
+	rewindSelectedIdx int         // 选中的消息索引（在 rewindMessages 中）
+	rewindTargetMsgID string      // 目标消息 UUID（确认界面使用）
 }
 
 // ---------------------------------------------------------------------------
@@ -1566,6 +1586,22 @@ func (m *model) handleKeyPress(msg tea.KeyPressMsg) (bool, tea.Cmd) {
 			return true, nil
 		}
 		return false, nil
+	}
+
+	// =====================================================================
+	// 3g. Rewind 选择覆盖层活跃时路由
+	// =====================================================================
+	if m.overlay == overlayRewindSelect {
+		keyStr := msg.String()
+		return true, m.handleRewindSelectKey(keyStr)
+	}
+
+	// =====================================================================
+	// 3h. Rewind 确认覆盖层活跃时路由
+	// =====================================================================
+	if m.overlay == overlayRewindConfirm {
+		keyStr := msg.String()
+		return true, m.handleRewindConfirmKey(keyStr)
 	}
 
 	// =====================================================================
@@ -3495,6 +3531,13 @@ func (m *model) handleLoopDone(ev agentloop.LoopDone, generation int) {
 		m.cm.SetTodoItems(serializeTodoItems(m.todoState))
 		result := m.cm.CompleteRun(ev.Messages, m.loopPrompt, m.lastTurnPrompt, m.loopCompl, m.loopCacheHit, m.loopCacheMiss, m.loopReasoning, m.hudModel, elapsedMs, string(ev.Reason))
 
+		// FileHistory: 为当前 user turn 拍快照（在所有 tool call 完成后）
+		if m.fh != nil && m.fhSessionDir != "" {
+			if lastUserMsgID := m.cm.LastUserMessageID(); lastUserMsgID != "" {
+				m.fh.MakeSnapshot(lastUserMsgID, m.fhSessionDir)
+			}
+		}
+
 		// loop 级增量归零，准备下一个 loop
 		m.loopPrompt = 0
 		m.loopCompl = 0
@@ -4240,7 +4283,7 @@ func (m *model) doTurn(userInput string) tea.Cmd {
 	m.hudTurns++
 
 	// 1. PrepareRun — 使用展开后的输入
-	messagesSnapshot := m.cm.PrepareRun(expanded)
+	messagesSnapshot, messageID := m.cm.PrepareRun(expanded)
 
 	// 1.4 上轮用户快捷键退出 plan 模式 → 注入 [plan:end] 通知 LLM
 	if m.planExitPending {
@@ -4296,6 +4339,13 @@ func (m *model) doTurn(userInput string) tea.Cmd {
 
 	// 创建可取消的 context（在 goroutine 外创建，避免 race）
 	ctx, cancel := context.WithCancel(context.Background())
+	ctx = agentloop.WithMessageID(ctx, messageID)
+	// 注入 FileHistory 用于工具执行前的文件备份
+	if m.fh != nil {
+		ctx = filehistory.WithFileHistory(ctx, m.fh)
+		ctx = filehistory.WithMessageID(ctx, messageID)
+		ctx = filehistory.WithSessionDir(ctx, m.fhSessionDir)
+	}
 	m.cancelRun = cancel
 
 	// 3. 返回一个 tea.Cmd：在 goroutine 中消费 loop.Run() channel，
@@ -4546,6 +4596,18 @@ func (m *model) View() tea.View {
 			boxWidth = overlayMaxWidthMedium
 		}
 		overlayContent = m.renderHelpOverlay(boxWidth)
+	case overlayRewindSelect:
+		boxWidth := contentWidth
+		if boxWidth > overlayMaxWidthNormal {
+			boxWidth = overlayMaxWidthNormal
+		}
+		overlayContent = m.renderRewindSelectOverlay(boxWidth)
+	case overlayRewindConfirm:
+		boxWidth := contentWidth
+		if boxWidth > overlayMaxWidthNormal {
+			boxWidth = overlayMaxWidthNormal
+		}
+		overlayContent = m.renderRewindConfirmOverlay(boxWidth)
 	}
 	var pickerContent string
 	if m.pickerVisible {
@@ -5335,6 +5397,282 @@ func (m *model) syncThemeComponents() {
 // Slash Command 集成
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Rewind
+// ---------------------------------------------------------------------------
+
+// handleRewindCommand 打开 rewind 消息选择覆盖层。
+func (m *model) handleRewindCommand() tea.Cmd {
+	if m.running {
+		return nil
+	}
+
+	// 构建可回退的消息列表
+	m.rewindMessages = m.buildRewindMessageList()
+	if len(m.rewindMessages) == 0 {
+		m.paras = append(m.paras, Paragraph{
+			Type:      paraSystem,
+			State:     stateDone,
+			Text:      m.msg().RewindNothingToRestore,
+			NotifKind: notifInfo,
+		})
+		m.input.Reset()
+		return nil
+	}
+
+	m.rewindSelectedIdx = 0
+	m.input.Blur()
+	m.input.Reset()
+	return m.activateOverlay(overlayRewindSelect)
+}
+
+// buildRewindMessageList 从消息历史中提取可回退的用户消息。
+func (m *model) buildRewindMessageList() []rewindMsg {
+	msgs := m.cm.Messages()
+	var snapshots []filehistory.FileHistorySnapshot
+	if m.fh != nil {
+		snapshots = m.fh.GetSnapshots()
+	}
+
+	var result []rewindMsg
+	for _, msg := range msgs {
+		if msg.Role != llm.RoleUser || msg.ID == "" {
+			continue
+		}
+		// 跳过 background-notifications 内部消息
+		if strings.HasPrefix(msg.Content, "<background-notifications>") {
+			continue
+		}
+		// 跳过 AGENTS.md 注入消息（回退到它之前无意义，且截断后会丢失 AGENTS.md）
+		if strings.HasPrefix(msg.Content, "# AGENTS.md") {
+			continue
+		}
+
+		rm := rewindMsg{
+			MessageID: msg.ID,
+			Content:   truncateRewindText(msg.Content, 60),
+		}
+
+		// 查找对应的 snapshot
+		for _, snap := range snapshots {
+			if snap.MessageID == msg.ID {
+				rm.FilesChanged = len(snap.TrackedFileBackups)
+				if rm.FilesChanged > 0 {
+					var fileNames []string
+					for fp := range snap.TrackedFileBackups {
+						fileNames = append(fileNames, filepath.Base(fp))
+					}
+					rm.FileSummary = filehistory.FileListDisplay(fileNames)
+				}
+				break
+			}
+		}
+
+		result = append(result, rm)
+	}
+	return result
+}
+
+// handleRewindSelectKey 处理 rewind 选择覆盖层的键盘事件。
+func (m *model) handleRewindSelectKey(keyStr string) tea.Cmd {
+	switch keyStr {
+	case "up":
+		if m.rewindSelectedIdx > 0 {
+			m.rewindSelectedIdx--
+		}
+	case "down":
+		if m.rewindSelectedIdx < len(m.rewindMessages)-1 {
+			m.rewindSelectedIdx++
+		}
+	case "enter":
+		if m.rewindSelectedIdx >= 0 && m.rewindSelectedIdx < len(m.rewindMessages) {
+			m.rewindTargetMsgID = m.rewindMessages[m.rewindSelectedIdx].MessageID
+			m.rewindSelectedIdx = 0 // 默认选中 Restore code and conversation
+			m.overlay = overlayRewindConfirm
+			m.overlayAnimFrame = 0
+		}
+	case "esc":
+		m.overlay = overlayNone
+		m.rewindMessages = nil
+		m.input.Focus()
+	}
+	return nil
+}
+
+// handleRewindConfirmKey 处理 rewind 确认覆盖层的键盘事件。
+func (m *model) handleRewindConfirmKey(keyStr string) tea.Cmd {
+	switch keyStr {
+	case "up":
+		if m.rewindSelectedIdx > 0 {
+			m.rewindSelectedIdx--
+		}
+	case "down":
+		if m.rewindSelectedIdx < 3 {
+			m.rewindSelectedIdx++
+		}
+	case "enter":
+		return m.executeRewind(rewindOption(m.rewindSelectedIdx))
+	case "esc":
+		m.overlay = overlayRewindSelect
+		m.rewindSelectedIdx = 0
+	}
+	return nil
+}
+
+// executeRewind 执行回退操作。
+func (m *model) executeRewind(opt rewindOption) tea.Cmd {
+	if opt == rewindCancel {
+		m.overlay = overlayNone
+		m.rewindMessages = nil
+		m.input.Focus()
+		return nil
+	}
+
+	// 显示回退中通知
+	m.paras = append(m.paras, Paragraph{
+		Type:      paraSystem,
+		State:     stateDone,
+		Text:      m.msg().RewindRestoring,
+		NotifKind: notifInfo,
+	})
+	m.trimParas()
+
+	targetMsgID := m.rewindTargetMsgID
+	if targetMsgID == "" {
+		m.overlay = overlayNone
+		m.rewindMessages = nil
+		m.input.Focus()
+		return nil
+	}
+
+	// 查找目标消息在 messages 中的索引
+	targetIdx := -1
+	msgs := m.cm.Messages()
+	for i, msg := range msgs {
+		if msg.ID == targetMsgID {
+			targetIdx = i
+			break
+		}
+	}
+	if targetIdx < 0 {
+		m.overlay = overlayNone
+		m.rewindMessages = nil
+		m.input.Focus()
+		return nil
+	}
+
+	// 回退代码（如果需要）
+	if opt == rewindBoth || opt == rewindCodeOnly {
+		if m.fh != nil && m.fhSessionDir != "" {
+			restored, err := m.fh.Rewind(targetMsgID, m.fhSessionDir)
+			if err != nil {
+				m.paras = append(m.paras, Paragraph{
+					Type:      paraSystem,
+					State:     stateDone,
+					Text:      fmt.Sprintf(m.msg().RewindFailed, err),
+					NotifKind: notifError,
+				})
+			} else if len(restored) > 0 {
+				m.paras = append(m.paras, Paragraph{
+					Type:      paraSystem,
+					State:     stateDone,
+					Text:      fmt.Sprintf(m.msg().RewindFilesChanged, len(restored)) + ": " + strings.Join(restored, ", "),
+					NotifKind: notifInfo,
+				})
+			}
+			m.trimParas()
+		}
+	}
+
+	// 回退对话（如果需要）
+	if opt == rewindBoth || opt == rewindConvOnly {
+		newID, _, err := m.cm.RewindConversationTo(targetIdx, m.fhSessionDir)
+		if err != nil {
+			m.paras = append(m.paras, Paragraph{
+				Type:      paraSystem,
+				State:     stateDone,
+				Text:      fmt.Sprintf(m.msg().RewindFailed, err),
+				NotifKind: notifError,
+			})
+			m.trimParas()
+		} else {
+			// 更新 transcript 路径
+			m.transcriptPath = ctxpkg.TranscriptPath(m.fhSessionDir, newID)
+			m.transcriptWritten = 0
+
+			// 从截断后的消息重建段落列表
+			m.rebuildParasFromMessages()
+
+			m.paras = append(m.paras, Paragraph{
+				Type:      paraSystem,
+				State:     stateDone,
+				Text:      fmt.Sprintf("Rewound to before \"%s\". Original session preserved.", truncateRewindText(targetMsgID, 40)),
+				NotifKind: notifInfo,
+			})
+		}
+	}
+
+	m.overlay = overlayNone
+	m.rewindMessages = nil
+	m.input.Focus()
+	return nil
+}
+
+// truncateRewindText 截断文本到指定长度。
+func truncateRewindText(s string, maxLen int) string {
+	s = strings.TrimSpace(s)
+	// 取第一行
+	if idx := strings.IndexByte(s, '\n'); idx >= 0 {
+		s = s[:idx]
+	}
+	runes := []rune(s)
+	if len(runes) <= maxLen {
+		return s
+	}
+	return string(runes[:maxLen-1]) + "…"
+}
+
+// rebuildParasFromMessages 从 cm.Messages() 重建段落列表，用于 rewind 后恢复 TUI 显示。
+func (m *model) rebuildParasFromMessages() {
+	msgs := m.cm.Messages()
+	m.paras = make([]Paragraph, 0, len(msgs))
+	m.focusIndex = -1
+	m.hudTurns = 0
+	m.lastPromptTokens = 0
+
+	for _, msg := range msgs {
+		switch msg.Role {
+		case llm.RoleSystem:
+			// system 消息不在 TUI 中渲染（仅作为上下文）
+		case llm.RoleUser:
+			// 跳过 AGENTS.md 注入消息（messages[1]，内容以 "# AGENTS.md" 开头）
+			if strings.HasPrefix(msg.Content, "# AGENTS.md") {
+				continue
+			}
+			m.paras = append(m.paras, Paragraph{
+				Type:  paraUser,
+				State: stateDone,
+				Text:  msg.Content,
+			})
+		case llm.RoleAssistant:
+			if msg.Content != "" {
+				m.paras = append(m.paras, Paragraph{
+					Type:  paraAssistant,
+					State: stateDone,
+					Text:  msg.Content,
+				})
+			}
+		case llm.RoleTool:
+			m.paras = append(m.paras, Paragraph{
+				Type:       paraTool,
+				State:      stateDone,
+				ToolName:   msg.Name,
+				ToolResult: msg.Content,
+			})
+		}
+	}
+}
+
 // handleSlashCommand 处理以 / 开头的本地命令。
 // 命令名大小写不敏感，无匹配时显示帮助提示。
 func (m *model) handleSlashCommand(input string) tea.Cmd {
@@ -5484,7 +5822,7 @@ func (m *model) handleSlashCommand(input string) tea.Cmd {
 			// PrepareRun 将 skill body 作为 user 消息注入并返回消息快照
 			m.closePicker()
 			m.hudTurns++
-			messagesSnapshot := m.cm.PrepareRun(skillBody)
+			messagesSnapshot, _ := m.cm.PrepareRun(skillBody)
 			m.running = true
 			m.focusIndex = -1
 			m.input.Placeholder = m.msg().InputAgentRunning
@@ -5519,6 +5857,9 @@ func (m *model) handleSlashCommand(input string) tea.Cmd {
 				}
 				return nil
 			}
+
+		case slashcommand.SideEffectOpenRewind:
+			return m.handleRewindCommand()
 		}
 	}
 
@@ -5690,6 +6031,13 @@ func (c *tuiSessionCreator) NewSession() error {
 	m.transcriptPath = ctxpkg.TranscriptPath(m.sessionDir, sid)
 	m.transcriptWritten = 0
 
+	// 重置 FileHistory
+	m.fh = filehistory.NewState()
+	m.fhSessionDir = m.sessionDir
+
+	// 清理旧 session 的 file-history 备份目录（避免磁盘积累）
+	_ = os.RemoveAll(filepath.Join(m.sessionDir, "file-history"))
+
 	return nil
 }
 
@@ -5732,6 +6080,7 @@ func slashMessagesFrom(lc *Messages) *slashcommand.SlashMessages {
 		LocaleDescription:     lc.SlashLocaleDescription,
 		HelpDescription:       lc.SlashHelpDescription,
 		HelpText:              lc.SlashHelpText,
+		RewindDescription:     lc.RewindSlashDescription,
 	}
 }
 
@@ -5742,6 +6091,7 @@ func newSlashRegistry(creator slashcommand.SessionCreator, store slashcommand.Se
 	r.Register(slashcommand.NewThemeCommand(sm))
 	r.Register(slashcommand.NewLocaleCommand(sm))
 	r.Register(slashcommand.NewHelpCommand(r, sm))
+	r.Register(slashcommand.NewRewindCommand(sm))
 
 	// 注册 user-invocable skills
 	// skill body 的加载统一走 skill 工具（通过 SkillExecutor 接口）
@@ -6119,6 +6469,10 @@ func runTUI(llmClient llm.Client, registry tool.Registry, guard permission.Guard
 		sid := ctxMgr.SessionID()
 		m.transcriptPath = ctxpkg.TranscriptPath(sessionDir, sid)
 	}
+
+	// 初始化 FileHistory（用于 checkpoint/rewind 文件备份）
+	m.fh = filehistory.NewState()
+	m.fhSessionDir = sessionDir
 
 	// Resume：重放 transcript 到 viewport
 	if isResume && m.transcriptPath != "" {

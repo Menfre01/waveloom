@@ -20,6 +20,7 @@ const (
 // Message 表示对话中的一条消息，直接映射 OpenAI 协议的 message 对象。
 // JSON struct tags 配合 omitempty 实现零分配序列化，无需手动 buildMessages。
 type Message struct {
+	ID               string     `json:"id,omitempty"`                 // 不可变 UUID，创建时分配，用于 checkpoint/rewind 追踪
 	Role             Role       `json:"role"`                         // system / user / assistant / tool
 	Content          string     `json:"content,omitempty"`            // 文本内容（tool 角色时为工具执行结果）
 	ReasoningContent string     `json:"reasoning_content"`            // 思考链内容（DeepSeek 要求有 tool_calls 时必须回传，即使是空字符串）

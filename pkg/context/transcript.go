@@ -94,6 +94,10 @@ func LoadTranscriptLines(path string) ([]TranscriptLine, error) {
 		if err := json.Unmarshal(scanner.Bytes(), &line); err != nil {
 			continue // 跳过损坏行
 		}
+		// 跳过空 Type（非 transcript 格式数据，如 session message JSON）
+		if line.Type == "" {
+			continue
+		}
 		all = append(all, line)
 	}
 	if err := scanner.Err(); err != nil {
