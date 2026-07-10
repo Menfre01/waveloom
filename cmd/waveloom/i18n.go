@@ -219,6 +219,9 @@ type Messages struct {
 	// ── Setup locale options ──────────────────────────────
 	SetupLocaleZhCNLabel string
 	SetupLocaleEnUSLabel string
+
+	// ── Subagent suffix ──────────────────────────────────
+	SubagentTurnsFmt string // 含 %d，如 "%d轮" / "%d turns"
 }
 
 // ---------------------------------------------------------------------------
@@ -486,6 +489,9 @@ var zhCN = Messages{
 	// Setup locale options
 	SetupLocaleZhCNLabel: "简体中文  (zh-CN)",
 	SetupLocaleEnUSLabel: "English   (en-US)",
+
+	// Subagent suffix
+	SubagentTurnsFmt: "%d轮",
 }
 
 var enUS = Messages{
@@ -747,6 +753,9 @@ Environment variables:
 	// Setup locale options
 	SetupLocaleZhCNLabel: "简体中文  (zh-CN)",
 	SetupLocaleEnUSLabel: "English   (en-US)",
+
+	// Subagent suffix
+	SubagentTurnsFmt: "%d turns",
 }
 
 // ---------------------------------------------------------------------------
