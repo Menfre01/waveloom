@@ -304,20 +304,20 @@ type keyMap struct {
 // 作为接受 *Messages 的函数实现，支持国际化。
 
 var defaultKeys = keyMap{
-	Enter:         key.NewBinding(key.WithKeys("enter"), key.WithHelp("⏎", "发送消息")),
-	Interrupt:     key.NewBinding(key.WithKeys("esc"), key.WithHelp("Esc", "中断 agent loop")),
-	Quit:          key.NewBinding(key.WithKeys("ctrl+c"), key.WithHelp("Ctrl+C", "退出")),
-	FocusNext:     key.NewBinding(key.WithKeys("tab"), key.WithHelp("Tab", "聚焦下一个可交互段落")),
-	FocusPrev:     key.NewBinding(key.WithKeys("shift+tab"), key.WithHelp("Shift+Tab", "聚焦上一个可交互段落")),
-	Up:            key.NewBinding(key.WithKeys("up"), key.WithHelp("↑", "向上滚动")),
-	Down:          key.NewBinding(key.WithKeys("down"), key.WithHelp("↓", "向下滚动")),
-	PageUp:        key.NewBinding(key.WithKeys("pgup"), key.WithHelp("PgUp", "向上翻页")),
-	PageDown:      key.NewBinding(key.WithKeys("pgdown"), key.WithHelp("PgDn", "向下翻页")),
-	ToggleTheme:   key.NewBinding(key.WithKeys("ctrl+g"), key.WithHelp("Ctrl+G", "切换主题 (dark/light/auto)")),
-	JumpBottom:    key.NewBinding(key.WithKeys("ctrl+e", "end"), key.WithHelp("Ctrl+E/End", "跳到底部")),
-	Picker:        key.NewBinding(key.WithKeys("@"), key.WithHelp("@", "选择文件/目录")),
-	Paste:         key.NewBinding(key.WithKeys("ctrl+v"), key.WithHelp("Ctrl+V", "粘贴")),
-	Help:          key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "快捷键帮助")),
+	Enter:         key.NewBinding(key.WithKeys("enter"), key.WithHelp("⏎", "Send message")),
+	Interrupt:     key.NewBinding(key.WithKeys("esc"), key.WithHelp("Esc", "Interrupt agent loop")),
+	Quit:          key.NewBinding(key.WithKeys("ctrl+c"), key.WithHelp("Ctrl+C", "Quit")),
+	FocusNext:     key.NewBinding(key.WithKeys("tab"), key.WithHelp("Tab", "Focus next interactive paragraph")),
+	FocusPrev:     key.NewBinding(key.WithKeys("shift+tab"), key.WithHelp("Shift+Tab", "Focus previous interactive paragraph")),
+	Up:            key.NewBinding(key.WithKeys("up"), key.WithHelp("↑", "Scroll up")),
+	Down:          key.NewBinding(key.WithKeys("down"), key.WithHelp("↓", "Scroll down")),
+	PageUp:        key.NewBinding(key.WithKeys("pgup"), key.WithHelp("PgUp", "Page up")),
+	PageDown:      key.NewBinding(key.WithKeys("pgdown"), key.WithHelp("PgDn", "Page down")),
+	ToggleTheme:   key.NewBinding(key.WithKeys("ctrl+g"), key.WithHelp("Ctrl+G", "Toggle theme (dark/light/auto)")),
+	JumpBottom:    key.NewBinding(key.WithKeys("ctrl+e", "end"), key.WithHelp("Ctrl+E/End", "Jump to bottom")),
+	Picker:        key.NewBinding(key.WithKeys("@"), key.WithHelp("@", "Pick file/directory")),
+	Paste:         key.NewBinding(key.WithKeys("ctrl+v"), key.WithHelp("Ctrl+V", "Paste")),
+	Help:          key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "Shortcuts")),
 }
 
 // makeKeyMap 根据 locale 生成带翻译帮助文本的 keyMap。
@@ -5882,15 +5882,16 @@ func (i localeItem) Title() string       { return i.label }
 func (i localeItem) Description() string { return "" }
 func (i localeItem) FilterValue() string { return i.label }
 
-// localeItems 返回语言选择器的固定选项。
-var localeItems = []localeItem{
-	{label: "简体中文", locale: LocaleZhCN},
-	{label: "English", locale: LocaleEnUS},
-}
-
 // buildLocaleList 构建语言选择列表覆盖层。
 func (m *model) buildLocaleList() {
-	items := make([]list.Item, len(localeItems))
+	lc := m.lc
+	if lc == nil {
+		lc = &enUS
+	}
+	items := []list.Item{
+		localeItem{label: lc.SetupLocaleZhCNLabel, locale: LocaleZhCN},
+		localeItem{label: lc.SetupLocaleEnUSLabel, locale: LocaleEnUS},
+	}
 	selectedIdx := 0
 	currentLocale := LocaleEnUS
 	if m.lc != nil {
@@ -5899,9 +5900,8 @@ func (m *model) buildLocaleList() {
 			currentLocale = LocaleZhCN
 		}
 	}
-	for i, li := range localeItems {
-		items[i] = li
-		if li.locale == currentLocale {
+	for i, li := range items {
+		if li.(localeItem).locale == currentLocale {
 			selectedIdx = i
 		}
 	}
@@ -5935,9 +5935,8 @@ func (m *model) handleLocalePickerKey(msg tea.KeyPressMsg) (bool, tea.Cmd) {
 		m.localeList, cmd = m.localeList.Update(msg)
 		return true, cmd
 	case "enter":
-		idx := m.localeList.Index()
-		if idx >= 0 && idx < len(localeItems) {
-			m.applyLocale(localeItems[idx].locale)
+		if item, ok := m.localeList.SelectedItem().(localeItem); ok {
+			m.applyLocale(item.locale)
 		}
 		m.closeLocalePicker()
 		return true, nil
