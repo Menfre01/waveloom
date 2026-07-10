@@ -4665,9 +4665,15 @@ func (m *model) View() tea.View {
 		}
 	}
 
+	// 新内容提示（"↓ 新消息"）占据 1 行，bodyHeight 必须减去
+	newContentHintLines := 0
+	if m.hasNewContent && m.overlay == overlayNone {
+		newContentHintLines = 1
+	}
+
 	// styleApp 顶部 padding 1 行，底部 0；内区可用高度 = m.height - 1
 	innerHeight := m.height - 1
-	bodyHeight := innerHeight - headerHeight - fixedBottomHeight - overlayLines - pickerLines - commandPickerLines
+	bodyHeight := innerHeight - headerHeight - fixedBottomHeight - overlayLines - pickerLines - commandPickerLines - newContentHintLines
 	if bodyHeight < 1 {
 		bodyHeight = 1
 	}
@@ -4689,9 +4695,10 @@ func (m *model) View() tea.View {
 		if m.scrollTop < 0 {
 			m.scrollTop = 0
 		}
-		// 用户已滚动到底部 → 重新锁定
+		// 用户已滚动到底部 → 重新锁定，新内容提示自动消失
 		if m.scrollTop >= maxScrollTop {
 			m.pinnedToBottom = true
+			m.hasNewContent = false
 			m.scrollTop = maxScrollTop
 		}
 	}
@@ -4777,10 +4784,6 @@ func (m *model) View() tea.View {
 	if m.overlay == overlayNone {
 		if cur := m.input.Cursor(); cur != nil {
 			// 布局：styleApp top(1) + header + 空行 + body + newContentHint + overlays + todo + picker + separator(1)
-			newContentHintLines := 0
-			if m.hasNewContent && m.overlay == overlayNone {
-				newContentHintLines = 1
-			}
 			cur.Y += 1 + headerHeight + bodyHeight + newContentHintLines + overlayLines + todoPanelHeight + pickerLines + commandPickerLines + 1
 			cur.X += 2 // styleApp 左 padding
 			if cur.X > m.width-2 {

@@ -1768,10 +1768,14 @@ func renderToolFullOutput(sb *strings.Builder, p *Paragraph, textWidth int, inde
 		}
 
 	case "bash":
+		contentWidth := textWidth - lipgloss.Width(toolOutputPrefix)
+		if contentWidth < 1 {
+			contentWidth = 1
+		}
 		rawLines := strings.Split(result, "\n")
 		for _, line := range rawLines {
 			line = strings.TrimLeft(line, " ")
-			wlines := wrapLine(line, textWidth)
+			wlines := wrapLine(line, contentWidth)
 			for _, wl := range wlines {
 				if wrapped >= maxExpandedWrapped {
 					truncated = true
@@ -1797,8 +1801,12 @@ func renderToolFullOutput(sb *strings.Builder, p *Paragraph, textWidth int, inde
 		return
 
 	default:
+		contentWidth := textWidth - lipgloss.Width(toolOutputPrefix)
+		if contentWidth < 1 {
+			contentWidth = 1
+		}
 		for _, line := range strings.Split(result, "\n") {
-			wlines := wrapLine(line, textWidth)
+			wlines := wrapLine(line, contentWidth)
 			for _, wl := range wlines {
 				if wrapped >= maxExpandedWrapped {
 					truncated = true

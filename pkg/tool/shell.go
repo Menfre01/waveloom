@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"unicode/utf8"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -74,6 +75,7 @@ func (t *Shell) Description() string {
 		"",
 		"Keep commands to a SINGLE LINE. Chain dependent commands with && — do NOT use newlines or \\ line continuation.",
 		"If you absolutely must split, escape newlines as \\\\\\n in JSON (three backslashes + n).",
+		"Do NOT prefix commands with # comment lines — they prevent permission rules from matching the actual command. Run the command directly.",
 		"",
 		"Launch multiple independent commands as parallel shell calls in a single response.",
 		"Chain dependent commands with &&, not newlines.",
@@ -670,9 +672,21 @@ func truncateOutput(output string, maxLines int) string {
 	lines := strings.Split(output, "\n")
 
 	// 单行截断：超长行截断为 MaxLineBytes，防止单行 HTML/JSON 淹没输出
+	// 沿 rune 边界截断，避免在多字节字符中间切断
 	for i, line := range lines {
 		if len(line) > MaxLineBytes {
-			lines[i] = line[:MaxLineBytes] + fmt.Sprintf("... [line truncated at %d bytes]", MaxLineBytes)
+			truncateAt := 0
+			for _, r := range line {
+				next := truncateAt + utf8.RuneLen(r)
+				if next > MaxLineBytes {
+					break
+				}
+				truncateAt = next
+			}
+			if truncateAt == 0 {
+				truncateAt = MaxLineBytes
+			}
+			lines[i] = line[:truncateAt] + fmt.Sprintf("... [line truncated at %d bytes]", MaxLineBytes)
 		}
 	}
 
