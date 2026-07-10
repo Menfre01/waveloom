@@ -1,5 +1,19 @@
 # Changelog
 
+## [v0.1.0-beta.5] — 2026-07-10
+
+### 新增功能
+- **Checkpoint/Rewind 时间旅行**：支持将对话回退到任意历史用户消息，同时恢复所有文件变更。每次编辑前自动备份原始文件至 `.waveloom/file-history/`，每轮用户消息创建检查点。提供 TUI 选择界面（消息列表 + 确认对话框），支持 Fork 模式（原 session 完整保留，不丢历史）
+- **Glamour Dracula 语法高亮**：dark 主题下 Glamour Markdown 代码块从 DarkStyle 切换为 Dracula 配色，Comment / Keyword / LiteralString 等 25+ token 类型对比度大幅提升
+
+### 修复
+- **dark 主题可读性**：Gray / Muted 提亮，改善暗色终端下的文本对比度
+- **HUD 布局修复**：新内容提示不再挤占 HUD 显示行；展开态宽度溢出修正；工具输出截断沿 UTF-8 rune 边界安全切割，避免多字节字符乱码
+- **i18n 补全**：补全 subagent 后缀等 4 处硬编码中文，统一 Messages 国际化
+
+### 重构
+- 精简 `todo_write` 提示词，规则集中到 system prompt，降低工具描述 token 消耗
+
 ## [v0.1.0-beta.4] — 2026-07-09
 
 ### 新增功能
