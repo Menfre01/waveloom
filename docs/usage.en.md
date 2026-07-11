@@ -109,6 +109,32 @@ Plan Mode is a two-stage "design first, implement later" workflow. Ideal for tas
 
 The `▌Plan` indicator on the left of the input line shows you're in Plan Mode.
 
+## Advisor Mode
+
+Advisor Mode is a cost-optimized dual-model routing strategy — the secondary model handles routine tasks, and the primary model kicks in for deep reasoning. Enable it in `settings.json`:
+
+```json
+{
+  "llm": {
+    "provider": "deepseek",
+    "model": "deepseek-v4-pro",
+    "sub_model": "deepseek-v4-flash",
+    "mode": "advisor"
+  }
+}
+```
+
+**How it works**:
+
+- **Default**: Agent runs on the secondary model (`sub_model`, e.g. `deepseek-v4-flash`) — ~2x cheaper, excellent for reading, searching, and implementing straightforward changes.
+- **Plan Mode**: Entering plan mode auto-switches to the primary model (`model`, e.g. `deepseek-v4-pro`) for deep architectural reasoning. Exiting plan mode switches back.
+- **Advisor Subagent**: When the secondary model encounters a decision it cannot confidently make, it spawns an advisor subagent (primary model, read-only) to analyze trade-offs and recommend an approach.
+- **Code Review**: `evaluate` and `verification` subagents always use the primary model — review quality never degrades.
+
+**Requirements**: `sub_model` must be non-empty and different from `model`. With DeepSeek, `sub_model` auto-pairs to `deepseek-v4-flash`; explicitly set it for other providers.
+
+Leave `mode` unset or set to `"normal"` to keep using the primary model for everything (default behavior).
+
 ### AGENTS.md Auto-loading
 
 On startup, Waveloom discovers and loads `AGENTS.md` (search path: `~/.waveloom/AGENTS.md` → project root where `.git` lives → CWD), concatenating them from outer to inner as the first user message. The agent automatically follows project conventions, coding standards, and workflows defined therein.

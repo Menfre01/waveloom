@@ -1,6 +1,6 @@
 # Waveloom 工具描述
 
-> 本文档记录了 12 个内置工具通过 function calling 发送给 LLM 的完整内容：
+> 本文档记录了 13 个内置工具通过 function calling 发送给 LLM 的完整内容：
 > `Description()` 文本 + `Schema()` JSON 参数定义。
 > 这些内容与 `pkg/tool/*.go` 中的实现严格一致，改动时请同步更新。
 
@@ -68,10 +68,10 @@ Create a new file or overwrite an existing file. Creates parent directories auto
 ## edit_file
 
 ```
-Find-and-replace on an existing file by exact string match.
-old_string must be unique in the file — if ambiguous, include 1-2 surrounding lines as context.
+Find-and-replace on an existing file by exact string match. The system auto-corrects minor whitespace and Unicode differences.
 Set replace_all=true to replace every occurrence.
-Whitespace and blank-line differences are auto-corrected when the match is unambiguous.
+Include 1-2 surrounding context lines if the match would otherwise be ambiguous.
+When NOT to use: creating new files → use write_file. Reading files → use read_file. Large rewrites → use write_file.
 ```
 
 ```json
@@ -252,22 +252,10 @@ Invoke a user-defined skill. Use this when a task matches an available skill's d
 
 ```
 Enter plan mode for complex tasks requiring exploration and design before coding.
-Use this proactively when:
-- Implementing new features with architectural ambiguity
-- Multiple valid approaches exist and the choice matters
-- Changes affect 3+ files or restructure existing behavior
-- User preferences matter for the implementation approach
+→ When to use (or not use): see system prompt ## Plan Mode.
 
-Skip plan mode for:
-- Single-line or few-line fixes (typos, obvious bugs)
-- Tasks with very specific, detailed instructions from the user
-- Adding a single function with clear requirements
-
-In plan mode you CAN: read/search/explore code, ask questions, use shell for
-analysis commands (lint, test, version checks, git log/diff), and write/edit
-the plan file.
-In plan mode you CANNOT: write or edit source files — those operations will be
-blocked by the permission system and must wait until after plan approval.
+In plan mode you CAN: read/search/explore code, ask questions, use shell for analysis commands (lint, test, version checks, git log/diff), and write/edit the plan file.
+In plan mode you CANNOT: write or edit source files — those operations will be blocked by the permission system and must wait until after plan approval.
 
 Exit with exit_plan_mode when your plan is complete and ready for review.
 ```
@@ -316,59 +304,7 @@ Do NOT use ask_user_question to ask "is my plan ready?" or "should I proceed?"
 ## agent
 
 ```
-Launch a subagent to handle complex, multi-step tasks autonomously.
-
-Available subagent types and the tools they have access to:
-- evaluate: read-only evaluation (read_file, bash_subagent, web_fetch).
-  Assesses correctness, quality, and security — reports issues with severity.
-- Explore: read-only exploration (read_file, bash_subagent, web_fetch)
-- verification: read-only verification (read_file, bash_subagent, web_fetch).
-  Attempts to BREAK the implementation — runs builds, tests, and adversarial probes.
-- advisor: fork-based deep analysis (read-only tools, primary model).
-  Analyzes trade-offs and recommends approaches — never writes code.
-
-Omit subagent_type to fork yourself — the fork inherits your conversation context
-(minus the agent call itself). This is the DEFAULT choice: it shares your prompt
-cache (cheap) and already knows the background. Use fork for research, implementation,
-and any task where the context you've built up is useful.
-
-Specify subagent_type for a cold agent that starts with fresh context and filtered tools.
-Cold agents CANNOT reuse your prompt cache — they are EXPENSIVE. Only use them when
-you specifically need an independent perspective uncontaminated by your own analysis.
-
-Cold agent types:
-- evaluate: for assessment, not implementation. Code review, security audit,
-  second opinion on architecture, or any task that requires evaluating
-  correctness or quality — NOT writing or editing code. Reports issues with
-  severity (CRITICAL / WARNING / NOTE) and specific file:line references.
-- Explore: for discovery, not judgment. Find where things are defined, map out
-  unfamiliar subsystems, locate patterns across the codebase. Use when you need
-  to answer "where is X?" or "how is Y structured?" — NOT "is this code correct?".
-- verification: for post-implementation verification. Use after completing a
-  non-trivial task (3+ file edits, backend/API changes, infrastructure changes).
-  The agent runs builds, tests, and adversarial probes, then reports PASS/FAIL
-  with evidence. Pass the original task, files changed, and approach taken.
-- advisor: for deep analysis and design decisions (fork-based, hot-start).
-  Evaluates trade-offs between approaches, explores codebase implications,
-  and recommends paths forward. Uses the primary model (pro) for thorough
-  reasoning. NEVER writes code. Spawn when facing ≥3-file changes,
-  architectural decisions, or safety-critical code.
-
-Do NOT use cold agents just to parallelize work — fork multiple times instead.
-Each fork shares the same cache prefix; each cold agent pays the full input cost.
-
-- Launch multiple agents concurrently whenever possible — use a single message
-  with multiple tool calls. Map each agent to a separate todo item via todo_write
-  and mark them all in_progress BEFORE dispatching. Mark each completed
-  immediately as its agent returns.
-
-Usage: for forks, write a directive (context is inherited); for cold agents, provide
-a self-contained prompt with full background — the agent hasn't seen this conversation.
-You will receive the subagent's final output as the tool result.
-
-Do NOT use the agent tool for: reading a known file path (use read_file),
-searching within 1-3 files (use read_file), or simple file pattern matching (use shell).
-Explore agent should be used proactively for codebase exploration without the user having to ask.
+Launch a subagent to handle complex, multi-step tasks. See ## Agent Tool in the system prompt for agent types, when to fork vs cold, and prompt-writing guidance.
 ```
 
 ```json
@@ -377,7 +313,7 @@ Explore agent should be used proactively for codebase exploration without the us
   "properties": {
     "subagent_type": {
       "type": "string",
-      "description": "Omit to fork (DEFAULT, cheap, shares cache). Set to 'evaluate' for code review / security audit, 'Explore' for finding code patterns, 'verification' for post-implementation testing, or 'advisor' for deep analysis. Cold agents are expensive — they cannot reuse your prompt cache."
+      "description": "Omit to fork (DEFAULT). Set to 'Explore', 'evaluate', 'verification', or 'advisor' for specialized agents. See ## Agent Tool in system prompt for details."
     },
     "description": {
       "type": "string",
@@ -428,28 +364,18 @@ If the task is already completed or not found, returns an appropriate message.
 ## todo_write
 
 ```
-Task tracker for complex multi-step work. Use only when tasks have meaningful dependencies or run in parallel — skip for linear single-file changes.
+Task tracker for complex multi-step work.
 
-Trigger test (BOTH must be true before using this tool):
-1. ≥3 steps with real dependencies (B depends on A) or parallelizable units (subagents)
-2. Work spans ≥2 turns OR dispatches parallel subagents
+Fields:
+- content: imperative, WHAT to do ("Fix login bug")
+- activeForm: present continuous, shown during execution ("Fixing login bug")
+- status: pending → in_progress → completed
+- description: optional longer description with task details, context, or notes
 
-→ If either is false, skip the todo list and just do the work.
+Example:
+  todo_write([{content:"Fix login",status:"in_progress",activeForm:"Fixing login"},{content:"Add tests",status:"pending",activeForm:"Adding tests"}])
 
-RULES:
-1. After receiving new instructions — capture all tasks before starting work.
-2. Mark in_progress BEFORE beginning each task. Update status in real-time.
-3. Mark completed IMMEDIATELY after finishing — never batch-mark.
-4. ALWAYS pass the COMPLETE list — copy from previous result, modify, pass it all back.
-5. When all tasks are completed, the list auto-clears.
-
-content = imperative ("Fix bug"). activeForm = present continuous ("Fixing bug") — displayed with spinner during in_progress state. Both required for every task.
-
-Multiple tasks can be in_progress simultaneously when running parallel work.
-
-Skip this tool for: single-file fixes, linear micro-tasks (locate→edit→build), informational requests. When uncertain, skip — a missed todo is cheaper than noise.
-
-→ Detailed rules and examples: see system prompt section "## Todo List".
+→ When to use / not use, and all rules: see system prompt ## Todo List.
 ```
 
 ```json
