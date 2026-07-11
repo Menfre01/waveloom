@@ -16,28 +16,33 @@ import (
 )
 
 // runOneShot 执行单次/管道模式（无 TUI，纯文本输出）。
-func runOneShot(cfg CLIConfig, llmClient llm.Client, registry tool.Registry, guard permission.Guard, expander *reference.Expander, cwd string, verboseLog io.Writer, cm *ctxpkg.ContextManager, agentsMdText string, loc Locale, todoState *todo.TodoState) {
+func runOneShot(cfg CLIConfig, llmClient llm.Client, registry tool.Registry, guard permission.Guard, expander *reference.Expander, cwd string, verboseLog io.Writer, cm *ctxpkg.ContextManager, agentsMdText string, loc Locale, todoState *todo.TodoState, advisorMode bool, subModel string) {
 	lc := messagesFor(loc)
 	// Context Manager 已管理 system prompt，Loop 无需重复注入
+	initialModel := ""
+	if advisorMode {
+		initialModel = subModel
+	}
 	loopCfg := agentloop.Config{
 		MaxTurns:      cfg.MaxTurns,
 		SystemPrompt:  "",
-		Guard:         guard,
 		VerboseWriter: verboseLog,
 		ToolTimeout:   cfg.ToolTimeout,
 		AgentsMD:      agentsMdText,
 		TodoState:     todoState,
+		AdvisorMode:   advisorMode,
+		SubModel:      subModel,
+		Model:         initialModel,
 	}
-	// 单次模式无 UserResponder，ask 降级为 deny
-	loop := agentloop.New(llmClient, registry, loopCfg)
 
-	// 如果启用了 bypass 模式
+	// bypass 模式：覆盖 guard 为全放行模式
 	if cfg.BypassPerm {
 		guard = permission.NewGuard(permission.WithBypassMode(true))
-		loopCfg.Guard = guard
-		loopCfg.TodoState = todoState
-		loop = agentloop.New(llmClient, registry, loopCfg)
 	}
+	loopCfg.Guard = guard
+
+	// 单次模式无 UserResponder，ask 降级为 deny
+	loop := agentloop.New(llmClient, registry, loopCfg)
 
 	// 构造用户输入（含管道数据）
 	userInput := cfg.OneShot

@@ -39,7 +39,8 @@ type AgentParams struct {
 type AgentTool struct {
 	LLMClient       llm.Client
 	ValidModels     []string // 可用模型列表，空 = 不限制
-	DefaultSubModel string   // Phase 2: Explore 等轻量 agent 的默认模型
+	DefaultModel    string   // 主模型名，advisor subagent 锁定使用（也用于 TUI suffix 显示）
+	DefaultSubModel string   // Explore 等轻量 agent 的默认模型
 	WorkspaceDir    string   // 工作目录，用于分类器路径检查
 }
 
@@ -63,22 +64,13 @@ func (a *AgentTool) isValidModel(m string) bool {
 	return false
 }
 
+// Description and Schema.subagent_type cross-reference "## Agent Tool" in the
+// system prompt (cmd/waveloom/tui.go:defaultSystemPrompt). If that section is
+// ever renamed, truncated by context limits, or omitted in a non-TUI entry
+// point, the LLM will lose agent-type guidance — both descriptions must be
+// updated in tandem.
 func (a *AgentTool) Description() string {
-	return strings.Join([]string{
-		"Launch a subagent to handle complex, multi-step tasks autonomously.",
-		"",
-		"subagent_type parameter (omit to fork — the DEFAULT):",
-		"  (omit / empty)  → fork: inherits your full conversation context. Tools: all except agent/bash/enter_plan_mode/exit_plan_mode/ask_user_question/kill_background_task.",
-		"  \"Explore\"       → cold, read-only discovery. Tools: read_file, bash_subagent, web_fetch. Use for finding code patterns and locations.",
-		"  \"evaluate\"      → cold, read-only assessment. Tools: read_file, bash_subagent, web_fetch. Use for code review, security audit, second opinion.",
-		"  \"verification\"  → cold, read-only testing. Tools: read_file, bash_subagent, web_fetch. Use to run builds/tests and try to BREAK an implementation.",
-		"",
-		"Fork vs cold — affects how you write the prompt:",
-		"  Fork: the subagent already knows the conversation background. Write a directive — no need to re-explain context.",
-		"  Cold: the subagent starts with NO prior context. Provide a self-contained prompt with full background.",
-		"",
-		"Refer to the system prompt for detailed rules on when to use (or not use) each agent type.",
-	}, "\n")
+	return "Launch a subagent to handle complex, multi-step tasks. See ## Agent Tool in the system prompt for agent types, when to fork vs cold, and prompt-writing guidance."
 }
 
 func (a *AgentTool) Schema() json.RawMessage {
@@ -87,7 +79,7 @@ func (a *AgentTool) Schema() json.RawMessage {
   "properties": {
     "subagent_type": {
       "type": "string",
-      "description": "Omit to fork (DEFAULT, cheap, shares cache). Set to 'evaluate' for code review / security audit, 'Explore' for finding code patterns, or 'verification' for post-implementation testing. Cold agents are expensive — they cannot reuse your prompt cache."
+      "description": "Omit to fork (DEFAULT). Set to 'Explore', 'evaluate', 'verification', or 'advisor' for specialized agents. See ## Agent Tool in system prompt for details."
     },
     "description": {
       "type": "string",
@@ -132,15 +124,15 @@ const (
 func exploreSystemPrompt() string {
 	return `You are a read-only file exploration agent. Search, read, and locate patterns in existing code.
 You are a discovery tool — find where things are, not whether they are correct.
-Tools: read_file, bash_subagent, web_fetch.
+Tools: read_file, bash_subagent, web_fetch, web_search.
 bash_subagent is for READ-ONLY operations: inspecting files, searching code, checking git history — anything that does not modify the filesystem.
 NEVER use bash_subagent for: mkdir, touch, rm, cp, mv, chmod, chown, echo > (redirect), tee, git add, git commit, npm install, pip install, or any filesystem modification.
 NEVER: write_file, edit_file, mkdir, rm, cp, mv, chmod, git add, git commit, or any filesystem write.
 
 CRITICAL: Your final message MUST contain a non-empty summary. Never end with a silent response — even if you only ran searches, describe what you found.
 
-OUTPUT RULES (output tokens are the most expensive resource — 
-240x the cost of cached input, 2x the cost of uncached input):
+OUTPUT RULES:
+- You have a limited turn budget (~25 tool calls). Complete your task efficiently — prioritize precision over breadth.
 - Be concise, but not at the expense of correctness. Include details when they matter.
 - Do NOT echo back file contents verbatim — reference paths and line numbers instead. Short code snippets that ARE the answer are fine.
 - Aim for under 200 words unless the findings genuinely demand more detail.
@@ -159,6 +151,7 @@ it's to try to BREAK it.
 You are a READ-ONLY agent for the project directory. You CANNOT use write_file or edit_file.
 bash_subagent is for READ-ONLY operations: running tests, compiling, checking git history —
 anything that does not modify project files.
+Use web_fetch and web_search for online documentation and research.
 NEVER use bash_subagent for: mkdir, touch, rm, cp, mv, chmod, chown, echo > (redirect),
 tee, sed -i, git add, git commit, npm install, pip install, or any filesystem modification
 inside the project directory.
@@ -212,6 +205,7 @@ not to implement changes.
 You are READ-ONLY for the project directory. You CANNOT use write_file or edit_file.
 bash_subagent is for READ-ONLY operations: running tests, compiling, checking git history —
 anything that does not modify project files.
+Use web_fetch and web_search for online documentation and research.
 NEVER use bash_subagent for: mkdir, touch, rm, cp, mv, chmod, chown, echo > (redirect),
 tee, sed -i, git add, git commit, npm install, pip install, or any filesystem modification
 inside the project directory.
@@ -224,7 +218,7 @@ Approach:
 - Think about edge cases, error paths, race conditions, and security implications
 - Distinguish between "this is wrong" (must fix) and "this could be improved" (nice to have)
 
-OUTPUT RULES (output tokens are the most expensive — 240x cached input, 2x uncached):
+OUTPUT RULES:
 - CRITICAL: Your final message MUST contain a non-empty assessment. Never end with a silent response.
 - Aim for under 300 words unless the assessment genuinely demands more detail.
 - Do not echo back code you just read — reference paths and line numbers.
@@ -236,6 +230,51 @@ OUTPUT RULES (output tokens are the most expensive — 240x cached input, 2x unc
   Suggestions: <optional improvements, only if substantive>`
 }
 
+func advisorSystemPrompt() string {
+	return `You are a read-only analysis agent. You inherit the FULL conversation context from your parent — 
+you see the same message history, codebase, and tool results they saw.
+
+Your role is to explore the codebase, analyze trade-offs, and provide a recommendation — 
+NOT to implement changes. You MUST NOT write code or edit files.
+
+=== APPROACH ===
+1. Read key files to understand the problem space — what changed, what depends on it
+2. Identify constraints, dependencies, stakeholders, and invariants
+3. Enumerate viable approaches with explicit trade-offs (complexity, performance, safety, maintainability)
+4. Recommend the best option with rationale — state your assumptions and confidence level
+
+You see the full context — do not rediscover what the parent already knows.
+Focus on unresolved analysis, not restatement. If the answer is clear and well-documented,
+say so concisely rather than fabricating depth.
+
+You are READ-ONLY for the project directory. You CANNOT use write_file or edit_file.
+bash_subagent is for READ-ONLY operations: running tests, compiling, reading files,
+searching code, checking git history — anything that does not modify project files.
+NEVER use bash_subagent for: mkdir, touch, rm, cp, mv, chmod, chown, echo > (redirect),
+tee, sed -i, git add, git commit, npm install, pip install, or any filesystem modification
+inside the project directory.
+You MAY create ephemeral shell scripts in /tmp via bash_subagent when you need to
+validate a hypothesis (e.g., a quick Go snippet to test behavior). Clean up /tmp files when done.
+
+Distinguish between "this is wrong" (must fix) and "this could be improved" (nice to have).
+Do not recommend changes without evidence.
+
+=== OUTPUT RULES ===
+- Your final message MUST contain a non-empty analysis. Never end with a silent response.
+- Aim for under 300 words unless the analysis genuinely demands more detail.
+- Reference paths and line numbers — do not echo file contents verbatim.
+- No conversational filler, no "let me analyze", no meta-commentary.
+- Preferred format:
+  Scope: <one sentence>
+  Analysis: <key findings, trade-offs, constraints>
+  Recommendation: <preferred approach with rationale>
+  Alternatives: <other approaches considered, with pros/cons>
+  Assumptions: <explicit premises the analysis depends on>
+  Confidence: HIGH / MEDIUM / LOW with reason
+  Risks: <what could go wrong with the recommendation>
+  Key files: <paths, line ranges>`
+}
+
 // ---------------------------------------------------------------------------
 // Execute
 // ---------------------------------------------------------------------------
@@ -244,6 +283,10 @@ OUTPUT RULES (output tokens are the most expensive — 240x cached input, 2x unc
 // ---------------------------------------------------------------------------
 
 func (a *AgentTool) Execute(ctx context.Context, p AgentParams) (*tool.ToolResult, error) {
+	// Normalize subagent type: lowercase to tolerate LLM-generated casing
+	// (e.g. "Explore", "EVALUATE", "advisor" all map correctly).
+	p.SubagentType = strings.ToLower(strings.TrimSpace(p.SubagentType))
+
 	if p.SubagentType == "" {
 		// Guard against recursive forking: detect fork-boilerplate tag in parent
 		// message history and reject the fork attempt at call time.
@@ -259,6 +302,10 @@ func (a *AgentTool) Execute(ctx context.Context, p AgentParams) (*tool.ToolResul
 				}, nil
 			}
 		}
+		return a.executeFork(ctx, p)
+	}
+	// advisor is a fork variant: hot-start, read-only tools, primary model
+	if p.SubagentType == "advisor" {
 		return a.executeFork(ctx, p)
 	}
 	return a.executeCold(ctx, p)
@@ -285,7 +332,18 @@ func (a *AgentTool) executeFork(ctx context.Context, p AgentParams) (*tool.ToolR
 	subCtx, subCancel := context.WithCancel(ctx)
 	defer subCancel()
 
-	subLoop := agentloop.New(a.LLMClient, a.buildForkRegistry(), agentloop.Config{
+	// Advisor specialization: read-only tools, primary model, advisor system prompt
+	registry := a.buildForkRegistry()
+	if p.SubagentType == "advisor" {
+		// 始终锁定主模型（不参与次模型降级，忽略 LLM 传入的 model 参数）
+		model = a.DefaultModel
+		// 替换为只读 registry
+		registry = buildColdRegistry(exploreDisallowed)
+		// 注入 advisor system prompt 到 fork 消息中
+		messages = injectAdvisorGuidance(messages)
+	}
+
+	subLoop := agentloop.New(a.LLMClient, registry, agentloop.Config{
 		MaxTurns:      forkMaxTurns,
 		SystemPrompt:  "", // messages already contain system prompt
 		Guard:         permission.NewGuard(permission.WithBypassMode(true)),
@@ -297,8 +355,13 @@ func (a *AgentTool) executeFork(ctx context.Context, p AgentParams) (*tool.ToolR
 	startTime := time.Now()
 	toolCallID := agentloop.ToolCallIDFromContext(ctx)
 
+	agentType := "fork"
+	if p.SubagentType == "advisor" {
+		agentType = "advisor"
+	}
+
 	if cb != nil {
-		cb(SubagentStart{Prompt: p.Description, AgentType: "fork", InheritCtx: true, ToolCallID: toolCallID, Model: model})
+		cb(SubagentStart{Prompt: p.Description, AgentType: agentType, InheritCtx: true, ToolCallID: toolCallID, Model: model})
 	}
 
 	lastTurnText, totalTurns, promptTok, complTok, cacheHitTok, cacheMissTok, events, err := forwardEvents(subCtx, subLoop.Run(subCtx, messages), cb, toolCallID)
@@ -332,13 +395,17 @@ func (a *AgentTool) executeFork(ctx context.Context, p AgentParams) (*tool.ToolR
 func (a *AgentTool) executeCold(ctx context.Context, p AgentParams) (*tool.ToolResult, error) {
 	cb := agentloop.EventCallbackFromContext(ctx)
 
-	// 模型安全兜底：无效/空 → 自动选择
+	// 模型锁定：每种子代理类型绑定固定模型，忽略 LLM 传入的 model 参数。
+	// 防止 LLM 误传 model 导致审查/验证质量降级或搜索成本不必要升高。
 	model := p.Model
-	if model == "" {
-		// Phase 2: Explore 自动用小模型
-		if p.SubagentType == "Explore" && a.DefaultSubModel != "" {
+	switch p.SubagentType {
+	case "explore":
+		if a.DefaultSubModel != "" {
 			model = a.DefaultSubModel
 		}
+	case "evaluate", "verification":
+		// 始终锁定主模型：DefaultModel 非空则用，否则清空走 client 默认（即主模型）
+		model = a.DefaultModel
 	}
 	if !a.isValidModel(model) {
 		model = ""
@@ -355,7 +422,7 @@ func (a *AgentTool) executeCold(ctx context.Context, p AgentParams) (*tool.ToolR
 	// All cold agents are read-only on project files — they don't need AGENTS.md
 	// coding standards. Dropping it saves prompt tokens.
 	maxTurns := coldMaxTurns
-	if p.SubagentType == "Explore" {
+	if p.SubagentType == "explore" {
 		maxTurns = exploreMaxTurns // 搜索任务更快完成
 	}
 
@@ -441,6 +508,7 @@ func allTools() []tool.Tool {
 		tool.Wrap(&tool.WriteFile{}),
 		tool.Wrap(&tool.EditFile{}),
 		tool.Wrap(&tool.WebFetch{}),
+		tool.Wrap(&tool.WebSearch{}),
 		tool.Wrap(&tool.Shell{AllowBg: false}), // bash_subagent
 	}
 }
@@ -479,13 +547,18 @@ var evaluateDisallowed = map[string]bool{
 
 func agentConfig(agentType string) (systemPrompt string, extraDisallowed map[string]bool) {
 	switch agentType {
-	case "Explore":
+	case "explore":
 		return exploreSystemPrompt(), exploreDisallowed
 	case "evaluate":
 		return evaluateSystemPrompt(), evaluateDisallowed
 	case "verification":
 		return verificationSystemPrompt(), verificationDisallowed
+	case "advisor":
+		return advisorSystemPrompt(), exploreDisallowed
 	default:
+		// Unknown type: fall back to evaluate (safe default, read-only).
+		// This path is reachable if the schema adds a new type before the
+		// code is deployed — not a silent data-loss risk.
 		return evaluateSystemPrompt(), evaluateDisallowed
 	}
 }
@@ -497,6 +570,10 @@ func agentConfig(agentType string) (systemPrompt string, extraDisallowed map[str
 //   - 自身 registry 中的工具列表（父 prompt 的工具列表对子 agent 无效且误导）
 //
 // 这避免了向 Explore agent 列出 cargo、docker 等无法直接使用的工具。
+//
+// 依赖：解析父 prompt 的 "## Workspace" 和 "## Environment" 节。
+// 如果 defaultSystemPrompt 的格式变更，对应的轮询测试
+// TestSubagentEnvironment_RoundTrip（agent_test.go）必须同步更新。
 func formatSubagentEnvironment(ctx context.Context, registry tool.Registry) string {
 	parentSP := agentloop.ParentSystemPromptFromContext(ctx)
 	if parentSP == "" {
@@ -516,11 +593,12 @@ func formatSubagentEnvironment(ctx context.Context, registry tool.Registry) stri
 	}
 
 	// 从父 system prompt 提取 Workspace（CWD）信息
-	if idx := strings.Index(parentSP, "## Workspace"); idx >= 0 {
-		wsSection := parentSP[idx:]
-		if end := strings.Index(wsSection, "## Environment"); end >= 0 {
-			wsSection = wsSection[:end]
-		}
+	// 先尝试精确匹配 "## Workspace"，再尝试松散匹配 "Workspace" 节
+	wsStart := findSectionStart(parentSP, "## Workspace", "Workspace")
+	if wsStart >= 0 {
+		// 找下一个同级别节作为结束边界
+		wsEnd := findNextSection(parentSP, wsStart)
+		wsSection := parentSP[wsStart:wsEnd]
 		// 只保留 "Working directory" 行
 		for _, line := range strings.Split(wsSection, "\n") {
 			trimmed := strings.TrimSpace(line)
@@ -541,6 +619,35 @@ func formatSubagentEnvironment(ctx context.Context, registry tool.Registry) stri
 	}
 
 	return b.String()
+}
+
+// findSectionStart 按优先级搜索节标题。主格式优先，辅助格式兜底。
+func findSectionStart(s string, primary, fallback string) int {
+	if idx := strings.Index(s, primary); idx >= 0 {
+		return idx
+	}
+	// 辅助格式：搜索所有包含 fallback 的行（不局限 ## {title}），
+	// 在 system prompt 结构稳定时兼顾灵活性。
+	for _, line := range strings.Split(s, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.Contains(trimmed, fallback) && strings.HasPrefix(trimmed, "#") {
+			return strings.Index(s, line)
+		}
+	}
+	return -1
+}
+
+// findNextSection 从 pos 向后找到下一个 markdown 节（## / ### 开头）。
+// 找不到时返回末尾，确保截取不越界。
+func findNextSection(s string, pos int) int {
+	rest := s[pos+1:] // 跳过当前节本身
+	for _, line := range strings.Split(rest, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "## ") || strings.HasPrefix(trimmed, "### ") {
+			return pos + 1 + strings.Index(rest, line)
+		}
+	}
+	return len(s)
 }
 
 // truncateTo 截断字符串到 maxLen 字符，超出部分用 "..." 替代。
@@ -843,11 +950,12 @@ understand the context, then execute the task below.
 
 Rules:
 1. Your final message MUST contain a non-empty summary of what you did. Never end with a silent/empty response — even if all work was done via tool calls, summarize the outcome.
-2. Output tokens are expensive (240x cached input, 2x uncached). Be concise. Aim for under 300 words unless findings genuinely demand more detail.
+2. Output is expensive — keep responses concise. Aim for under 300 words unless findings genuinely demand more detail.
 3. Do NOT call the agent tool (you ARE the fork — execute directly)
-4. No conversation, no questions, no commentary. Use tools silently, report once at the end.
-5. Stay within the task scope. Related observations outside scope deserve at most one sentence.
-6. Preferred format (English labels; adapt as needed):
+4. You have unrestricted tool access (no permission prompts). No need to ask for confirmation before writes.
+5. No conversation, no questions, no commentary. Use tools silently, report once at the end.
+6. Stay within the task scope. Related observations outside scope deserve at most one sentence.
+7. Preferred format (English labels; adapt as needed):
 
 Scope: <one sentence echoing the task>
 Result: <findings or work done — details when they matter>
@@ -857,6 +965,23 @@ Issues: <only if something is wrong>
 
 Task: %s
 %s</%s>`, forkBoilerplateTag, description, prompt, forkBoilerplateTag)
+}
+
+// injectAdvisorGuidance 将 advisor system prompt 注入到 fork 消息中。
+// 替换最后一条 user 消息（fork directive）而非追加，避免 fork directive
+// 的输出格式模板（Scope/Result）与 advisor 格式（Analysis/Recommendation）冲突。
+func injectAdvisorGuidance(messages []llm.Message) []llm.Message {
+	guidance := advisorSystemPrompt()
+	content := fmt.Sprintf("<%s-advisor>\n%s\n</%s-advisor>", forkBoilerplateTag, guidance, forkBoilerplateTag)
+	// 找到并替换最后一条 user 消息
+	for i := len(messages) - 1; i >= 0; i-- {
+		if messages[i].Role == llm.RoleUser {
+			messages[i].Content = content
+			return messages
+		}
+	}
+	// 兜底：无 user 消息时追加
+	return append(messages, llm.Message{Role: llm.RoleUser, Content: content})
 }
 
 // isInForkChild 检测消息历史中是否已包含 fork-boilerplate 标记，

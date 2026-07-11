@@ -403,23 +403,33 @@ const (
 
 // renderRewindSelectOverlay 渲染 rewind 消息选择覆盖层。
 func (m *model) renderRewindSelectOverlay(boxWidth int) string {
-	innerWidth := boxWidth - 2 - 4
+	minWidth := 40                              // 最小内部宽度
+	maxInnerWidth := boxWidth - 2 - 4           // border(2) + padding(4)
 
-	title := styleOverlayTitle.Width(innerWidth).Render(m.msg().RewindTitle)
-	prompt := styleOverlayBody.Width(innerWidth).Render(m.msg().RewindPrompt)
+	// 计算最大总行数（含 box 边框和内边距 = 4 行）
+	maxTotalLines := m.height - 2 // 留 2 行 margin
+	if maxTotalLines < 10 {
+		maxTotalLines = 10
+	}
 
-	var lines []string
-	lines = append(lines, title, "", prompt, "")
+	// 构建所有消息行（含间距），同时计算最大原始行宽
+	type msgLine struct {
+		text     string
+		isBlank  bool
+		selected bool
+	}
+	var allMsgLines []msgLine
+	maxRawLen := 0
 
 	if len(m.rewindMessages) == 0 {
-		lines = append(lines, styleOverlayBody.Width(innerWidth).Render(m.msg().RewindNothingToRestore))
+		text := m.msg().RewindNothingToRestore
+		allMsgLines = append(allMsgLines, msgLine{text: text})
+		if len(text) > maxRawLen {
+			maxRawLen = len(text)
+		}
 	} else {
 		for i, msg := range m.rewindMessages {
-			prefix := "  "
-			if i == m.rewindSelectedIdx {
-				prefix = "> "
-			}
-			line := prefix + msg.Content
+			line := msg.Content
 			if msg.FilesChanged > 0 {
 				line += "  " + fmt.Sprintf(m.msg().RewindFilesChanged, msg.FilesChanged)
 				if msg.FileSummary != "" {
@@ -428,11 +438,114 @@ func (m *model) renderRewindSelectOverlay(boxWidth int) string {
 			} else {
 				line += "  " + m.msg().RewindNoCodeChanges
 			}
-			lines = append(lines, styleOverlayBody.Width(innerWidth).Render(line))
+			// 前缀宽度预留 2 字符（选中 ▌  或 未选中   ）
+			fullLine := "  " + line // 占位，最大宽度计算用
+			allMsgLines = append(allMsgLines, msgLine{text: line, selected: i == m.rewindSelectedIdx})
+			if len(fullLine) > maxRawLen {
+				maxRawLen = len(fullLine)
+			}
+			// 消息之间添加空行（最后一条不加）
+			if i < len(m.rewindMessages)-1 {
+				allMsgLines = append(allMsgLines, msgLine{isBlank: true})
+			}
 		}
-		// 最后加 (current) 标记
-		lines = append(lines, "")
-		lines = append(lines, styleOverlayBody.Width(innerWidth).Render(m.msg().RewindCurrent))
+	}
+
+	// 自适应宽度
+	titleText := m.msg().RewindTitle
+	promptText := m.msg().RewindPrompt
+	if len(titleText) > maxRawLen {
+		maxRawLen = len(titleText)
+	}
+	if len(promptText) > maxRawLen {
+		maxRawLen = len(promptText)
+	}
+
+	innerWidth := maxRawLen
+	if innerWidth < minWidth {
+		innerWidth = minWidth
+	}
+	if innerWidth > maxInnerWidth {
+		innerWidth = maxInnerWidth
+	}
+	actualBoxWidth := innerWidth + 6
+
+	// 消息行渲染辅助
+	renderMsgLine := func(ml msgLine) string {
+		if ml.isBlank {
+			return ""
+		}
+		if ml.selected {
+			bar := styleRewindBar.Render("▌")
+			return bar + " " + styleRewindSelected.MaxWidth(innerWidth-2).Render(ml.text)
+		}
+		return "  " + styleRewindNormal.MaxWidth(innerWidth-2).Render(ml.text)
+	}
+
+	// 计算固定区域行数
+	// header: title(1) + blank(1) + prompt(1) + blank(1) = 4
+	headerLines := 4
+	// footer: blank(1) + (current)(1) + blank(1) + hint(1) = 4
+	footerLines := 4
+	availMsgLines := maxTotalLines - headerLines - footerLines - 4 // 4 = box border/padding
+	if availMsgLines < 1 {
+		availMsgLines = 1
+	}
+
+	// 将 rewindScrollOffset（消息索引）映射到 allMsgLines 行偏移
+	// 每条消息在 allMsgLines 中占 2 行（内容 + 空行），最后一条占 1 行
+	msgLineOffset := m.rewindScrollOffset * 2
+	totalMsgLines := len(allMsgLines)
+	if msgLineOffset > totalMsgLines-availMsgLines {
+		msgLineOffset = max(0, totalMsgLines-availMsgLines)
+	}
+	end := msgLineOffset + availMsgLines
+	if end > totalMsgLines {
+		end = totalMsgLines
+		msgLineOffset = max(0, totalMsgLines-availMsgLines)
+	}
+	visibleMsgLines := allMsgLines[msgLineOffset:end]
+
+	// 组装 overlay 内容
+	var lines []string
+	lines = append(lines,
+		styleOverlayTitle.Width(innerWidth).Render(titleText),
+		"",
+		styleOverlayBody.Width(innerWidth).Render(promptText),
+		"",
+	)
+
+	for _, ml := range visibleMsgLines {
+		lines = append(lines, renderMsgLine(ml))
+	}
+
+	// 滚动指示器 或 普通尾部
+	if len(m.rewindMessages) > 0 {
+		needsScroll := msgLineOffset > 0 || end < totalMsgLines
+		if needsScroll {
+			indicator := ""
+			if msgLineOffset > 0 {
+				indicator = "↑ "
+			}
+			// 计算当前可见范围内的消息数
+			visibleCount := 0
+			for _, ml := range visibleMsgLines {
+				if !ml.isBlank {
+					visibleCount++
+				}
+			}
+			indicator += fmt.Sprintf("%d-%d / %d",
+				m.rewindScrollOffset+1,
+				min(m.rewindScrollOffset+visibleCount, len(m.rewindMessages)),
+				len(m.rewindMessages))
+			if end < totalMsgLines {
+				indicator += " ↓"
+			}
+			lines = append(lines, styleOverlayBody.MaxWidth(innerWidth).Render(indicator))
+		} else {
+			lines = append(lines, "")
+		}
+		lines = append(lines, styleOverlayBody.MaxWidth(innerWidth).Render(m.msg().RewindCurrent))
 	}
 
 	lines = append(lines, "")
@@ -444,14 +557,13 @@ func (m *model) renderRewindSelectOverlay(boxWidth int) string {
 	})
 	lines = append(lines, hint)
 
-	return renderOverlayBox(boxWidth, m.overlayAnimFrame, strings.Join(lines, "\n"))
+	return renderOverlayBox(actualBoxWidth, m.overlayAnimFrame, strings.Join(lines, "\n"))
 }
 
 // renderRewindConfirmOverlay 渲染 rewind 确认覆盖层。
 func (m *model) renderRewindConfirmOverlay(boxWidth int) string {
-	innerWidth := boxWidth - 2 - 4
-
-	title := styleOverlayTitle.Width(innerWidth).Render(m.msg().RewindConfirmTitle)
+	minWidth := 40
+	maxInnerWidth := boxWidth - 2 - 4
 
 	// 找到目标消息的文本
 	targetText := ""
@@ -462,30 +574,60 @@ func (m *model) renderRewindConfirmOverlay(boxWidth int) string {
 		}
 	}
 
-	var lines []string
-	lines = append(lines, title, "")
-	if targetText != "" {
-		lines = append(lines, styleOverlayBody.Width(innerWidth).Render(m.msg().RewindConfirmPrompt))
-		lines = append(lines, "  │ "+targetText)
-		lines = append(lines, "")
+	// 计算自适应宽度
+	maxRawLen := len(m.msg().RewindConfirmTitle)
+	if len(m.msg().RewindConfirmPrompt) > maxRawLen {
+		maxRawLen = len(m.msg().RewindConfirmPrompt)
 	}
-
+	if len(targetText)+5 > maxRawLen { // "  │ " + targetText
+		maxRawLen = len(targetText) + 5
+	}
 	options := []string{
 		m.msg().RewindOptionBoth,
 		m.msg().RewindOptionConv,
 		m.msg().RewindOptionCode,
 		m.msg().RewindOptionNeverMind,
 	}
-	for i, opt := range options {
-		prefix := "  "
-		if i == int(m.rewindSelectedIdx) {
-			prefix = "> "
+	for _, opt := range options {
+		if len(opt)+2 > maxRawLen { // prefix 2 chars
+			maxRawLen = len(opt) + 2
 		}
-		lines = append(lines, styleOverlayBody.Width(innerWidth).Render(prefix+opt))
+	}
+	warningText := "⚠ " + m.msg().RewindWarning
+	if len(warningText) > maxRawLen {
+		maxRawLen = len(warningText)
+	}
+
+	innerWidth := maxRawLen
+	if innerWidth < minWidth {
+		innerWidth = minWidth
+	}
+	if innerWidth > maxInnerWidth {
+		innerWidth = maxInnerWidth
+	}
+	actualBoxWidth := innerWidth + 6
+
+	title := styleOverlayTitle.Width(innerWidth).Render(m.msg().RewindConfirmTitle)
+
+	var lines []string
+	lines = append(lines, title, "")
+	if targetText != "" {
+		lines = append(lines, styleOverlayBody.Width(innerWidth).Render(m.msg().RewindConfirmPrompt))
+		lines = append(lines, styleOverlayBody.MaxWidth(innerWidth).Render("  │ "+targetText))
+		lines = append(lines, "")
+	}
+
+	for i, opt := range options {
+		if i == int(m.rewindSelectedIdx) {
+			bar := styleRewindBar.Render("▌")
+			lines = append(lines, bar+" "+styleRewindSelected.MaxWidth(innerWidth-2).Render(opt))
+		} else {
+			lines = append(lines, "  "+styleRewindNormal.MaxWidth(innerWidth-2).Render(opt))
+		}
 	}
 
 	lines = append(lines, "")
-	lines = append(lines, styleOverlayBody.Width(innerWidth).Render("⚠ "+m.msg().RewindWarning))
+	lines = append(lines, styleOverlayBody.Width(innerWidth).Render(warningText))
 
 	hint := renderOverlayHint(&m.help, innerWidth, []key.Binding{
 		key.NewBinding(key.WithKeys("↑/↓"), key.WithHelp("↑/↓", m.msg().KeyNav)),
@@ -495,5 +637,5 @@ func (m *model) renderRewindConfirmOverlay(boxWidth int) string {
 	lines = append(lines, "")
 	lines = append(lines, hint)
 
-	return renderOverlayBox(boxWidth, m.overlayAnimFrame, strings.Join(lines, "\n"))
+	return renderOverlayBox(actualBoxWidth, m.overlayAnimFrame, strings.Join(lines, "\n"))
 }
