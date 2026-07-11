@@ -110,6 +110,18 @@ var defaultSystemPrompt = `You are Waveloom, a coding agent. You help users writ
 
 ## Agent Tool
 
+### Available agent types
+
+| Type | Use case | Context |
+|---|---|---|
+| *(omit)* / fork | Research, implementation, analysis | Inherits your context |
+| Explore | Code search, file discovery, read-only exploration | Cold (fast model) |
+| evaluate | Code review, security audit, second opinion | Cold |
+| verification | Post-implementation testing, try to break it | Cold |
+| advisor | Deep analysis, trade-off evaluation, decision support (read-only) | Inherits your context |
+
+See below for when to fork vs use a cold agent.
+
 ### When to use the agent tool
 
 - Use the agent tool for complex, multi-step tasks that require exploring multiple files, making several edits, or independent research.
@@ -249,6 +261,11 @@ const maxToolResultBytes = 100 * 1024 // 100 KB
 
 // buildSystemPrompt 构造完整的系统提示词。
 // CWD 在会话期间固定，不存在 cd 工具。
+//
+// 输出格式解析依赖（修改需同步）：
+//   - pkg/subagent/agent.go:formatSubagentEnvironment — 解析 "## Workspace" 和
+//     "## Environment" 节提取 OS/Shell/CWD 给冷启动子 agent
+//   - 对应的轮询测试：pkg/subagent/agent_test.go:TestFormatSubagentEnvironment_*
 func buildSystemPrompt(cwd string, loc Locale) string {
 	prompt := defaultSystemPrompt
 	// 根据 locale 替换 Personality 中的语言指令
