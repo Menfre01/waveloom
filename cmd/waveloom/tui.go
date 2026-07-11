@@ -627,8 +627,10 @@ type model struct {
 	cancelRun     context.CancelFunc // 取消当前运行的 agent loop（nil 表示无运行中 loop）
 	runGeneration int                // 每次 doTurn 递增，闭包捕获后用于 LoopDone 去重
 	themeMode     string             // 当前主题模式: auto / dark / light
-	autoDark      bool               // 启动时 auto 检测结果：true = 深色背景，缓存避免运行时调用 HasDarkBackground
-	palette   palette            // 当前配色
+	autoDark         bool               // 启动时 auto 检测结果（lipgloss 直接查询）：true = 深色背景
+	autoDarkFromTea  bool               // Bubble Tea BackgroundColorMsg 检测结果：true = 深色背景
+	hasTeaBackground bool               // 是否已收到 Bubble Tea 的背景色检测消息
+	palette          palette            // 当前配色
 	width     int
 	height    int
 
@@ -932,6 +934,7 @@ func (m *model) Init() tea.Cmd {
 		m.spSubagent.Tick,
 		m.spTodo.Tick,
 		m.checkUpdateCmd(),
+		func() tea.Msg { return tea.RequestBackgroundColor() },
 	)
 }
 
@@ -1019,6 +1022,17 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.glamourRenderer = glamourR
 		}
 
+		return m, nil
+
+	// ------------------------------------------------------------------
+	// 终端背景色检测（Bubble Tea 推荐方式，比 lipgloss.HasDarkBackground 更可靠）
+	// ------------------------------------------------------------------
+	case tea.BackgroundColorMsg:
+		m.autoDarkFromTea = msg.IsDark()
+		m.hasTeaBackground = true
+		if m.themeMode == "auto" {
+			m.reapplyAutoTheme()
+		}
 		return m, nil
 
 	// ------------------------------------------------------------------
@@ -5250,6 +5264,30 @@ func (r *tuiUserResponder) ApprovePlan(ctx context.Context, plan string) (permis
 // 主题管理
 // ---------------------------------------------------------------------------
 
+// autoIsDark 返回 auto 模式下当前是否应使用深色主题。
+// 优先使用 Bubble Tea BackgroundColorMsg 的检测结果（更可靠），
+// 未收到时回退到 lipgloss.HasDarkBackground 的初始检测结果。
+func (m *model) autoIsDark() bool {
+	if m.hasTeaBackground {
+		return m.autoDarkFromTea
+	}
+	return m.autoDark
+}
+
+// reapplyAutoTheme 重新根据 auto 检测结果应用主题。
+// 仅在 themeMode == "auto" 时调用（Bubble Tea 背景色检测完成后）。
+func (m *model) reapplyAutoTheme() {
+	var p palette
+	if m.autoIsDark() {
+		p = darkPalette
+	} else {
+		p = lightPalette
+	}
+	applyTheme(p)
+	m.palette = p
+	m.syncThemeComponents()
+}
+
 // initTheme 根据 themeMode 和终端背景色初始化主题。
 // 在 runTUI 中 program 就绪后调用，确保可以检测终端背景色。
 func (m *model) initTheme() {
@@ -5265,7 +5303,7 @@ func (m *model) initTheme() {
 		p = lightColorBlindPalette
 	case "auto":
 		m.autoDark = lipgloss.HasDarkBackground(os.Stdin, os.Stdout)
-		if m.autoDark {
+		if m.autoIsDark() {
 			p = darkPalette
 		} else {
 			p = lightPalette
@@ -5295,7 +5333,7 @@ func (m *model) toggleTheme() {
 		m.palette = lightColorBlindPalette
 	case "lightcolorblind":
 		m.themeMode = "auto"
-		if m.autoDark {
+		if m.autoIsDark() {
 			applyTheme(darkPalette)
 			m.palette = darkPalette
 		} else {
@@ -5309,7 +5347,9 @@ func (m *model) toggleTheme() {
 	}
 	m.syncThemeComponents()
 	if m.settingsStore != nil {
-		_ = m.settingsStore.SaveTheme(m.themeMode)
+		if err := m.settingsStore.SaveTheme(m.themeMode); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to save theme: %v\n", err)
+		}
 	}
 }
 
@@ -5326,7 +5366,7 @@ func (m *model) syncThemeComponents() {
 	m.ctxProgress.EmptyColor = colorFooterFg
 
 	// 同步 help 组件主题
-	isDark := m.themeMode == "dark" || m.themeMode == "darkcolorblind" || (m.themeMode == "auto" && m.autoDark)
+	isDark := m.themeMode == "dark" || m.themeMode == "darkcolorblind" || (m.themeMode == "auto" && m.autoIsDark())
 	m.help.Styles = help.DefaultStyles(isDark)
 
 	// 同步 input 组件样式 —— 提示符与用户消息前缀联动，placeholder 使用 muted 色
@@ -5968,6 +6008,11 @@ func (s *tuiSettingsStore) plansDirectory() string {
 // writeFullSettings 全量 read-modify-write settings.json，替换 llm / theme / locale section。
 // llmSettings 为 nil 时保留已有的 llm section；theme / locale 为空时保留已有值。
 func writeFullSettings(path string, llmSettings *llm.LLMSettings, theme, locale string) error {
+	// 确保父目录存在
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return fmt.Errorf("create config dir: %w", err)
+	}
+
 	// 读取现有完整文件
 	full := make(map[string]any)
 	if data, err := os.ReadFile(path); err == nil {
@@ -6199,7 +6244,7 @@ func (m *model) applyThemeMode(mode string) {
 	case "lightcolorblind":
 		p = lightColorBlindPalette
 	case "auto":
-		if m.autoDark {
+		if m.autoIsDark() {
 			p = darkPalette
 		} else {
 			p = lightPalette
@@ -6212,7 +6257,9 @@ func (m *model) applyThemeMode(mode string) {
 	m.syncThemeComponents()
 	// 落盘到 project settings.json
 	if m.settingsStore != nil {
-		_ = m.settingsStore.SaveTheme(mode)
+		if err := m.settingsStore.SaveTheme(mode); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to save theme: %v\n", err)
+		}
 	}
 }
 
@@ -6313,7 +6360,9 @@ func (m *model) applyLocale(loc Locale) {
 	// 刷新 command picker 缓存（下次打开 / 时用新文案重建列表）
 	m.commandPickerItems = nil
 	if m.settingsStore != nil {
-		_ = m.settingsStore.SaveLocale(string(loc))
+		if err := m.settingsStore.SaveLocale(string(loc)); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to save locale: %v\n", err)
+		}
 	}
 }
 
@@ -6412,7 +6461,9 @@ func (m *model) commitModelSwitch(modelID string) {
 		settings = &llm.LLMSettings{}
 	}
 	settings.Model = modelID
-	_ = m.settingsStore.SaveLLM(settings) // 忽略写入错误，用户感知到 HUD 已更新
+	if err := m.settingsStore.SaveLLM(settings); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: failed to save LLM settings: %v\n", err)
+	} // 用户感知到 HUD 已更新
 	m.hudModel = normalizeWidth(modelID)
 	m.hudThinkingEffort = resolveThinkingEffort(settings)
 	m.reconfigureLLMClient(modelID)
