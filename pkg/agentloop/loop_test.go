@@ -3369,6 +3369,241 @@ func TestBuildToolMessages_FatalOverridesBackoff(t *testing.T) {
 }
 
 // ============================================================================
+// 14b. Advisor mode 退避测试
+// ============================================================================
+
+func TestBuildToolMessages_AdvisorTerminateAt5(t *testing.T) {
+	// Advisor mode：连续 5 次同 (tool, kind) 错误 → 终止（正常模式为 8）
+	l := New(nil, nil, Config{AdvisorMode: true})
+
+	recoverableErr := &tool.ToolError{
+		Class:   tool.ErrorClassRecoverable,
+		Kind:    tool.ErrKindFileNotFound,
+		Message: "no such file",
+	}
+
+	// 累积到 count=4（不终止）
+	for i := 0; i < 4; i++ {
+		calls := []llm.ToolCall{makeToolCall(fmt.Sprintf("tc%d", i), "read_file", `{}`)}
+		results := map[string]*tool.ToolResult{
+			fmt.Sprintf("tc%d", i): {Error: recoverableErr},
+		}
+		_, reason, err := l.buildToolMessages(calls, results, nil)
+		if err != nil {
+			t.Fatalf("round %d: unexpected error at count=%d: %v", i+1, l.consecutiveSameError, err)
+		}
+		if reason != "" {
+			t.Errorf("round %d: unexpected reason at count=%d: %s", i+1, l.consecutiveSameError, reason)
+		}
+	}
+	if l.consecutiveSameError != 4 {
+		t.Fatalf("expected count=4 after 4 rounds, got %d", l.consecutiveSameError)
+	}
+
+	// 第 5 轮：应终止
+	calls5 := []llm.ToolCall{makeToolCall("tc5", "read_file", `{}`)}
+	results5 := map[string]*tool.ToolResult{
+		"tc5": {Error: recoverableErr},
+	}
+	_, reason, err := l.buildToolMessages(calls5, results5, nil)
+	if err == nil {
+		t.Fatal("round 5: expected fatal error at count 5 in advisor mode")
+	}
+	if reason != ReasonToolFatal {
+		t.Errorf("round 5: expected ReasonToolFatal, got %s", reason)
+	}
+	if l.consecutiveSameError != 5 {
+		t.Errorf("expected count=5, got %d", l.consecutiveSameError)
+	}
+}
+
+func TestBuildToolMessages_NormalModeTerminateAt8(t *testing.T) {
+	// 正常模式：连续 8 次才终止
+	l := New(nil, nil, Config{AdvisorMode: false})
+
+	recoverableErr := &tool.ToolError{
+		Class:   tool.ErrorClassRecoverable,
+		Kind:    tool.ErrKindCommandFailed,
+		Message: "command failed",
+	}
+
+	// 累积到 count=7（不终止）
+	for i := 0; i < 7; i++ {
+		calls := []llm.ToolCall{makeToolCall(fmt.Sprintf("tc%d", i), "bash", `{}`)}
+		results := map[string]*tool.ToolResult{
+			fmt.Sprintf("tc%d", i): {Error: recoverableErr},
+		}
+		_, reason, err := l.buildToolMessages(calls, results, nil)
+		if err != nil {
+			t.Fatalf("round %d: unexpected error at count=%d: %v", i+1, l.consecutiveSameError, err)
+		}
+		if reason != "" {
+			t.Errorf("round %d: unexpected reason at count=%d: %s", i+1, l.consecutiveSameError, reason)
+		}
+	}
+	if l.consecutiveSameError != 7 {
+		t.Fatalf("expected count=7 after 7 rounds, got %d", l.consecutiveSameError)
+	}
+
+	// 第 8 轮：应终止
+	calls8 := []llm.ToolCall{makeToolCall("tc8", "bash", `{}`)}
+	results8 := map[string]*tool.ToolResult{
+		"tc8": {Error: recoverableErr},
+	}
+	_, reason, err := l.buildToolMessages(calls8, results8, nil)
+	if err == nil {
+		t.Fatal("round 8: expected fatal error at count 8 in normal mode")
+	}
+	if reason != ReasonToolFatal {
+		t.Errorf("round 8: expected ReasonToolFatal, got %s", reason)
+	}
+}
+
+func TestBuildToolMessages_AdvisorWarningAt3And5(t *testing.T) {
+	// Advisor mode 完整阶梯：
+	//   count=1 正常调用（不警告）
+	//   count=2 试错（不警告）
+	//   count=3 警告 → count=4 警告 → count=5 终止
+	l := New(nil, nil, Config{AdvisorMode: true})
+
+	recoverableErr := &tool.ToolError{
+		Class:   tool.ErrorClassRecoverable,
+		Kind:    tool.ErrKindCommandFailed,
+		Message: "exit status 1",
+	}
+
+	// count=1：不警告
+	calls1 := []llm.ToolCall{makeToolCall("tc1", "bash", `{}`)}
+	results1 := map[string]*tool.ToolResult{"tc1": {Error: recoverableErr}}
+	msgs1, _, _ := l.buildToolMessages(calls1, results1, nil)
+	for _, m := range msgs1 {
+		if strings.Contains(m.Content, "[system]") {
+			t.Error("advisor mode count=1: unexpected [system] warning (should be normal call)")
+		}
+	}
+
+	// count=2：不警告（试错阶段）
+	calls2 := []llm.ToolCall{makeToolCall("tc2", "bash", `{}`)}
+	results2 := map[string]*tool.ToolResult{"tc2": {Error: recoverableErr}}
+	msgs2, _, _ := l.buildToolMessages(calls2, results2, nil)
+	for _, m := range msgs2 {
+		if strings.Contains(m.Content, "[system]") {
+			t.Error("advisor mode count=2: unexpected [system] warning (should be trial-and-error)")
+		}
+	}
+
+	// count=3：警告，应包含 advisor 引用
+	calls3 := []llm.ToolCall{makeToolCall("tc3", "bash", `{}`)}
+	results3 := map[string]*tool.ToolResult{"tc3": {Error: recoverableErr}}
+	msgs3, _, _ := l.buildToolMessages(calls3, results3, nil)
+
+	foundAdvisorRef3 := false
+	for _, m := range msgs3 {
+		if strings.Contains(m.Content, "[system]") && strings.Contains(m.Content, "advisor") && strings.Contains(m.Content, "consider spawning") {
+			foundAdvisorRef3 = true
+			break
+		}
+	}
+	if !foundAdvisorRef3 {
+		t.Error("advisor mode count=3: expected [system] warning with 'consider spawning advisor'")
+	}
+
+	// count=4：警告，语言升级为强制措辞 + 终止阈值
+	calls4 := []llm.ToolCall{makeToolCall("tc4", "bash", `{}`)}
+	results4 := map[string]*tool.ToolResult{"tc4": {Error: recoverableErr}}
+	msgs4, _, _ := l.buildToolMessages(calls4, results4, nil)
+
+	foundAdvisorRef4 := false
+	for _, m := range msgs4 {
+		if strings.Contains(m.Content, "[system]") && strings.Contains(m.Content, "MUST spawn") && strings.Contains(m.Content, "terminate after") {
+			foundAdvisorRef4 = true
+			break
+		}
+	}
+	if !foundAdvisorRef4 {
+		t.Error("advisor mode count=4: expected [system] warning with 'MUST spawn advisor' and 'terminate after'")
+	}
+
+	if l.consecutiveSameError != 4 {
+		t.Fatalf("expected count=4, got %d", l.consecutiveSameError)
+	}
+
+	// count=5：应终止（不再是警告）
+	calls5 := []llm.ToolCall{makeToolCall("tc5", "bash", `{}`)}
+	results5 := map[string]*tool.ToolResult{"tc5": {Error: recoverableErr}}
+	_, reason, err := l.buildToolMessages(calls5, results5, nil)
+	if err == nil {
+		t.Fatal("advisor mode count=5: expected fatal termination")
+	}
+	if reason != ReasonToolFatal {
+		t.Errorf("expected ReasonToolFatal, got %s", reason)
+	}
+}
+
+func TestBuildToolMessages_AdvisorResetBySuccess(t *testing.T) {
+	// Advisor mode：成功调用重置计数器
+	l := New(nil, nil, Config{AdvisorMode: true})
+
+	recoverableErr := &tool.ToolError{
+		Class:   tool.ErrorClassRecoverable,
+		Kind:    tool.ErrKindFileNotFound,
+		Message: "no such file",
+	}
+
+	// count=1
+	_, _, _ = l.buildToolMessages(
+		[]llm.ToolCall{makeToolCall("tc1", "read_file", `{}`)},
+		map[string]*tool.ToolResult{"tc1": {Error: recoverableErr}},
+		nil,
+	)
+	if l.consecutiveSameError != 1 {
+		t.Fatalf("expected count=1, got %d", l.consecutiveSameError)
+	}
+
+	// 成功调用 → 重置
+	_, _, _ = l.buildToolMessages(
+		[]llm.ToolCall{makeToolCall("tc2", "bash", `{}`)},
+		map[string]*tool.ToolResult{"tc2": {Content: "success"}},
+		nil,
+	)
+	if l.consecutiveSameError != 0 {
+		t.Errorf("advisor mode: expected counter reset after success, got %d", l.consecutiveSameError)
+	}
+}
+
+func TestBuildToolMessages_AdvisorResetByDifferentKind(t *testing.T) {
+	// Advisor mode：不同 error kind 重置计数器
+	l := New(nil, nil, Config{AdvisorMode: true})
+
+	// count=1: file_not_found
+	_, _, _ = l.buildToolMessages(
+		[]llm.ToolCall{makeToolCall("tc1", "read_file", `{}`)},
+		map[string]*tool.ToolResult{"tc1": {Error: &tool.ToolError{
+			Class: tool.ErrorClassRecoverable, Kind: tool.ErrKindFileNotFound, Message: "no file",
+		}}},
+		nil,
+	)
+	if l.consecutiveSameError != 1 {
+		t.Fatalf("expected count=1, got %d", l.consecutiveSameError)
+	}
+
+	// 不同 kind → 重置为 1
+	_, _, _ = l.buildToolMessages(
+		[]llm.ToolCall{makeToolCall("tc2", "bash", `{}`)},
+		map[string]*tool.ToolResult{"tc2": {Error: &tool.ToolError{
+			Class: tool.ErrorClassRecoverable, Kind: tool.ErrKindCommandFailed, Message: "fail",
+		}}},
+		nil,
+	)
+	if l.consecutiveSameError != 1 {
+		t.Errorf("advisor mode: expected counter reset to 1 on different kind, got %d", l.consecutiveSameError)
+	}
+	if l.lastErrorKind != tool.ErrKindCommandFailed {
+		t.Errorf("expected lastErrorKind updated to command_failed, got %s", l.lastErrorKind)
+	}
+}
+
+// ============================================================================
 // 15. ToolCallResult.IsError 测试
 // ============================================================================
 
