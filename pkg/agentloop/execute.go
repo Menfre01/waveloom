@@ -580,18 +580,42 @@ func (l *Loop) buildToolMessages(
 
 		// 警告注入：连续失败达到阈值时，向 messages 末尾注入 system 提示，
 		// 引导 LLM 意识到重复错误并改变策略。
-		if warnThresholds[l.consecutiveSameError] {
-			warnMsg := llm.Message{
-				Role: llm.RoleUser,
-				Content: fmt.Sprintf(
+		//
+		// 正常模式阶梯：     count=3 警告 → count=5 警告 → count=8 终止
+		// Advisor mode 阶梯：count=3 警告 → count=4 警告 → count=5 终止
+		//                     (count=1 正常调用，count=2 试错不警告)
+		thresholds := warnThresholds
+		effectiveMax := maxConsecutiveSameError
+		if l.config.AdvisorMode {
+			thresholds = advisorWarnThresholds
+			effectiveMax = maxAdvisorConsecutiveSameError
+		}
+
+		if thresholds[l.consecutiveSameError] {
+			var warnContent string
+			if l.config.AdvisorMode {
+				verb := "consider spawning"
+				if l.consecutiveSameError == effectiveMax-1 {
+					verb = "you MUST spawn"
+				}
+				warnContent = fmt.Sprintf(
+					"[system] You have received %d consecutive %q errors on the %q tool. You are in advisor mode — %s advisor (type=\"advisor\") to get the primary model's analysis. Continuing with the same approach will cause the loop to terminate after %d consecutive failures.",
+					l.consecutiveSameError, firstRecoverableKind, firstRecoverableTool, verb, effectiveMax,
+				)
+			} else {
+				warnContent = fmt.Sprintf(
 					"[system] You have received %d consecutive %q errors on the %q tool. Reassess your approach — try a different tool, different parameters, or re-examine the task. Do not repeat the same call pattern. If the root cause remains unclear, consider delegating analysis to a subagent for a fresh perspective.",
-					l.consecutiveSameError, firstRecoverableTool, firstRecoverableKind,
-				),
+					l.consecutiveSameError, firstRecoverableKind, firstRecoverableTool,
+				)
+			}
+			warnMsg := llm.Message{
+				Role:    llm.RoleUser,
+				Content: warnContent,
 			}
 			messages = append(messages, warnMsg)
 		}
 
-		if l.consecutiveSameError >= maxConsecutiveSameError {
+		if l.consecutiveSameError >= effectiveMax {
 			if fatalErr == nil {
 				fatalReason = ReasonToolFatal
 				fatalErr = fmt.Errorf(
