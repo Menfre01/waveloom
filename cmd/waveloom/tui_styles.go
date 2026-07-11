@@ -282,6 +282,11 @@ var (
 	styleOverlayHint lipgloss.Style
 	styleOverlayBody lipgloss.Style
 
+	// Rewind 选择列表样式
+	styleRewindSelected lipgloss.Style
+	styleRewindNormal   lipgloss.Style
+	styleRewindBar      lipgloss.Style
+
 	// Todo 面板预定义样式
 	styleTodoInProgressSpinner lipgloss.Style
 	styleTodoInProgressText    lipgloss.Style
@@ -398,6 +403,15 @@ func applyTheme(p palette) {
 
 	// Picker 空状态 / 覆盖层正文预定义样式
 	styleOverlayBody = lipgloss.NewStyle().Foreground(colorFooterFg)
+
+	// Rewind 选择列表样式，与 @ 文件列表 / / 命令列表选中样式对齐
+	styleRewindSelected = lipgloss.NewStyle().
+				Foreground(colorOK).
+				Bold(true)
+	styleRewindNormal = lipgloss.NewStyle().
+				Foreground(colorHeaderFg)
+	styleRewindBar = lipgloss.NewStyle().
+			Foreground(colorHeaderAccent)
 
 	// Todo 面板预定义样式
 	styleTodoInProgressSpinner = lipgloss.NewStyle().Foreground(colorAccentGold)
