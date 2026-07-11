@@ -112,6 +112,7 @@ func MergeLLMSettings(base, override *LLMSettings) *LLMSettings {
 		APIKey:   base.APIKey,
 		Provider: base.Provider,
 		Model:    base.Model,
+		SubModel: base.SubModel,
 		BaseURL:  base.BaseURL,
 		Timeout:  base.Timeout,
 		Retry:    base.Retry,
@@ -142,6 +143,9 @@ func MergeLLMSettings(base, override *LLMSettings) *LLMSettings {
 	}
 	if override.Model != "" {
 		merged.Model = override.Model
+	}
+	if override.SubModel != "" {
+		merged.SubModel = override.SubModel
 	}
 	if override.BaseURL != "" {
 		merged.BaseURL = override.BaseURL
@@ -199,13 +203,6 @@ func NewClientFromLLMSettings(settings *LLMSettings) (Client, ClientConfig, erro
 		return nil, ClientConfig{}, &NonRetryableError{Message: "settings must not be nil"}
 	}
 
-	// 自动配对 sub_model：DeepSeek pro 主模型 → flash 子模型
-	if settings.Provider == "deepseek" && settings.SubModel == "" {
-		if settings.Model == "deepseek-v4-pro" {
-			settings.SubModel = "deepseek-v4-flash"
-		}
-	}
-
 	apiKey := settings.APIKey
 	if apiKey == "" {
 		apiKey = os.Getenv("LLM_API_KEY")
@@ -247,6 +244,7 @@ func DefaultSettings() *LLMSettings {
 	return &LLMSettings{
 		Provider: "deepseek",
 		Model:    "deepseek-v4-pro",
+		SubModel: "deepseek-v4-flash",
 		BaseURL:  "https://api.deepseek.com",
 		Timeout:  "600s",
 		Retry: &RetrySettings{
