@@ -111,7 +111,7 @@ func TestAgentTool_Schema(t *testing.T) {
 func TestAgentTool_Description(t *testing.T) {
 	a := &AgentTool{}
 	desc := a.Description()
-	for _, keyword := range []string{"subagent", "fork", "evaluate", "Explore", "verification"} {
+	for _, keyword := range []string{"subagent", "Agent Tool"} {
 		if !strings.Contains(desc, keyword) {
 			t.Errorf("Description missing keyword %q", keyword)
 		}
@@ -154,7 +154,7 @@ func TestAgentTool_ExecuteCold_Explore(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Execute() error: %v", err)
 	}
-	if !strings.Contains(result.Content, "Explore") {
+	if !strings.Contains(result.Content, "explore") {
 		t.Errorf("result should mention agent type: %s", result.Content)
 	}
 }
@@ -1621,7 +1621,7 @@ func TestAgentTool_ExecuteCold_ValidModel(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Execute() error: %v", err)
 	}
-	if !strings.Contains(result.Content, "Explore") {
+	if !strings.Contains(result.Content, "explore") {
 		t.Errorf("result should succeed with valid model: %s", result.Content)
 	}
 }
@@ -1669,7 +1669,7 @@ func TestAgentTool_ExecuteCold_ExploreAutoModel(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Execute() error: %v", err)
 	}
-	if !strings.Contains(result.Content, "Explore") {
+	if !strings.Contains(result.Content, "explore") {
 		t.Errorf("result should succeed: %s", result.Content)
 	}
 	if capturedModel != "deepseek-v4-flash" {
@@ -1703,10 +1703,170 @@ func TestAgentTool_ExecuteCold_ExploreAutoModel_EmptyDefault(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Execute() error: %v", err)
 	}
-	if !strings.Contains(result.Content, "Explore") {
+	if !strings.Contains(result.Content, "explore") {
 		t.Errorf("result should succeed: %s", result.Content)
 	}
 	if capturedModel != "" {
 		t.Errorf("SubagentStart.Model = %q, want empty (no DefaultSubModel configured)", capturedModel)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Advisor mode tests
+// ---------------------------------------------------------------------------
+
+func TestAdvisorMode_ExploreAutoFlash(t *testing.T) {
+	ctx := context.Background()
+	a := &AgentTool{
+		LLMClient:       &stubLLM{},
+		DefaultSubModel: "sub-model",
+	}
+
+	var capturedModel string
+	cb := func(ev agentloop.TurnEvent) {
+		if start, ok := ev.(SubagentStart); ok {
+			capturedModel = start.Model
+		}
+	}
+	ctx = agentloop.WithEventCallback(ctx, cb)
+	ctx = agentloop.WithToolCallID(ctx, "call-explore-auto")
+
+	result, err := a.Execute(ctx, AgentParams{
+		SubagentType: "Explore",
+		Description:  "auto flash test",
+		Prompt:       "find something",
+	})
+	if err != nil {
+		t.Fatalf("Execute() error: %v", err)
+	}
+	if !strings.Contains(result.Content, "explore") {
+		t.Errorf("result should mention agent type: %s", result.Content)
+	}
+	if capturedModel != "sub-model" {
+		t.Errorf("SubagentStart.Model = %q, want %q (Explore auto uses DefaultSubModel)", capturedModel, "sub-model")
+	}
+}
+
+func TestAdvisorMode_EvaluateStaysPro(t *testing.T) {
+	ctx := context.Background()
+	a := &AgentTool{
+		LLMClient:       &stubLLM{},
+		DefaultSubModel: "flash",
+	}
+
+	var capturedModel string
+	cb := func(ev agentloop.TurnEvent) {
+		if start, ok := ev.(SubagentStart); ok {
+			capturedModel = start.Model
+		}
+	}
+	ctx = agentloop.WithEventCallback(ctx, cb)
+	ctx = agentloop.WithToolCallID(ctx, "call-evaluate-pro")
+
+	result, err := a.Execute(ctx, AgentParams{
+		SubagentType: "evaluate",
+		Description:  "stay pro test",
+		Prompt:       "review something",
+	})
+	if err != nil {
+		t.Fatalf("Execute() error: %v", err)
+	}
+	if !strings.Contains(result.Content, "evaluate") {
+		t.Errorf("result should mention agent type: %s", result.Content)
+	}
+	if capturedModel != "" {
+		t.Errorf("SubagentStart.Model = %q, want empty (evaluate should not downgrade)", capturedModel)
+	}
+}
+
+func TestAdvisorMode_ColdAgentExplicitModel(t *testing.T) {
+	// REGRESSION: 冷代理模型锁定后，LLM 传入的 model 参数被忽略。
+	// evaluate 始终锁定 DefaultModel，缺少时为空（走 client 默认）。
+	ctx := context.Background()
+	a := &AgentTool{LLMClient: &stubLLM{}}
+
+	var capturedModel string
+	cb := func(ev agentloop.TurnEvent) {
+		if start, ok := ev.(SubagentStart); ok {
+			capturedModel = start.Model
+		}
+	}
+	ctx = agentloop.WithEventCallback(ctx, cb)
+	ctx = agentloop.WithToolCallID(ctx, "call-cold-explicit")
+
+	result, err := a.Execute(ctx, AgentParams{
+		SubagentType: "evaluate",
+		Description:  "explicit model test",
+		Prompt:       "review something",
+		Model:        "custom-model",
+	})
+	if err != nil {
+		t.Fatalf("Execute() error: %v", err)
+	}
+	// evaluate locks to DefaultModel ("" when unset), ignoring LLM's explicit model
+	if capturedModel != "" {
+		t.Errorf("SubagentStart.Model = %q, want %q (evaluate locks to DefaultModel, ignores explicit)", capturedModel, "")
+	}
+	_ = result
+}
+
+func TestAdvisorMode_AdvisorSubagent_UsesPrimaryModel(t *testing.T) {
+	ctx := context.Background()
+	msgs := []llm.Message{
+		{Role: llm.RoleSystem, Content: "sys"},
+		{Role: llm.RoleUser, Content: "hello"},
+	}
+	ctx = agentloop.WithParentMessages(ctx, msgs)
+
+	var capturedModel string
+	cb := func(ev agentloop.TurnEvent) {
+		if start, ok := ev.(SubagentStart); ok {
+			capturedModel = start.Model
+		}
+	}
+	ctx = agentloop.WithEventCallback(ctx, cb)
+	ctx = agentloop.WithToolCallID(ctx, "call-advisor-model")
+
+	a := &AgentTool{
+		LLMClient:       &stubLLM{},
+		DefaultModel:    "deepseek-v4-pro",
+		DefaultSubModel: "deepseek-v4-flash",
+	}
+
+	result, err := a.Execute(ctx, AgentParams{
+		SubagentType: "advisor",
+		Description:  "advisor test",
+		Prompt:       "analyze something",
+	})
+	if err != nil {
+		t.Fatalf("Execute() error: %v", err)
+	}
+	// Advisor routes to executeFork → fork format, not cold format
+	if !strings.Contains(result.Content, "fork subagent completed") {
+		t.Errorf("advisor should produce fork-style result, got: %s", result.Content)
+	}
+	if strings.Contains(result.Content, "subagent [advisor]") {
+		t.Errorf("advisor should NOT produce cold-style result: %s", result.Content)
+	}
+	// Advisor must lock to DefaultModel regardless of AgentParams.Model
+	if capturedModel != "deepseek-v4-pro" {
+		t.Errorf("SubagentStart.Model = %q, want %q (advisor always locks to DefaultModel)", capturedModel, "deepseek-v4-pro")
+	}
+}
+
+func TestAdvisorMode_AdvisorSubagent_ReadOnly(t *testing.T) {
+	// Advisor uses buildColdRegistry(exploreDisallowed) — same as Explore
+	// The advisor path in executeFork replaces the fork registry with this
+	r := buildColdRegistry(exploreDisallowed)
+	names := toolNames(r)
+	for _, name := range []string{"write_file", "edit_file"} {
+		if contains(names, name) {
+			t.Errorf("advisor registry should NOT have %q", name)
+		}
+	}
+	for _, name := range []string{"read_file", "web_fetch", "bash_subagent"} {
+		if !contains(names, name) {
+			t.Errorf("advisor registry missing %q", name)
+		}
 	}
 }

@@ -1,5 +1,19 @@
 # Changelog
 
+## [v0.1.0-beta.6] — 2026-07-11
+
+### 新增功能
+- **Advisor Mode 双模型成本优化**：子代理 advisor 类型使用 flash 模型处理评估任务，主 agent 保留 pro 模型做深度推理，评估任务 token 成本降低约 50%
+- **Overlay/Rewind TUI 增强**：overlay 面板统一铺满终端宽度消除窄边截断；rewind 消息选择器支持自适应宽度、内容截断与滚动交互
+
+### 修复
+- **TUI 持久化修复**：暗色/亮色检测改用 Bubble Tea `BackgroundColorMsg` 系统事件，修复部分终端上主题持久化静默失败
+- **Plan Mode 模型切换修复**：手动进入 plan mode 时 advisor 模型未从 pro 切换为 flash 的问题
+- **System Prompt 推理漏洞**：全面审计并修复 agent system prompt 中 2 处可能导致 LLM 绕过约束的推理漏洞
+
+### 重构
+- **模型配置 Settings 驱动重构**：LLM 模型配置完全由 settings.json 驱动，移除所有硬编码模型常量，用户可通过 settings 自定义任意 LLM 参数
+
 ## [v0.1.0-beta.5] — 2026-07-10
 
 ### 新增功能

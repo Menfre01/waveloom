@@ -584,7 +584,7 @@ func (l *Loop) buildToolMessages(
 			warnMsg := llm.Message{
 				Role: llm.RoleUser,
 				Content: fmt.Sprintf(
-					"[system] 你已经连续 %d 轮对 %q 工具收到 %q 错误。请反思当前策略——尝试用不同的工具、不同的参数，或重新理解任务目标。不要重复相同的调用模式。",
+					"[system] You have received %d consecutive %q errors on the %q tool. Reassess your approach — try a different tool, different parameters, or re-examine the task. Do not repeat the same call pattern. If the root cause remains unclear, consider delegating analysis to a subagent for a fresh perspective.",
 					l.consecutiveSameError, firstRecoverableTool, firstRecoverableKind,
 				),
 			}
@@ -892,11 +892,18 @@ Remember: DO NOT write or edit any source files — these operations will be blo
 	// 启用 plan 模式
 	l.plan = true
 	l.planPairID = generatePairID()
+
+	// Advisor mode：进入 plan 时切到主模型（清空 Model override，回退到 Client 默认）
+	if l.config.AdvisorMode {
+		l.prePlanModel = l.config.Model
+		l.config.Model = ""
+	}
+
 	if l.config.Guard != nil {
 		l.config.Guard.EnterPlanMode(l.config.PlanFile)
 	}
 
-	emitPlanEnter(ch, state.TurnCount, l.config.PlanFile, l.planPairID)
+	emitPlanEnter(ctx, ch, state.TurnCount, l.config.PlanFile, l.planPairID)
 
 	return &tool.ToolResult{
 		Content: fmt.Sprintf(`Entered plan mode. You should now focus on exploring the codebase and designing an implementation approach.
@@ -982,11 +989,18 @@ func (l *Loop) executeExitPlanMode(ctx context.Context, tc llm.ToolCall, state *
 	l.plan = false
 	l.approvedPlan = planStr // 暂存，由 executeToolCalls 在 tool 消息后注入 [plan:end]
 	l.config.PlanFile = ""   // 清除，确保下次进入生成新文件
+
+	// Advisor mode：退出 plan 时恢复次模型
+	if l.config.AdvisorMode && l.prePlanModel != "" {
+		l.config.Model = l.prePlanModel
+		l.prePlanModel = ""
+	}
+
 	if l.config.Guard != nil {
 		l.config.Guard.ExitPlanMode()
 	}
 
-	emitPlanExit(ch, state.TurnCount, planStr, l.config.PlanFile)
+	emitPlanExit(ctx, ch, state.TurnCount, planStr, l.config.PlanFile)
 
 	return &tool.ToolResult{
 		Content: "Plan approved. The approved plan is in the next user message ([plan:end #xxxx]).",
@@ -1025,10 +1039,19 @@ Plan saved to: %s
 %s`, l.planPairID, l.planPairID, l.planPairID, l.planPairID, l.config.PlanFile, planContent)
 }
 
+// mustReadRandom 包装 crypto/rand.Read，失败时 panic。
+// crypto/rand.Read 仅当系统熵池枯竭时才会失败，此时进程已处于退化状态，
+// 继续使用全零 ID 会导致数据损坏，因此 fail-fast 是更安全的选择。
+func mustReadRandom(b []byte) {
+	if _, err := rand.Read(b); err != nil {
+		panic(fmt.Sprintf("crypto/rand.Read failed: %v", err))
+	}
+}
+
 // generatePairID 生成 4 位 hex 随机配对 ID（如 "a3f7"）。
 func generatePairID() string {
 	b := make([]byte, 2)
-	rand.Read(b)
+	mustReadRandom(b)
 	return hex.EncodeToString(b)
 }
 
@@ -1052,7 +1075,7 @@ func (l *Loop) generatePlanFilePath() string {
 	}
 	// 兜底：用随机 hex
 	b := make([]byte, 4)
-	rand.Read(b)
+	mustReadRandom(b)
 	return filepath.Join(plansDir, hex.EncodeToString(b)+".md")
 }
 
@@ -1066,18 +1089,18 @@ func generateWordSlug() string {
 // randInt 使用 crypto/rand 生成 [0, max) 范围内的随机整数。
 func randInt(max int) int {
 	b := make([]byte, 4)
-	rand.Read(b)
+	mustReadRandom(b)
 	return int(uint32(b[0])|uint32(b[1])<<8|uint32(b[2])<<16|uint32(b[3])<<24) % max
 }
 
 // emitPlanEnter 发送 PlanModeEnter 事件到 channel。
-func emitPlanEnter(ch chan<- TurnEvent, turn int, planFile, pairID string) {
-	sendEvent(context.Background(), ch, PlanModeEnter{Turn: turn, PlanFile: planFile, PairID: pairID})
+func emitPlanEnter(ctx context.Context, ch chan<- TurnEvent, turn int, planFile, pairID string) {
+	sendEvent(ctx, ch, PlanModeEnter{Turn: turn, PlanFile: planFile, PairID: pairID})
 }
 
 // emitPlanExit 发送 PlanModeExit 事件到 channel。
-func emitPlanExit(ch chan<- TurnEvent, turn int, plan, filePath string) {
-	sendEvent(context.Background(), ch, PlanModeExit{
+func emitPlanExit(ctx context.Context, ch chan<- TurnEvent, turn int, plan, filePath string) {
+	sendEvent(ctx, ch, PlanModeExit{
 		Turn:     turn,
 		Plan:     plan,
 		FilePath: filePath,

@@ -3,6 +3,8 @@
         "api_key": "sk-your-deepseek-key",
         "provider": "deepseek",
         "model": "deepseek-v4-pro",
+        "sub_model": "deepseek-v4-flash",
+        "mode": "normal",
         "base_url": "https://api.deepseek.com",
         "timeout": "600s",
         "retry": {

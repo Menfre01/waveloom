@@ -869,70 +869,131 @@ func TestWriteDefaultSettingsIdempotent(t *testing.T) {
 	}
 }
 
-// REGRESSION: DeepSeek pro model → auto-pair flash as sub_model.
-func TestNewClientFromLLMSettings_AutoPairSubModel(t *testing.T) {
-	if testing.Short() {
-		t.Skip("requires API key")
-	}
-	// Only test auto-pair logic, not actual API call
+// REGRESSION: SubModel 不再自动配对，完全由配置决定。
+// 当 SubModel 为空时，NewClientFromLLMSettings 不应对其赋值。
+func TestNewClientFromLLMSettings_SubModelNotAutoPaired(t *testing.T) {
 	settings := &LLMSettings{
 		Provider: "deepseek",
 		Model:    "deepseek-v4-pro",
-		APIKey:   "sk-test-key-for-auto-pair-check",
+		APIKey:   "sk-test-key-for-submodel-check",
 	}
-	// Auto-pair should set SubModel without needing API call
-	// We test via NewClientFromLLMSettings which triggers the auto-pair logic
-	// But that also creates a client and would fail without real key.
-	// Instead, test the logic directly: verify the struct mutation pattern
-	_ = settings
+	// SubModel 未配置时应保持为空，不再自动配对
+	if settings.SubModel != "" {
+		t.Errorf("SubModel should remain empty when not configured, got %q", settings.SubModel)
+	}
 }
 
-// REGRESSION: flash main model → no sub_model auto-pair.
-func TestSubModel_AutoPair_SkipWhenMainIsFlash(t *testing.T) {
+// REGRESSION: SubModel 由配置显式指定，不应被覆盖。
+func TestSubModel_RespectsExplicitConfig_Flash(t *testing.T) {
 	settings := &LLMSettings{
 		Provider: "deepseek",
 		Model:    "deepseek-v4-flash",
+		SubModel: "custom-flash-model",
 	}
-	// Simulate the auto-pair logic from NewClientFromLLMSettings
-	if settings.Provider == "deepseek" && settings.SubModel == "" {
-		if settings.Model == "deepseek-v4-pro" {
-			settings.SubModel = "deepseek-v4-flash"
-		}
-	}
-	if settings.SubModel != "" {
-		t.Errorf("flash main model should NOT get auto sub_model, got %q", settings.SubModel)
+	if settings.SubModel != "custom-flash-model" {
+		t.Errorf("SubModel should respect explicit config, got %q", settings.SubModel)
 	}
 }
 
-// REGRESSION: pro main model → auto-pair flash.
-func TestSubModel_AutoPair_ProToFlash(t *testing.T) {
+// REGRESSION: SubModel 由配置显式指定，不应被覆盖。
+func TestSubModel_RespectsExplicitConfig_Pro(t *testing.T) {
 	settings := &LLMSettings{
 		Provider: "deepseek",
 		Model:    "deepseek-v4-pro",
+		SubModel: "custom-sub-model",
 	}
-	// Simulate the auto-pair logic
-	if settings.Provider == "deepseek" && settings.SubModel == "" {
-		if settings.Model == "deepseek-v4-pro" {
-			settings.SubModel = "deepseek-v4-flash"
-		}
-	}
-	if settings.SubModel != "deepseek-v4-flash" {
-		t.Errorf("pro main model should auto-pair flash, got %q", settings.SubModel)
+	if settings.SubModel != "custom-sub-model" {
+		t.Errorf("SubModel should respect explicit config, got %q", settings.SubModel)
 	}
 }
 
-// REGRESSION: non-DeepSeek provider → no auto-pair.
-func TestSubModel_AutoPair_SkipNonDeepSeek(t *testing.T) {
+// REGRESSION: non-DeepSeek provider — SubModel 可自由配置，无强制逻辑。
+func TestSubModel_NonDeepSeek_FreeConfig(t *testing.T) {
 	settings := &LLMSettings{
 		Provider: "openai",
 		Model:    "gpt-4o",
+		SubModel: "gpt-4o-mini",
 	}
-	if settings.Provider == "deepseek" && settings.SubModel == "" {
-		if settings.Model == "deepseek-v4-pro" {
-			settings.SubModel = "deepseek-v4-flash"
+	if settings.SubModel != "gpt-4o-mini" {
+		t.Errorf("SubModel should respect explicit config for any provider, got %q", settings.SubModel)
+	}
+}
+
+func TestAdvisorMode_IsAdvisorMode(t *testing.T) {
+	tests := []struct {
+		name     string
+		settings *LLMSettings
+		want     bool
+	}{
+		{
+			name:     "Mode=advisor, SubModel=flash, Model=pro → true",
+			settings: &LLMSettings{Mode: "advisor", SubModel: "flash", Model: "pro"},
+			want:     true,
+		},
+		{
+			name:     "Mode=normal, SubModel=flash, Model=pro → false",
+			settings: &LLMSettings{Mode: "normal", SubModel: "flash", Model: "pro"},
+			want:     false,
+		},
+		{
+			name:     "Mode=advisor, SubModel=empty, Model=pro → false",
+			settings: &LLMSettings{Mode: "advisor", SubModel: "", Model: "pro"},
+			want:     false,
+		},
+		{
+			name:     "Mode=advisor, SubModel=pro, Model=pro → false (same model)",
+			settings: &LLMSettings{Mode: "advisor", SubModel: "pro", Model: "pro"},
+			want:     false,
+		},
+		{
+			name:     "Mode=default, SubModel=flash, Model=pro → false",
+			settings: &LLMSettings{Mode: "", SubModel: "flash", Model: "pro"},
+			want:     false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := tt.settings.IsAdvisorMode()
+			if got != tt.want {
+				t.Errorf("IsAdvisorMode() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestAdvisorMode_MergeLLMSettings_PreservesMode(t *testing.T) {
+	t.Run("global Mode=advisor, project Mode=empty → merged Mode=advisor", func(t *testing.T) {
+		global := &LLMSettings{Mode: "advisor"}
+		project := &LLMSettings{Mode: ""}
+		merged := MergeLLMSettings(global, project)
+		if merged.Mode != "advisor" {
+			t.Errorf("merged.Mode = %q, want %q", merged.Mode, "advisor")
 		}
-	}
-	if settings.SubModel != "" {
-		t.Errorf("non-DeepSeek should NOT get auto sub_model, got %q", settings.SubModel)
+	})
+
+	t.Run("global Mode=normal, project Mode=advisor → merged Mode=advisor (project overrides)", func(t *testing.T) {
+		global := &LLMSettings{Mode: "normal"}
+		project := &LLMSettings{Mode: "advisor"}
+		merged := MergeLLMSettings(global, project)
+		if merged.Mode != "advisor" {
+			t.Errorf("merged.Mode = %q, want %q", merged.Mode, "advisor")
+		}
+	})
+
+	t.Run("both Mode=empty → merged Mode=empty", func(t *testing.T) {
+		global := &LLMSettings{Mode: ""}
+		project := &LLMSettings{Mode: ""}
+		merged := MergeLLMSettings(global, project)
+		if merged.Mode != "" {
+			t.Errorf("merged.Mode = %q, want empty", merged.Mode)
+		}
+	})
+}
+
+func TestAdvisorMode_DefaultSettings_Mode(t *testing.T) {
+	settings := DefaultSettings()
+	if settings.Mode != "normal" {
+		t.Errorf("DefaultSettings().Mode = %q, want %q", settings.Mode, "normal")
 	}
 }

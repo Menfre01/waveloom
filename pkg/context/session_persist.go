@@ -2,7 +2,6 @@ package context
 
 import (
 	"bufio"
-	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -249,7 +248,7 @@ func projectSlug(absPath string) string {
 // 例：a1b2c3d4-e5f6-a7b8-c9d0-e1f2a3b4c5d6
 func NewSessionID() string {
 	b := make([]byte, 16)
-	rand.Read(b)
+	mustReadRandom(b)
 	s := hex.EncodeToString(b)
 	return s[0:8] + "-" + s[8:12] + "-" + s[12:16] + "-" + s[16:20] + "-" + s[20:32]
 }

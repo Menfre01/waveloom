@@ -110,6 +110,18 @@ var defaultSystemPrompt = `You are Waveloom, a coding agent. You help users writ
 
 ## Agent Tool
 
+### Available agent types
+
+| Type | Use case | Context |
+|---|---|---|
+| *(omit)* / fork | Research, implementation, analysis | Inherits your context |
+| Explore | Code search, file discovery, read-only exploration | Cold (fast model) |
+| evaluate | Code review, security audit, second opinion | Cold |
+| verification | Post-implementation testing, try to break it | Cold |
+| advisor | Deep analysis, trade-off evaluation, decision support (read-only) | Inherits your context |
+
+See below for when to fork vs use a cold agent.
+
 ### When to use the agent tool
 
 - Use the agent tool for complex, multi-step tasks that require exploring multiple files, making several edits, or independent research.
@@ -238,14 +250,6 @@ Use ` + "`todo_write`" + ` for tasks with meaningful dependencies or parallelism
 // 自定义消息类型
 // ---------------------------------------------------------------------------
 
-// overlayMaxWidth 定义各覆盖层的最大宽度，保证在不同终端宽度下视觉一致。
-const (
-	overlayMaxWidthCompact = 50 // 主题/语言选择器（列表项短）
-	overlayMaxWidthMedium  = 60 // 模型选择器
-	overlayMaxWidthNormal  = 70 // 权限确认 / 问题选择 / plan 进入
-	overlayMaxWidthWide    = 80 // plan 退出审批（plan 内容区更宽）
-)
-
 // maxParas 是段落列表的硬上限，超出时从头部淘汰旧段落。
 // 200 个段落 ≈ 40–60 个典型 turn，保证渲染性能稳定。
 const maxParas = 200
@@ -257,6 +261,11 @@ const maxToolResultBytes = 100 * 1024 // 100 KB
 
 // buildSystemPrompt 构造完整的系统提示词。
 // CWD 在会话期间固定，不存在 cd 工具。
+//
+// 输出格式解析依赖（修改需同步）：
+//   - pkg/subagent/agent.go:formatSubagentEnvironment — 解析 "## Workspace" 和
+//     "## Environment" 节提取 OS/Shell/CWD 给冷启动子 agent
+//   - 对应的轮询测试：pkg/subagent/agent_test.go:TestFormatSubagentEnvironment_*
 func buildSystemPrompt(cwd string, loc Locale) string {
 	prompt := defaultSystemPrompt
 	// 根据 locale 替换 Personality 中的语言指令
@@ -479,6 +488,11 @@ type model struct {
 	verboseLog io.Writer // --verbose 日志输出（nil = 不记录）
 	loop       *agentloop.Loop
 
+	// Advisor mode
+	advisorMode bool   // 是否启用 advisor mode
+	subModel    string // advisor mode 的次模型名
+	initialModel string // 初始模型名（advisor mode 时为 subModel，否则 ""）
+
 	// Todo 任务列表
 	todoState    *todo.TodoState // session 级 todo 状态（跨 Loop 持久）
 	todoExpanded bool            // 是否展开全部（默认 false）
@@ -652,9 +666,10 @@ type model struct {
 	fhSessionDir string // session 目录路径（用于 filehistory 备份存储）
 
 	// Rewind 覆盖层状态
-	rewindMessages    []rewindMsg // 可回退的消息列表
-	rewindSelectedIdx int         // 选中的消息索引（在 rewindMessages 中）
-	rewindTargetMsgID string      // 目标消息 UUID（确认界面使用）
+	rewindMessages     []rewindMsg // 可回退的消息列表
+	rewindSelectedIdx  int         // 选中的消息索引（在 rewindMessages 中）
+	rewindScrollOffset int         // 消息列表滚动偏移（可见范围起始索引）
+	rewindTargetMsgID  string      // 目标消息 UUID（确认界面使用）
 }
 
 // ---------------------------------------------------------------------------
@@ -760,10 +775,6 @@ func colorHex(c color.Color) string {
 
 // newTUIModel 创建 TUI model，依赖由外部注入（LLM client / tool registry / guard / expander / verboseLog / locale）。
 func newTUIModel(llmClient llm.Client, registry tool.Registry, guard permission.Guard, expander *reference.Expander, modelName string, theme string, verboseLog io.Writer, contextLimit int, maxTurns int, toolTimeout time.Duration, toolTimeoutSource string, loc Locale, todoState *todo.TodoState) *model {
-	if modelName == "" {
-		modelName = "deepseek-v4"
-	}
-
 	cwd, _ := os.Getwd()
 	cm := ctxpkg.New(buildSystemPrompt(cwd, loc))
 	lc := messagesFor(loc)
@@ -915,7 +926,10 @@ func (m *model) wireLoop() {
 				m.program.Send(ev)
 			}
 		},
-		TodoState: m.todoState,
+		TodoState:   m.todoState,
+		AdvisorMode: m.advisorMode,
+		SubModel:    m.subModel,
+		Model:       m.initialModel,
 	})
 }
 
@@ -1874,11 +1888,7 @@ func (m *model) permListChoice() permission.UserChoice {
 
 const otherOptionKey = "___other___"
 func (m *model) overlayInnerWidth() int {
-	contentWidth := max(m.width-4, 20)
-	boxWidth := contentWidth
-	if boxWidth > overlayMaxWidthNormal {
-		boxWidth = overlayMaxWidthNormal
-	}
+	boxWidth := max(m.width-4, 20)
 	return boxWidth - 2 - 4 // border(左右各1) + padding(左右各2)
 }
 
@@ -4560,68 +4570,28 @@ func (m *model) View() tea.View {
 	switch m.overlay {
 	case overlayPermission:
 		if m.permReq != nil {
-			boxWidth := contentWidth
-			if boxWidth > overlayMaxWidthNormal {
-				boxWidth = overlayMaxWidthNormal
-			}
-			overlayContent = m.renderPermOverlay(boxWidth)
+			overlayContent = m.renderPermOverlay(contentWidth)
 		}
 	case overlayQuestion:
 		if m.questionReq != nil {
-			boxWidth := contentWidth
-			if boxWidth > overlayMaxWidthNormal {
-				boxWidth = overlayMaxWidthNormal
-			}
-			overlayContent = m.renderQuestionOverlay(boxWidth)
+			overlayContent = m.renderQuestionOverlay(contentWidth)
 		}
 	case overlayThemePicker:
-		boxWidth := contentWidth
-		if boxWidth > overlayMaxWidthCompact {
-			boxWidth = overlayMaxWidthCompact
-		}
-		overlayContent = m.renderThemePickerOverlay(boxWidth)
+		overlayContent = m.renderThemePickerOverlay(contentWidth)
 	case overlayModelPicker:
-		boxWidth := contentWidth
-		if boxWidth > overlayMaxWidthMedium {
-			boxWidth = overlayMaxWidthMedium
-		}
-		overlayContent = m.renderModelPickerOverlay(boxWidth)
+		overlayContent = m.renderModelPickerOverlay(contentWidth)
 	case overlayLocalePicker:
-		boxWidth := contentWidth
-		if boxWidth > overlayMaxWidthCompact {
-			boxWidth = overlayMaxWidthCompact
-		}
-		overlayContent = m.renderLocalePickerOverlay(boxWidth)
+		overlayContent = m.renderLocalePickerOverlay(contentWidth)
 	case overlayPlanEnter:
-		boxWidth := contentWidth
-		if boxWidth > overlayMaxWidthNormal {
-			boxWidth = overlayMaxWidthNormal
-		}
-		overlayContent = m.renderPlanEnterOverlay(boxWidth)
+		overlayContent = m.renderPlanEnterOverlay(contentWidth)
 	case overlayPlanExit:
-		boxWidth := contentWidth
-		if boxWidth > overlayMaxWidthWide {
-			boxWidth = overlayMaxWidthWide
-		}
-		overlayContent = m.renderPlanExitOverlay(boxWidth)
+		overlayContent = m.renderPlanExitOverlay(contentWidth)
 	case overlayHelp:
-		boxWidth := contentWidth
-		if boxWidth > overlayMaxWidthMedium {
-			boxWidth = overlayMaxWidthMedium
-		}
-		overlayContent = m.renderHelpOverlay(boxWidth)
+		overlayContent = m.renderHelpOverlay(contentWidth)
 	case overlayRewindSelect:
-		boxWidth := contentWidth
-		if boxWidth > overlayMaxWidthNormal {
-			boxWidth = overlayMaxWidthNormal
-		}
-		overlayContent = m.renderRewindSelectOverlay(boxWidth)
+		overlayContent = m.renderRewindSelectOverlay(contentWidth)
 	case overlayRewindConfirm:
-		boxWidth := contentWidth
-		if boxWidth > overlayMaxWidthNormal {
-			boxWidth = overlayMaxWidthNormal
-		}
-		overlayContent = m.renderRewindConfirmOverlay(boxWidth)
+		overlayContent = m.renderRewindConfirmOverlay(contentWidth)
 	}
 	var pickerContent string
 	if m.pickerVisible {
@@ -5464,6 +5434,7 @@ func (m *model) handleRewindCommand() tea.Cmd {
 	}
 
 	m.rewindSelectedIdx = 0
+	m.rewindScrollOffset = 0
 	m.input.Blur()
 	m.input.Reset()
 	return m.activateOverlay(overlayRewindSelect)
@@ -5522,10 +5493,12 @@ func (m *model) handleRewindSelectKey(keyStr string) tea.Cmd {
 	case "up":
 		if m.rewindSelectedIdx > 0 {
 			m.rewindSelectedIdx--
+			m.rewindScrollToVisible()
 		}
 	case "down":
 		if m.rewindSelectedIdx < len(m.rewindMessages)-1 {
 			m.rewindSelectedIdx++
+			m.rewindScrollToVisible()
 		}
 	case "enter":
 		if m.rewindSelectedIdx >= 0 && m.rewindSelectedIdx < len(m.rewindMessages) {
@@ -5540,6 +5513,39 @@ func (m *model) handleRewindSelectKey(keyStr string) tea.Cmd {
 		m.input.Focus()
 	}
 	return nil
+}
+
+// rewindScrollToVisible 确保当前选中项在可视区域内。
+func (m *model) rewindScrollToVisible() {
+	// 与 renderRewindSelectOverlay 中的可用行数计算保持一致
+	maxTotalLines := m.height - 2
+	if maxTotalLines < 10 {
+		maxTotalLines = 10
+	}
+	// header(4) + footer(4) + box border/padding(4) = 12 行固定开销
+	availMsgLines := maxTotalLines - 12
+	if availMsgLines < 1 {
+		availMsgLines = 1
+	}
+	// 每条消息占 2 行（内容 + 空行），最后一条占 1 行，取上整
+	maxVisible := (availMsgLines + 1) / 2
+	if maxVisible >= len(m.rewindMessages) {
+		m.rewindScrollOffset = 0
+		return
+	}
+	if m.rewindSelectedIdx < m.rewindScrollOffset {
+		m.rewindScrollOffset = m.rewindSelectedIdx
+	}
+	if m.rewindSelectedIdx >= m.rewindScrollOffset+maxVisible {
+		m.rewindScrollOffset = m.rewindSelectedIdx - maxVisible + 1
+	}
+	// 确保不会超出范围
+	if m.rewindScrollOffset < 0 {
+		m.rewindScrollOffset = 0
+	}
+	if m.rewindScrollOffset > len(m.rewindMessages)-maxVisible {
+		m.rewindScrollOffset = len(m.rewindMessages) - maxVisible
+	}
 }
 
 // handleRewindConfirmKey 处理 rewind 确认覆盖层的键盘事件。
@@ -5924,6 +5930,17 @@ func (m *model) reconfigureLLMClient(newModel string) {
 		return
 	}
 	m.llmClient = client
+
+	// 模型切换后重新判断 advisor mode 状态，避免 stale state
+	// 导致 plan mode 下模型切换逻辑不一致。
+	m.advisorMode = settings.IsAdvisorMode()
+	m.subModel = settings.SubModel
+	if m.advisorMode {
+		m.initialModel = settings.SubModel
+	} else {
+		m.initialModel = ""
+	}
+
 	if m.loop != nil {
 		m.wireLoop()
 	}
@@ -6479,10 +6496,15 @@ func (m *model) closeModelPicker() {
 // ---------------------------------------------------------------------------
 
 // runTUI 启动交互式 TUI 模式。依赖由 main() 统一初始化后传入，无需重复创建。
-func runTUI(llmClient llm.Client, registry tool.Registry, guard permission.Guard, expander *reference.Expander, modelName string, theme string, verboseLog io.Writer, contextLimit int, maxTurns int, toolTimeout time.Duration, toolTimeoutSource string, bypassPerm bool, ctxMgr *ctxpkg.ContextManager, isResume bool, sessionDir string, globalPath string, projectPath string, agentsMdText string, loc Locale, todoState *todo.TodoState) {
+func runTUI(llmClient llm.Client, registry tool.Registry, guard permission.Guard, expander *reference.Expander, modelName string, theme string, verboseLog io.Writer, contextLimit int, maxTurns int, toolTimeout time.Duration, toolTimeoutSource string, bypassPerm bool, ctxMgr *ctxpkg.ContextManager, isResume bool, sessionDir string, globalPath string, projectPath string, agentsMdText string, loc Locale, todoState *todo.TodoState, advisorMode bool, subModel string) {
 	m := newTUIModel(llmClient, registry, guard, expander, modelName, theme, verboseLog, contextLimit, maxTurns, toolTimeout, toolTimeoutSource, loc, todoState)
 	m.agentsMdText = agentsMdText
 	m.sessionDir = sessionDir
+	m.advisorMode = advisorMode
+	m.subModel = subModel
+	if advisorMode {
+		m.initialModel = subModel
+	}
 
 	// 构造 slash command registry（TUI 侧依赖实现）
 	store := &tuiSettingsStore{projectPath: projectPath, globalPath: globalPath}
@@ -6687,7 +6709,7 @@ func (m *model) generatePlanFilePath() string {
 		}
 	}
 	b := make([]byte, 4)
-	rand.Read(b)
+	mustReadRandom(b)
 	return filepath.Join(plansDir, hex.EncodeToString(b)+".md")
 }
 
@@ -6710,10 +6732,17 @@ func loadPlansDirectory(store *tuiSettingsStore) string {
 	return store.plansDirectory()
 }
 
+// mustReadRandom 包装 crypto/rand.Read，失败时 panic。
+func mustReadRandom(b []byte) {
+	if _, err := rand.Read(b); err != nil {
+		panic(fmt.Sprintf("crypto/rand.Read failed: %v", err))
+	}
+}
+
 // generatePairIDForTUI 生成 4 位 hex 随机配对 ID。
 func generatePairIDForTUI() string {
 	b := make([]byte, 2)
-	rand.Read(b)
+	mustReadRandom(b)
 	return hex.EncodeToString(b)
 }
 
@@ -6726,7 +6755,7 @@ func generateTUISlug() string {
 
 func tuiRandInt(max int) int {
 	b := make([]byte, 4)
-	rand.Read(b)
+	mustReadRandom(b)
 	return int(uint32(b[0])|uint32(b[1])<<8|uint32(b[2])<<16|uint32(b[3])<<24) % max
 }
 
