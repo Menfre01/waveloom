@@ -139,7 +139,12 @@ Release notes 以用户可感知的功能变化为描述单位，分类汇总：
 手动步骤（release workflow 之前完成）：
 
 1. **汇总 changelog** — 从上次 tag 到 HEAD 扫描 commit，按分类汇总，更新 `CHANGELOG.md` 和 `CHANGELOG.en.md`
-2. **审查 README** — 检查 `README.md` 和 `docs/README.en.md` 是否需要同步新功能
-3. **审查双语文档** — 检查 `CONTRIBUTING` / `SECURITY` / `docs/` 下中英双语是否同步
-4. **文档提交** — 如有文档修改，先 commit（类型 `docs`）
-5. **打 tag 并推送** — `git tag vX.Y.Z && git push origin dev && git push origin vX.Y.Z`
+2. **审查 Windows 兼容性** — 检查本次变更涉及的代码是否存在平台依赖问题：
+   - 路径拼接是否使用 `filepath.Join`，无硬编码 `/` 或 `\`
+   - 文件遍历优先使用 `filepath.WalkDir` / `os.ReadDir`，无外部命令
+   - 新增依赖是否声明跨平台支持
+   - Git diff 中新增的 `/` 分隔符确认是 Go 导入路径（安全）而非文件系统路径
+3. **审查 README** — 检查 `README.md` 和 `docs/README.en.md` 是否需要同步新功能
+4. **审查双语文档** — 检查 `CONTRIBUTING` / `SECURITY` / `docs/` 下中英双语是否同步
+5. **文档提交** — 如有文档修改，先 commit（类型 `docs`）
+6. **打 tag 并推送** — `git tag vX.Y.Z && git push origin dev && git push origin vX.Y.Z`
