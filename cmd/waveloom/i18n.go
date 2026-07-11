@@ -150,12 +150,17 @@ type Messages struct {
 	SetupStepAPIKey      string
 	SetupStepModel       string
 	SetupStepTheme       string
+	SetupStepSubModel    string
+	SetupStepBaseURL     string
 	SetupLocalePrompt    string
 	SetupProviderPrompt  string
 	SetupAPIKeyPrompt    string
 	SetupAPIKeyEmptyWarn string
 	SetupModelPrompt     string // 含 %s
 	SetupThemePrompt     string
+	SetupProviderOther   string
+	SetupBaseURLDesc     string
+	SetupSubModelDesc    string // 含 %s — 子代理模型推荐值
 	SetupDoneTitle       string
 	SetupDoneConfigSaved string
 	SetupDoneReady       string
@@ -167,6 +172,8 @@ type Messages struct {
 	SetupSummaryLanguage string
 	SetupSummaryProvider string
 	SetupSummaryModel    string
+	SetupSummarySubModel string
+	SetupSummaryBaseURL  string
 	SetupSummaryAPIKey   string
 	SetupConfirmSave     string
 	SetupConfirmBack     string
@@ -370,7 +377,12 @@ var zhCN = Messages{
 	SetupStepProvider:    "Step %d/%d — 选择 Provider",
 	SetupStepAPIKey:      "Step %d/%d — API Key",
 	SetupStepModel:       "Step %d/%d — 模型名称",
+	SetupStepSubModel:    "Step %d/%d — 子代理模型",
+	SetupStepBaseURL:     "Step %d/%d — API 端点",
 	SetupStepTheme:       "Step %d/%d — 主题",
+	SetupProviderOther:   "Other (OpenAI-compatible)",
+	SetupBaseURLDesc:     "兼容 OpenAI API 的服务地址，如 http://localhost:11434/v1",
+	SetupSubModelDesc:    "%s (Recommended) — 子代理默认模型",
 	SetupLocalePrompt:    "请输入数字 (1-2) [默认: 1]: ",
 	SetupProviderPrompt:  "请输入数字 (1-2) [默认: 1]: ",
 	SetupAPIKeyPrompt:    "请输入 API Key: ",
@@ -388,6 +400,8 @@ var zhCN = Messages{
 	SetupSummaryLanguage: "语言",
 	SetupSummaryProvider: "Provider",
 	SetupSummaryModel:    "模型",
+	SetupSummarySubModel: "子代理模型",
+	SetupSummaryBaseURL:  "API 端点",
 	SetupSummaryAPIKey:   "API Key",
 	SetupConfirmSave:     "Save  — 确认保存",
 	SetupConfirmBack:     "Back  — 回退修改",
@@ -654,7 +668,12 @@ var enUS = Messages{
 	SetupStepProvider:    "Step %d/%d — Select Provider",
 	SetupStepAPIKey:      "Step %d/%d — API Key",
 	SetupStepModel:       "Step %d/%d — Model Name",
+	SetupStepSubModel:    "Step %d/%d — Subagent Model",
+	SetupStepBaseURL:     "Step %d/%d — API Endpoint",
 	SetupStepTheme:       "Step %d/%d — Theme",
+	SetupProviderOther:   "Other (OpenAI-compatible)",
+	SetupBaseURLDesc:     "OpenAI-compatible API endpoint, e.g. http://localhost:11434/v1",
+	SetupSubModelDesc:    "%s (Recommended) — default model for subagents",
 	SetupLocalePrompt:    "Enter number (1-2) [default: 1]: ",
 	SetupProviderPrompt:  "Enter number (1-2) [default: 1]: ",
 	SetupAPIKeyPrompt:    "Enter API Key: ",
@@ -672,6 +691,8 @@ var enUS = Messages{
 	SetupSummaryLanguage: "Language",
 	SetupSummaryProvider: "Provider",
 	SetupSummaryModel:    "Model",
+	SetupSummarySubModel: "Subagent Model",
+	SetupSummaryBaseURL:  "API Endpoint",
 	SetupSummaryAPIKey:   "API Key",
 	SetupConfirmSave:     "Save",
 	SetupConfirmBack:     "Back",

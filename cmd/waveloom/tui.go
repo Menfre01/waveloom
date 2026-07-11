@@ -760,10 +760,6 @@ func colorHex(c color.Color) string {
 
 // newTUIModel 创建 TUI model，依赖由外部注入（LLM client / tool registry / guard / expander / verboseLog / locale）。
 func newTUIModel(llmClient llm.Client, registry tool.Registry, guard permission.Guard, expander *reference.Expander, modelName string, theme string, verboseLog io.Writer, contextLimit int, maxTurns int, toolTimeout time.Duration, toolTimeoutSource string, loc Locale, todoState *todo.TodoState) *model {
-	if modelName == "" {
-		modelName = "deepseek-v4"
-	}
-
 	cwd, _ := os.Getwd()
 	cm := ctxpkg.New(buildSystemPrompt(cwd, loc))
 	lc := messagesFor(loc)
