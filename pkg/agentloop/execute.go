@@ -584,7 +584,7 @@ func (l *Loop) buildToolMessages(
 			warnMsg := llm.Message{
 				Role: llm.RoleUser,
 				Content: fmt.Sprintf(
-					"[system] 你已经连续 %d 轮对 %q 工具收到 %q 错误。请反思当前策略——尝试用不同的工具、不同的参数，或重新理解任务目标。不要重复相同的调用模式。",
+					"[system] You have received %d consecutive %q errors on the %q tool. Reassess your approach — try a different tool, different parameters, or re-examine the task. Do not repeat the same call pattern. If the root cause remains unclear, consider delegating analysis to a subagent for a fresh perspective.",
 					l.consecutiveSameError, firstRecoverableTool, firstRecoverableKind,
 				),
 			}
