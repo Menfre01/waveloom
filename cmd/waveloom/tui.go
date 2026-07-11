@@ -238,14 +238,6 @@ Use ` + "`todo_write`" + ` for tasks with meaningful dependencies or parallelism
 // 自定义消息类型
 // ---------------------------------------------------------------------------
 
-// overlayMaxWidth 定义各覆盖层的最大宽度，保证在不同终端宽度下视觉一致。
-const (
-	overlayMaxWidthCompact = 50 // 主题/语言选择器（列表项短）
-	overlayMaxWidthMedium  = 60 // 模型选择器
-	overlayMaxWidthNormal  = 70 // 权限确认 / 问题选择 / plan 进入
-	overlayMaxWidthWide    = 80 // plan 退出审批（plan 内容区更宽）
-)
-
 // maxParas 是段落列表的硬上限，超出时从头部淘汰旧段落。
 // 200 个段落 ≈ 40–60 个典型 turn，保证渲染性能稳定。
 const maxParas = 200
@@ -6700,7 +6692,7 @@ func (m *model) generatePlanFilePath() string {
 		}
 	}
 	b := make([]byte, 4)
-	rand.Read(b)
+	mustReadRandom(b)
 	return filepath.Join(plansDir, hex.EncodeToString(b)+".md")
 }
 
@@ -6723,10 +6715,17 @@ func loadPlansDirectory(store *tuiSettingsStore) string {
 	return store.plansDirectory()
 }
 
+// mustReadRandom 包装 crypto/rand.Read，失败时 panic。
+func mustReadRandom(b []byte) {
+	if _, err := rand.Read(b); err != nil {
+		panic(fmt.Sprintf("crypto/rand.Read failed: %v", err))
+	}
+}
+
 // generatePairIDForTUI 生成 4 位 hex 随机配对 ID。
 func generatePairIDForTUI() string {
 	b := make([]byte, 2)
-	rand.Read(b)
+	mustReadRandom(b)
 	return hex.EncodeToString(b)
 }
 
@@ -6739,7 +6738,7 @@ func generateTUISlug() string {
 
 func tuiRandInt(max int) int {
 	b := make([]byte, 4)
-	rand.Read(b)
+	mustReadRandom(b)
 	return int(uint32(b[0])|uint32(b[1])<<8|uint32(b[2])<<16|uint32(b[3])<<24) % max
 }
 

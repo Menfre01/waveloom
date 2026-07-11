@@ -1190,3 +1190,78 @@ func TestAdvisorMode_NormalMode_NoSwitch(t *testing.T) {
 	}
 	go func() { for range ch {} }()
 }
+
+// TestAdvisorMode_SetPlanMode_SwitchesModel 验证用户快捷键进入 plan 模式时模型切换。
+func TestAdvisorMode_SetPlanMode_SwitchesModel(t *testing.T) {
+	l := New(nil, nil, Config{
+		AdvisorMode: true,
+		SubModel:    "flash",
+		Model:       "flash",
+	})
+
+	planFile := filepath.Join(t.TempDir(), "plan.md")
+	l.SetPlanMode(planFile)
+
+	if l.config.Model != "" {
+		t.Errorf("expected Model to be cleared (primary), got %q", l.config.Model)
+	}
+	if l.prePlanModel != "flash" {
+		t.Errorf("expected prePlanModel to be %q, got %q", "flash", l.prePlanModel)
+	}
+	if !l.plan {
+		t.Error("expected plan mode to be active")
+	}
+}
+
+// TestAdvisorMode_ResetPlanMode_RestoresModel 验证用户快捷键退出 plan 模式时模型恢复。
+func TestAdvisorMode_ResetPlanMode_RestoresModel(t *testing.T) {
+	l := New(nil, nil, Config{
+		AdvisorMode: true,
+		SubModel:    "flash",
+		Model:       "flash",
+	})
+
+	// 模拟进入 plan 模式
+	l.plan = true
+	l.prePlanModel = "flash"
+	l.config.Model = ""
+
+	// 手动退出
+	l.ResetPlanMode()
+
+	if l.config.Model != "flash" {
+		t.Errorf("expected Model to be restored to %q, got %q", "flash", l.config.Model)
+	}
+	if l.prePlanModel != "" {
+		t.Errorf("expected prePlanModel to be cleared, got %q", l.prePlanModel)
+	}
+	if l.plan {
+		t.Error("expected plan mode to be inactive")
+	}
+}
+
+// TestAdvisorMode_SetPlanMode_NoDoubleSave 验证重复进入 plan 模式不会覆盖 prePlanModel。
+func TestAdvisorMode_SetPlanMode_NoDoubleSave(t *testing.T) {
+	l := New(nil, nil, Config{
+		AdvisorMode: true,
+		SubModel:    "flash",
+		Model:       "flash",
+	})
+
+	planFile := filepath.Join(t.TempDir(), "plan.md")
+
+	// 第一次进入
+	l.SetPlanMode(planFile)
+	if l.prePlanModel != "flash" {
+		t.Fatalf("first entry: expected prePlanModel %q, got %q", "flash", l.prePlanModel)
+	}
+
+	// 重复调用（模拟用户多次按 Shift+Tab）
+	l.SetPlanMode(planFile)
+	if l.prePlanModel != "flash" {
+		t.Errorf("second entry should not overwrite prePlanModel: got %q, want %q", l.prePlanModel, "flash")
+	}
+	if l.config.Model != "" {
+		t.Errorf("second entry: expected Model still cleared, got %q", l.config.Model)
+	}
+}

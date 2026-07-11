@@ -565,25 +565,6 @@ func ExtractPattern(toolName string, input json.RawMessage) string {
 	}
 }
 
-// stringsJoin 用指定分隔符连接字符串切片。
-func stringsJoin(elems []string, sep string) string {
-	if len(elems) == 0 {
-		return ""
-	}
-	n := len(sep) * (len(elems) - 1)
-	for _, e := range elems {
-		n += len(e)
-	}
-	b := make([]byte, 0, n)
-	for i, e := range elems {
-		if i > 0 {
-			b = append(b, sep...)
-		}
-		b = append(b, e...)
-	}
-	return string(b)
-}
-
 // extractFilePath 从工具输入中提取文件路径和 working_dir。
 func extractFilePath(input json.RawMessage) (path, workingDir string) {
 	var params struct {
@@ -602,35 +583,4 @@ func extractFilePath(input json.RawMessage) (path, workingDir string) {
 		path = params.WorkingDir
 	}
 	return path, params.WorkingDir
-}
-
-// splitFields 按空格分割字符串，返回非空 fields。
-func splitFields(s string) []string {
-	var result []string
-	for _, f := range splitBySpace(s) {
-		if f != "" {
-			result = append(result, f)
-		}
-	}
-	return result
-}
-
-// splitBySpace 简单的空格分割。
-func splitBySpace(s string) []string {
-	var fields []string
-	current := ""
-	for _, r := range s {
-		if r == ' ' || r == '\t' {
-			if current != "" {
-				fields = append(fields, current)
-				current = ""
-			}
-		} else {
-			current += string(r)
-		}
-	}
-	if current != "" {
-		fields = append(fields, current)
-	}
-	return fields
 }
