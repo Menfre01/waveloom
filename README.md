@@ -135,6 +135,10 @@ Waveloom works with any text-based project. Code verification uses each language
 
 Go 1.25+, `make build` / `make test`. See [`CONTRIBUTING.md`](./CONTRIBUTING.md) for project structure and contribution guide.
 
+Built with [Bubble Tea](https://github.com/charmbracelet/bubbletea) (TUI framework),
+[Glamour](https://github.com/charmbracelet/glamour) (Markdown rendering),
+and [Lip Gloss](https://github.com/charmbracelet/lipgloss) (terminal styling) — part of the [Charm](https://charm.sh) ecosystem.
+
 ---
 
 Apache License 2.0 © 2026 Waveloom Contributors
