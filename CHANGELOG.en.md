@@ -1,5 +1,19 @@
 # Changelog
 
+## [v0.1.0-beta.6] — 2026-07-11
+
+### Added
+- **Advisor Mode cost optimization**: Advisor subagents now use the flash model for evaluation tasks while the main agent retains pro for deep reasoning — evaluation token costs reduced by ~50%
+- **Overlay/Rewind TUI enhancements**: Overlay panels now span full terminal width, eliminating narrow-edge clipping; rewind message selector supports adaptive width, content truncation, and scroll interaction
+
+### Fixed
+- **TUI persistence fix**: Dark/light detection switched to Bubble Tea `BackgroundColorMsg` system events, fixing silent theme persistence failure on some terminals
+- **Plan Mode model switch fix**: Advisor model not switching from pro to flash when entering plan mode manually
+- **System prompt reasoning vulnerability**: Comprehensive audit and fix of 2 reasoning gaps in agent system prompt that could allow LLM constraint bypass
+
+### Changed
+- **Model config fully settings-driven**: LLM model configuration now entirely driven by settings.json, removing all hardcoded model constants — users can customize arbitrary LLM parameters via settings
+
 ## [v0.1.0-beta.5] — 2026-07-10
 
 ### Added
