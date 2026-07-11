@@ -652,9 +652,10 @@ type model struct {
 	fhSessionDir string // session 目录路径（用于 filehistory 备份存储）
 
 	// Rewind 覆盖层状态
-	rewindMessages    []rewindMsg // 可回退的消息列表
-	rewindSelectedIdx int         // 选中的消息索引（在 rewindMessages 中）
-	rewindTargetMsgID string      // 目标消息 UUID（确认界面使用）
+	rewindMessages     []rewindMsg // 可回退的消息列表
+	rewindSelectedIdx  int         // 选中的消息索引（在 rewindMessages 中）
+	rewindScrollOffset int         // 消息列表滚动偏移（可见范围起始索引）
+	rewindTargetMsgID  string      // 目标消息 UUID（确认界面使用）
 }
 
 // ---------------------------------------------------------------------------
@@ -1870,11 +1871,7 @@ func (m *model) permListChoice() permission.UserChoice {
 
 const otherOptionKey = "___other___"
 func (m *model) overlayInnerWidth() int {
-	contentWidth := max(m.width-4, 20)
-	boxWidth := contentWidth
-	if boxWidth > overlayMaxWidthNormal {
-		boxWidth = overlayMaxWidthNormal
-	}
+	boxWidth := max(m.width-4, 20)
 	return boxWidth - 2 - 4 // border(左右各1) + padding(左右各2)
 }
 
@@ -4556,68 +4553,28 @@ func (m *model) View() tea.View {
 	switch m.overlay {
 	case overlayPermission:
 		if m.permReq != nil {
-			boxWidth := contentWidth
-			if boxWidth > overlayMaxWidthNormal {
-				boxWidth = overlayMaxWidthNormal
-			}
-			overlayContent = m.renderPermOverlay(boxWidth)
+			overlayContent = m.renderPermOverlay(contentWidth)
 		}
 	case overlayQuestion:
 		if m.questionReq != nil {
-			boxWidth := contentWidth
-			if boxWidth > overlayMaxWidthNormal {
-				boxWidth = overlayMaxWidthNormal
-			}
-			overlayContent = m.renderQuestionOverlay(boxWidth)
+			overlayContent = m.renderQuestionOverlay(contentWidth)
 		}
 	case overlayThemePicker:
-		boxWidth := contentWidth
-		if boxWidth > overlayMaxWidthCompact {
-			boxWidth = overlayMaxWidthCompact
-		}
-		overlayContent = m.renderThemePickerOverlay(boxWidth)
+		overlayContent = m.renderThemePickerOverlay(contentWidth)
 	case overlayModelPicker:
-		boxWidth := contentWidth
-		if boxWidth > overlayMaxWidthMedium {
-			boxWidth = overlayMaxWidthMedium
-		}
-		overlayContent = m.renderModelPickerOverlay(boxWidth)
+		overlayContent = m.renderModelPickerOverlay(contentWidth)
 	case overlayLocalePicker:
-		boxWidth := contentWidth
-		if boxWidth > overlayMaxWidthCompact {
-			boxWidth = overlayMaxWidthCompact
-		}
-		overlayContent = m.renderLocalePickerOverlay(boxWidth)
+		overlayContent = m.renderLocalePickerOverlay(contentWidth)
 	case overlayPlanEnter:
-		boxWidth := contentWidth
-		if boxWidth > overlayMaxWidthNormal {
-			boxWidth = overlayMaxWidthNormal
-		}
-		overlayContent = m.renderPlanEnterOverlay(boxWidth)
+		overlayContent = m.renderPlanEnterOverlay(contentWidth)
 	case overlayPlanExit:
-		boxWidth := contentWidth
-		if boxWidth > overlayMaxWidthWide {
-			boxWidth = overlayMaxWidthWide
-		}
-		overlayContent = m.renderPlanExitOverlay(boxWidth)
+		overlayContent = m.renderPlanExitOverlay(contentWidth)
 	case overlayHelp:
-		boxWidth := contentWidth
-		if boxWidth > overlayMaxWidthMedium {
-			boxWidth = overlayMaxWidthMedium
-		}
-		overlayContent = m.renderHelpOverlay(boxWidth)
+		overlayContent = m.renderHelpOverlay(contentWidth)
 	case overlayRewindSelect:
-		boxWidth := contentWidth
-		if boxWidth > overlayMaxWidthNormal {
-			boxWidth = overlayMaxWidthNormal
-		}
-		overlayContent = m.renderRewindSelectOverlay(boxWidth)
+		overlayContent = m.renderRewindSelectOverlay(contentWidth)
 	case overlayRewindConfirm:
-		boxWidth := contentWidth
-		if boxWidth > overlayMaxWidthNormal {
-			boxWidth = overlayMaxWidthNormal
-		}
-		overlayContent = m.renderRewindConfirmOverlay(boxWidth)
+		overlayContent = m.renderRewindConfirmOverlay(contentWidth)
 	}
 	var pickerContent string
 	if m.pickerVisible {
@@ -5460,6 +5417,7 @@ func (m *model) handleRewindCommand() tea.Cmd {
 	}
 
 	m.rewindSelectedIdx = 0
+	m.rewindScrollOffset = 0
 	m.input.Blur()
 	m.input.Reset()
 	return m.activateOverlay(overlayRewindSelect)
@@ -5518,10 +5476,12 @@ func (m *model) handleRewindSelectKey(keyStr string) tea.Cmd {
 	case "up":
 		if m.rewindSelectedIdx > 0 {
 			m.rewindSelectedIdx--
+			m.rewindScrollToVisible()
 		}
 	case "down":
 		if m.rewindSelectedIdx < len(m.rewindMessages)-1 {
 			m.rewindSelectedIdx++
+			m.rewindScrollToVisible()
 		}
 	case "enter":
 		if m.rewindSelectedIdx >= 0 && m.rewindSelectedIdx < len(m.rewindMessages) {
@@ -5536,6 +5496,39 @@ func (m *model) handleRewindSelectKey(keyStr string) tea.Cmd {
 		m.input.Focus()
 	}
 	return nil
+}
+
+// rewindScrollToVisible 确保当前选中项在可视区域内。
+func (m *model) rewindScrollToVisible() {
+	// 与 renderRewindSelectOverlay 中的可用行数计算保持一致
+	maxTotalLines := m.height - 2
+	if maxTotalLines < 10 {
+		maxTotalLines = 10
+	}
+	// header(4) + footer(4) + box border/padding(4) = 12 行固定开销
+	availMsgLines := maxTotalLines - 12
+	if availMsgLines < 1 {
+		availMsgLines = 1
+	}
+	// 每条消息占 2 行（内容 + 空行），最后一条占 1 行，取上整
+	maxVisible := (availMsgLines + 1) / 2
+	if maxVisible >= len(m.rewindMessages) {
+		m.rewindScrollOffset = 0
+		return
+	}
+	if m.rewindSelectedIdx < m.rewindScrollOffset {
+		m.rewindScrollOffset = m.rewindSelectedIdx
+	}
+	if m.rewindSelectedIdx >= m.rewindScrollOffset+maxVisible {
+		m.rewindScrollOffset = m.rewindSelectedIdx - maxVisible + 1
+	}
+	// 确保不会超出范围
+	if m.rewindScrollOffset < 0 {
+		m.rewindScrollOffset = 0
+	}
+	if m.rewindScrollOffset > len(m.rewindMessages)-maxVisible {
+		m.rewindScrollOffset = len(m.rewindMessages) - maxVisible
+	}
 }
 
 // handleRewindConfirmKey 处理 rewind 确认覆盖层的键盘事件。
