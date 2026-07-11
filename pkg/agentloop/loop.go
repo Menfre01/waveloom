@@ -223,6 +223,13 @@ func (l *Loop) SetPlanMode(planFile string) (planPairID string, startMessage llm
 	l.plan = true
 	l.planPairID = generatePairID()
 	l.config.PlanFile = planFile
+
+	// Advisor mode：进入 plan 时切到主模型（仅在尚未进入 plan 时切换，避免重复）
+	if l.config.AdvisorMode && l.prePlanModel == "" {
+		l.prePlanModel = l.config.Model
+		l.config.Model = ""
+	}
+
 	if l.config.Guard != nil {
 		l.config.Guard.EnterPlanMode(planFile)
 	}
@@ -245,6 +252,12 @@ func (l *Loop) ResetPlanMode() {
 	l.planPairID = ""
 	l.config.PlanFile = ""
 	l.approvedPlan = ""
+
+	// Advisor mode：退出 plan 时恢复次模型
+	if l.config.AdvisorMode && l.prePlanModel != "" {
+		l.config.Model = l.prePlanModel
+		l.prePlanModel = ""
+	}
 }
 
 // Run 执行主循环，逐轮推送 TurnEvent 到返回的 channel。

@@ -140,13 +140,20 @@ func (cm *ContextManager) PrepareRun(userInput string) ([]llm.Message, string) {
 	return snapshot, messageID
 }
 
+// mustReadRandom 包装 crypto/rand.Read，失败时 panic。
+func mustReadRandom(b []byte) {
+	if _, err := rand.Read(b); err != nil {
+		panic(fmt.Sprintf("crypto/rand.Read failed: %v", err))
+	}
+}
+
 // newMessageID 生成 8 字节随机十六进制消息标识符。
 // 格式：16 个十六进制字符，如 "a1b2c3d4e5f6a7b8"。
 // 足以为每个消息提供唯一标识（64 位随机空间，冲突概率可忽略），
 // 比 UUID v4 更紧凑，在 JSONL 序列化中节省空间。
 func newMessageID() string {
 	b := make([]byte, 8)
-	rand.Read(b)
+	mustReadRandom(b)
 	return hex.EncodeToString(b)
 }
 
