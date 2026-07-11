@@ -23,6 +23,8 @@ type setupState struct {
 	locale     string
 	prov       string
 	model      string
+	subModel   string
+	baseURL    string
 	apiKey     string
 	configPath string
 	lc         *Messages
@@ -49,11 +51,13 @@ func newSetupModel(loc Locale) *setupModel {
 	lc := messagesFor(loc)
 	return &setupModel{
 		state: &setupState{
-			theme:  "auto",
-			locale: string(loc),
-			prov:   "deepseek",
-			model:  "deepseek-v4-pro",
-			lc:     lc,
+			theme:    "auto",
+			locale:   string(loc),
+			prov:     "deepseek",
+			model:    "deepseek-v4-pro",
+			subModel: "deepseek-v4-flash",
+			baseURL:  "https://api.deepseek.com",
+			lc:       lc,
 		},
 	}
 }
@@ -189,6 +193,12 @@ func (m *setupModel) handleStepComplete() {
 			applyTheme(darkColorBlindPalette)
 		case "lightcolorblind":
 			applyTheme(lightColorBlindPalette)
+		case "auto":
+			if lipgloss.HasDarkBackground(os.Stdin, os.Stdout) {
+				applyTheme(darkPalette)
+			} else {
+				applyTheme(lightPalette)
+			}
 		default:
 			applyTheme(darkPalette)
 		}
@@ -199,10 +209,20 @@ func (m *setupModel) handleStepComplete() {
 		m.step++
 	case 2:
 		m.state.prov = m.form.GetString("provider")
-		if m.state.prov == "openai" {
+		switch m.state.prov {
+		case "openai":
 			m.state.model = "gpt-4o"
-		} else {
+			m.state.subModel = "gpt-4o-mini"
+			m.state.baseURL = "https://api.openai.com/v1"
+		case "deepseek":
 			m.state.model = "deepseek-v4-pro"
+			m.state.subModel = "deepseek-v4-flash"
+			m.state.baseURL = "https://api.deepseek.com"
+		default:
+			// 自定义 provider — 模型和 baseURL 由用户自行填写
+			m.state.model = ""
+			m.state.subModel = ""
+			m.state.baseURL = ""
 		}
 		m.step++
 	case 3:
@@ -216,6 +236,14 @@ func (m *setupModel) handleStepComplete() {
 		model := m.form.GetString("model")
 		if model != "" {
 			m.state.model = model
+		}
+		subModel := m.form.GetString("subModel")
+		if subModel != "" {
+			m.state.subModel = subModel
+		}
+		baseURL := m.form.GetString("baseURL")
+		if baseURL != "" {
+			m.state.baseURL = baseURL
 		}
 		m.step++
 	case 5:
@@ -282,6 +310,7 @@ func (m *setupModel) buildForm() {
 			Options(
 				huh.NewOption("DeepSeek  (Recommended)", "deepseek"),
 				huh.NewOption("OpenAI", "openai"),
+				huh.NewOption(lc.SetupProviderOther, "other"),
 			).
 			Value(&provVal)
 		m.form = huh.NewForm(huh.NewGroup(sel)).
@@ -303,19 +332,40 @@ func (m *setupModel) buildForm() {
 	case 4:
 		defaultModel := m.state.model
 		modelVal := defaultModel
+		defaultSubModel := m.state.subModel
+		subModelVal := defaultSubModel
+		defaultBaseURL := m.state.baseURL
+		baseURLVal := defaultBaseURL
 		desc := ""
-		if m.state.prov == "deepseek" {
+		subDesc := ""
+		baseURLDesc := lc.SetupBaseURLDesc
+		switch m.state.prov {
+		case "deepseek":
 			desc = "deepseek-v4-pro (Recommended) / deepseek-v4-flash"
-		} else {
+			subDesc = fmt.Sprintf(lc.SetupSubModelDesc, "deepseek-v4-flash")
+		case "openai":
 			desc = "gpt-4o (Recommended) / gpt-4o-mini"
+			subDesc = fmt.Sprintf(lc.SetupSubModelDesc, "gpt-4o-mini")
 		}
-		inp := huh.NewInput().
+		modelInp := huh.NewInput().
 			Key("model").
 			Title(fmt.Sprintf(lc.SetupStepModel, 5, totalSteps)).
 			Description(desc).
 			Placeholder(defaultModel).
 			Value(&modelVal)
-		m.form = huh.NewForm(huh.NewGroup(inp)).
+		subInp := huh.NewInput().
+			Key("subModel").
+			Title(fmt.Sprintf(lc.SetupStepSubModel, 5, totalSteps)).
+			Description(subDesc).
+			Placeholder(defaultSubModel).
+			Value(&subModelVal)
+		baseURLInp := huh.NewInput().
+			Key("baseURL").
+			Title(fmt.Sprintf(lc.SetupStepBaseURL, 5, totalSteps)).
+			Description(baseURLDesc).
+			Placeholder(defaultBaseURL).
+			Value(&baseURLVal)
+		m.form = huh.NewForm(huh.NewGroup(modelInp, subInp, baseURLInp)).
 			WithTheme(theme).WithWidth(formWidth).WithShowHelp(false)
 
 	case 5:
@@ -389,6 +439,8 @@ func renderSummary(s *setupState) string {
 		fmt.Sprintf("%s:  %s", lc.SetupSummaryLanguage, s.locale),
 		fmt.Sprintf("%s:  %s", lc.SetupSummaryProvider, s.prov),
 		fmt.Sprintf("%s:  %s", lc.SetupSummaryModel, s.model),
+		fmt.Sprintf("%s:  %s", lc.SetupSummarySubModel, s.subModel),
+		fmt.Sprintf("%s:  %s", lc.SetupSummaryBaseURL, s.baseURL),
 		fmt.Sprintf("%s:  %s", lc.SetupSummaryAPIKey, maskKey(s.apiKey)),
 	}
 	return strings.Join(lines, "\n")
@@ -407,16 +459,12 @@ func (m *setupModel) saveAndFinish() {
 	m.state.configPath = configPath
 	_ = os.MkdirAll(filepath.Dir(configPath), 0o755)
 
-	baseURL := "https://api.deepseek.com"
-	if m.state.prov == "openai" {
-		baseURL = "https://api.openai.com/v1"
-	}
-
 	settings := &llm.LLMSettings{
 		APIKey:   m.state.apiKey,
 		Provider: m.state.prov,
 		Model:    m.state.model,
-		BaseURL:  baseURL,
+		SubModel: m.state.subModel,
+		BaseURL:  m.state.baseURL,
 		Timeout:  "600s",
 	}
 	if m.state.prov == "deepseek" {
@@ -473,10 +521,12 @@ func runSetup(loc Locale) {
 	lc := m.state.lc
 	fmt.Printf("\n  %s\n\n", lc.SetupDoneTitle)
 	fmt.Printf("  %s\n", fmt.Sprintf(lc.SetupDoneConfigSaved, m.state.configPath))
-	fmt.Printf("  Language:  %s\n", m.state.locale)
-	fmt.Printf("  Theme:     %s\n", m.state.theme)
-	fmt.Printf("  Provider:  %s\n", m.state.prov)
-	fmt.Printf("  Model:     %s\n", m.state.model)
+	fmt.Printf("  %s: %s\n", lc.SetupSummaryLanguage, m.state.locale)
+	fmt.Printf("  %s: %s\n", lc.SetupSummaryTheme, m.state.theme)
+	fmt.Printf("  %s: %s\n", lc.SetupSummaryProvider, m.state.prov)
+	fmt.Printf("  %s: %s\n", lc.SetupSummaryModel, m.state.model)
+	fmt.Printf("  %s: %s\n", lc.SetupSummarySubModel, m.state.subModel)
+	fmt.Printf("  %s: %s\n", lc.SetupSummaryBaseURL, m.state.baseURL)
 	fmt.Printf("\n  %s\n\n", lc.SetupDoneReady)
 }
 
