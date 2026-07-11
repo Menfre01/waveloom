@@ -30,7 +30,7 @@ Minimal config:
 | `timeout` | Request timeout | `600s` |
 | `extra_params` | Extra parameters (thinking, reasoning_effort, etc.) | Thinking mode on by default |
 | `retry` | Retry policy `{"max_retries":3, "initial_backoff":"1s", "max_backoff":"30s", "multiplier":2.0}` | Default retry policy |
-| `mode` | `"normal"` or `"advisor"`. In advisor mode the main Agent defaults to `sub_model` (secondary model) to reduce token costs, temporarily switching to `model` (primary model) inside plan mode for deep reasoning. Only effective when `sub_model` is non-empty and differs from `model` | `"normal"` |
+| `mode` | `"normal"` or `"advisor"`. In advisor mode the main Agent defaults to `sub_model` (secondary model) to reduce token costs, temporarily switching to `model` (primary model) inside plan mode for deep reasoning. Only effective when `sub_model` is non-empty and differs from `model`. **Startup-only, cannot be changed at runtime via `/model`** | `"normal"` |
 | `headers` | Custom HTTP headers `{"X-Custom": "value"}` | — |
 
 ### permissions Configuration

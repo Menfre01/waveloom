@@ -6141,6 +6141,7 @@ func slashMessagesFrom(lc *Messages) *slashcommand.SlashMessages {
 		ModelConfigReadFailed: lc.SlashModelConfigReadFailed,
 		ModelConfigSaveFailed: lc.SlashModelConfigSaveFailed,
 		ModelSwitched:         lc.SlashModelSwitched,
+		ModelAdvisorModeNotice: lc.SlashModelAdvisorModeNotice,
 		ThemeDescription:      lc.SlashThemeDescription,
 		LocaleDescription:     lc.SlashLocaleDescription,
 		HelpDescription:       lc.SlashHelpDescription,
@@ -6477,13 +6478,31 @@ func (m *model) commitModelSwitch(modelID string) {
 	if err != nil {
 		settings = &llm.LLMSettings{}
 	}
+
+	wasAdvisorMode := settings.IsAdvisorMode()
+
 	settings.Model = modelID
 	if err := m.settingsStore.SaveLLM(settings); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: failed to save LLM settings: %v\n", err)
-	} // 用户感知到 HUD 已更新
+	}
 	m.hudModel = normalizeWidth(modelID)
 	m.hudThinkingEffort = resolveThinkingEffort(settings)
 	m.reconfigureLLMClient(modelID)
+
+	// 追加系统通知
+	lc := m.msg()
+	text := fmt.Sprintf(lc.SlashModelSwitched, modelID)
+	if wasAdvisorMode {
+		text += "\n" + lc.SlashModelAdvisorModeNotice
+	}
+	m.paras = append(m.paras, Paragraph{
+		Type:      paraSystem,
+		State:     stateDone,
+		Text:      text,
+		NotifKind: notifInfo,
+	})
+	m.trimParas()
+	m.flushTranscript()
 }
 
 func (m *model) closeModelPicker() {
