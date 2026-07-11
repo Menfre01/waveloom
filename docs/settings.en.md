@@ -30,6 +30,7 @@ Minimal config:
 | `timeout` | Request timeout | `600s` |
 | `extra_params` | Extra parameters (thinking, reasoning_effort, etc.) | Thinking mode on by default |
 | `retry` | Retry policy `{"max_retries":3, "initial_backoff":"1s", "max_backoff":"30s", "multiplier":2.0}` | Default retry policy |
+| `mode` | `"normal"` or `"advisor"`. In advisor mode the main Agent defaults to `sub_model` (secondary model) to reduce token costs, temporarily switching to `model` (primary model) inside plan mode for deep reasoning. Only effective when `sub_model` is non-empty and differs from `model` | `"normal"` |
 | `headers` | Custom HTTP headers `{"X-Custom": "value"}` | — |
 
 ### permissions Configuration
@@ -62,7 +63,7 @@ The agent auto-detects available toolchains at startup. For tools not in PATH or
 
 ### web_search Configuration
 
-The `web_search` tool defaults to DuckDuckGo — no configuration required. For better result quality, switch to the Brave Search API ([2,000 free queries/month](https://brave.com/search/api/)) via an environment variable:
+The `web_search` tool defaults to DuckDuckGo — no configuration required. For better result quality, switch to the Brave Search API via an environment variable:
 
 ```bash
 export BRAVE_API_KEY="your-brave-api-key"
