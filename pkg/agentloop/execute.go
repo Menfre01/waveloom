@@ -892,6 +892,13 @@ Remember: DO NOT write or edit any source files — these operations will be blo
 	// 启用 plan 模式
 	l.plan = true
 	l.planPairID = generatePairID()
+
+	// Advisor mode：进入 plan 时切到主模型（清空 Model override，回退到 Client 默认）
+	if l.config.AdvisorMode {
+		l.prePlanModel = l.config.Model
+		l.config.Model = ""
+	}
+
 	if l.config.Guard != nil {
 		l.config.Guard.EnterPlanMode(l.config.PlanFile)
 	}
@@ -982,6 +989,13 @@ func (l *Loop) executeExitPlanMode(ctx context.Context, tc llm.ToolCall, state *
 	l.plan = false
 	l.approvedPlan = planStr // 暂存，由 executeToolCalls 在 tool 消息后注入 [plan:end]
 	l.config.PlanFile = ""   // 清除，确保下次进入生成新文件
+
+	// Advisor mode：退出 plan 时恢复次模型
+	if l.config.AdvisorMode && l.prePlanModel != "" {
+		l.config.Model = l.prePlanModel
+		l.prePlanModel = ""
+	}
+
 	if l.config.Guard != nil {
 		l.config.Guard.ExitPlanMode()
 	}

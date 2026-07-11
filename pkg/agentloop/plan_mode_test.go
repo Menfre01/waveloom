@@ -1061,3 +1061,132 @@ func TestGeneratePlanFilePath_Unique(t *testing.T) {
 		t.Errorf("expected different plan file paths, got same: %s", path1)
 	}
 }
+
+// ============================================================================
+// Advisor mode plan mode switching tests
+// ============================================================================
+
+func TestAdvisorMode_EnterPlanMode_SwitchesModel(t *testing.T) {
+	l := New(nil, nil, Config{
+		AdvisorMode:   true,
+		SubModel:      "sub-model",
+		Model:         "sub-model",
+		UserResponder: &mockPlanResponder{enterPlanOK: true},
+		Guard:         &mockGuard{},
+		PlanFile:      "/tmp/test-plan.md",
+	})
+
+	tc := llm.ToolCall{
+		ID:        "call_adv_enter_1",
+		Name:      "enter_plan_mode",
+		Arguments: `{}`,
+	}
+
+	ch := make(chan TurnEvent, 4)
+	result, err := l.executeEnterPlanMode(context.Background(), tc, &LoopState{}, ch)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.IsError() {
+		t.Fatalf("unexpected error result: %s", result.Error.Message)
+	}
+	// Should switch to primary model (empty string = client default)
+	if l.config.Model != "" {
+		t.Errorf("expected Model to be empty (primary), got %q", l.config.Model)
+	}
+	// Should save the sub model
+	if l.prePlanModel != "sub-model" {
+		t.Errorf("expected prePlanModel to be %q, got %q", "sub-model", l.prePlanModel)
+	}
+	go func() { for range ch {} }()
+}
+
+func TestAdvisorMode_ExitPlanMode_RestoresModel(t *testing.T) {
+	tmpFile, err := os.CreateTemp("", "plan-adv-exit-*.md")
+	if err != nil {
+		t.Fatalf("failed to create temp file: %v", err)
+	}
+	defer os.Remove(tmpFile.Name()) //nolint:errcheck
+	_, _ = tmpFile.WriteString("# Advisor Plan\nApproved plan content.")
+	_ = tmpFile.Close()
+
+	l := New(nil, nil, Config{
+		AdvisorMode:   true,
+		SubModel:      "sub-model",
+		Model:         "sub-model",
+		UserResponder: &mockPlanResponder{
+			approvePlan: permission.PlanApproval{Approved: true},
+		},
+		Guard:    &mockGuard{},
+		PlanFile: tmpFile.Name(),
+	})
+	// Simulate having entered plan mode: plan=true, model cleared, prePlanModel set
+	l.plan = true
+	l.planPairID = "adv1"
+	l.prePlanModel = "sub-model"
+	l.config.Model = ""
+
+	tc := llm.ToolCall{
+		ID:        "call_adv_exit_1",
+		Name:      "exit_plan_mode",
+		Arguments: `{}`,
+	}
+
+	state := &LoopState{
+		Messages: []llm.Message{
+			{Role: llm.RoleUser, Content: "approve"},
+		},
+	}
+
+	ch := make(chan TurnEvent, 4)
+	result, err := l.executeExitPlanMode(context.Background(), tc, state, ch)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.IsError() {
+		t.Fatalf("unexpected error result: %s", result.Error.Message)
+	}
+	// Should restore sub model
+	if l.config.Model != "sub-model" {
+		t.Errorf("expected Model to be restored to %q, got %q", "sub-model", l.config.Model)
+	}
+	// Should clear prePlanModel
+	if l.prePlanModel != "" {
+		t.Errorf("expected prePlanModel to be empty, got %q", l.prePlanModel)
+	}
+	go func() { for range ch {} }()
+}
+
+func TestAdvisorMode_NormalMode_NoSwitch(t *testing.T) {
+	l := New(nil, nil, Config{
+		AdvisorMode:   false,
+		Model:         "some-model",
+		UserResponder: &mockPlanResponder{enterPlanOK: true},
+		Guard:         &mockGuard{},
+		PlanFile:      "/tmp/test-plan.md",
+	})
+
+	tc := llm.ToolCall{
+		ID:        "call_normal_enter_1",
+		Name:      "enter_plan_mode",
+		Arguments: `{}`,
+	}
+
+	ch := make(chan TurnEvent, 4)
+	result, err := l.executeEnterPlanMode(context.Background(), tc, &LoopState{}, ch)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.IsError() {
+		t.Fatalf("unexpected error result: %s", result.Error.Message)
+	}
+	// Model should remain unchanged in non-advisor mode
+	if l.config.Model != "some-model" {
+		t.Errorf("expected Model to remain %q, got %q", "some-model", l.config.Model)
+	}
+	// prePlanModel should not be set
+	if l.prePlanModel != "" {
+		t.Errorf("expected prePlanModel to be empty, got %q", l.prePlanModel)
+	}
+	go func() { for range ch {} }()
+}

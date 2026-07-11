@@ -17,11 +17,18 @@ type LLMSettings struct {
 	Provider    string            `json:"provider"`     // "openai" / "deepseek"，默认 "deepseek"
 	Model       string            `json:"model"`        // 模型名称（主模型）
 	SubModel    string            `json:"sub_model"`    // subagent 默认模型，仅 DeepSeek 下自动填充为空则用 Model
+	Mode        string            `json:"mode"`         // "normal" / "advisor"，默认 "normal"。advisor 仅在 SubModel 非空且不等于 Model 时生效
 	BaseURL     string            `json:"base_url"`     // API 端点，留空使用默认
 	Timeout     string            `json:"timeout"`      // 单次请求超时，Go Duration 格式（如 "600s"），默认 600s
 	Retry       *RetrySettings    `json:"retry"`        // 重试策略，留空使用默认
 	Headers     map[string]string `json:"headers"`      // 自定义 HTTP 请求头
 	ExtraParams map[string]any    `json:"extra_params"` // Provider 特有参数，支持任意嵌套
+}
+
+// IsAdvisorMode 判断当前是否启用 advisor mode。
+// 条件：mode == "advisor" && SubModel 非空 && SubModel != Model。
+func (s *LLMSettings) IsAdvisorMode() bool {
+	return s.Mode == "advisor" && s.SubModel != "" && s.SubModel != s.Model
 }
 
 // RetrySettings 对应 settings.json 中的 retry 配置块。
@@ -113,6 +120,7 @@ func MergeLLMSettings(base, override *LLMSettings) *LLMSettings {
 		Provider: base.Provider,
 		Model:    base.Model,
 		SubModel: base.SubModel,
+		Mode:     base.Mode,
 		BaseURL:  base.BaseURL,
 		Timeout:  base.Timeout,
 		Retry:    base.Retry,
@@ -146,6 +154,9 @@ func MergeLLMSettings(base, override *LLMSettings) *LLMSettings {
 	}
 	if override.SubModel != "" {
 		merged.SubModel = override.SubModel
+	}
+	if override.Mode != "" {
+		merged.Mode = override.Mode
 	}
 	if override.BaseURL != "" {
 		merged.BaseURL = override.BaseURL
@@ -245,6 +256,7 @@ func DefaultSettings() *LLMSettings {
 		Provider: "deepseek",
 		Model:    "deepseek-v4-pro",
 		SubModel: "deepseek-v4-flash",
+		Mode:     "normal",
 		BaseURL:  "https://api.deepseek.com",
 		Timeout:  "600s",
 		Retry: &RetrySettings{
