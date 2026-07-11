@@ -21,13 +21,21 @@
 
 **A DeepSeek-native terminal code agent engineered for cache economics.** Prefix-cache architecture keeps the longest common prefix cache-hot across turns; LLM auto-selects pro for deep reasoning and flash for routine tasks — maximizing cache hits and minimizing token cost. Claude Code-level TUI with `.claude/skills/` and `.claude.json` MCP configs drop in — zero-friction replacement. One Go binary.
 
-**curl one-liner (macOS / Linux)**
+<p align="center">
+  <img src="./assets/demo.en.gif" alt="Waveloom Demo" width="900"/>
+</p>
+
+---
+
+## Quick Start
+
+### macOS / Linux
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/Menfre01/waveloom/main/install.sh | sh
 ```
 
-**Homebrew**
+Or via Homebrew:
 
 ```sh
 brew tap menfre01/tap
@@ -36,7 +44,9 @@ brew install waveloom
 
 > Supports macOS / Linux / Windows, AMD64 & ARM64. Installs to `~/.local/bin`, no sudo needed.
 
-**Windows** requires [Git for Windows](https://git-scm.com/downloads/win). Open PowerShell and run:
+### Windows
+
+Requires [Git for Windows](https://git-scm.com/downloads/win). Open PowerShell and run:
 
 ```powershell
 powershell -c "irm https://raw.githubusercontent.com/Menfre01/waveloom/main/install.ps1 | iex"
@@ -47,7 +57,7 @@ powershell -c "irm https://raw.githubusercontent.com/Menfre01/waveloom/main/inst
 >
 > Prefer Git Bash? Waveloom requires `bash.exe` — cmd and PowerShell are not supported. After installation, **open Git Bash** and run the commands below. If `waveloom` is not found, add `%USERPROFILE%\.local\bin` to your Windows PATH (the installer handles this automatically).
 
-Then configure your key and start:
+### Configure
 
 ```sh
 waveloom setup
@@ -56,10 +66,6 @@ waveloom
 
 > [!IMPORTANT]
 > API key connects directly to DeepSeek / OpenAI — your code never passes through a third-party server. Every file write and command execution requires your confirmation.
-
-<p align="center">
-  <img src="./assets/demo.en.gif" alt="Waveloom Demo" width="900"/>
-</p>
 
 ---
 
@@ -96,6 +102,7 @@ waveloom
 - **Session persistence** — Close the terminal, come back days later with `waveloom --continue`. The agent remembers all prior context.
 - **Checkpoint/Rewind** — Rewind to any previous message with full file state restoration. Fork mode preserves original session intact — history never lost.
 - **Plan Mode** — Two-stage workflow: explore & design first, implement after approval. `Shift+Tab` to enter/exit, Guard-enforced write protection.
+- **Advisor Mode** — Price-optimized dual-model routing: flash handles routine coding, pro auto-activates for plan mode and code review. Enable with `"mode": "advisor"` in settings.
 - **13 built-in tools** — `read_file` / `write_file` / `edit_file` / `bash` / `web_fetch` / `web_search` / `ask_user_question` / `enter_plan_mode` / `exit_plan_mode` / `skill` / `agent` / `kill_background_task` / `todo_write`.
 - **i18n multilingual** — Full zh-CN / en-US bilingual UI. `--locale` CLI flag, `/locale` command, auto-detect from LANG.
 
@@ -112,6 +119,9 @@ Stored locally at `~/.waveloom/`. Keys connect directly to DeepSeek / OpenAI —
 **Q: How do I switch languages?**  
 Type `/locale` to toggle between Chinese and English, or `waveloom --locale zh-CN`. The setting persists automatically in `settings.json`.
 
+**Q: How do I enable advisor mode?**  
+Add `"mode": "advisor"` to the `llm` section in `settings.json`. In advisor mode, the agent uses the secondary model (`sub_model`, e.g. `deepseek-v4-flash`) for routine coding and auto-switches to the primary model (`model`, e.g. `deepseek-v4-pro`) inside plan mode and for code review — cutting token costs by ~50%.
+
 **Q: What languages are supported?**  
 Waveloom works with any text-based project. Code verification uses each language's native build tools (`go build`, `npx tsc`, `cargo build`, `make`, etc.) — no LSP server required.
 
@@ -123,7 +133,7 @@ Waveloom works with any text-based project. Code verification uses each language
 |----------|---------|
 | [`usage`](./docs/usage.en.md) | Interactive mode, shortcuts, Skill system |
 | [`install`](./docs/install.en.md) | Homebrew / curl / source / shell completions |
-| [`settings`](./docs/settings.en.md) | API key, model, timeout, compaction |
+| [`settings`](./docs/settings.en.md) | API key, model, timeout, compaction, advisor mode |
 | [`prefix-cache`](./docs/prefix-cache.en.md) | DeepSeek caching, four-tier compaction |
 | [`environment`](./docs/environment.en.md) | Toolchain probing |
 | [`mcp`](./docs/mcp.en.md) | MCP client, config sources, CLI management |
