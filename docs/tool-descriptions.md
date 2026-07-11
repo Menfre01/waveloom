@@ -18,7 +18,7 @@
 | `skill` | ❌ | 系统 | 调用用户定义的 Skill |
 | `enter_plan_mode` | ❌ | Plan | 进入先规划后执行的 Plan 模式 |
 | `exit_plan_mode` | ❌ | Plan | 提交 Plan 审批，通过后恢复正常模式 |
-| `agent` | ✅ | 子代理 | 委派复杂任务给子 agent（Fork / Cold / Explore） |
+| `agent` | ✅ | 子代理 | 委派复杂任务给子 agent（Fork / Cold / Explore / Advisor） |
 | `kill_background_task` | ✅ | 任务 | 终止后台运行的任务 |
 | `todo_write` | ❌ | 任务 | 创建和管理结构化任务列表 |
 
@@ -324,6 +324,8 @@ Available subagent types and the tools they have access to:
 - Explore: read-only exploration (read_file, bash_subagent, web_fetch)
 - verification: read-only verification (read_file, bash_subagent, web_fetch).
   Attempts to BREAK the implementation — runs builds, tests, and adversarial probes.
+- advisor: fork-based deep analysis (read-only tools, primary model).
+  Analyzes trade-offs and recommends approaches — never writes code.
 
 Omit subagent_type to fork yourself — the fork inherits your conversation context
 (minus the agent call itself). This is the DEFAULT choice: it shares your prompt
@@ -346,6 +348,11 @@ Cold agent types:
   non-trivial task (3+ file edits, backend/API changes, infrastructure changes).
   The agent runs builds, tests, and adversarial probes, then reports PASS/FAIL
   with evidence. Pass the original task, files changed, and approach taken.
+- advisor: for deep analysis and design decisions (fork-based, hot-start).
+  Evaluates trade-offs between approaches, explores codebase implications,
+  and recommends paths forward. Uses the primary model (pro) for thorough
+  reasoning. NEVER writes code. Spawn when facing ≥3-file changes,
+  architectural decisions, or safety-critical code.
 
 Do NOT use cold agents just to parallelize work — fork multiple times instead.
 Each fork shares the same cache prefix; each cold agent pays the full input cost.
@@ -370,7 +377,7 @@ Explore agent should be used proactively for codebase exploration without the us
   "properties": {
     "subagent_type": {
       "type": "string",
-      "description": "Omit to fork (DEFAULT, cheap, shares cache). Set to 'evaluate' for code review / security audit, 'Explore' for finding code patterns, or 'verification' for post-implementation testing. Cold agents are expensive — they cannot reuse your prompt cache."
+      "description": "Omit to fork (DEFAULT, cheap, shares cache). Set to 'evaluate' for code review / security audit, 'Explore' for finding code patterns, 'verification' for post-implementation testing, or 'advisor' for deep analysis. Cold agents are expensive — they cannot reuse your prompt cache."
     },
     "description": {
       "type": "string",
