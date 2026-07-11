@@ -78,7 +78,16 @@ type Config struct {
 
 	// Model 覆盖 LLM Client 的默认 model。空 = 使用 Client 默认。
 	// 用于 subagent 按任务复杂度选择不同模型。
+	// Advisor mode 下：默认 = SubModel（次模型），plan mode 内临时清空（主模型）。
 	Model string
+
+	// AdvisorMode 启用时，Loop 在 plan mode 进入/退出时自动切换 Model。
+	// 默认 false（向后兼容）。
+	AdvisorMode bool
+
+	// SubModel advisor mode 下的默认模型名（即配置中的 sub_model）。
+	// 取值为 llmSettings.SubModel。AdvisorMode=false 时忽略。
+	SubModel string
 }
 
 // DefaultToolTimeout 是单个工具执行的推荐超时时间（10 分钟）。
@@ -170,6 +179,9 @@ type Loop struct {
 	prePlanMode bool   // 进入 plan 前的 bypassMode 状态
 	planPairID  string // START/END 配对 ID（4 位 hex，如 "a3f7"）
 	approvedPlan string // 审批通过的 plan 内容（用于 executeToolCalls 在 tool 消息后注入 [plan:end]）
+
+	// prePlanModel advisor mode 下进入 plan 前的 Model 值，退出时恢复。
+	prePlanModel string
 
 	// ── 退避追踪（会话级，跨 Run() 持久化）──
 
