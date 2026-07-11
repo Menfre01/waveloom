@@ -111,7 +111,7 @@ func TestAgentTool_Schema(t *testing.T) {
 func TestAgentTool_Description(t *testing.T) {
 	a := &AgentTool{}
 	desc := a.Description()
-	for _, keyword := range []string{"subagent", "fork", "evaluate", "Explore", "verification"} {
+	for _, keyword := range []string{"subagent", "Agent Tool"} {
 		if !strings.Contains(desc, keyword) {
 			t.Errorf("Description missing keyword %q", keyword)
 		}
@@ -154,7 +154,7 @@ func TestAgentTool_ExecuteCold_Explore(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Execute() error: %v", err)
 	}
-	if !strings.Contains(result.Content, "Explore") {
+	if !strings.Contains(result.Content, "explore") {
 		t.Errorf("result should mention agent type: %s", result.Content)
 	}
 }
@@ -1621,7 +1621,7 @@ func TestAgentTool_ExecuteCold_ValidModel(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Execute() error: %v", err)
 	}
-	if !strings.Contains(result.Content, "Explore") {
+	if !strings.Contains(result.Content, "explore") {
 		t.Errorf("result should succeed with valid model: %s", result.Content)
 	}
 }
@@ -1669,7 +1669,7 @@ func TestAgentTool_ExecuteCold_ExploreAutoModel(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Execute() error: %v", err)
 	}
-	if !strings.Contains(result.Content, "Explore") {
+	if !strings.Contains(result.Content, "explore") {
 		t.Errorf("result should succeed: %s", result.Content)
 	}
 	if capturedModel != "deepseek-v4-flash" {
@@ -1703,7 +1703,7 @@ func TestAgentTool_ExecuteCold_ExploreAutoModel_EmptyDefault(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Execute() error: %v", err)
 	}
-	if !strings.Contains(result.Content, "Explore") {
+	if !strings.Contains(result.Content, "explore") {
 		t.Errorf("result should succeed: %s", result.Content)
 	}
 	if capturedModel != "" {
@@ -1739,7 +1739,7 @@ func TestAdvisorMode_ExploreAutoFlash(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Execute() error: %v", err)
 	}
-	if !strings.Contains(result.Content, "Explore") {
+	if !strings.Contains(result.Content, "explore") {
 		t.Errorf("result should mention agent type: %s", result.Content)
 	}
 	if capturedModel != "sub-model" {

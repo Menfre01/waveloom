@@ -189,10 +189,9 @@ func main() {
 		systemPrompt += skillListing
 	}
 
-	// 注入 subagent 模型选择指导（主模型 ≠ sub_model 时）
-	if llmSettings.SubModel != "" && llmSettings.Model != llmSettings.SubModel {
-		systemPrompt += buildModelSelectionSection(llmSettings.Model, llmSettings.SubModel)
-	}
+	// 注入 subagent 模型选择指导（始终注入，agent 工具 schema 引用此项）。
+	// 有 SubModel 时生成完整版（含选择指导），无 SubModel 时简化版（仅告知默认模型）。
+	systemPrompt += buildModelSelectionSection(llmSettings.Model, llmSettings.SubModel)
 
 	// 注入 advisor mode 指导（仅 advisor mode 下）
 	if advisorMode {
@@ -579,7 +578,18 @@ func buildValidModels(s *llm.LLMSettings) []string {
 }
 
 // buildModelSelectionSection 构造注入到 system prompt 的模型选择指导。
+// 始终注入（无 SubModel 时生成简化版），确保 agent 工具 schema 中的
+// "See system prompt under 'Subagent Model Selection'" 引用始终有效。
 func buildModelSelectionSection(defaultModel, flashModel string) string {
+	if flashModel == "" {
+		return fmt.Sprintf(`
+## Subagent Model Selection
+
+When spawning subagents with the agent tool, you can override the model via the optional
+`+"`model`"+` parameter. Omit or leave blank to use the default model (%s).
+Invalid values are silently ignored — the default is used.
+`, defaultModel)
+	}
 	return fmt.Sprintf(`
 ## Subagent Model Selection
 
@@ -598,7 +608,7 @@ If you pass an unrecognized value, the default is used.
 }
 
 // buildAdvisorModeSection 构造注入到 system prompt 的 advisor mode 指导。
-func buildAdvisorModeSection(primaryModel, subModel string) string {
+func buildAdvisorModeSection(subModel, primaryModel string) string {
 	return fmt.Sprintf(`
 ## Advisor Mode
 
@@ -608,16 +618,50 @@ You are running in **advisor mode** to optimize token costs:
 
 - **PLAN MODE**: Enter plan mode → model auto-switches to %s. Exit → back to %s.
 
-- **ADVISOR SUBAGENT**: You are on the sub-model — delegate deep reasoning.
-  Spawn advisor (type="advisor", runs on %s) when: ≥2 valid approaches to
-  choose between, changes cross ≥3 modules or public APIs, first time in an
-  unfamiliar module, complex bugs spanning multiple files, or security concerns.
-  Advisor is read-only — it explores and recommends, never writes code.
+- **ADVISOR SUBAGENT**: You are on the sub-model — delegate deep reasoning to the
+  primary model. A single advisor call costs ~1 turn of tokens but can save 5+ turns
+  of wrong implementation. Spawn advisor (type="advisor", runs on %s) when:
+  * You need to choose between ≥2 implementation approaches (e.g., "should I use
+    a mutex or a channel?", "rewrite vs refactor incrementally?")
+  * The change spans ≥3 files and you're not sure about downstream effects
+  * You're working in an unfamiliar package for the first time and need orientation
+  * A bug spans multiple modules and root cause is unclear
+  * Safety-critical code: auth, crypto, input validation, permissions
+  * Performance-sensitive hot paths or data structure selection
+  * You've received repeated tool errors and root cause is unclear despite
+    changing approach at least twice
+  * Any decision that, if wrong, would require reverting ≥2 turns of work
+  * BEFORE writing code for any architectural change (new abstraction, API change,
+    data model change)
+  Advisor explores and recommends — it NEVER writes code.
+
+  **Writing the prompt**: Pose the key decision or trade-off as an analytical
+  question (e.g., "Should I use approach A (mutex) or B (channel) for this
+  concurrency problem? Analyze trade-offs."). Include file paths and the
+  relevant context the advisor needs to answer. Do NOT include implementation
+  steps — the advisor only evaluates, not executes.
+
+  **After advisor returns**, consume its output by Confidence level:
+  - HIGH → implement the Recommendation directly
+  - MEDIUM → validate the top assumption first (read the key file, check the approach),
+    then implement
+  - LOW → reconsider the approach. Read the Alternatives, pick one to investigate
+    further, or spawn a second advisor for a second opinion
+
+- **SELF-CHECK**: Before making any change that affects ≥2 files (across one
+  or more tool calls), run through this checklist:
+  * Have I read every file I plan to modify?
+  * Do I know the exact public API signatures of the affected interfaces?
+  * If this approach is wrong, is it easy to revert?
+  If any answer is "no" → spawn advisor first.
 
 - **REVIEW**: After global-impact changes (≥3 modules, public API, security),
-  spawn evaluate (uses %s, do NOT pass model="%s"). Skip review for local
-  changes unless critical logic is involved.
+  spawn evaluate. It always uses the primary model regardless of the model
+  parameter — just pass the task description.
 
-- Simple tasks do not need plan mode — just implement directly on %s.
-`, subModel, primaryModel, subModel, primaryModel, primaryModel, primaryModel, subModel)
+- Simple single-file fixes, formatting, lint issues, or tasks with clear step-by-step
+  instructions do not need advisor — just implement directly on %s. (Exception:
+  safety-critical code — auth, crypto, input validation, permissions — always
+  warrants advisor regardless of scope.)
+`, subModel, primaryModel, subModel, primaryModel, subModel)
 }
