@@ -88,6 +88,13 @@ func main() {
 		os.Exit(1)
 	}
 
+	// 判断是否启用 advisor mode
+	advisorMode := llmSettings.IsAdvisorMode()
+	subModel := llmSettings.SubModel
+	if !advisorMode {
+		subModel = "" // normal mode 不需要次模型
+	}
+
 	// 4.5 创建 Tier 3 摘要专用 Client（开启 JSON 模式）
 	summarizerClient := llmClient
 	summaryCfg := llmClientCfg
@@ -120,7 +127,7 @@ func main() {
 	// 6. 初始化 Tool Registry
 	registry := tool.NewRegistry()
 	subModelValidation := buildValidModels(llmSettings)
-	registerBuiltinTools(registry, skillLoader, llmClient, subModelValidation, llmSettings.SubModel, cwd)
+	registerBuiltinTools(registry, skillLoader, llmClient, subModelValidation, llmSettings.Model, llmSettings.SubModel, cwd)
 
 	// 8.5 启动 MCP Manager — 连接配置的 MCP Server，注册工具代理
 	// 日志输出策略：
@@ -185,6 +192,11 @@ func main() {
 	// 注入 subagent 模型选择指导（主模型 ≠ sub_model 时）
 	if llmSettings.SubModel != "" && llmSettings.Model != llmSettings.SubModel {
 		systemPrompt += buildModelSelectionSection(llmSettings.Model, llmSettings.SubModel)
+	}
+
+	// 注入 advisor mode 指导（仅 advisor mode 下）
+	if advisorMode {
+		systemPrompt += buildAdvisorModeSection(llmSettings.Model, llmSettings.SubModel)
 	}
 
 	// 合并 compaction 配置：默认值 + settings.json 覆盖
@@ -278,15 +290,15 @@ func main() {
 
 	// 16. 分支：无 prompt → 交互式 TUI，有 prompt → 单次执行
 	if cfg.OneShot == "" {
-		runTUI(llmClient, registry, guard, expander, llmSettings.Model, cfg.Theme, verboseLog, cfg.ContextLimit, cfg.MaxTurns, cfg.ToolTimeout, cfg.ToolTimeoutSource, cfg.BypassPerm, ctxMgr, isResume, sessionDir, globalPath, projectPath, agentsMdText, loc, todoState)
+		runTUI(llmClient, registry, guard, expander, llmSettings.Model, cfg.Theme, verboseLog, cfg.ContextLimit, cfg.MaxTurns, cfg.ToolTimeout, cfg.ToolTimeoutSource, cfg.BypassPerm, ctxMgr, isResume, sessionDir, globalPath, projectPath, agentsMdText, loc, todoState, advisorMode, subModel)
 		return
 	}
 
-	runOneShot(cfg, llmClient, registry, guard, expander, cwd, verboseLog, ctxMgr, agentsMdText, loc, todoState)
+	runOneShot(cfg, llmClient, registry, guard, expander, cwd, verboseLog, ctxMgr, agentsMdText, loc, todoState, advisorMode, subModel)
 }
 
 // registerBuiltinTools 注册内置工具。
-func registerBuiltinTools(r tool.Registry, skillLoader *skill.Loader, llmClient llm.Client, validModels []string, subModel string, cwd string) {
+func registerBuiltinTools(r tool.Registry, skillLoader *skill.Loader, llmClient llm.Client, validModels []string, defaultModel string, subModel string, cwd string) {
 	r.Register(tool.Wrap(&tool.ReadFile{}))
 	r.Register(tool.Wrap(&tool.WriteFile{}))
 	r.Register(tool.Wrap(&tool.EditFile{}))
@@ -313,6 +325,7 @@ func registerBuiltinTools(r tool.Registry, skillLoader *skill.Loader, llmClient 
 	at := &subagent.AgentTool{
 		LLMClient:       llmClient,
 		ValidModels:     validModels,
+		DefaultModel:    defaultModel,
 		DefaultSubModel: subModel,
 		WorkspaceDir:    cwd,
 	}
@@ -582,4 +595,29 @@ Choose based on the task:
 
 If you pass an unrecognized value, the default is used.
 `, defaultModel, flashModel, flashModel, defaultModel, flashModel, flashModel, defaultModel)
+}
+
+// buildAdvisorModeSection 构造注入到 system prompt 的 advisor mode 指导。
+func buildAdvisorModeSection(primaryModel, subModel string) string {
+	return fmt.Sprintf(`
+## Advisor Mode
+
+You are running in **advisor mode** to optimize token costs:
+
+- **DEFAULT MODEL**: %s — use for reading, searching, implementing. ~2x cheaper.
+
+- **PLAN MODE**: Enter plan mode → model auto-switches to %s. Exit → back to %s.
+
+- **ADVISOR SUBAGENT**: You are on the sub-model — delegate deep reasoning.
+  Spawn advisor (type="advisor", runs on %s) when: ≥2 valid approaches to
+  choose between, changes cross ≥3 modules or public APIs, first time in an
+  unfamiliar module, complex bugs spanning multiple files, or security concerns.
+  Advisor is read-only — it explores and recommends, never writes code.
+
+- **REVIEW**: After global-impact changes (≥3 modules, public API, security),
+  spawn evaluate (uses %s, do NOT pass model="%s"). Skip review for local
+  changes unless critical logic is involved.
+
+- Simple tasks do not need plan mode — just implement directly on %s.
+`, subModel, primaryModel, subModel, primaryModel, primaryModel, primaryModel, subModel)
 }

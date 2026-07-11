@@ -39,7 +39,8 @@ type AgentParams struct {
 type AgentTool struct {
 	LLMClient       llm.Client
 	ValidModels     []string // 可用模型列表，空 = 不限制
-	DefaultSubModel string   // Phase 2: Explore 等轻量 agent 的默认模型
+	DefaultModel    string   // 主模型名，advisor subagent 锁定使用（也用于 TUI suffix 显示）
+	DefaultSubModel string   // Explore 等轻量 agent 的默认模型
 	WorkspaceDir    string   // 工作目录，用于分类器路径检查
 }
 
@@ -72,6 +73,7 @@ func (a *AgentTool) Description() string {
 		"  \"Explore\"       → cold, read-only discovery. Tools: read_file, bash_subagent, web_fetch. Use for finding code patterns and locations.",
 		"  \"evaluate\"      → cold, read-only assessment. Tools: read_file, bash_subagent, web_fetch. Use for code review, security audit, second opinion.",
 		"  \"verification\"  → cold, read-only testing. Tools: read_file, bash_subagent, web_fetch. Use to run builds/tests and try to BREAK an implementation.",
+		"  \"advisor\"       → fork, read-only analysis with FULL context. Tools: read_file, bash_subagent, web_fetch. Use for deep analysis, trade-off evaluation, and decision support when you need the primary model's reasoning.",
 		"",
 		"Fork vs cold — affects how you write the prompt:",
 		"  Fork: the subagent already knows the conversation background. Write a directive — no need to re-explain context.",
@@ -87,7 +89,7 @@ func (a *AgentTool) Schema() json.RawMessage {
   "properties": {
     "subagent_type": {
       "type": "string",
-      "description": "Omit to fork (DEFAULT, cheap, shares cache). Set to 'evaluate' for code review / security audit, 'Explore' for finding code patterns, or 'verification' for post-implementation testing. Cold agents are expensive — they cannot reuse your prompt cache."
+      "description": "Omit to fork (DEFAULT, cheap, shares cache). Set to 'evaluate' for code review / security audit, 'Explore' for finding code patterns, 'verification' for post-implementation testing, or 'advisor' for deep read-only analysis with full context. Cold agents are expensive — they cannot reuse your prompt cache."
     },
     "description": {
       "type": "string",
@@ -236,6 +238,33 @@ OUTPUT RULES (output tokens are the most expensive — 240x cached input, 2x unc
   Suggestions: <optional improvements, only if substantive>`
 }
 
+func advisorSystemPrompt() string {
+	return `You are a read-only analysis agent. You inherit the FULL conversation context from your parent — 
+you see the same message history, codebase, and tool results they saw.
+
+Your role is to explore the codebase, analyze trade-offs, and provide a recommendation — 
+NOT to implement changes. You MUST NOT write code or edit files.
+
+You are READ-ONLY for the project directory. You CANNOT use write_file or edit_file.
+bash_subagent is for READ-ONLY operations: reading files, searching code, checking git history —
+anything that does not modify project files.
+NEVER use bash_subagent for: mkdir, touch, rm, cp, mv, chmod, chown, echo > (redirect),
+tee, sed -i, git add, git commit, npm install, pip install, or any filesystem modification
+inside the project directory.
+
+=== OUTPUT RULES ===
+- Your final message MUST contain a non-empty analysis. Never end with a silent response.
+- Aim for under 300 words unless the analysis genuinely demands more detail.
+- Reference paths and line numbers — do not echo file contents verbatim.
+- No conversational filler, no "let me analyze", no meta-commentary.
+- Preferred format:
+  Scope: <one sentence>
+  Analysis: <key findings, trade-offs, constraints>
+  Recommendation: <preferred approach with rationale>
+  Alternatives: <other approaches considered, with pros/cons>
+  Key files: <paths, line ranges>`
+}
+
 // ---------------------------------------------------------------------------
 // Execute
 // ---------------------------------------------------------------------------
@@ -259,6 +288,10 @@ func (a *AgentTool) Execute(ctx context.Context, p AgentParams) (*tool.ToolResul
 				}, nil
 			}
 		}
+		return a.executeFork(ctx, p)
+	}
+	// advisor is a fork variant: hot-start, read-only tools, primary model
+	if p.SubagentType == "advisor" {
 		return a.executeFork(ctx, p)
 	}
 	return a.executeCold(ctx, p)
@@ -285,7 +318,18 @@ func (a *AgentTool) executeFork(ctx context.Context, p AgentParams) (*tool.ToolR
 	subCtx, subCancel := context.WithCancel(ctx)
 	defer subCancel()
 
-	subLoop := agentloop.New(a.LLMClient, a.buildForkRegistry(), agentloop.Config{
+	// Advisor specialization: read-only tools, primary model, advisor system prompt
+	registry := a.buildForkRegistry()
+	if p.SubagentType == "advisor" {
+		// 始终锁定主模型（不参与次模型降级，忽略 LLM 传入的 model 参数）
+		model = a.DefaultModel
+		// 替换为只读 registry
+		registry = buildColdRegistry(exploreDisallowed)
+		// 注入 advisor system prompt 到 fork 消息中
+		messages = injectAdvisorGuidance(messages)
+	}
+
+	subLoop := agentloop.New(a.LLMClient, registry, agentloop.Config{
 		MaxTurns:      forkMaxTurns,
 		SystemPrompt:  "", // messages already contain system prompt
 		Guard:         permission.NewGuard(permission.WithBypassMode(true)),
@@ -297,8 +341,13 @@ func (a *AgentTool) executeFork(ctx context.Context, p AgentParams) (*tool.ToolR
 	startTime := time.Now()
 	toolCallID := agentloop.ToolCallIDFromContext(ctx)
 
+	agentType := "fork"
+	if p.SubagentType == "advisor" {
+		agentType = "advisor"
+	}
+
 	if cb != nil {
-		cb(SubagentStart{Prompt: p.Description, AgentType: "fork", InheritCtx: true, ToolCallID: toolCallID, Model: model})
+		cb(SubagentStart{Prompt: p.Description, AgentType: agentType, InheritCtx: true, ToolCallID: toolCallID, Model: model})
 	}
 
 	lastTurnText, totalTurns, promptTok, complTok, cacheHitTok, cacheMissTok, events, err := forwardEvents(subCtx, subLoop.Run(subCtx, messages), cb, toolCallID)
@@ -332,13 +381,17 @@ func (a *AgentTool) executeFork(ctx context.Context, p AgentParams) (*tool.ToolR
 func (a *AgentTool) executeCold(ctx context.Context, p AgentParams) (*tool.ToolResult, error) {
 	cb := agentloop.EventCallbackFromContext(ctx)
 
-	// 模型安全兜底：无效/空 → 自动选择
+	// 模型锁定：每种子代理类型绑定固定模型，忽略 LLM 传入的 model 参数。
+	// 防止 LLM 误传 model 导致审查/验证质量降级或搜索成本不必要升高。
 	model := p.Model
-	if model == "" {
-		// Phase 2: Explore 自动用小模型
-		if p.SubagentType == "Explore" && a.DefaultSubModel != "" {
+	switch p.SubagentType {
+	case "Explore":
+		if a.DefaultSubModel != "" {
 			model = a.DefaultSubModel
 		}
+	case "evaluate", "verification":
+		// 始终锁定主模型：DefaultModel 非空则用，否则清空走 client 默认（即主模型）
+		model = a.DefaultModel
 	}
 	if !a.isValidModel(model) {
 		model = ""
@@ -857,6 +910,17 @@ Issues: <only if something is wrong>
 
 Task: %s
 %s</%s>`, forkBoilerplateTag, description, prompt, forkBoilerplateTag)
+}
+
+// injectAdvisorGuidance 将 advisor system prompt 注入到 fork 消息中。
+// 在 fork directive 之后追加一条 user 消息，包含 advisor 专用指导。
+func injectAdvisorGuidance(messages []llm.Message) []llm.Message {
+	guidance := advisorSystemPrompt()
+	// 在最后一条 user 消息（fork directive）之后追加 advisor 指导
+	return append(messages, llm.Message{
+		Role:    llm.RoleUser,
+		Content: fmt.Sprintf("<%s-advisor>\n%s\n</%s-advisor>", forkBoilerplateTag, guidance, forkBoilerplateTag),
+	})
 }
 
 // isInForkChild 检测消息历史中是否已包含 fork-boilerplate 标记，

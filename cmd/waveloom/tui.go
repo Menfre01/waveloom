@@ -479,6 +479,11 @@ type model struct {
 	verboseLog io.Writer // --verbose 日志输出（nil = 不记录）
 	loop       *agentloop.Loop
 
+	// Advisor mode
+	advisorMode bool   // 是否启用 advisor mode
+	subModel    string // advisor mode 的次模型名
+	initialModel string // 初始模型名（advisor mode 时为 subModel，否则 ""）
+
 	// Todo 任务列表
 	todoState    *todo.TodoState // session 级 todo 状态（跨 Loop 持久）
 	todoExpanded bool            // 是否展开全部（默认 false）
@@ -912,7 +917,10 @@ func (m *model) wireLoop() {
 				m.program.Send(ev)
 			}
 		},
-		TodoState: m.todoState,
+		TodoState:   m.todoState,
+		AdvisorMode: m.advisorMode,
+		SubModel:    m.subModel,
+		Model:       m.initialModel,
 	})
 }
 
@@ -5913,6 +5921,17 @@ func (m *model) reconfigureLLMClient(newModel string) {
 		return
 	}
 	m.llmClient = client
+
+	// 模型切换后重新判断 advisor mode 状态，避免 stale state
+	// 导致 plan mode 下模型切换逻辑不一致。
+	m.advisorMode = settings.IsAdvisorMode()
+	m.subModel = settings.SubModel
+	if m.advisorMode {
+		m.initialModel = settings.SubModel
+	} else {
+		m.initialModel = ""
+	}
+
 	if m.loop != nil {
 		m.wireLoop()
 	}
@@ -6468,10 +6487,15 @@ func (m *model) closeModelPicker() {
 // ---------------------------------------------------------------------------
 
 // runTUI 启动交互式 TUI 模式。依赖由 main() 统一初始化后传入，无需重复创建。
-func runTUI(llmClient llm.Client, registry tool.Registry, guard permission.Guard, expander *reference.Expander, modelName string, theme string, verboseLog io.Writer, contextLimit int, maxTurns int, toolTimeout time.Duration, toolTimeoutSource string, bypassPerm bool, ctxMgr *ctxpkg.ContextManager, isResume bool, sessionDir string, globalPath string, projectPath string, agentsMdText string, loc Locale, todoState *todo.TodoState) {
+func runTUI(llmClient llm.Client, registry tool.Registry, guard permission.Guard, expander *reference.Expander, modelName string, theme string, verboseLog io.Writer, contextLimit int, maxTurns int, toolTimeout time.Duration, toolTimeoutSource string, bypassPerm bool, ctxMgr *ctxpkg.ContextManager, isResume bool, sessionDir string, globalPath string, projectPath string, agentsMdText string, loc Locale, todoState *todo.TodoState, advisorMode bool, subModel string) {
 	m := newTUIModel(llmClient, registry, guard, expander, modelName, theme, verboseLog, contextLimit, maxTurns, toolTimeout, toolTimeoutSource, loc, todoState)
 	m.agentsMdText = agentsMdText
 	m.sessionDir = sessionDir
+	m.advisorMode = advisorMode
+	m.subModel = subModel
+	if advisorMode {
+		m.initialModel = subModel
+	}
 
 	// 构造 slash command registry（TUI 侧依赖实现）
 	store := &tuiSettingsStore{projectPath: projectPath, globalPath: globalPath}
