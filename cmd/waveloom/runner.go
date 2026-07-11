@@ -26,7 +26,6 @@ func runOneShot(cfg CLIConfig, llmClient llm.Client, registry tool.Registry, gua
 	loopCfg := agentloop.Config{
 		MaxTurns:      cfg.MaxTurns,
 		SystemPrompt:  "",
-		Guard:         guard,
 		VerboseWriter: verboseLog,
 		ToolTimeout:   cfg.ToolTimeout,
 		AgentsMD:      agentsMdText,
@@ -35,16 +34,15 @@ func runOneShot(cfg CLIConfig, llmClient llm.Client, registry tool.Registry, gua
 		SubModel:      subModel,
 		Model:         initialModel,
 	}
-	// 单次模式无 UserResponder，ask 降级为 deny
-	loop := agentloop.New(llmClient, registry, loopCfg)
 
-	// 如果启用了 bypass 模式
+	// bypass 模式：覆盖 guard 为全放行模式
 	if cfg.BypassPerm {
 		guard = permission.NewGuard(permission.WithBypassMode(true))
-		loopCfg.Guard = guard
-		loopCfg.TodoState = todoState
-		loop = agentloop.New(llmClient, registry, loopCfg)
 	}
+	loopCfg.Guard = guard
+
+	// 单次模式无 UserResponder，ask 降级为 deny
+	loop := agentloop.New(llmClient, registry, loopCfg)
 
 	// 构造用户输入（含管道数据）
 	userInput := cfg.OneShot
