@@ -21,6 +21,7 @@ import (
 
 	"github.com/Menfre01/waveloom/pkg/pathutil"
 	"github.com/Menfre01/waveloom/pkg/permission"
+	"github.com/Menfre01/waveloom/pkg/plugin"
 	"github.com/Menfre01/waveloom/pkg/shellutil"
 
 	"gopkg.in/yaml.v3"
@@ -136,6 +137,34 @@ func (l *Loader) List() ([]SkillInfo, error) {
 			infos = append(infos, l.scanCommandsDir(src.dir, src.priority, seen)...)
 		} else {
 			infos = append(infos, l.scanSkillsDir(src.dir, src.priority, seen)...)
+		}
+	}
+
+	// 插件 skills（最低优先级）
+	if l.HomeDir != "" {
+		pluginSkills, pluginCmds, _ := plugin.Discover(
+			filepath.Join(l.HomeDir, ".claude", "plugins"),
+			filepath.Join(l.HomeDir, ".claude"),
+		)
+		for _, ps := range pluginSkills {
+			if seen[ps.SkillName] {
+				continue // 同名 user skill 优先
+			}
+			info, ok := l.parseSkillInfo(ps.SKILLPath, ps.SkillName, false)
+			if ok {
+				seen[info.Name] = true
+				infos = append(infos, info)
+			}
+		}
+		for _, pc := range pluginCmds {
+			if seen[pc.CommandName] {
+				continue
+			}
+			info, ok := l.parseSkillInfo(pc.MDPath, pc.CommandName, true)
+			if ok {
+				seen[info.Name] = true
+				infos = append(infos, info)
+			}
 		}
 	}
 
@@ -395,6 +424,24 @@ func (l *Loader) Load(name string, args string) (*LoadedSkill, error) {
 		addDir(projectRoot, filepath.Join(".waveloom", "skills", name))
 		addCmd(filepath.Join(projectRoot, ".claude", "commands"))
 		addCmd(filepath.Join(projectRoot, ".waveloom", "commands"))
+	}
+
+	// 插件 skills/commands（最低优先级）
+	if l.HomeDir != "" {
+		pluginSkills, pluginCmds, _ := plugin.Discover(
+			filepath.Join(l.HomeDir, ".claude", "plugins"),
+			filepath.Join(l.HomeDir, ".claude"),
+		)
+		for _, ps := range pluginSkills {
+			if ps.SkillName == name {
+				candidates = append(candidates, candidate{ps.SKILLPath, false})
+			}
+		}
+		for _, pc := range pluginCmds {
+			if pc.CommandName == name {
+				candidates = append(candidates, candidate{pc.MDPath, true})
+			}
+		}
 	}
 
 	// 去重：同路径不重复（skill 目录形式优先于 command 扁平文件）
