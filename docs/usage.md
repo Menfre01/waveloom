@@ -85,7 +85,7 @@ waveloom --resume <session-id>  # 恢复指定会话
 | `/locale` | `/lang` | 切换语言（zh-CN / en-US） |
 | `/help` | — | 显示所有可用命令 |
 
-`.claude/skills/` 中 `user-invocable: true` 的 Skill 也会自动注册为 `/` 命令，命令名即 Skill 名。
+`.claude/skills/` 中 `user-invocable: true` 的 Skill 也会自动注册为 `/` 命令，命令名即 Skill 名。此外，已安装的 Claude Code 插件中的 skills/commands 会自动发现并加载（通过 `~/.claude/plugins/installed_plugins.json` + `enabledPlugins` 配置）。
 
 ## Plan 模式
 
