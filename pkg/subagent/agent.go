@@ -350,6 +350,7 @@ func (a *AgentTool) executeFork(ctx context.Context, p AgentParams) (*tool.ToolR
 		UserResponder: nil,
 		ToolTimeout:   agentloop.DefaultToolTimeout,
 		Model:         model,
+		TodoState:     agentloop.TodoStateFromContext(ctx),
 	})
 
 	startTime := time.Now()
@@ -436,6 +437,7 @@ func (a *AgentTool) executeCold(ctx context.Context, p AgentParams) (*tool.ToolR
 		UserResponder: nil,
 		ToolTimeout:   agentloop.DefaultToolTimeout,
 		Model:         model,
+		TodoState:     agentloop.TodoStateFromContext(ctx),
 	})
 
 	startTime := time.Now()
