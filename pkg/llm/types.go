@@ -83,6 +83,7 @@ type ToolSpec struct {
 	Name        string      // 函数名，须匹配 ^[a-zA-Z0-9_-]{1,64}$
 	Description string      // 函数描述
 	Parameters  interface{} // JSON Schema 格式的参数定义
+	Prompt      string      // 工具使用指南（由 agent loop 注入 system message，不进入 function description）
 }
 
 // Response 封装 LLM 返回的完整信息。

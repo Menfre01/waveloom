@@ -42,6 +42,14 @@ type UserInteractionTool interface {
 	RequiresUserInteraction() bool
 }
 
+// ToolWithPrompt 是可选接口，由需要注入使用指南的工具实现。
+// Prompt() 返回工具的使用指南（When to Use / NOT / 示例等），
+// 由 Loop 在启动时注入 system message，与 Description 分离。
+// Description 保持简短（~30 token），Prompt 可包含详细规则。
+type ToolWithPrompt interface {
+	Prompt() string
+}
+
 // ---------------------------------------------------------------------------
 // TypedStreamableTool[P] — 可选的流式工具接口
 // ---------------------------------------------------------------------------
@@ -69,6 +77,7 @@ type StreamableTool interface {
 type ErasedTool struct {
 	name                    string
 	desc                    string
+	prompt                  string
 	schema                  json.RawMessage
 	concurrentSafe          bool
 	requiresUserInteraction bool
@@ -81,6 +90,7 @@ type ErasedTool struct {
 
 func (e *ErasedTool) Name() string            { return e.name }
 func (e *ErasedTool) Description() string     { return e.desc }
+func (e *ErasedTool) Prompt() string          { return e.prompt }
 func (e *ErasedTool) Schema() json.RawMessage { return e.schema }
 func (e *ErasedTool) ConcurrentSafe() bool    { return e.concurrentSafe }
 func (e *ErasedTool) RequiresUserInteraction() bool { return e.requiresUserInteraction }
@@ -103,9 +113,14 @@ func Wrap[P any](t TypedTool[P]) *ErasedTool {
 	if uit, ok := any(t).(UserInteractionTool); ok {
 		requiresUI = uit.RequiresUserInteraction()
 	}
+	var prompt string
+	if twp, ok := any(t).(ToolWithPrompt); ok {
+		prompt = twp.Prompt()
+	}
 	et := &ErasedTool{
 		name:                    t.Name(),
 		desc:                    t.Description(),
+		prompt:                  prompt,
 		schema:                  t.Schema(),
 		concurrentSafe:          t.ConcurrentSafe(),
 		requiresUserInteraction: requiresUI,
@@ -297,4 +312,5 @@ type ToolSpec struct {
 	Name        string          `json:"name"`
 	Description string          `json:"description"`
 	Parameters  json.RawMessage `json:"parameters"` // JSON Schema 参数定义
+	Prompt      string          `json:"-"`          // 工具使用指南（注入 system message，不进入 function description）
 }

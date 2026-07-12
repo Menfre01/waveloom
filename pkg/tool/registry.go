@@ -44,11 +44,21 @@ func (r *registry) Register(t Tool) {
 		panic(fmt.Sprintf("tool %q already registered", t.Name()))
 	}
 	r.tools[t.Name()] = t
-	r.specs = append(r.specs, ToolSpec{
+	desc := t.Description()
+	spec := ToolSpec{
 		Name:        t.Name(),
-		Description: t.Description(),
 		Parameters:  t.Schema(),
-	})
+	}
+	if twp, ok := t.(ToolWithPrompt); ok {
+		prompt := twp.Prompt()
+		spec.Prompt = prompt
+		// Prompt 拼接到 Description 中发送给 LLM（走 tools[] 字段，不破坏前缀缓存）
+		if prompt != "" {
+			desc = desc + "\n\n" + prompt
+		}
+	}
+	spec.Description = desc
+	r.specs = append(r.specs, spec)
 }
 
 // List 返回所有已注册工具的 ToolSpec 列表。
