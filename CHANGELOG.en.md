@@ -1,5 +1,12 @@
 # Changelog
 
+## [v0.1.0-beta.7] — 2026-07-13
+
+### Added
+- **Claude Code plugin compatibility**: Automatically discover and load skills/commands from installed Claude Code plugins via `installed_plugins.json` + `enabledPlugins` config. User-created skills take priority over plugin skills with the same name. Supports both standard skills/commands directories and manifest-declared custom paths ([#2](https://github.com/Menfre01/waveloom/issues/2))
+- **/model advisor mode notice**: When switching models via `/model` in advisor mode, appends a warning that model switching doesn't change normal/advisor mode
+- **Tool error backoff**: Added graduated backoff for tool errors in advisor mode, reducing token waste on consecutive failures
+
 ## [v0.1.0-beta.6] — 2026-07-11
 
 ### Added

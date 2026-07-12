@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 240" fill="none">
+  <defs>
+    <linearGradient id="grad" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#5f5faf"/>
+      <stop offset="50%" stop-color="#5fafd7"/>
+      <stop offset="100%" stop-color="#5faf5f"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Rounded dark background -->
+  <rect x="0" y="0" width="240" height="240" rx="48" fill="#1a1a2e"/>
+
+  <!-- W mark: interleaved wave threads, centered -->
+  <g transform="translate(30, 55)">
+    <!-- Thread 1: top wave -->
+    <path d="M 0 50 Q 15 10, 30 50 T 60 50 T 90 50 T 120 50 T 150 50 T 180 50"
+          stroke="#5fafd7" stroke-width="6" stroke-linecap="round" fill="none" opacity="0.9"/>
+    <!-- Thread 2: middle wave -->
+    <path d="M 0 80 Q 20 45, 40 80 T 80 80 T 120 80 T 160 80"
+          stroke="#5faf5f" stroke-width="6" stroke-linecap="round" fill="none" opacity="0.7"/>
+    <!-- Thread 3: bottom wave -->
+    <path d="M 0 110 Q 25 80, 50 110 T 100 110 T 150 110"
+          stroke="#5f5faf" stroke-width="6" stroke-linecap="round" fill="none" opacity="0.5"/>
+  </g>
+</svg>

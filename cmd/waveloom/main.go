@@ -628,8 +628,6 @@ You are running in **advisor mode** to optimize token costs:
   * A bug spans multiple modules and root cause is unclear
   * Safety-critical code: auth, crypto, input validation, permissions
   * Performance-sensitive hot paths or data structure selection
-  * You've received repeated tool errors and root cause is unclear despite
-    changing approach at least twice
   * Any decision that, if wrong, would require reverting ≥2 turns of work
   * BEFORE writing code for any architectural change (new abstraction, API change,
     data model change)
@@ -658,6 +656,11 @@ You are running in **advisor mode** to optimize token costs:
 - **REVIEW**: After global-impact changes (≥3 modules, public API, security),
   spawn evaluate. It always uses the primary model regardless of the model
   parameter — just pass the task description.
+
+- **TOOL ERROR ESCALATION**: The loop tracks consecutive failures by (tool, error type).
+  You get 2 silent retries (count 1-2). At count 3-4, [system] warnings appear suggesting
+  you spawn advisor. At count 5, the loop terminates. If you see a count=3 warning,
+  spawn advisor before the loop forces termination.
 
 - Simple single-file fixes, formatting, lint issues, or tasks with clear step-by-step
   instructions do not need advisor — just implement directly on %s. (Exception:
