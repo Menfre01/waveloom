@@ -16,6 +16,14 @@ dist/
 # 根目录 waveloom 二进制（go build 本地产物）
 /waveloom
 
+# 实验编译产物（go build ./experiments/...）
+/attention_order
+/attention_position
+/agentsmd_attention
+/channel_priority
+/injection_priority
+/tool_cache
+
 # Waveloom verbose 日志
 .waveloom/waveloom.log
 .waveloom/waveloom.log.*
@@ -40,5 +48,5 @@ marketing/
 benchmark_results/
 cmd/benchmark-cache/
 cmd/cache-proxy/
-benchmark-cache
-cache-proxy
+/benchmark-cache
+/cache-proxy
