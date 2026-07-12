@@ -96,7 +96,7 @@ func (s *TodoState) StatusSummary() string {
 
 	var b strings.Builder
 	b.WriteString("## Current Todo Status\n")
-	b.WriteString("(keep updated via todo_write)\n")
+	b.WriteString("→ Verify status accuracy before taking action. Update via todo_write if any status is wrong.\n")
 	for _, t := range s.items {
 		b.WriteString(formatTodoLine(t))
 		b.WriteByte('\n')

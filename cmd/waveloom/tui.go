@@ -206,7 +206,7 @@ Use ` + "`todo_write`" + ` for tasks with meaningful dependencies or parallelism
 ### When NOT to Use
 
 - Single-file fixes, linear micro-tasks (locate → edit → build), informational requests.
-- **When uncertain — skip it.** A missed todo is cheaper than noise.
+- **When uncertain — check the status summary.** The system will remind you if updates are overdue.
 
 → Field definitions, states, format, and examples: see ` + "`todo_write`" + ` tool description.
 

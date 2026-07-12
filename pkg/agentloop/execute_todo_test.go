@@ -371,3 +371,344 @@ func TestTodoState_ConcurrencyDataIntegrity(t *testing.T) {
 		}
 	}
 }
+
+// ============================================================================
+// todoReminderText 单元测试
+// ============================================================================
+
+func TestTodoReminderText_ContainsStalenessCount(t *testing.T) {
+	// REGRESSION: todoReminderText 应包含 staleness 计数，不包含忽略出口
+	summary := "## Current Todo Status\n→ Verify status accuracy before taking action.\n[pending] Task A\n"
+	text := todoReminderText(summary, 4)
+
+	if !contains(text, "4 turns since last todo_write") {
+		t.Errorf("todoReminderText missing staleness count, got: %s", text)
+	}
+	if contains(text, "Ignore if not applicable") {
+		t.Errorf("todoReminderText should NOT contain escape hatch 'Ignore if not applicable'")
+	}
+	if !contains(text, "todo_write NOW") {
+		t.Errorf("todoReminderText should contain urgency signal 'NOW'")
+	}
+}
+
+func TestTodoReminderText_DifferentStalenessValues(t *testing.T) {
+	// staleness 计数应随传入值变化
+	summary := "## Current Todo Status\n[pending] Task A\n"
+
+	for _, n := range []int{2, 5, 10} {
+		text := todoReminderText(summary, n)
+		expected := fmt.Sprintf("%d turns since last todo_write", n)
+		if !contains(text, expected) {
+			t.Errorf("staleness=%d: expected %q in text, got: %s", n, expected, text)
+		}
+	}
+}
+
+// ============================================================================
+// updateTodoCounters 单元测试
+// ============================================================================
+
+func TestUpdateTodoCounters_NoActiveTasksResetsCounters(t *testing.T) {
+	// 无活跃任务时计数器应归零
+	ts := todo.NewTodoState()
+	loop := New(nil, nil, Config{TodoState: ts})
+
+	// 手动设置非零计数器
+	loop.turnsSinceLastTodoWrite = 5
+	loop.turnsSinceLastTodoReminder = 3
+
+	loop.updateTodoCounters(nil)
+
+	if loop.turnsSinceLastTodoWrite != 0 {
+		t.Errorf("turnsSinceLastTodoWrite = %d, want 0 (no active tasks)", loop.turnsSinceLastTodoWrite)
+	}
+	if loop.turnsSinceLastTodoReminder != 0 {
+		t.Errorf("turnsSinceLastTodoReminder = %d, want 0 (no active tasks)", loop.turnsSinceLastTodoReminder)
+	}
+}
+
+func TestUpdateTodoCounters_WithActiveTasksIncrements(t *testing.T) {
+	// 有活跃任务时两个计数器都应递增
+	ts := todo.NewTodoState()
+	ts.Apply(todo.TodoWriteParams{
+		Todos: []todo.TodoItem{
+			{Content: "Task A", Status: "in_progress", ActiveForm: "Doing A"},
+		},
+	})
+
+	loop := New(nil, nil, Config{TodoState: ts})
+	loop.turnsSinceLastTodoWrite = 1
+	loop.turnsSinceLastTodoReminder = 1
+
+	loop.updateTodoCounters(nil)
+
+	if loop.turnsSinceLastTodoWrite != 2 {
+		t.Errorf("turnsSinceLastTodoWrite = %d, want 2", loop.turnsSinceLastTodoWrite)
+	}
+	if loop.turnsSinceLastTodoReminder != 2 {
+		t.Errorf("turnsSinceLastTodoReminder = %d, want 2", loop.turnsSinceLastTodoReminder)
+	}
+}
+
+// ============================================================================
+// maybeInjectTodoReminder 单元测试
+// ============================================================================
+
+func TestMaybeInjectTodoReminder_BelowThresholdNoInject(t *testing.T) {
+	// 距上次 todo_write < idleTodoWrite → 不注入提醒
+	ts := todo.NewTodoState()
+	ts.Apply(todo.TodoWriteParams{
+		Todos: []todo.TodoItem{
+			{Content: "Task A", Status: "in_progress", ActiveForm: "Doing A"},
+		},
+	})
+
+	loop := New(nil, nil, Config{TodoState: ts})
+	loop.turnsSinceLastTodoWrite = 1 // < idleTodoWrite(2)
+	loop.turnsSinceLastTodoReminder = 0
+
+	state := &LoopState{Messages: []llm.Message{}}
+	loop.maybeInjectTodoReminder(state)
+
+	// 不应注入任何 todo-status 消息
+	if findTodoStatusIndex(state.Messages) >= 0 {
+		t.Error("should NOT inject reminder when below idleTodoWrite threshold")
+	}
+	// 提醒计数器不应被重置（未触发注入）
+	if loop.turnsSinceLastTodoReminder != 0 {
+		t.Errorf("turnsSinceLastTodoReminder = %d, want 0 (no injection occurred)", loop.turnsSinceLastTodoReminder)
+	}
+}
+
+func TestMaybeInjectTodoReminder_AtThresholdInjects(t *testing.T) {
+	// 距上次 todo_write >= idleTodoWrite 且 reminder >= idleTodoReminder → 注入提醒
+	ts := todo.NewTodoState()
+	ts.Apply(todo.TodoWriteParams{
+		Todos: []todo.TodoItem{
+			{Content: "Task A", Status: "in_progress", ActiveForm: "Doing A"},
+		},
+	})
+
+	loop := New(nil, nil, Config{TodoState: ts})
+	loop.turnsSinceLastTodoWrite = 2 // >= idleTodoWrite(2)
+	loop.turnsSinceLastTodoReminder = 2 // >= idleTodoReminder(2)
+
+	state := &LoopState{Messages: []llm.Message{}}
+	loop.maybeInjectTodoReminder(state)
+
+	idx := findTodoStatusIndex(state.Messages)
+	if idx < 0 {
+		t.Fatal("should inject reminder when at idleTodoWrite threshold")
+	}
+	content := state.Messages[idx].Content
+	if !contains(content, "2 turns since last todo_write") {
+		t.Errorf("reminder should contain staleness count, got: %s", content)
+	}
+	if !contains(content, "todo_write NOW") {
+		t.Errorf("reminder should contain urgency signal 'NOW', got: %s", content)
+	}
+	// 提醒计数器应被重置
+	if loop.turnsSinceLastTodoReminder != 0 {
+		t.Errorf("turnsSinceLastTodoReminder = %d, want 0 (reset after injection)", loop.turnsSinceLastTodoReminder)
+	}
+	// todo_write 计数器不应被重置（提醒不能替代真正的 todo_write）
+	if loop.turnsSinceLastTodoWrite != 2 {
+		t.Errorf("turnsSinceLastTodoWrite = %d, want 2 (reminder does NOT reset write counter)", loop.turnsSinceLastTodoWrite)
+	}
+}
+
+func TestMaybeInjectTodoReminder_ReminderIntervalEnforced(t *testing.T) {
+	// 两次提醒之间至少间隔 idleTodoReminder 轮
+	ts := todo.NewTodoState()
+	ts.Apply(todo.TodoWriteParams{
+		Todos: []todo.TodoItem{
+			{Content: "Task A", Status: "in_progress", ActiveForm: "Doing A"},
+		},
+	})
+
+	loop := New(nil, nil, Config{TodoState: ts})
+	// todo_write 计数器已超阈值，但 reminder 计数器未达间隔
+	loop.turnsSinceLastTodoWrite = 3 // >= idleTodoWrite(2)
+	loop.turnsSinceLastTodoReminder = 1 // < idleTodoReminder(2)
+
+	state := &LoopState{Messages: []llm.Message{}}
+	loop.maybeInjectTodoReminder(state)
+
+	if findTodoStatusIndex(state.Messages) >= 0 {
+		t.Error("should NOT inject reminder when reminder interval not yet reached")
+	}
+}
+
+func TestMaybeInjectTodoReminder_NoTasksSkips(t *testing.T) {
+	// 无活跃任务时跳过
+	ts := todo.NewTodoState()
+	loop := New(nil, nil, Config{TodoState: ts})
+	loop.turnsSinceLastTodoWrite = 10
+	loop.turnsSinceLastTodoReminder = 10
+
+	state := &LoopState{Messages: []llm.Message{}}
+	loop.maybeInjectTodoReminder(state)
+
+	if findTodoStatusIndex(state.Messages) >= 0 {
+		t.Error("should NOT inject reminder when no active tasks")
+	}
+}
+
+func TestMaybeInjectTodoReminder_UpdatesExistingSlot(t *testing.T) {
+	// 已有 todo-status 消息时应原地更新而非追加
+	ts := todo.NewTodoState()
+	ts.Apply(todo.TodoWriteParams{
+		Todos: []todo.TodoItem{
+			{Content: "Task A", Status: "in_progress", ActiveForm: "Doing A"},
+		},
+	})
+
+	loop := New(nil, nil, Config{TodoState: ts})
+	loop.turnsSinceLastTodoWrite = 2
+	loop.turnsSinceLastTodoReminder = 2
+
+	// 预置一条旧的 todo-status 消息
+	state := &LoopState{Messages: []llm.Message{
+		{Role: llm.RoleUser, Content: "## Current Todo Status\n[pending] Old Task\n"},
+	}}
+	originalLen := len(state.Messages)
+
+	loop.maybeInjectTodoReminder(state)
+
+	// 消息数量不应增加（原地更新）
+	if len(state.Messages) != originalLen {
+		t.Errorf("expected %d messages (in-place update), got %d", originalLen, len(state.Messages))
+	}
+	// 内容应被替换为新提醒
+	if contains(state.Messages[0].Content, "Old Task") {
+		t.Error("old todo-status content should be replaced by reminder")
+	}
+	if !contains(state.Messages[0].Content, "todo_write NOW") {
+		t.Error("updated content should contain reminder")
+	}
+}
+
+// ============================================================================
+// injectTodoStatus 单元测试
+// ============================================================================
+
+func TestInjectTodoStatus_NoTasksSkips(t *testing.T) {
+	ts := todo.NewTodoState()
+	loop := New(nil, nil, Config{TodoState: ts})
+
+	msgs := []llm.Message{}
+	loop.injectTodoStatus(&msgs)
+
+	if len(msgs) != 0 {
+		t.Error("should not inject status when no active tasks")
+	}
+}
+
+func TestInjectTodoStatus_AppendsWhenNoSlot(t *testing.T) {
+	ts := todo.NewTodoState()
+	ts.Apply(todo.TodoWriteParams{
+		Todos: []todo.TodoItem{
+			{Content: "Task A", Status: "in_progress", ActiveForm: "Doing A"},
+		},
+	})
+
+	loop := New(nil, nil, Config{TodoState: ts})
+	msgs := []llm.Message{
+		{Role: llm.RoleSystem, Content: "system prompt"},
+	}
+
+	loop.injectTodoStatus(&msgs)
+
+	if len(msgs) != 2 {
+		t.Fatalf("expected 2 messages, got %d", len(msgs))
+	}
+	if msgs[1].Role != llm.RoleUser {
+		t.Errorf("injected message role = %s, want user", msgs[1].Role)
+	}
+	if !contains(msgs[1].Content, "Current Todo Status") {
+		t.Error("injected message should contain todo status header")
+	}
+}
+
+func TestInjectTodoStatus_UpdatesExistingSlot(t *testing.T) {
+	ts := todo.NewTodoState()
+	ts.Apply(todo.TodoWriteParams{
+		Todos: []todo.TodoItem{
+			{Content: "Task B", Status: "in_progress", ActiveForm: "Doing B"},
+		},
+	})
+
+	loop := New(nil, nil, Config{TodoState: ts})
+
+	// 预置旧 todo-status
+	msgs := []llm.Message{
+		{Role: llm.RoleSystem, Content: "system prompt"},
+		{Role: llm.RoleUser, Content: "## Current Todo Status\n[pending] Task A\n"},
+	}
+	originalLen := len(msgs)
+
+	loop.injectTodoStatus(&msgs)
+
+	// 不应追加新消息
+	if len(msgs) != originalLen {
+		t.Errorf("expected %d messages, got %d", originalLen, len(msgs))
+	}
+	// 内容应被更新
+	if contains(msgs[1].Content, "Task A") {
+		t.Error("old status should be replaced")
+	}
+	if !contains(msgs[1].Content, "Task B") {
+		t.Error("new status should contain Task B")
+	}
+	if !contains(msgs[1].Content, "Verify status accuracy before taking action") {
+		t.Error("status summary should contain directive text")
+	}
+}
+
+func TestInjectTodoStatus_NoNilTodoState(t *testing.T) {
+	// REGRESSION: nil TodoState 不应 panic
+	loop := New(nil, nil, Config{TodoState: nil})
+	msgs := []llm.Message{}
+	loop.injectTodoStatus(&msgs)
+	// 不 panic 即通过
+}
+
+// ============================================================================
+// todo_write 执行后计数器重置
+// ============================================================================
+
+func TestExecuteTodoWrite_ResetsReminderCounters(t *testing.T) {
+	// REGRESSION: todo_write 成功后应重置提醒计数器
+	ts := todo.NewTodoState()
+	registry := tool.NewRegistry()
+	registry.Register(tool.Wrap(&tool.TodoWrite{}))
+
+	loop := New(nil, registry, Config{TodoState: ts})
+
+	// 设置非零计数器
+	loop.turnsSinceLastTodoWrite = 7
+	loop.turnsSinceLastTodoReminder = 5
+
+	ch := make(chan TurnEvent, 2)
+	result := loop.executeTodoWrite(context.Background(), llm.ToolCall{
+		ID:   "call_1",
+		Name: "todo_write",
+		Arguments: `{"todos": [
+			{"content": "Task A", "status": "in_progress", "activeForm": "Doing A"}
+		]}`,
+	}, nil, ch)
+
+	if result == nil || result.Error != nil {
+		t.Fatalf("todo_write failed: %v", result)
+	}
+
+	if loop.turnsSinceLastTodoWrite != 0 {
+		t.Errorf("turnsSinceLastTodoWrite = %d, want 0 after todo_write", loop.turnsSinceLastTodoWrite)
+	}
+	if loop.turnsSinceLastTodoReminder != 0 {
+		t.Errorf("turnsSinceLastTodoReminder = %d, want 0 after todo_write", loop.turnsSinceLastTodoReminder)
+	}
+}
+
+
