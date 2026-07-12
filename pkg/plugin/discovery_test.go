@@ -60,12 +60,12 @@ func TestDiscover_PluginWithSkills(t *testing.T) {
 
 	// 创建 skill
 	skillDir := filepath.Join(installDir, "skills", "test-skill")
-	os.MkdirAll(skillDir, 0o755)
+	_ = os.MkdirAll(skillDir, 0o755)
 	mustWriteFile(t, filepath.Join(skillDir, "SKILL.md"), "---\nname: test-skill\ndescription: Test\n---\n\nHello")
 
 	// 创建 command
 	cmdDir := filepath.Join(installDir, "commands")
-	os.MkdirAll(cmdDir, 0o755)
+	_ = os.MkdirAll(cmdDir, 0o755)
 	mustWriteFile(t, filepath.Join(cmdDir, "test-cmd.md"), "---\ndescription: Test cmd\n---\n\nContent")
 
 	skills, cmds, err := Discover(pluginsDir, claudeDir)
@@ -113,7 +113,7 @@ func TestDiscover_DisabledPlugin(t *testing.T) {
 		},
 	})
 	skillDir := filepath.Join(installDir, "skills", "doomed")
-	os.MkdirAll(skillDir, 0o755)
+	_ = os.MkdirAll(skillDir, 0o755)
 	mustWriteFile(t, filepath.Join(skillDir, "SKILL.md"), "---\nname: doomed\n---\n\nNope")
 
 	skills, cmds, err := Discover(pluginsDir, claudeDir)
@@ -149,7 +149,7 @@ func TestDiscover_PluginMissingFromSettings(t *testing.T) {
 	// 空 settings.json（无 enabledPlugins）
 	mustWriteJSON(t, filepath.Join(claudeDir, "settings.json"), map[string]any{})
 	skillDir := filepath.Join(installDir, "skills", "ghost")
-	os.MkdirAll(skillDir, 0o755)
+	_ = os.MkdirAll(skillDir, 0o755)
 	mustWriteFile(t, filepath.Join(skillDir, "SKILL.md"), "---\nname: ghost\n---\n\nBoo")
 
 	skills, _, _ := Discover(pluginsDir, claudeDir)
@@ -215,7 +215,7 @@ func TestDiscover_ManifestExtraSkillsDir(t *testing.T) {
 		"skills": []string{"./extra-skills"},
 	})
 	extraDir := filepath.Join(installDir, "extra-skills", "bonus")
-	os.MkdirAll(extraDir, 0o755)
+	_ = os.MkdirAll(extraDir, 0o755)
 	mustWriteFile(t, filepath.Join(extraDir, "SKILL.md"), "---\nname: bonus\n---\n\nExtra")
 
 	skills, _, err := Discover(pluginsDir, claudeDir)
@@ -335,7 +335,7 @@ func TestDiscover_PluginNameFallback(t *testing.T) {
 		"description": "no name",
 	})
 	skillDir := filepath.Join(installDir, "skills", "orphan")
-	os.MkdirAll(skillDir, 0o755)
+	_ = os.MkdirAll(skillDir, 0o755)
 	mustWriteFile(t, filepath.Join(skillDir, "SKILL.md"), "---\nname: orphan\n---\n\nHello")
 
 	skills, _, err := Discover(pluginsDir, claudeDir)
@@ -370,7 +370,7 @@ func TestDiscover_NonDirEntryInSkills(t *testing.T) {
 		"name": "junk",
 	})
 	// 在 skills/ 下放一个文件（不是目录）— 应跳过
-	os.MkdirAll(filepath.Join(installDir, "skills"), 0o755)
+	_ = os.MkdirAll(filepath.Join(installDir, "skills"), 0o755)
 	mustWriteFile(t, filepath.Join(installDir, "skills", "notadir.txt"), "hello")
 
 	skills, _, err := Discover(pluginsDir, claudeDir)
@@ -401,7 +401,7 @@ func TestDiscover_NonMDFileInCommands(t *testing.T) {
 		"name": "nonmd",
 	})
 	// commands/ 下放 .txt 文件而非 .md
-	os.MkdirAll(filepath.Join(installDir, "commands"), 0o755)
+	_ = os.MkdirAll(filepath.Join(installDir, "commands"), 0o755)
 	mustWriteFile(t, filepath.Join(installDir, "commands", "test.txt"), "not a command")
 
 	_, cmds, err := Discover(pluginsDir, claudeDir)
