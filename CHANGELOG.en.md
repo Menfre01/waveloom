@@ -1,6 +1,6 @@
 # Changelog
 
-## [v0.1.0-beta.7] — 2026-07-13
+## [v0.1.0-beta.7] — 2026-07-12
 
 ### Added
 - **Claude Code plugin compatibility**: Automatically discover and load skills/commands from installed Claude Code plugins via `installed_plugins.json` + `enabledPlugins` config. User-created skills take priority over plugin skills with the same name. Supports both standard skills/commands directories and manifest-declared custom paths ([#2](https://github.com/Menfre01/waveloom/issues/2))
