@@ -1,6 +1,10 @@
 package agentloop
 
-import "context"
+import (
+	"context"
+
+	"github.com/Menfre01/waveloom/pkg/todo"
+)
 
 // Context keys for injecting loop state into tool execution context.
 // AgentTool reads these to construct sub-loop instances.
@@ -11,6 +15,7 @@ type (
 	agentsMDKey            struct{}
 	toolCallIDKey          struct{}
 	messageIDKey           struct{}
+	todoStateKey           struct{}
 )
 
 // WithEventCallback injects a callback for subagent events into ctx.
@@ -80,4 +85,15 @@ func WithMessageID(ctx context.Context, id string) context.Context {
 func MessageIDFromContext(ctx context.Context) string {
 	s, _ := ctx.Value(messageIDKey{}).(string)
 	return s
+}
+
+// WithTodoState injects the session-level TodoState into ctx for subagent loops.
+func WithTodoState(ctx context.Context, ts *todo.TodoState) context.Context {
+	return context.WithValue(ctx, todoStateKey{}, ts)
+}
+
+// TodoStateFromContext extracts the TodoState from ctx.
+func TodoStateFromContext(ctx context.Context) *todo.TodoState {
+	ts, _ := ctx.Value(todoStateKey{}).(*todo.TodoState)
+	return ts
 }
