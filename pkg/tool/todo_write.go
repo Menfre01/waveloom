@@ -63,7 +63,7 @@ func (t *TodoWrite) Description() string {
 // Prompt 返回 todo_write 的完整使用指南（When to Use / NOT / 示例 / 规则），
 // 由 Registry 拼接到 ToolSpec.Description 中发送给 LLM。
 func (t *TodoWrite) Prompt() string {
-	return strings.TrimSpace(`
+	return "## Todo List\n\n" + strings.TrimSpace(`
 Use this tool to create and manage a structured task list for your current coding session. This helps you track progress, organize complex tasks, and demonstrate thoroughness to the user. It also helps the user understand the progress of the task and overall progress of their requests.
 
 ## When to Use This Tool

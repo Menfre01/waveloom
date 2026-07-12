@@ -139,6 +139,24 @@ func TestExitPlanMode_Execute(t *testing.T) {
 }
 
 // ============================================================================
+// Prompt 测试 — 验证行为约束已从 Description 移至 Prompt（C2 → C1）
+// ============================================================================
+
+func TestExitPlanMode_Prompt(t *testing.T) {
+	tool := &ExitPlanMode{}
+	prompt := tool.Prompt()
+	if prompt == "" {
+		t.Error("Prompt should not be empty")
+	}
+	if !containsStr(prompt, "Before Using") {
+		t.Error("Prompt should contain usage guide")
+	}
+	if !containsStr(prompt, "Do NOT use ask_user_question") {
+		t.Error("Prompt should warn against using ask_user_question for plan approval")
+	}
+}
+
+// ============================================================================
 // 验证 EnterPlanMode / ExitPlanMode 注册
 // ============================================================================
 

@@ -14,6 +14,7 @@ import (
 type mockTypedTool struct {
 	name           string
 	desc           string
+	prompt         string // ToolWithPrompt 支持
 	schema         json.RawMessage
 	concurrentSafe bool
 	execute        func(ctx context.Context, params mockParams) (*ToolResult, error)
@@ -25,6 +26,7 @@ type mockParams struct {
 
 func (t *mockTypedTool) Name() string                     { return t.name }
 func (t *mockTypedTool) Description() string              { return t.desc }
+func (t *mockTypedTool) Prompt() string                   { return t.prompt }
 func (t *mockTypedTool) Schema() json.RawMessage          { return t.schema }
 func (t *mockTypedTool) ConcurrentSafe() bool             { return t.concurrentSafe }
 func (t *mockTypedTool) Execute(ctx context.Context, p mockParams) (*ToolResult, error) {

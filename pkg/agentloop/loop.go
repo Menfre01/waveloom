@@ -337,10 +337,9 @@ func (l *Loop) Run(ctx context.Context, messages []llm.Message) <-chan TurnEvent
 			state.TurnCount+1, len(state.Messages), len(l.toolRegistry.List()))
 
 		messagesForTurn := state.Messages
-			// messagesForTurn 与 state.Messages 共享底层数组（slice header copy）。
-			// injectTodoStatus 在找到已有 todo-status 消息时原地更新 Content，
-			// 此时 state.Messages 同步受益（共享数组）；追加时仅影响 messagesForTurn，
-			// 新增消息在下一轮被 assistant 消息的同索引 append 覆盖，不会泄漏到持久化历史。
+			// messagesForTurn 是每轮重建的临时切片。injectTodoStatus 通过 Append
+			// 在末尾追加 todo-status 消息，仅影响 messagesForTurn，不修改 state.Messages。
+			// 追加使用 Append 策略以避免破坏前缀缓存（Update 的 API 费用是 Append 的 19x）。
 
 			// 每轮注入当前 todo 状态，确保 LLM 始终可见活跃任务
 			l.injectTodoStatus(&messagesForTurn)
@@ -624,8 +623,9 @@ func (l *Loop) Run(ctx context.Context, messages []llm.Message) <-chan TurnEvent
 				tick := l.config.Compactor.Compact(ctx, &state.Messages, lastPromptTokens)
 				compacted = true
 
-				// compaction 可能移除了旧的 todo_write 结果，刷新或注入 todo-status 消息
-			// 确保 LLM 在压缩后仍能看到当前状态
+				// compaction 可能移除了旧的 todo_write 结果。
+			// compaction 已经破坏了前缀缓存，此处 Update 不产生额外成本，
+			// 且避免 stale todo-status 消息累积。
 			if l.config.TodoState != nil {
 				if summary := l.config.TodoState.StatusSummary(); summary != "" {
 					if idx := findTodoStatusIndex(state.Messages); idx >= 0 {
@@ -748,9 +748,8 @@ func sendEvent(ctx context.Context, ch chan<- TurnEvent, ev TurnEvent) bool {
 }
 
 // injectTodoStatus 在每轮 LLM 调用前将当前 todo 状态注入消息列表。
-// 若已有 todo-status 消息则原地更新，否则追加。无活跃任务时不做任何操作。
-// 与 maybeInjectTodoReminder 不同：此函数每轮都更新状态视图（不附带提醒文字），
-// 而 maybeInjectTodoReminder 仅在长时间未更新时注入带提醒文字的版本。
+// 始终追加新消息（Append 策略），不更新已有消息以避免破坏前缀缓存。
+// messagesForTurn 是每轮重建的临时切片，追加的消息不会泄漏到 state.Messages。
 func (l *Loop) injectTodoStatus(msgs *[]llm.Message) {
 	if l.config.TodoState == nil {
 		return
@@ -759,19 +758,14 @@ func (l *Loop) injectTodoStatus(msgs *[]llm.Message) {
 	if summary == "" {
 		return
 	}
-	text := todoStatusText(summary)
-	if idx := findTodoStatusIndex(*msgs); idx >= 0 {
-		(*msgs)[idx].Content = text
-	} else {
-		*msgs = append(*msgs, llm.Message{
-			Role:    llm.RoleUser,
-			Content: text,
-		})
-	}
+	*msgs = append(*msgs, llm.Message{
+		Role:    llm.RoleUser,
+		Content: todoStatusText(summary),
+	})
 }
 
 // todoStatusText 构造 todo 状态消息文本。当前仅返回状态快照本身，
-// 不再追加操作规则（规则已在 system prompt + tool description + FormatResult 三重覆盖）。
+// 不再追加操作规则（规则已在 system prompt + FormatResult 双重覆盖）。
 func todoStatusText(summary string) string {
 	return summary
 }
@@ -784,6 +778,7 @@ func todoReminderText(summary string, turnsSince int) string {
 
 // findTodoStatusIndex 返回最后一条 todo-status 消息的索引，-1 表示不存在。
 // todo-status 消息以 "## Current Todo Status" 开头，RoleUser 角色。
+// 仅用于 compaction 后刷新路径——compaction 已破坏缓存，Update 不产生额外成本。
 func findTodoStatusIndex(msgs []llm.Message) int {
 	for i := len(msgs) - 1; i >= 0; i-- {
 		if msgs[i].Role == llm.RoleUser && strings.HasPrefix(strings.TrimSpace(msgs[i].Content), "## Current Todo Status") {
@@ -810,7 +805,8 @@ func (l *Loop) updateTodoCounters(toolCalls []llm.ToolCall) {
 }
 
 // maybeInjectTodoReminder 在距上次 todo_write 超过 idleTodoWrite 轮后，
-// 向 messages 注入当前 todo 状态快照 + 提醒文字。
+// 向 messages 追加当前 todo 状态快照 + 提醒文字。
+// 使用 Append 策略避免破坏前缀缓存。
 // 两次提醒之间至少间隔 idleTodoReminder 轮。
 func (l *Loop) maybeInjectTodoReminder(state *LoopState) {
 	if l.config.TodoState == nil {
@@ -832,15 +828,9 @@ func (l *Loop) maybeInjectTodoReminder(state *LoopState) {
 
 	msg := todoReminderText(l.config.TodoState.StatusSummary(), l.turnsSinceLastTodoWrite)
 
-	// 原地更新最后一条 todo-status 消息，避免消息累积。
-	// 若 compaction 路径已在本轮注入了 todo-status，此处更新而非追加。
-	if idx := findTodoStatusIndex(state.Messages); idx >= 0 {
-		state.Messages[idx].Content = msg
-	} else {
-		state.Messages = append(state.Messages, llm.Message{
-			Role:    llm.RoleUser,
-			Content: msg,
-		})
-	}
+	state.Messages = append(state.Messages, llm.Message{
+		Role:    llm.RoleUser,
+		Content: msg,
+	})
 }
 

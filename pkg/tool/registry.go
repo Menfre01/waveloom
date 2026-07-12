@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 )
 
 // ---------------------------------------------------------------------------
@@ -18,6 +19,9 @@ type Registry interface {
 	Execute(ctx context.Context, name string, input json.RawMessage) (*ToolResult, error)
 	IsStreamable(name string) bool
 	ExecuteStreaming(ctx context.Context, name string, input json.RawMessage, chunkCb func(string)) (*ToolResult, error)
+	// FormatToolPrompts 返回所有 ToolWithPrompt 工具的 C1 使用指南。
+	// 由 system prompt 构建器调用，实现“注册什么工具就注入什么指南”的按需组装。
+	FormatToolPrompts() string
 }
 
 // ---------------------------------------------------------------------------
@@ -50,12 +54,7 @@ func (r *registry) Register(t Tool) {
 		Parameters:  t.Schema(),
 	}
 	if twp, ok := t.(ToolWithPrompt); ok {
-		prompt := twp.Prompt()
-		spec.Prompt = prompt
-		// Prompt 拼接到 Description 中发送给 LLM（走 tools[] 字段，不破坏前缀缓存）
-		if prompt != "" {
-			desc = desc + "\n\n" + prompt
-		}
+		spec.Prompt = twp.Prompt()
 	}
 	spec.Description = desc
 	r.specs = append(r.specs, spec)
@@ -64,6 +63,19 @@ func (r *registry) Register(t Tool) {
 // List 返回所有已注册工具的 ToolSpec 列表。
 func (r *registry) List() []ToolSpec {
 	return r.specs
+}
+
+// FormatToolPrompts 返回所有 ToolWithPrompt 工具的 C1 使用指南，
+// 由 system prompt 构建器按需注入。仅收集 spec.Prompt 非空的工具。
+func (r *registry) FormatToolPrompts() string {
+	var parts []string
+	for _, spec := range r.specs {
+		if spec.Prompt == "" {
+			continue
+		}
+		parts = append(parts, spec.Prompt)
+	}
+	return strings.Join(parts, "\n\n")
 }
 
 // Get 按名查找工具。

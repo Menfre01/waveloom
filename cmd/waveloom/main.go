@@ -199,6 +199,12 @@ func main() {
 		systemPrompt += buildAdvisorModeSection(llmSettings.Model, llmSettings.SubModel)
 	}
 
+	// 注入工具使用指南：ToolWithPrompt.Prompt() → C1 system prompt。
+	// 按需组装 — 仅已注册且实现了 ToolWithPrompt 的工具会贡献内容。
+	if toolPrompts := registry.FormatToolPrompts(); toolPrompts != "" {
+		systemPrompt += "\n\n" + toolPrompts
+	}
+
 	// 合并 compaction 配置：默认值 + settings.json 覆盖
 	compactionConfig := compaction.DefaultCompactionConfig()
 	if cs := compaction.LoadCompactionSettings(globalPath); cs != nil {
