@@ -19,7 +19,7 @@
 
 ---
 
-**A DeepSeek-native terminal code agent engineered for cache economics.** Prefix-cache architecture keeps the longest common prefix cache-hot across turns; LLM auto-selects pro for deep reasoning and flash for routine tasks — maximizing cache hits and minimizing token cost. Claude Code-level TUI with `.claude/skills/` and `.claude.json` MCP configs drop in — zero-friction replacement. One Go binary.
+**A DeepSeek-native terminal code agent engineered for cache economics.** Prefix-cache architecture keeps the longest common prefix cache-hot across turns; LLM auto-selects pro for deep reasoning and flash for routine tasks — maximizing cache hits and minimizing token cost. Premium TUI with `.claude/skills/` and `.claude.json` MCP configs drop in — zero-friction onboarding. One Go binary.
 
 <p align="center">
   <img src="./assets/demo.en.gif" alt="Waveloom Demo" width="900"/>
@@ -81,9 +81,9 @@ waveloom
 | Runtime | Go binary ~18MB, zero deps | Node.js | Go binary + Desktop app, external plugin host |
 | MCP | Full client (config, transport, tool proxy), registered alongside built-in tools | Native MCP support | Native MCP support |
 | Permission | 8-step pipeline, 3-tier command safety (RiskNone/RiskLow/RiskHigh) | 8-source rule merge + LLM classifier auto-approval | Policy + Approver, 9-stage execute pipeline, shellsafe readOnly detect |
-| TUI polish | Streaming reasoning, rich diff, permission dialogs, `@` fuzzy picker, `/` palette, i18n, theme toggle — Claude Code parity | Native TUI (Ink/React), gold standard | Functional TUI, different UX paradigm |
+| TUI polish | Streaming reasoning, rich diff, permission dialogs, `@` fuzzy picker, `/` palette, i18n, theme toggle — premium terminal UX | Native TUI (Ink/React), gold standard | Functional TUI, different UX paradigm |
 
-**Choose Waveloom if**: you use DeepSeek, want `.claude/skills/` + `.claude/plugins/` drop-in, Premium terminal UX without the cache miss cost.  
+**Choose Waveloom if**: you use DeepSeek, want `.claude/skills/` + `.claude/plugins/` drop-in, premium terminal UX without the cache miss cost.  
 **Choose Claude Code if**: you use Anthropic, need coordinator mode, deep in the Claude ecosystem.  
 **Choose Reasonix if**: you want a desktop GUI, QQ Bot integration, or a larger community ecosystem.
 
@@ -91,7 +91,7 @@ waveloom
 
 ## Why TUI
 
-**Waveloom is the only DeepSeek-native agent with Claude Code-level terminal polish.** Streaming reasoning with syntax highlighting, rich diff, permission dialogs, `@` fuzzy file picker, `/` command palette, light/dark/color-blind theme toggle, `?` shortcut help, zh-CN / en-US i18n. Most DeepSeek agents treat the TUI as an afterthought — raw text streaming, no interaction design. Fire it up and feel the difference.
+**Waveloom is the only DeepSeek-native agent with premium terminal polish.** Streaming reasoning with syntax highlighting, rich diff, permission dialogs, `@` fuzzy file picker, `/` command palette, light/dark/color-blind theme toggle, `?` shortcut help, zh-CN / en-US i18n. Most DeepSeek agents treat the TUI as an afterthought — raw text streaming, no interaction design. Fire it up and feel the difference.
 
 ---
 
