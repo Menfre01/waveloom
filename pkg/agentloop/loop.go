@@ -714,6 +714,7 @@ func toLLMToolSpecs(specs []tool.ToolSpec) []llm.ToolSpec {
 			Name:        s.Name,
 			Description: s.Description,
 			Parameters:  s.Parameters,
+			Prompt:      s.Prompt,
 		}
 	}
 	return result
