@@ -228,3 +228,85 @@ func TestRegistry_ExecuteStreaming_NotStreamable(t *testing.T) {
 		t.Error("expected error for non-streamable tool")
 	}
 }
+
+// ============================================================================
+// FormatToolPrompts 测试
+// ============================================================================
+
+func TestFormatToolPrompts_Empty(t *testing.T) {
+	r := NewRegistry()
+	r.Register(Wrap(&mockTypedTool{name: "no_prompt", desc: "desc", schema: json.RawMessage(`{}`),
+		execute: func(ctx context.Context, p mockParams) (*ToolResult, error) { return &ToolResult{}, nil }},
+	))
+
+	result := r.FormatToolPrompts()
+	if result != "" {
+		t.Errorf("empty prompts should return empty string, got: %q", result)
+	}
+}
+
+func TestFormatToolPrompts_Single(t *testing.T) {
+	r := NewRegistry()
+	r.Register(Wrap(&mockTypedTool{
+		name:   "todo_write",
+		desc:   "Task tracker",
+		prompt: "## Todo List\n\nUse this tool...",
+		schema: json.RawMessage(`{}`),
+		execute: func(ctx context.Context, p mockParams) (*ToolResult, error) { return &ToolResult{}, nil },
+	}))
+
+	result := r.FormatToolPrompts()
+	if !strings.Contains(result, "## Todo List") {
+		t.Errorf("expected '## Todo List' in prompts, got: %q", result)
+	}
+	if !strings.Contains(result, "Use this tool") {
+		t.Errorf("expected 'Use this tool' in prompts, got: %q", result)
+	}
+}
+
+func TestFormatToolPrompts_Multiple(t *testing.T) {
+	r := NewRegistry()
+	noop := func(ctx context.Context, p mockParams) (*ToolResult, error) { return &ToolResult{}, nil }
+	r.Register(Wrap(&mockTypedTool{name: "tool_a", desc: "A", prompt: "## Section A\n\nContent A", schema: json.RawMessage(`{}`), execute: noop}))
+	r.Register(Wrap(&mockTypedTool{name: "tool_b", desc: "B", prompt: "## Section B\n\nContent B", schema: json.RawMessage(`{}`), execute: noop}))
+	r.Register(Wrap(&mockTypedTool{name: "no_prompt", desc: "C", schema: json.RawMessage(`{}`), execute: noop}))
+
+	result := r.FormatToolPrompts()
+	if !strings.Contains(result, "## Section A") || !strings.Contains(result, "Content A") {
+		t.Errorf("missing section A in: %q", result)
+	}
+	if !strings.Contains(result, "## Section B") || !strings.Contains(result, "Content B") {
+		t.Errorf("missing section B in: %q", result)
+	}
+	// 无 Prompt 的工具不应出现
+	if strings.Contains(result, "## no_prompt") {
+		t.Error("tool without Prompt should not appear")
+	}
+	// 多个 Prompt 之间用 \n\n 分隔
+	if !strings.Contains(result, "\n\n## Section B") {
+		t.Errorf("missing separator between prompts, got: %q", result)
+	}
+}
+
+func TestFormatToolPrompts_PromptNotInDescription(t *testing.T) {
+	// REGRESSION: Prompt() 内容不应出现在 Description（C2）中，仅通过 FormatToolPrompts（C1）暴露。
+	r := NewRegistry()
+	r.Register(Wrap(&mockTypedTool{
+		name:   "test",
+		desc:   "API contract only",
+		prompt: "## Usage Guide\n\nBehavioral rules",
+		schema: json.RawMessage(`{}`),
+		execute: func(ctx context.Context, p mockParams) (*ToolResult, error) { return &ToolResult{}, nil },
+	}))
+
+	specs := r.List()
+	if len(specs) != 1 {
+		t.Fatal("expected 1 spec")
+	}
+	if strings.Contains(specs[0].Description, "Usage Guide") || strings.Contains(specs[0].Description, "Behavioral rules") {
+		t.Error("Prompt content leaked into Description (C2)")
+	}
+	if specs[0].Prompt == "" {
+		t.Error("Prompt should be stored in spec.Prompt")
+	}
+}

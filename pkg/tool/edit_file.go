@@ -27,12 +27,14 @@ type EditFile struct{}
 
 func (t *EditFile) Name() string            { return "edit_file" }
 func (t *EditFile) Description() string {
-	return strings.Join([]string{
-		"Find-and-replace on an existing file by exact string match. The system auto-corrects minor whitespace and Unicode differences.",
-		"Set replace_all=true to replace every occurrence.",
-		"Include 1-2 surrounding context lines if the match would otherwise be ambiguous.",
-		"When NOT to use: creating new files → use write_file. Reading files → use read_file. Large rewrites → use write_file.",
-	}, "\n")
+	return "Find-and-replace on an existing file by exact string match. The system auto-corrects minor whitespace and Unicode differences. " +
+		"Set replace_all=true to replace every occurrence. " +
+		"Include 1-2 surrounding context lines if the match would otherwise be ambiguous."
+}
+
+// Prompt 返回 edit_file 使用约束，由 Registry.FormatToolPrompts() 注入 C1 system prompt。
+func (t *EditFile) Prompt() string {
+	return "## Edit File\n\nWhen NOT to use edit_file: creating new files → use write_file. Reading files → use read_file. Large rewrites → use write_file."
 }
 func (t *EditFile) Schema() json.RawMessage { return editFileSchema }
 func (t *EditFile) ConcurrentSafe() bool    { return false }

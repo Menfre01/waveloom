@@ -272,3 +272,17 @@ func TestAbsInt(t *testing.T) {
 		t.Errorf("absInt(0) = %d, want 0", got)
 	}
 }
+
+func TestWriteFile_Prompt(t *testing.T) {
+	tool := &WriteFile{}
+	prompt := tool.Prompt()
+	if prompt == "" {
+		t.Error("Prompt should not be empty")
+	}
+	if !strings.Contains(prompt, "new files or complete overwrites") {
+		t.Error("Prompt should mention when to use write_file")
+	}
+	if !strings.Contains(prompt, "partial edits use edit_file") {
+		t.Error("Prompt should redirect to edit_file for partial edits")
+	}
+}

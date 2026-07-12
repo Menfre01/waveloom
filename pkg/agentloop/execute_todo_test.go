@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 
@@ -471,8 +472,8 @@ func TestMaybeInjectTodoReminder_BelowThresholdNoInject(t *testing.T) {
 	state := &LoopState{Messages: []llm.Message{}}
 	loop.maybeInjectTodoReminder(state)
 
-	// 不应注入任何 todo-status 消息
-	if findTodoStatusIndex(state.Messages) >= 0 {
+	// 不应注入任何 todo-status 消息（初始为空，未触发注入）
+	if len(state.Messages) != 0 {
 		t.Error("should NOT inject reminder when below idleTodoWrite threshold")
 	}
 	// 提醒计数器不应被重置（未触发注入）
@@ -497,11 +498,14 @@ func TestMaybeInjectTodoReminder_AtThresholdInjects(t *testing.T) {
 	state := &LoopState{Messages: []llm.Message{}}
 	loop.maybeInjectTodoReminder(state)
 
-	idx := findTodoStatusIndex(state.Messages)
-	if idx < 0 {
-		t.Fatal("should inject reminder when at idleTodoWrite threshold")
+	// 消息应以 "## Current Todo Status" 开头
+	if len(state.Messages) != 1 {
+		t.Fatalf("expected 1 message after reminder injection, got %d", len(state.Messages))
 	}
-	content := state.Messages[idx].Content
+	if !strings.HasPrefix(state.Messages[0].Content, "## Current Todo Status") {
+		t.Error("injected reminder should start with '## Current Todo Status'")
+	}
+	content := state.Messages[0].Content
 	if !contains(content, "2 turns since last todo_write") {
 		t.Errorf("reminder should contain staleness count, got: %s", content)
 	}
@@ -535,7 +539,7 @@ func TestMaybeInjectTodoReminder_ReminderIntervalEnforced(t *testing.T) {
 	state := &LoopState{Messages: []llm.Message{}}
 	loop.maybeInjectTodoReminder(state)
 
-	if findTodoStatusIndex(state.Messages) >= 0 {
+	if len(state.Messages) != 0 {
 		t.Error("should NOT inject reminder when reminder interval not yet reached")
 	}
 }
@@ -550,13 +554,13 @@ func TestMaybeInjectTodoReminder_NoTasksSkips(t *testing.T) {
 	state := &LoopState{Messages: []llm.Message{}}
 	loop.maybeInjectTodoReminder(state)
 
-	if findTodoStatusIndex(state.Messages) >= 0 {
+	if len(state.Messages) != 0 {
 		t.Error("should NOT inject reminder when no active tasks")
 	}
 }
 
 func TestMaybeInjectTodoReminder_UpdatesExistingSlot(t *testing.T) {
-	// 已有 todo-status 消息时应原地更新而非追加
+	// 已有 todo-status 消息时追加新消息（Append 策略，避免破坏前缀缓存）
 	ts := todo.NewTodoState()
 	ts.Apply(todo.TodoWriteParams{
 		Todos: []todo.TodoItem{
@@ -572,20 +576,20 @@ func TestMaybeInjectTodoReminder_UpdatesExistingSlot(t *testing.T) {
 	state := &LoopState{Messages: []llm.Message{
 		{Role: llm.RoleUser, Content: "## Current Todo Status\n[pending] Old Task\n"},
 	}}
-	originalLen := len(state.Messages)
 
 	loop.maybeInjectTodoReminder(state)
 
-	// 消息数量不应增加（原地更新）
-	if len(state.Messages) != originalLen {
-		t.Errorf("expected %d messages (in-place update), got %d", originalLen, len(state.Messages))
+	// 消息数量应增加（Append 策略，不原地更新）
+	if len(state.Messages) != 2 {
+		t.Errorf("expected 2 messages (append), got %d", len(state.Messages))
 	}
-	// 内容应被替换为新提醒
-	if contains(state.Messages[0].Content, "Old Task") {
-		t.Error("old todo-status content should be replaced by reminder")
+	// 旧消息内容不变
+	if !contains(state.Messages[0].Content, "Old Task") {
+		t.Error("old todo-status should remain unchanged (Append strategy)")
 	}
-	if !contains(state.Messages[0].Content, "todo_write NOW") {
-		t.Error("updated content should contain reminder")
+	// 新消息应包含提醒
+	if !contains(state.Messages[1].Content, "todo_write NOW") {
+		t.Error("appended reminder should contain 'todo_write NOW'")
 	}
 }
 
@@ -632,6 +636,7 @@ func TestInjectTodoStatus_AppendsWhenNoSlot(t *testing.T) {
 }
 
 func TestInjectTodoStatus_UpdatesExistingSlot(t *testing.T) {
+	// 已有 todo-status 消息时追加新消息（Append 策略，避免破坏前缀缓存）
 	ts := todo.NewTodoState()
 	ts.Apply(todo.TodoWriteParams{
 		Todos: []todo.TodoItem{
@@ -646,23 +651,23 @@ func TestInjectTodoStatus_UpdatesExistingSlot(t *testing.T) {
 		{Role: llm.RoleSystem, Content: "system prompt"},
 		{Role: llm.RoleUser, Content: "## Current Todo Status\n[pending] Task A\n"},
 	}
-	originalLen := len(msgs)
 
 	loop.injectTodoStatus(&msgs)
 
-	// 不应追加新消息
-	if len(msgs) != originalLen {
-		t.Errorf("expected %d messages, got %d", originalLen, len(msgs))
+	// 消息数量应增加（Append 策略，不原地更新）
+	if len(msgs) != 3 {
+		t.Errorf("expected 3 messages (append), got %d", len(msgs))
 	}
-	// 内容应被更新
-	if contains(msgs[1].Content, "Task A") {
-		t.Error("old status should be replaced")
+	// 旧消息内容不变
+	if !contains(msgs[1].Content, "Task A") {
+		t.Error("old todo-status should remain unchanged (Append strategy)")
 	}
-	if !contains(msgs[1].Content, "Task B") {
-		t.Error("new status should contain Task B")
+	// 新消息应包含最新状态
+	if !contains(msgs[2].Content, "Task B") {
+		t.Error("appended status should contain Task B")
 	}
-	if !contains(msgs[1].Content, "Verify status accuracy before taking action") {
-		t.Error("status summary should contain directive text")
+	if !contains(msgs[2].Content, "Verify status accuracy before taking action") {
+		t.Error("appended status should contain directive text")
 	}
 }
 

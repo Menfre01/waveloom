@@ -34,11 +34,11 @@ func TestAskUserQuestionDescription(t *testing.T) {
 	if !strings.Contains(desc, "Ask the user") {
 		t.Error("Description should mention 'Ask the user'")
 	}
-	if strings.Contains(desc, "exit_plan_mode") {
-		// exit_plan_mode 引用应出现在末尾 NOTE 中
-		if !strings.Contains(desc, "Do NOT use") {
-			t.Error("Description should warn against using this tool for plan approval")
-		}
+
+	// "Do NOT use for plan approval" 已移至 Prompt() → C1
+	prompt := tool.Prompt()
+	if !strings.Contains(prompt, "exit_plan_mode") || !strings.Contains(prompt, "Do NOT use") {
+		t.Error("Prompt should warn against using this tool for plan approval")
 	}
 }
 

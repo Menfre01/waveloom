@@ -462,22 +462,28 @@ func TestShellSafeCommandNoWarning(t *testing.T) {
 func TestShellDescriptionGuidesToolUsage(t *testing.T) {
 	tool := &Shell{AllowBg: true}
 	desc := tool.Description()
-	// Description 应引导 LLM 优先用专用工具
+	prompt := tool.Prompt()
+
+	// Prompt 应引导 LLM 优先用专用工具（行为约束在 Prompt → C1）
 	expectedMentions := []string{
 		"read_file", "write_file", "edit_file",
 	}
 	for _, toolName := range expectedMentions {
-		if !strings.Contains(desc, toolName) {
-			t.Errorf("Description should mention %s as preferred over shell", toolName)
+		if !strings.Contains(prompt, toolName) {
+			t.Errorf("Prompt should mention %s as preferred over shell", toolName)
 		}
 	}
-	// Description 应引导 LLM 使用 working_dir 切换到不同目录
+	// Description 应提及 working_dir（API 契约在 Description → C2）
 	if !strings.Contains(desc, "working_dir") {
 		t.Error("Description should mention working_dir for directory switching")
 	}
-	// cd 前缀已由权限系统和工具执行层归一化，Description 无需再警告
-	if strings.Contains(desc, "do NOT prefix") || strings.Contains(desc, "cd breaks permission") {
-		t.Error("Description should NOT warn against cd prefix — normalization handles it")
+	// Description 不应包含行为约束（已移至 Prompt）
+	if strings.Contains(desc, "Prefer dedicated tools") {
+		t.Error("Description should NOT contain behavioral rules — they belong in Prompt()")
+	}
+	// cd 前缀已由权限系统和工具执行层归一化，Prompt 无需再警告
+	if strings.Contains(prompt, "do NOT prefix") || strings.Contains(prompt, "cd breaks permission") {
+		t.Error("Prompt should NOT warn against cd prefix — normalization handles it")
 	}
 }
 

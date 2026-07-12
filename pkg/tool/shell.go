@@ -53,20 +53,28 @@ func (t *Shell) Schema() json.RawMessage {
 
 func (t *Shell) ConcurrentSafe() bool { return false }
 
-// Description 引导 LLM 优先使用专用工具，仅在必要时使用 shell。
+// Description 仅描述 API 契约。行为约束（使用规则、策略）见 Prompt()，
+// 由 Registry.FormatToolPrompts() 注入 C1 system prompt。
 func (t *Shell) Description() string {
 	lines := []string{
 		"Execute a shell command in a subprocess. Configurable timeout (default 120s, max 600s), captures stdout and stderr.",
-		"",
 	}
 	if t.AllowBg {
 		lines = append(lines,
 			"Set run_in_background to true for long-running commands (servers, watchers, daemons). The tool returns immediately with a task ID and log path — use read_file to check progress. Use kill_background_task to stop a running background task.",
-			"",
 		)
 	}
 	lines = append(lines,
 		"Unix/macOS uses bash -c (sh fallback), Windows uses Git Bash (bash -c).",
+		"Commands already run in the workspace directory. To operate elsewhere, use the working_dir parameter.",
+	)
+	return strings.Join(lines, "\n")
+}
+
+// Prompt 返回 shell 使用行为约束，由 Registry.FormatToolPrompts() 注入 C1 system prompt。
+func (t *Shell) Prompt() string {
+	lines := []string{
+		"## Shell Usage",
 		"",
 		"Prefer dedicated tools over shell:",
 		"  - Read files: read_file (not cat/head/tail)",
@@ -80,9 +88,6 @@ func (t *Shell) Description() string {
 		"Launch multiple independent commands as parallel shell calls in a single response.",
 		"Chain dependent commands with &&, not newlines.",
 		"",
-		"Commands already run in the workspace directory.",
-		"To operate in a different directory, use the working_dir parameter.",
-		"",
 		"For throwaway verification scripts: prefer python, write to a temp file, and clean up after.",
 		"  Git Bash on Windows provides standard Unix paths (/tmp, /usr/bin). Use forward-slash paths.",
 		"",
@@ -90,7 +95,7 @@ func (t *Shell) Description() string {
 		`  {"command":"python /tmp/check.py && rm /tmp/check.py"}  — Unix/macOS or Windows (Git Bash)`,
 		`  {"command":"make build"}                                 — runs in workspace`,
 		`  {"command":"ls", "working_dir":"/tmp"}                   — runs in /tmp, clean`,
-	)
+	}
 	return strings.Join(lines, "\n")
 }
 

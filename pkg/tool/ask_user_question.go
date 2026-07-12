@@ -91,10 +91,15 @@ func (t *AskUserQuestion) ConcurrentSafe() bool     { return false }
 func (t *AskUserQuestion) RequiresUserInteraction() bool { return true }
 
 func (t *AskUserQuestion) Description() string {
+	return "Ask the user one or more multiple-choice questions to gather preferences, clarify ambiguity, or make decisions during execution."
+}
+
+// Prompt 返回 ask_user_question 使用指南，由 Registry.FormatToolPrompts() 注入 C1 system prompt。
+func (t *AskUserQuestion) Prompt() string {
 	return strings.TrimSpace(`
-Ask the user one or more multiple-choice questions to gather preferences,
-clarify ambiguity, or make decisions during execution. Use this tool when
-you need to:
+## Ask User Question
+
+Use this tool when you need to:
 
 1. Gather user preferences or requirements
 2. Clarify ambiguous instructions

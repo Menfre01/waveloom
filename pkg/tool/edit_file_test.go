@@ -1506,3 +1506,20 @@ func TestTryNormalizedMatch_Exact(t *testing.T) {
 		t.Error("should return hint for whitespace-normalized match")
 	}
 }
+
+func TestEditFile_Prompt(t *testing.T) {
+	tool := &EditFile{}
+	prompt := tool.Prompt()
+	if prompt == "" {
+		t.Error("Prompt should not be empty")
+	}
+	if !strings.Contains(prompt, "When NOT to use") {
+		t.Error("Prompt should contain usage restrictions")
+	}
+	if !strings.Contains(prompt, "use write_file") {
+		t.Error("Prompt should redirect to write_file for new files")
+	}
+	if !strings.Contains(prompt, "use read_file") {
+		t.Error("Prompt should redirect to read_file")
+	}
+}

@@ -420,6 +420,12 @@ func (a *AgentTool) executeCold(ctx context.Context, p AgentParams) (*tool.ToolR
 	// listing unavailable tools wastes prompt tokens and misleads the LLM.
 	sp += formatSubagentEnvironment(ctx, subRegistry)
 
+	// 注入工具使用指南（ToolWithPrompt.Prompt() → C1）。
+	// 按需组装 — 仅已注册且实现了 ToolWithPrompt 的工具会贡献内容。
+	if toolPrompts := subRegistry.FormatToolPrompts(); toolPrompts != "" {
+		sp += "\n\n" + toolPrompts
+	}
+
 	// All cold agents are read-only on project files — they don't need AGENTS.md
 	// coding standards. Dropping it saves prompt tokens.
 	maxTurns := coldMaxTurns

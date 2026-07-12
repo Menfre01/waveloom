@@ -26,15 +26,20 @@ func (t *ExitPlanMode) ConcurrentSafe() bool     { return false }
 func (t *ExitPlanMode) RequiresUserInteraction() bool { return true }
 
 func (t *ExitPlanMode) Description() string {
-	return strings.TrimSpace(`
-Exit plan mode when your plan is complete and ready for user approval.
+	return "Exit plan mode when your plan is complete and ready for user approval."
+}
 
-## Before Using This Tool
+// Prompt 返回 exit_plan_mode 使用指南，由 Registry.FormatToolPrompts() 注入 C1 system prompt。
+func (t *ExitPlanMode) Prompt() string {
+	return strings.TrimSpace(`
+## Exit Plan Mode
+
+### Before Using This Tool
 - Write your plan to the plan file first (use write_file with the plan file path shown in [plan:start #xxxx])
 - Ensure your plan is complete and unambiguous
 - Resolve any open questions with ask_user_question BEFORE calling exit_plan_mode
 
-## How This Tool Works
+### How This Tool Works
 - This tool reads the plan from the file you wrote
 - The user will see the plan content and approve or request changes
 - If approved, you return to normal mode and can begin implementation
