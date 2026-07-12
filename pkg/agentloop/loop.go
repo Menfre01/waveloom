@@ -126,8 +126,18 @@ type LoopState struct {
 // 8 轮后仍未改变则判定为死循环强制终止。
 const maxConsecutiveSameError = 8
 
-// warnThresholds 定义需要注入提醒消息的连续失败轮次。
+// maxAdvisorConsecutiveSameError 是 advisor mode 下的容忍上限。
+// 阈值降至 5 轮：flash 模型不应有 8 次试错机会。
+// 阶梯：count=1 正常调用 → count=2 试错 → count=3 警告 → count=4 警告 → count=5 终止
+const maxAdvisorConsecutiveSameError = 5
+
+// warnThresholds 定义正常模式下需要注入提醒消息的连续失败轮次。
+// 阶梯：3 → 5 → 8(终止)
 var warnThresholds = map[int]bool{3: true, 5: true}
+
+// advisorWarnThresholds 定义 advisor mode 下的警告轮次。
+// 阶梯：3(警告) → 4(警告) → 5(终止)，count=1,2 为正常调用和试错阶段不警告
+var advisorWarnThresholds = map[int]bool{3: true, 4: true}
 
 // todoReminderInterval 定义 todo 周期性提醒的间隔（assistant turn 数）。
 // 首次提醒在 idleTodoWrite（距上次 todo_write 达到此值）时触发，
