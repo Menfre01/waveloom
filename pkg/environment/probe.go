@@ -6,10 +6,12 @@ package environment
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -106,6 +108,87 @@ func RunProbes(ctx context.Context, commands []string) []ProbeResult {
 		return results[i].Binary < results[j].Binary
 	})
 
+	return results
+}
+
+// ---------------------------------------------------------------------------
+// 探测结果缓存
+// ---------------------------------------------------------------------------
+
+const probeCacheTTL = 24 * time.Hour
+
+// probeCache 是持久化到 ~/.waveloom/probe-cache.json 的缓存结构。
+type probeCache struct {
+	PathHash  string        `json:"path_hash"`
+	Timestamp time.Time     `json:"timestamp"`
+	Results   []ProbeResult `json:"results"`
+}
+
+// probeCachePath 返回缓存文件的路径。
+func probeCachePath() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, ".waveloom", "probe-cache.json"), nil
+}
+
+// pathHash 计算当前 PATH 环境变量的 SHA-256 哈希（取前 16 位）。
+// PATH 变化（用户新装工具）时缓存自动失效。
+func pathHash() string {
+	path := os.Getenv("PATH")
+	h := sha256.Sum256([]byte(path))
+	return fmt.Sprintf("%x", h[:8])
+}
+
+// loadCache 读取缓存的探测结果，仅在 TTL 内且 PATH 一致时有效。
+func loadCache(cachePath string) ([]ProbeResult, bool) {
+	data, err := os.ReadFile(cachePath)
+	if err != nil {
+		return nil, false
+	}
+	var c probeCache
+	if err := json.Unmarshal(data, &c); err != nil {
+		return nil, false
+	}
+	if c.PathHash != pathHash() {
+		return nil, false
+	}
+	if time.Since(c.Timestamp) > probeCacheTTL {
+		return nil, false
+	}
+	return c.Results, true
+}
+
+// saveCache 将探测结果写入缓存文件。
+func saveCache(cachePath string, results []ProbeResult) {
+	c := probeCache{
+		PathHash:  pathHash(),
+		Timestamp: time.Now(),
+		Results:   results,
+	}
+	data, err := json.Marshal(c)
+	if err != nil {
+		return
+	}
+	dir := filepath.Dir(cachePath)
+	_ = os.MkdirAll(dir, 0o755)
+	_ = os.WriteFile(cachePath, data, 0o644)
+}
+
+// RunProbesWithCache 是 RunProbes 的带缓存版本。
+// 首次使用或缓存过期/PATH 变化时执行完整探测并写入缓存；
+// 缓存有效时直接返回，跳过 2 秒的探测延迟。
+func RunProbesWithCache(ctx context.Context, commands []string) []ProbeResult {
+	cachePath, err := probeCachePath()
+	if err != nil {
+		return RunProbes(ctx, commands)
+	}
+	if cached, ok := loadCache(cachePath); ok {
+		return cached
+	}
+	results := RunProbes(ctx, commands)
+	saveCache(cachePath, results)
 	return results
 }
 

@@ -88,7 +88,7 @@ func runOneShot(cfg CLIConfig, llmClient llm.Client, registry tool.Registry, gua
 	}
 
 	if finalEv.Err != nil {
-		fmt.Fprintf(os.Stderr, lc.OneShotError, finalEv.Err)
+		fmt.Fprintf(os.Stderr, lc.OneShotError, humanizeError(finalEv.Err))
 		os.Exit(1)
 	}
 

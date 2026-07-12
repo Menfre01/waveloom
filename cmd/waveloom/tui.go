@@ -70,6 +70,9 @@ import (
 // 常量
 // ---------------------------------------------------------------------------
 
+
+var updateSpinnerFrames = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
+
 var defaultSystemPrompt = `You are Waveloom, a coding agent. You help users write, refactor, debug, and explore code. Read before you write, verify before you claim, check before you guess.
 
 ## Personality
@@ -185,30 +188,7 @@ Anti-pattern — DO NOT:
 
 ## Todo List
 
-Use ` + "`todo_write`" + ` for tasks with meaningful dependencies or parallelism — not as a mechanical checklist. The goal is preventing omissions in complex work, not adding process overhead to trivial edits.
-
-### Trigger test (BOTH must be true)
-
-1. ≥3 steps with real dependencies (B depends on A) or parallelizable units (subagents)
-2. Work spans ≥5 turns OR dispatches multiple serial subagents
-
-→ If either is false, skip the todo list and just do the work.
-
-### Hard Rules
-
-- **After receiving new instructions** — capture all tasks before starting work. When the user changes topic, re-evaluate the entire list: remove tasks that no longer apply.
-- **Mark in_progress BEFORE beginning** each task. **Mark completed IMMEDIATELY after finishing** — never defer status updates.
-- **Pass the COMPLETE list every time** — copy from previous result, change only status fields. Never drop items, never change content or activeForm between calls.
-- **Only ONE task in_progress at a time** during serial work. Mark several in_progress ONLY when genuinely launching parallel subagents in the same turn. If the plan is sequential (T1 → T2 → T3), keep only the current task in_progress — complete it, then start the next.
-- When all completed, the list auto-clears. Start fresh next round.
-- Launching parallel subagents → mark all in_progress at once, update after each returns. Never wait for all to finish.
-
-### When NOT to Use
-
-- Single-file fixes, linear micro-tasks (locate → edit → build), informational requests.
-- **When uncertain — check the status summary.** The system will remind you if updates are overdue.
-
-→ Field definitions, states, format, and examples: see ` + "`todo_write`" + ` tool description.
+Use ` + "`todo_write`" + ` to track progress on complex tasks — when to use, when NOT to use, task states, management rules, and detailed examples: see ` + "`todo_write`" + ` tool description.
 
 ## Coding standards
 
@@ -659,6 +639,7 @@ type model struct {
 	// 全局通知（footer banner）
 	noticeBanner  string // 非空时在 footer 显示通知（版本更新等）
 	updating      bool   // 更新进行中
+	updateTick    int    // 更新动画帧计数
 	latestVersion string // 缓存的最新版本号
 
 	// FileHistory — checkpoint/rewind 文件备份
@@ -958,6 +939,7 @@ func (m *model) Init() tea.Cmd {
 
 type updateCheckMsg struct {
 	info *environment.UpdateInfo
+	err  string
 }
 
 // updateProgressMsg 更新进度推送（下载/解压/安装）。
@@ -977,7 +959,10 @@ type updateDoneMsg struct {
 func (m *model) checkUpdateCmd() tea.Cmd {
 	return func() tea.Msg {
 		info, err := environment.CheckForUpdate(context.Background(), Version)
-		if err != nil || info == nil {
+		if err != nil {
+			return updateCheckMsg{err: err.Error()}
+		}
+		if info == nil {
 			return updateCheckMsg{}
 		}
 		return updateCheckMsg{info: info}
@@ -992,10 +977,12 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// 更新检查
 	// ------------------------------------------------------------------
 	case updateCheckMsg:
-		if msg.info != nil {
+		if msg.err != "" {
+			m.noticeBanner = "✗ update check failed"
+		} else if msg.info != nil {
 			m.updateCache.Set(msg.info)
 			if msg.info.UpdateAvailable {
-				m.noticeBanner = fmt.Sprintf(m.msg().UpdateAvailable, msg.info.LatestVersion)
+				m.noticeBanner = "⏎ update " + msg.info.LatestVersion
 				m.latestVersion = msg.info.LatestVersion
 			}
 		}
@@ -1106,6 +1093,10 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		m.spTodo, cmd = m.spTodo.Update(msg)
 		cmds = append(cmds, cmd)
+
+		if m.updating {
+			m.updateTick++
+		}
 
 		return m, tea.Batch(cmds...)
 
@@ -1667,12 +1658,12 @@ func (m *model) handleKeyPress(msg tea.KeyPressMsg) (bool, tea.Cmd) {
 		if !m.running {
 			userInput := strings.TrimSpace(m.input.Value())
 			if userInput == "" {
-			// 空 Enter + 更新 banner 可见 → 触发更新
-			if m.noticeBanner != "" && !m.updating {
-			return true, m.startUpdate()
-		}
-		return true, nil
-	}
+			// 空 Enter + 更新可用 → 触发更新（仅限可触发状态）
+			if m.noticeBanner != "" && !m.updating && strings.HasPrefix(m.noticeBanner, "⏎") {
+					return true, m.startUpdate()
+				}
+				return true, nil
+			}
 			if strings.EqualFold(userInput, "exit") {
 				return true, tea.Quit
 			}
@@ -1731,7 +1722,7 @@ return true, m.doTurn(userInput)
 			m.cancelRun = nil
 			return true, nil
 		}
-	// 空闲态 + 通知 banner 可见 → 单击 Esc 关闭通知
+	// 空闲态 + 更新通知可见 → 单击 Esc 关闭
 	if !m.running && m.overlay == overlayNone && !m.pickerVisible && m.noticeBanner != "" && !m.updating {
 		m.noticeBanner = ""
 		m.lastEscTime = time.Time{}
@@ -3646,11 +3637,11 @@ func (m *model) handleLoopDone(ev agentloop.LoopDone, generation int) {
 			m.paras = append(m.paras, Paragraph{
 				Type:      paraSystem,
 				State:     stateDone,
-				Text:      fmt.Sprintf(m.msg().LoopModelError, elapsedStr, ev.Err),
+				Text:      fmt.Sprintf(m.msg().LoopModelError, elapsedStr, humanizeError(ev.Err)),
 				NotifKind: notifError,
 			})
 		case agentloop.ReasonToolFatal:
-			text := fmt.Sprintf(m.msg().LoopToolFatal, elapsedStr, ev.Err)
+			text := fmt.Sprintf(m.msg().LoopToolFatal, elapsedStr, humanizeError(ev.Err))
 			if m.toolTimeout > 0 && isTimeoutError(ev.Err) {
 				text = fmt.Sprintf(m.msg().LoopToolTimeout, m.toolTimeoutSource, formatDuration(m.toolTimeout.Milliseconds()), elapsedStr)
 			}
@@ -4711,19 +4702,22 @@ func (m *model) View() tea.View {
 		}
 	}
 	if !hasContent && !m.running && !m.inPlanMode && padLines > 0 {
+		guide := m.msg().WelcomeGuide
+		guideLines := strings.Split(guide, "\n")
+		// 计算垂直居中位置
+		guideHeight := len(guideLines)
+		guidePos := (padLines - guideHeight) / 2
+		if guidePos < 0 {
+			guidePos = 0
+		}
 		welcomeStyle := lipgloss.NewStyle().
 			Foreground(colorMuted).
 			Width(contentWidth).
 			Align(lipgloss.Center)
-		welcomeLine := welcomeStyle.Render(m.msg().WelcomeHint)
-		// 将欢迎语放在 body 区域的上 1/3 处，其余为空行
-		welcomePos := padLines / 3
-		if welcomePos < 1 {
-			welcomePos = 1
-		}
 		for i := 0; i < padLines; i++ {
-			if i == welcomePos {
-				parts = append(parts, welcomeLine)
+			idx := i - guidePos
+			if idx >= 0 && idx < guideHeight {
+				parts = append(parts, welcomeStyle.Render(guideLines[idx]))
 			} else {
 				parts = append(parts, "")
 			}
@@ -4931,16 +4925,6 @@ func (m *model) renderHeader() string {
 	lineCwd := lipgloss.NewStyle().Width(contentWidth).Render(cwdPart)
 	sb.WriteString(lineCwd)
 
-	// 通知 banner：右对齐，无背景
-	if m.noticeBanner != "" {
-		sb.WriteString("\n")
-		bannerStyle := lipgloss.NewStyle().
-			Foreground(colorAccentGold).
-			Width(contentWidth).
-			Align(lipgloss.Right)
-		sb.WriteString(bannerStyle.Render(m.noticeBanner))
-	}
-
 	return sb.String()
 }
 
@@ -4998,6 +4982,19 @@ func (m *model) renderFooter() string {
 	balancePart := m.renderBalance()
 
 	line2Parts := []string{compactingPart, turnsPart, messagesPart, latencyPart, balancePart}
+	if m.noticeBanner != "" {
+		bannerText := m.noticeBanner
+		if m.updating {
+			bannerText += " " + updateSpinnerFrames[m.updateTick%len(updateSpinnerFrames)]
+		}
+		var updateStyle lipgloss.Style
+		if strings.HasPrefix(m.noticeBanner, "✗") {
+			updateStyle = styleFooterLatRed
+		} else {
+			updateStyle = lipgloss.NewStyle().Foreground(colorAccentGold)
+		}
+		line2Parts = append(line2Parts, updateStyle.Render(bannerText))
+	}
 	line2Content := strings.Join(line2Parts, sep)
 	line2 := styleFooter.Width(contentWidth).Render(line2Content)
 
@@ -6611,15 +6608,8 @@ func runTUI(llmClient llm.Client, registry tool.Registry, guard permission.Guard
 // 进度通过 program.Send 推送到 TUI Update 循环。
 func (m *model) startUpdate() tea.Cmd {
 	m.updating = true
-	m.noticeBanner = "" // 清除 banner，避免重复触发
-
-	// 追加 tool 段落
-	m.paras = append(m.paras, Paragraph{
-		Type:     paraTool,
-		State:    stateStreaming,
-		ToolName: "▲",
-		ToolArgs: "waveloom self-update → " + m.latestVersion,
-	})
+	m.updateTick = 0
+	m.noticeBanner = "updating " + m.latestVersion
 
 	return func() tea.Msg {
 		startTime := time.Now()
@@ -6653,21 +6643,10 @@ func (m *model) startUpdate() tea.Cmd {
 	}
 }
 
-// handleUpdateProgress 更新 tool 段落的内容。
+// handleUpdateProgress 静默忽略进度消息（footer 只显示 ⏳ updating...）。
 func (m *model) handleUpdateProgress(msg updateProgressMsg) {
 	if msg.err != "" {
-		// 进度中的错误转为 done 消息
 		m.program.Send(updateDoneMsg{err: msg.err})
-		return
-	}
-	// 找到最后一个 stateStreaming 的 paraTool 段落
-	for i := len(m.paras) - 1; i >= 0; i-- {
-		p := &m.paras[i]
-		if p.Type == paraTool && p.State == stateStreaming {
-			p.ToolResult += msg.detail + "\n"
-			p.renderDirty = true
-			return
-		}
 	}
 }
 
@@ -6675,38 +6654,10 @@ func (m *model) handleUpdateProgress(msg updateProgressMsg) {
 func (m *model) handleUpdateDone(msg updateDoneMsg) {
 	m.updating = false
 
-	// 找到最后一个 streaming tool 段落
-	for i := len(m.paras) - 1; i >= 0; i-- {
-		p := &m.paras[i]
-		if p.Type == paraTool && p.State == stateStreaming {
-			p.ToolDurMs = msg.durMs
-			if msg.err != "" {
-				p.ToolResult += "✗ " + msg.err + "\n"
-				p.ToolError = msg.err
-				p.State = stateError
-			} else {
-				p.State = stateDone
-			}
-			p.renderDirty = true
-			break
-		}
-	}
-
 	if msg.err != "" {
-		m.paras = append(m.paras, Paragraph{
-			Type:      paraSystem,
-			State:     stateDone,
-			Text:      m.msg().SysUpdateFailed,
-			NotifKind: notifError,
-		})
+		m.noticeBanner = "✗ update failed"
 	} else {
-		m.paras = append(m.paras, Paragraph{
-			Type:      paraSystem,
-			State:     stateDone,
-			Text:      fmt.Sprintf(m.msg().SysUpdateInstalled, m.latestVersion),
-			NotifKind: notifInfo,
-		})
-		m.trimParas()
+		m.noticeBanner = "✓ " + m.latestVersion + " installed · restart to apply"
 	}
 }
 

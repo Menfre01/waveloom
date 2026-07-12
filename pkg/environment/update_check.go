@@ -40,6 +40,7 @@ func CheckForUpdate(ctx context.Context, currentVersion string) (*UpdateInfo, er
 // URL 参数化便于 httptest mock。
 func checkLatestRelease(ctx context.Context, url, currentVersion string) (*UpdateInfo, error) {
 	client := &http.Client{
+		Timeout: 5 * time.Second,
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			return http.ErrUseLastResponse // 不跟随重定向，我们只需要 Location header
 		},

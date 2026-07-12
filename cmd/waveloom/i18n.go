@@ -34,6 +34,7 @@ type Messages struct {
 
 	// ── Welcome ────────────────────────────────────────────
 	WelcomeHint      string // 空状态时 body 区域的欢迎引导文案
+	WelcomeGuide     string // 空状态时 body 区域的首次引导面板（多行）
 	NewContentHint   string // 向上滚动时新内容到达的提示
 	TerminalTooSmall string // 终端高度 < 10 行时的提示
 
@@ -155,8 +156,10 @@ type Messages struct {
 	SetupLocalePrompt    string
 	SetupProviderPrompt  string
 	SetupAPIKeyPrompt    string
-	SetupAPIKeyEmptyWarn string
-	SetupModelPrompt     string // 含 %s
+	SetupAPIKeyEmptyWarn  string
+	SetupAPIKeyEmptyError string
+	SetupAPIKeyInvalidFmt string // 含 %v
+	SetupModelPrompt      string // 含 %s
 	SetupThemePrompt     string
 	SetupProviderOther   string
 	SetupBaseURLDesc     string
@@ -265,6 +268,16 @@ var zhCN = Messages{
 
 	// Welcome
 	WelcomeHint:      "输入提示词，按 ⏎ 开始",
+	WelcomeGuide: "" +
+		"欢迎使用 Waveloom — DeepSeek 原生终端编码代理\n" +
+		"\n" +
+		"  /  命令面板 — model、theme、locale、help、rewind\n" +
+		"  @  引用文件 — @main.go 将文件内容加入上下文\n" +
+		"  ⏎  发送消息 — 让我编写、重构或调试代码\n" +
+		"\n" +
+		"试试: \"介绍一下这个项目\" 或 \"帮我写个单元测试\"\n" +
+		"\n" +
+		"开始输入即可对话 —",
 	NewContentHint:   "↓ 新内容 (Ctrl+E 跳回底部)",
 	TerminalTooSmall: "终端窗口太小，请调大后重试（最少 10 行）",
 
@@ -285,8 +298,8 @@ var zhCN = Messages{
 	LoopMaxTurns:    "已达最大轮次（%d轮, %s, ↑%s, ↓%s）。继续对话。",
 	LoopAborted:     "已中断（%s）",
 	LoopToolTimeout: "工具执行超时（%s %s）%s",
-	LoopModelError:  "模型错误（%s, %v）",
-	LoopToolFatal:   "工具错误（%s, %v）",
+	LoopModelError:  "Model error (%s, %v)",
+	LoopToolFatal:   "Tool error (%s, %v)",
 
 	// Update
 	UpdateAvailable: "↑ %s  ⏎ 更新 • esc 忽略",
@@ -387,8 +400,10 @@ var zhCN = Messages{
 	SetupLocalePrompt:    "请输入数字 (1-2) [默认: 1]: ",
 	SetupProviderPrompt:  "请输入数字 (1-2) [默认: 1]: ",
 	SetupAPIKeyPrompt:    "请输入 API Key: ",
-	SetupAPIKeyEmptyWarn: "⚠️  API Key 不能为空。你可以之后设置 LLM_API_KEY 环境变量再运行 waveloom setup。",
-	SetupModelPrompt:     "输入模型名 [默认: %s]: ",
+	SetupAPIKeyEmptyWarn:  "⚠️  API Key 不能为空。你可以之后设置 LLM_API_KEY 环境变量再运行 waveloom setup。",
+	SetupAPIKeyEmptyError: "API Key 不能为空",
+	SetupAPIKeyInvalidFmt: "API Key 验证失败: %v",
+	SetupModelPrompt:      "输入模型名 [默认: %s]: ",
 	SetupThemePrompt:     "请输入数字 (1-3) [默认: 1]: ",
 	SetupDoneTitle:       "设置完成！",
 	SetupDoneConfigSaved: "配置已保存到 %s",
@@ -508,7 +523,7 @@ var zhCN = Messages{
 
 	// One-shot mode
 	OneShotHeader: "🤖 Waveloom (单次模式) — %s — %s\n\n",
-	OneShotError:  "❌ 错误: %v\n",
+	OneShotError:  "❌ Error: %v\n",
 
 	// Session save
 	SessionSaved:      "已保存 session: %s\n",
@@ -557,6 +572,16 @@ var enUS = Messages{
 
 	// Welcome
 	WelcomeHint:      "Type a prompt and press ⏎ to start",
+	WelcomeGuide: "" +
+		"Welcome to Waveloom — your DeepSeek-native terminal coding agent\n" +
+		"\n" +
+		"  /  Commands — model, theme, locale, help, rewind\n" +
+		"  @  Reference files — @main.go to add context\n" +
+		"  ⏎  Send message — ask me to write, refactor, or debug code\n" +
+		"\n" +
+		"Try: \"Explain this project\" or \"Add a unit test for ...\"\n" +
+		"\n" +
+		"Start typing to begin —",
 	NewContentHint:   "↓ New content (Ctrl+E to jump back)",
 	TerminalTooSmall: "Terminal too small, please resize (min 10 rows)",
 
@@ -679,8 +704,10 @@ var enUS = Messages{
 	SetupLocalePrompt:    "Enter number (1-2) [default: 1]: ",
 	SetupProviderPrompt:  "Enter number (1-2) [default: 1]: ",
 	SetupAPIKeyPrompt:    "Enter API Key: ",
-	SetupAPIKeyEmptyWarn: "⚠️  API Key cannot be empty. You can set LLM_API_KEY environment variable and run waveloom setup again.",
-	SetupModelPrompt:     "Enter model name [default: %s]: ",
+	SetupAPIKeyEmptyWarn:  "⚠️  API Key cannot be empty. You can set LLM_API_KEY environment variable and run waveloom setup again.",
+	SetupAPIKeyEmptyError: "API Key cannot be empty",
+	SetupAPIKeyInvalidFmt: "API key validation failed: %v",
+	SetupModelPrompt:      "Enter model name [default: %s]: ",
 	SetupThemePrompt:     "Enter number (1-3) [default: 1]: ",
 	SetupDoneTitle:       "Setup Complete!",
 	SetupDoneConfigSaved: "Config saved to %s",
