@@ -81,10 +81,11 @@ func main() {
 	// 4. 加载 LLM Client（合并全局和项目配置，项目字段优先；--model 覆盖配置文件）
 	llmClient, llmClientCfg, llmSettings, err := createLLMClient(globalPath, projectPath, cfg.Model, loc)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		if needsSetup() {
-			fmt.Fprint(os.Stderr, messagesFor(loc).CLINoAPIKeySetupHint)
+			runSetup(loc)
+			return
 		}
+		fmt.Fprintf(os.Stderr, "Error: %v\n", humanizeError(err))
 		os.Exit(1)
 	}
 
@@ -108,7 +109,7 @@ func main() {
 	guard := createGuard(globalPath, projectPath)
 
 	// 5.4 环境探测：预先执行，结果用于 Guard 和 system prompt
-	probeResults := environment.RunProbes(context.Background(), environment.DefaultProbes())
+	probeResults := environment.RunProbesWithCache(context.Background(), environment.DefaultProbes())
 
 	// 提取探测到的工具名列表，注入 Guard 的 RiskLow 白名单
 	var availableTools []string
@@ -365,20 +366,6 @@ func resolveSettingsPaths(explicit string) (globalPath, projectPath string) {
 func createLLMClient(globalPath, projectPath, cliModel string, loc Locale) (llm.Client, llm.ClientConfig, *llm.LLMSettings, error) {
 	globalSettings, _ := llm.LoadSettingsIfExists(globalPath)
 	projectSettings, _ := llm.LoadSettingsIfExists(projectPath)
-
-	// 两边都没有配置文件 → 生成默认项目配置
-	if globalSettings == nil && projectSettings == nil {
-		if err := llm.WriteDefaultSettings(projectPath); err != nil {
-			return nil, llm.ClientConfig{}, nil, fmt.Errorf("failed to create default settings: %w", err)
-		}
-		fmt.Fprintf(os.Stderr, messagesFor(loc).CLIDefaultConfigCreated, projectPath)
-		fmt.Fprint(os.Stderr, messagesFor(loc).CLISetupHint)
-		var loadErr error
-		projectSettings, loadErr = llm.LoadSettingsIfExists(projectPath)
-		if loadErr != nil {
-			return nil, llm.ClientConfig{}, nil, loadErr
-		}
-	}
 
 	merged := llm.MergeLLMSettings(globalSettings, projectSettings)
 	if cliModel != "" {

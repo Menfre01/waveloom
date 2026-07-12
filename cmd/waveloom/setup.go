@@ -1,11 +1,13 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/huh/v2"
@@ -19,15 +21,16 @@ import (
 // ---------------------------------------------------------------------------
 
 type setupState struct {
-	theme      string
-	locale     string
-	prov       string
-	model      string
-	subModel   string
-	baseURL    string
-	apiKey     string
-	configPath string
-	lc         *Messages
+	theme       string
+	locale      string
+	prov        string
+	model       string
+	subModel    string
+	baseURL     string
+	apiKey      string
+	apiKeyError string
+	configPath  string
+	lc          *Messages
 }
 
 // ---------------------------------------------------------------------------
@@ -228,9 +231,10 @@ func (m *setupModel) handleStepComplete() {
 	case 3:
 		m.state.apiKey = m.form.GetString("apiKey")
 		if m.state.apiKey == "" {
-			fmt.Println("  " + m.state.lc.SetupAPIKeyEmptyWarn)
-			os.Exit(1)
+			m.state.apiKeyError = m.state.lc.SetupAPIKeyEmptyError
+			return
 		}
+		m.state.apiKeyError = ""
 		m.step++
 	case 4:
 		model := m.form.GetString("model")
@@ -249,6 +253,11 @@ func (m *setupModel) handleStepComplete() {
 	case 5:
 		choice := m.form.GetString("saveChoice")
 		if choice == "save" {
+			if err := validateAPIKey(m.state.prov, m.state.apiKey, m.state.baseURL); err != nil {
+				m.state.apiKeyError = fmt.Sprintf(m.state.lc.SetupAPIKeyInvalidFmt, err)
+				m.step = 3
+				return
+			}
 			m.saveAndFinish()
 			m.step++
 		} else {
@@ -319,6 +328,9 @@ func (m *setupModel) buildForm() {
 	case 3:
 		apiKeyVal := m.state.apiKey
 		apiDesc := fmt.Sprintf("https://platform.%s.com/api_keys", m.state.prov)
+		if m.state.apiKeyError != "" {
+			apiDesc = lipgloss.NewStyle().Foreground(colorErr).Render(m.state.apiKeyError) + "\n" + apiDesc
+		}
 		inp := huh.NewInput().
 			Key("apiKey").
 			Title(fmt.Sprintf(lc.SetupStepAPIKey, 4, totalSteps)).
@@ -582,4 +594,26 @@ func needsSetup() bool {
 		return false
 	}
 	return true
+}
+
+// validateAPIKey 向 Provider 发送轻量请求验证 API Key 是否有效。
+// 成功返回 nil，失败返回具体错误信息。
+func validateAPIKey(provider, apiKey, baseURL string) error {
+	cfg := llm.ClientConfig{
+		Provider: llm.ProviderType(provider),
+		APIKey:   apiKey,
+		BaseURL:  baseURL,
+		Timeout:  10 * time.Second,
+	}
+	client, err := llm.NewClient(cfg)
+	if err != nil {
+		return fmt.Errorf("invalid configuration: %w", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	_, err = client.ListModels(ctx)
+	if err != nil {
+		return fmt.Errorf("cannot connect to API: %w", err)
+	}
+	return nil
 }

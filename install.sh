@@ -41,11 +41,16 @@ echo "✓ Waveloom ${VERSION} installed to ${INSTALL_DIR}/${BINARY}"
 
 # Check PATH
 if ! echo "${PATH}" | grep -q "${INSTALL_DIR}"; then
+    SHELL_RC=""
+    case "$(basename "${SHELL:-}")" in
+        zsh)  SHELL_RC="${HOME}/.zshrc" ;;
+        bash) SHELL_RC="${HOME}/.bashrc" ;;
+        *)    SHELL_RC="${HOME}/.profile" ;;
+    esac
     echo ""
-    echo "⚠  ${INSTALL_DIR} is not in your PATH."
-    echo "   Add the following to your ~/.bashrc or ~/.zshrc:"
-    echo ""
-    echo "   export PATH=\"\$HOME/.local/bin:\$PATH\""
+    echo "→ Adding ${INSTALL_DIR} to PATH in ${SHELL_RC}..."
+    echo "export PATH=\"\$HOME/.local/bin:\$PATH\"" >> "${SHELL_RC}"
+    echo "  Run 'source ${SHELL_RC}' or restart your shell to apply."
 fi
 
 echo ""
