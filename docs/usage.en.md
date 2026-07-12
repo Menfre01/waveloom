@@ -85,7 +85,7 @@ Type `/` in the input to open the command palette with fuzzy search.
 | `/locale` | `/lang` | Switch language (zh-CN / en-US) |
 | `/help` | — | Show all available commands |
 
-Skills with `user-invocable: true` in `.claude/skills/` are automatically registered as `/` commands using the skill name.
+Skills with `user-invocable: true` in `.claude/skills/` are automatically registered as `/` commands using the skill name. Additionally, skills/commands from installed Claude Code plugins are auto-discovered (via `~/.claude/plugins/installed_plugins.json` + `enabledPlugins` config).
 
 ## Plan Mode
 
