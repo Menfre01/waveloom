@@ -1,5 +1,6 @@
 // Package memory 提供 AGENTS.md 持久记忆的发现和加载。
 //
+// 设计：
 //   - 从 CWD 向上遍历到 Git 根，收集路径上所有 AGENTS.md
 //   - 加载 ~/.waveloom/AGENTS.md 作为全局记忆
 //   - 一次性读盘，会话期间不变

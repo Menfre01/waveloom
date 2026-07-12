@@ -19,7 +19,7 @@
 
 ---
 
-**DeepSeek 原生终端编码代理，围绕缓存经济学设计。** 前缀缓存架构让最长公共前缀跨轮次持续命中；LLM 自动按任务选模型——pro 做深度推理，flash 处理常规任务——最大化缓存命中，最小化 token 成本。Claude Code 级 TUI，`.claude/skills/` 和 `.claude.json` MCP 配置开箱兼容，零摩擦替换。单一 Go 二进制。
+**DeepSeek 原生终端编码代理，围绕缓存经济学设计。** 前缀缓存架构让最长公共前缀跨轮次持续命中；LLM 自动按任务选模型——pro 做深度推理，flash 处理常规任务——最大化缓存命中，最小化 token 成本。专业级 TUI，`.claude/skills/` 和 `.claude.json` MCP 配置开箱兼容，零摩擦迁移。单一 Go 二进制。
 
 <p align="center">
   <img src="../assets/demo.gif" alt="Waveloom Demo" width="900"/>
@@ -81,9 +81,9 @@ waveloom
 | 运行时 | Go 单二进制 ~18MB，零依赖 | Node.js | Go 二进制 + Desktop 应用，外部 plugin 宿主 |
 | MCP | 完整客户端（配置、传输、工具代理），与内置工具统一注册 | 原生 MCP 支持 | 原生 MCP 支持 |
 | 权限模型 | 8 步决策管线，3 级命令安全分类（RiskNone/RiskLow/RiskHigh） | 8 源规则合并 + LLM 分类器自动审批 | Policy + Approver，9 阶段执行管线，shellsafe readOnly 检测 |
-| TUI 打磨 | 流式推理、rich diff、权限对话框、`@` 模糊选择器、`/` 面板、i18n、主题切换 — Claude Code 同级 | 原生 TUI（Ink/React），标杆水平 | 功能完备的 TUI，非 Claude Code 式体验 |
+| TUI 打磨 | 流式推理、rich diff、权限对话框、`@` 模糊选择器、`/` 面板、i18n、主题切换 — 专业级 | 原生 TUI（Ink/React），标杆水平 | 功能完备的 TUI，不同 UX 范式 |
 
-**选 Waveloom 如果**：用 DeepSeek、想要 `.claude/skills/` + `.claude/plugins/` 开箱即用、Claude Code 体验但不想白烧缓存未命中费用。  
+**选 Waveloom 如果**：用 DeepSeek、想要 `.claude/skills/` + `.claude/plugins/` 开箱即用、追求专业终端体验但不想白烧缓存未命中费用。  
 **选 Claude Code 如果**：用 Anthropic API、需要 coordinator 模式、重度依赖 Claude 生态。  
 **选 Reasonix 如果**：需要桌面 GUI、QQ Bot 集成、或更大的社区生态。
 
@@ -91,7 +91,7 @@ waveloom
 
 ## 为什么选择 TUI
 
-**Waveloom 是唯一达到 Claude Code 级终端交互打磨的 DeepSeek 原生 Agent。** 流式推理 + 语法高亮、rich diff、权限确认对话框、`@` 模糊文件选择器、`/` 命令面板、主题切换、中英双语。大多数 DeepSeek Agent 的 TUI 只是 bare minimum — 纯文本流、无交互设计。跑一下就知道差距。
+**Waveloom 是少数在终端交互打磨上不妥协的 DeepSeek 原生 Agent。** 流式推理 + 语法高亮、rich diff、权限确认对话框、`@` 模糊文件选择器、`/` 命令面板、主题切换、中英双语。大多数 DeepSeek Agent 的 TUI 只是 bare minimum — 纯文本流、无交互设计。跑一下就知道差距。
 
 ---
 

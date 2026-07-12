@@ -578,6 +578,7 @@ Migrate $source to $target
 }
 
 func TestLoad_PartialNamedArguments(t *testing.T) {
+	// 未提供的命名参数 → 空字符串
 	home := tmpDir(t)
 	writeFile(t, filepath.Join(home, ".claude", "skills", "greet", "SKILL.md"), `---
 name: greet
@@ -779,6 +780,7 @@ Deploy now.
 }
 
 // TestLoad_EmptyArgsWithPlaceholders 验证无参时所有占位符替换为空字符串。
+// args="" → parsedArgs=[] → 所有索引/命名/整体变量 → 空字符串。
 func TestLoad_EmptyArgsWithPlaceholders(t *testing.T) {
 	home := tmpDir(t)
 	writeFile(t, filepath.Join(home, ".claude", "skills", "test", "SKILL.md"), `---
@@ -860,6 +862,7 @@ First: $0, Second: $1, Third: $2
 	if err != nil {
 		t.Fatal(err)
 	}
+	// 越界索引 → 空字符串
 	expected := "First: onlyone, Second: , Third: "
 	if loaded.Body != expected {
 		t.Errorf("out-of-range index args should be empty string: got %q, want %q", loaded.Body, expected)
@@ -936,6 +939,7 @@ Some text!` + "`echo bad`" + ` should not execute
 	if err != nil {
 		t.Fatal(err)
 	}
+	// ! 前非空白/非行首时保留为字面文本
 	// "text!`cmd`" 中 ! 前是 't'，不匹配 → 不执行
 	if !strings.Contains(loaded.Body, "!`echo bad`") {
 		t.Error("non-whitespace-prefixed !`...` should be preserved as literal text")
@@ -946,7 +950,7 @@ Some text!` + "`echo bad`" + ` should not execute
 	}
 }
 
-
+// TestRegression_InlineInjectionAfterText：
 // 行中 ! 前为空白字符时，触发动态注入。
 // 例如 "当前时间: !`date '+%H:%M:%S'`" 中 ! 前是空格 → 应执行。
 func TestRegression_InlineInjectionAfterText(t *testing.T) {

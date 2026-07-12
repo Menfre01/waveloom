@@ -518,6 +518,7 @@ func (l *Loader) loadFromFile(filePath, skillName, args string, isFlatFile bool)
 	}
 
 	// $ARGUMENTS 无痛追加
+	// 仅当原始 body 中无任何占位符（$ARGUMENTS / $ARGUMENTS[N] / $N / $name）
 	// 且 args 非空时自动追加。
 	if args != "" && !substituted {
 		body += "\n\nARGUMENTS: " + args
@@ -644,9 +645,11 @@ var fencedCodeBlockRegex = regexp.MustCompile("(?s)```.*?```")
 var inlineCodeSpanRegex = regexp.MustCompile("`[^`\n]+`")
 
 // indexArgRegex 匹配 $ARGUMENTS[N] 形式的索引参数占位符。
+// 匹配 $ARGUMENTS[N] 形如 /\$ARGUMENTS\[(\d+)\]/g
 var indexArgRegex = regexp.MustCompile(`\$ARGUMENTS\[(\d+)\]`)
 
 // indexShorthandRegex 匹配 $N 形式的索引参数占位符。
+// 匹配 $N 形如 /\$(\d+)(?!\w)/g
 // Go RE2 不支持 lookahead，使用 \b 词边界替代：
 // $1 xyz → 匹配（1 和空格之间有边界）
 // $1abc  → 不匹配（1 和 a 之间无边界）
@@ -722,7 +725,7 @@ func isWordChar(c byte) bool {
 // ---------------------------------------------------------------------------
 
 func (l *Loader) substituteVariables(body, args string, argsList, namedArgs []string, dirPath string) (string, bool) {
-
+	// 替换顺序：
 	// 1. 命名参数 $name（先于索引参数，避免 $name 被 $N 误匹配）
 	// 2. $ARGUMENTS[N]
 	// 3. $N
@@ -735,7 +738,7 @@ func (l *Loader) substituteVariables(body, args string, argsList, namedArgs []st
 	// 代码片段（围栏块和行内 code span）中的变量不替换。
 	// \$ 转义序列中的 $ 不参与变量替换（先保护，后还原）。
 	//
-
+	// 关键行为：
 	// - $ARGUMENTS[N] 和 $N 使用全局正则替换；越界索引 → 替换为空字符串
 	// - 无参时（argsList 为空）所有 $N / $ARGUMENTS[N] / $ARGUMENTS → 空字符串
 	// - 返回 substituted 指示是否有占位符被实际替换（用于 auto-append 判定）
@@ -748,7 +751,7 @@ func (l *Loader) substituteVariables(body, args string, argsList, namedArgs []st
 	// 保护 \$ → 占位符，防止变量替换误伤 $N
 	body = strings.ReplaceAll(body, `\$`, escapedDollarPlaceholder)
 
-	// 1. 命名参数
+	// 1. 命名参数（未绑定 → 空字符串）
 	for i, name := range namedArgs {
 		val := ""
 		if i < len(argsList) {
@@ -760,7 +763,7 @@ func (l *Loader) substituteVariables(body, args string, argsList, namedArgs []st
 		matches := re.FindAllStringIndex(body, -1)
 		for m := len(matches) - 1; m >= 0; m-- {
 			start, end := matches[m][0], matches[m][1]
-
+			// 检查 $name 后是否紧跟 [ 或单词字符：
 			// $name[0] → 不认为 $name 是占位符
 			// $nameXxx → 不认为 $name 是占位符
 			if end < len(body) {
@@ -831,6 +834,7 @@ func (l *Loader) substituteVariables(body, args string, argsList, namedArgs []st
 // ---------------------------------------------------------------------------
 
 // inlineCmdRegex 匹配行内动态注入 !`command`
+// 动态注入正则: /(?<=^|\s)!`([^`]+)`/gm
 // Go RE2 不支持 lookbehind，改用捕获前缀 (^|\s) 再在替换时拼接
 var inlineCmdRegex = regexp.MustCompile(`(^|\s)!` + "`([^`]+)`")
 
@@ -905,6 +909,7 @@ func (l *Loader) executeDynamicInjections(body, dirPath string) string {
 	body = l.replaceMultilineInjections(body, dirPath)
 
 	// 2. 处理行内 !`command`
+	// lookbehind (?<=^|\s) 保证 ! 前必须是行首或空白字符。
 	// Go RE2 不支持 lookbehind，改用捕获前缀并在 ReplaceAllStringFunc 中拼接。
 	// 使用 ReplaceAllStringFunc 而非整行替换，确保只替换匹配部分，保留行内其他文本。
 	lines := strings.Split(body, "\n")
