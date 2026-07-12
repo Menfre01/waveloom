@@ -33,7 +33,6 @@ type Messages struct {
 	InputPlanModePlaceholder  string
 
 	// ── Welcome ────────────────────────────────────────────
-	WelcomeHint      string // 空状态时 body 区域的欢迎引导文案
 	WelcomeGuide     string // 空状态时 body 区域的首次引导面板（多行）
 	NewContentHint   string // 向上滚动时新内容到达的提示
 	TerminalTooSmall string // 终端高度 < 10 行时的提示
@@ -42,11 +41,9 @@ type Messages struct {
 	SysCompactionDone    string
 	SysContextHardLimit  string
 	SysSummaryFailed     string
-	SysNewSessionCreated string
 	SysUnknownCommand    string // 含 %s
 	SysCommandFailed     string // 含 %v
-	SysUpdateFailed      string
-	SysUpdateInstalled   string // 含 %s
+	SysNewSessionCreated string
 	SysSkillActivated    string // 含 %s
 	SysSkillLoadFailed   string // 含 %s, %s
 
@@ -59,7 +56,6 @@ type Messages struct {
 	LoopToolFatal   string // 含 %s, %v
 
 	// ── Update ────────────────────────────────────────────
-	UpdateAvailable string // 含 %s
 
 	// ── Thought ───────────────────────────────────────────
 	ThoughtThinking     string
@@ -68,8 +64,6 @@ type Messages struct {
 	ThoughtCollapseHint string
 
 	// ── Tool ──────────────────────────────────────────────
-	ToolNotFound         string
-	ToolNoInfo           string
 	ToolNQuestions       string // 含 %d
 	ToolQuestionDeclined string
 	ToolTruncated        string
@@ -135,16 +129,7 @@ type Messages struct {
 	// ── Header ───────────────────────────────────────────
 	HeaderSession string
 
-	// ── Footer (labels only; values are computed) ────────
-	FooterCtx   string
-	FooterCache string
-	FooterLoop  string
-	FooterM     string
-	FooterElap  string
-	FooterBal   string
-
 	// ── Setup wizard ─────────────────────────────────────
-	SetupTitle           string
 	SetupOverwriteWarn   string
 	SetupStepLocale      string
 	SetupStepProvider    string
@@ -153,14 +138,8 @@ type Messages struct {
 	SetupStepTheme       string
 	SetupStepSubModel    string
 	SetupStepBaseURL     string
-	SetupLocalePrompt    string
-	SetupProviderPrompt  string
-	SetupAPIKeyPrompt    string
-	SetupAPIKeyEmptyWarn  string
 	SetupAPIKeyEmptyError string
 	SetupAPIKeyInvalidFmt string // 含 %v
-	SetupModelPrompt      string // 含 %s
-	SetupThemePrompt     string
 	SetupProviderOther   string
 	SetupBaseURLDesc     string
 	SetupSubModelDesc    string // 含 %s — 子代理模型推荐值
@@ -169,7 +148,6 @@ type Messages struct {
 	SetupDoneReady       string
 	SetupConfirmTitle    string
 	SetupConfirmPrompt   string
-	SetupConfirmRedo     string // 含 %d
 	SetupHelpHint        string
 	SetupSummaryTheme    string
 	SetupSummaryLanguage string
@@ -202,15 +180,12 @@ type Messages struct {
 	HelpUsageText string
 
 	// ── CLI stdout (--continue / --resume / ls / oneshot) ──
-	CLINoAPIKeySetupHint    string
-	CLIContinueSession      string // 含 %s
-	CLINoRecentSession      string
-	CLIResumedSession       string // 含 %s
-	CLIDefaultConfigCreated string // 含 %s
-	CLISetupHint            string
-	CLILsNoRecent           string
-	CLILsHeader             string
-	CLILsRestoreHint        string
+	CLIContinueSession string // 含 %s
+	CLINoRecentSession string
+	CLIResumedSession  string // 含 %s
+	CLILsNoRecent      string
+	CLILsHeader        string
+	CLILsRestoreHint   string
 
 	// ── One-shot mode ──────────────────────────────────────
 	OneShotHeader string // 含 %s, %s
@@ -250,7 +225,6 @@ type Messages struct {
 	RewindFailed           string // "Failed to restore: %v"
 	RewindNoCodeChanges    string // "No code changes"
 	RewindFilesChanged     string // "%d files changed"
-	RewindFilesChanged1    string // "%s +%d -%d"
 	RewindSlashDescription string // "Rewind code and/or conversation to a previous point"
 }
 
@@ -267,7 +241,6 @@ var zhCN = Messages{
 	InputPlanModePlaceholder:  "[Plan] 输入消息, ⏎ 发送 · Shift+Tab 退出",
 
 	// Welcome
-	WelcomeHint:      "输入提示词，按 ⏎ 开始",
 	WelcomeGuide: "" +
 		"欢迎使用 Waveloom — DeepSeek 原生终端编码代理\n" +
 		"\n" +
@@ -288,8 +261,6 @@ var zhCN = Messages{
 	SysNewSessionCreated: "新 session 已创建。",
 	SysUnknownCommand:    "未知命令: %s。输入框输入 / 查看可用命令。",
 	SysCommandFailed:     "命令执行失败: %v",
-	SysUpdateFailed:      "更新失败。你可以重新打开 waveloom 后重试，或手动运行 install.sh。",
-	SysUpdateInstalled:   "✓ %s 已安装，重启后生效。",
 	SysSkillActivated:    "已激活 Skills: %s",
 	SysSkillLoadFailed:   "Skill 加载失败: %s — %s",
 
@@ -301,9 +272,6 @@ var zhCN = Messages{
 	LoopModelError:  "Model error (%s, %v)",
 	LoopToolFatal:   "Tool error (%s, %v)",
 
-	// Update
-	UpdateAvailable: "↑ %s  ⏎ 更新 • esc 忽略",
-
 	// Thought
 	ThoughtThinking:     "思考中...",
 	ThoughtComplete:     "▶ 思考完成 (%d tokens) · ⏎ 展开",
@@ -311,8 +279,6 @@ var zhCN = Messages{
 	ThoughtCollapseHint: "▼ ⏎ 折叠",
 
 	// Tool
-	ToolNotFound:         "(未找到)",
-	ToolNoInfo:           "(无信息)",
 	ToolNQuestions:       "(%d 问)",
 	ToolQuestionDeclined: "(declined)",
 	ToolTruncated:        "··· (truncated)",
@@ -376,16 +342,7 @@ var zhCN = Messages{
 	// Header
 	HeaderSession: "session: ",
 
-	// Footer labels
-	FooterCtx:   "ctx",
-	FooterCache: "cache",
-	FooterLoop:  "Loop",
-	FooterM:     "M",
-	FooterElap:  "elap",
-	FooterBal:   "bal",
-
 	// Setup wizard
-	SetupTitle:           "Waveloom · 首次设置",
 	SetupOverwriteWarn:   "继续操作将覆盖当前的 api_key。",
 	SetupStepLocale:      "Step %d/%d — 界面语言",
 	SetupStepProvider:    "Step %d/%d — 选择 Provider",
@@ -397,20 +354,13 @@ var zhCN = Messages{
 	SetupProviderOther:   "Other (OpenAI-compatible)",
 	SetupBaseURLDesc:     "兼容 OpenAI API 的服务地址，如 http://localhost:11434/v1",
 	SetupSubModelDesc:    "%s (Recommended) — 子代理默认模型",
-	SetupLocalePrompt:    "请输入数字 (1-2) [默认: 1]: ",
-	SetupProviderPrompt:  "请输入数字 (1-2) [默认: 1]: ",
-	SetupAPIKeyPrompt:    "请输入 API Key: ",
-	SetupAPIKeyEmptyWarn:  "⚠️  API Key 不能为空。你可以之后设置 LLM_API_KEY 环境变量再运行 waveloom setup。",
 	SetupAPIKeyEmptyError: "API Key 不能为空",
 	SetupAPIKeyInvalidFmt: "API Key 验证失败: %v",
-	SetupModelPrompt:      "输入模型名 [默认: %s]: ",
-	SetupThemePrompt:     "请输入数字 (1-3) [默认: 1]: ",
 	SetupDoneTitle:       "设置完成！",
 	SetupDoneConfigSaved: "配置已保存到 %s",
 	SetupDoneReady:       "现在可以运行 waveloom 进入交互模式了。",
 	SetupConfirmTitle:    "确认配置",
 	SetupConfirmPrompt:   "确认以上配置？",
-	SetupConfirmRedo:     "重新设置 Step %d",
 	SetupHelpHint:        "↑↓ 导航   ⏎ 确认   Esc 回退   Ctrl+C 退出",
 	SetupSummaryTheme:    "主题",
 	SetupSummaryLanguage: "语言",
@@ -511,12 +461,9 @@ var zhCN = Messages{
 `,
 
 	// CLI stdout
-	CLINoAPIKeySetupHint:    "\n  请运行 waveloom setup 完成首次配置，或设置 LLM_API_KEY 环境变量。\n",
 	CLIContinueSession:      "继续最近 session: %s\n",
 	CLINoRecentSession:      "没有找到最近的 session，将创建新 session\n",
 	CLIResumedSession:       "已恢复 session: %s\n",
-	CLIDefaultConfigCreated: "📝 已生成默认配置文件: %s\n",
-	CLISetupHint:            "   💡 运行 waveloom setup 完成首次配置，或设置 LLM_API_KEY 环境变量\n",
 	CLILsNoRecent:           "没有找到最近的 session。",
 	CLILsHeader:             "最近 sessions:",
 	CLILsRestoreHint:        "恢复: waveloom --resume <id>  或  waveloom --continue",
@@ -559,7 +506,6 @@ var zhCN = Messages{
 	RewindFailed:           "回退失败: %v",
 	RewindNoCodeChanges:    "无代码变更",
 	RewindFilesChanged:     "%d 个文件变更",
-	RewindFilesChanged1:    "%s +%d -%d",
 	RewindSlashDescription: "回退代码和/或对话到之前的某个节点",
 }
 
@@ -571,7 +517,6 @@ var enUS = Messages{
 	InputPlanModePlaceholder:  "[Plan] Type a message, ⏎ to send · Shift+Tab to exit",
 
 	// Welcome
-	WelcomeHint:      "Type a prompt and press ⏎ to start",
 	WelcomeGuide: "" +
 		"Welcome to Waveloom — your DeepSeek-native terminal coding agent\n" +
 		"\n" +
@@ -592,8 +537,6 @@ var enUS = Messages{
 	SysNewSessionCreated: "New session created.",
 	SysUnknownCommand:    "Unknown command: %s. Type /help to see available commands.",
 	SysCommandFailed:     "Command failed: %v",
-	SysUpdateFailed:      "Update failed. Reopen waveloom to retry, or run install.sh manually.",
-	SysUpdateInstalled:   "✓ %s installed, restart to take effect.",
 	SysSkillActivated:    "Skills activated: %s",
 	SysSkillLoadFailed:   "Skill load failed: %s — %s",
 
@@ -605,9 +548,6 @@ var enUS = Messages{
 	LoopModelError:  "Model error (%s, %v)",
 	LoopToolFatal:   "Tool error (%s, %v)",
 
-	// Update
-	UpdateAvailable: "↑ %s  ⏎ update • esc dismiss",
-
 	// Thought
 	ThoughtThinking:     "Thinking...",
 	ThoughtComplete:     "▶ Thinking done (%d tokens) · ⏎ to expand",
@@ -615,8 +555,6 @@ var enUS = Messages{
 	ThoughtCollapseHint: "▼ ⏎ to collapse",
 
 	// Tool
-	ToolNotFound:         "(not found)",
-	ToolNoInfo:           "(no info)",
 	ToolNQuestions:       "(%d questions)",
 	ToolQuestionDeclined: "(declined)",
 	ToolTruncated:        "··· (truncated)",
@@ -680,16 +618,7 @@ var enUS = Messages{
 	// Header
 	HeaderSession: "session: ",
 
-	// Footer labels
-	FooterCtx:   "ctx",
-	FooterCache: "cache",
-	FooterLoop:  "Loop",
-	FooterM:     "M",
-	FooterElap:  "elap",
-	FooterBal:   "bal",
-
 	// Setup wizard
-	SetupTitle:           "Waveloom · First-time Setup",
 	SetupOverwriteWarn:   "This will overwrite the existing api_key.",
 	SetupStepLocale:      "Step %d/%d — Language",
 	SetupStepProvider:    "Step %d/%d — Select Provider",
@@ -701,20 +630,13 @@ var enUS = Messages{
 	SetupProviderOther:   "Other (OpenAI-compatible)",
 	SetupBaseURLDesc:     "OpenAI-compatible API endpoint, e.g. http://localhost:11434/v1",
 	SetupSubModelDesc:    "%s (Recommended) — default model for subagents",
-	SetupLocalePrompt:    "Enter number (1-2) [default: 1]: ",
-	SetupProviderPrompt:  "Enter number (1-2) [default: 1]: ",
-	SetupAPIKeyPrompt:    "Enter API Key: ",
-	SetupAPIKeyEmptyWarn:  "⚠️  API Key cannot be empty. You can set LLM_API_KEY environment variable and run waveloom setup again.",
 	SetupAPIKeyEmptyError: "API Key cannot be empty",
 	SetupAPIKeyInvalidFmt: "API key validation failed: %v",
-	SetupModelPrompt:      "Enter model name [default: %s]: ",
-	SetupThemePrompt:     "Enter number (1-3) [default: 1]: ",
 	SetupDoneTitle:       "Setup Complete!",
 	SetupDoneConfigSaved: "Config saved to %s",
 	SetupDoneReady:       "You can now run waveloom to start the interactive mode.",
 	SetupConfirmTitle:    "Confirm Settings",
 	SetupConfirmPrompt:   "Confirm the settings above?",
-	SetupConfirmRedo:     "Redo Step %d",
 	SetupHelpHint:        "↑↓ navigate   ⏎ confirm   Esc back   Ctrl+C quit",
 	SetupSummaryTheme:    "Theme",
 	SetupSummaryLanguage: "Language",
@@ -814,12 +736,9 @@ Environment variables:
 `,
 
 	// CLI stdout
-	CLINoAPIKeySetupHint:    "\n  Run waveloom setup to complete initial configuration, or set LLM_API_KEY environment variable.\n",
 	CLIContinueSession:      "Continuing most recent session: %s\n",
 	CLINoRecentSession:      "No recent session found, creating new session\n",
 	CLIResumedSession:       "Resumed session: %s\n",
-	CLIDefaultConfigCreated: "Default config created: %s\n",
-	CLISetupHint:            "   💡 Run waveloom setup to complete configuration, or set LLM_API_KEY\n",
 	CLILsNoRecent:           "No recent sessions found.",
 	CLILsHeader:             "Recent sessions:",
 	CLILsRestoreHint:        "Restore: waveloom --resume <id>  or  waveloom --continue",
@@ -862,7 +781,6 @@ Environment variables:
 	RewindFailed:           "Failed to restore: %v",
 	RewindNoCodeChanges:    "No code changes",
 	RewindFilesChanged:     "%d files changed",
-	RewindFilesChanged1:    "%s +%d -%d",
 	RewindSlashDescription: "Rewind code and/or conversation to a previous point",
 }
 
