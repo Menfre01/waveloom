@@ -73,7 +73,7 @@ waveloom
 
 | | Waveloom | Claude Code | Reasonix |
 |---|---|---|---|
-| Skill format | Drop-in: `.claude/skills/` SKILL.md, 9 frontmatter fields (`$ARGUMENTS`, `paths`, `` !`cmd` `` injection, etc.) | Native SKILL.md + commands | 13 frontmatter fields, no variable substitution in skill bodies |
+| Skill/Plugin | Drop-in: `.claude/skills/` SKILL.md + `.claude/plugins/` installed plugins, 9 frontmatter fields (`$ARGUMENTS`, `paths`, `` !`cmd` `` injection, etc.) | Native SKILL.md + commands + plugin system | 13 frontmatter fields, no variable substitution in skill bodies |
 | Cache design | DeepSeek prefix matching: 4-tier watermark (Snip → Prune → Summarize), compaction bytes never change | Anthropic `cache_control`: `cache_edits` API, dynamic system prompt sections | DeepSeek prefix matching: 4-tier (notice → snip → compact → force), `session.Replace()` bumps rewrite version |
 | Compaction | Monotonic — `compactionDecisionSet` + triple cursor, each message compacted once | Per-turn independent, no durability guarantee | Prefix bytes preserved across compact, but no per-message decision tracking |
 | Plan mode | Guard restricts writes to plan file only; build tools auto-allowed | Write restricted to plan file only; rich exit UI | `planmode.Policy` with trust gates for bash/MCP; Marker string injected; no plan file |
@@ -83,7 +83,7 @@ waveloom
 | Permission | 8-step pipeline, 3-tier command safety (RiskNone/RiskLow/RiskHigh) | 8-source rule merge + LLM classifier auto-approval | Policy + Approver, 9-stage execute pipeline, shellsafe readOnly detect |
 | TUI polish | Streaming reasoning, rich diff, permission dialogs, `@` fuzzy picker, `/` palette, i18n, theme toggle — Claude Code parity | Native TUI (Ink/React), gold standard | Functional TUI, different UX paradigm |
 
-**Choose Waveloom if**: you use DeepSeek, have `.claude/skills/`, want Premium terminal UX without the cache miss cost.  
+**Choose Waveloom if**: you use DeepSeek, want `.claude/skills/` + `.claude/plugins/` drop-in, Premium terminal UX without the cache miss cost.  
 **Choose Claude Code if**: you use Anthropic, need coordinator mode, deep in the Claude ecosystem.  
 **Choose Reasonix if**: you want a desktop GUI, QQ Bot integration, or a larger community ecosystem.
 
