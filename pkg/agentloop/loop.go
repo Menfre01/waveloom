@@ -143,8 +143,8 @@ var advisorWarnThresholds = map[int]bool{3: true, 4: true}
 // 首次提醒在 idleTodoWrite（距上次 todo_write 达到此值）时触发，
 // 后续提醒至少间隔 idleTodoReminder 轮。
 const (
-	idleTodoWrite    = 3 // 超过此值无 todo_write → 注入提醒
-	idleTodoReminder = 3 // 两次提醒之间的最小间隔
+	idleTodoWrite    = 2 // 超过此值无 todo_write → 注入提醒
+	idleTodoReminder = 2 // 两次提醒之间的最小间隔
 )
 
 
@@ -629,11 +629,11 @@ func (l *Loop) Run(ctx context.Context, messages []llm.Message) <-chan TurnEvent
 			if l.config.TodoState != nil {
 				if summary := l.config.TodoState.StatusSummary(); summary != "" {
 					if idx := findTodoStatusIndex(state.Messages); idx >= 0 {
-						state.Messages[idx].Content = todoReminderText(summary)
+						state.Messages[idx].Content = todoStatusText(summary)
 					} else {
 						state.Messages = append(state.Messages, llm.Message{
 							Role:    llm.RoleUser,
-							Content: todoReminderText(summary),
+							Content: todoStatusText(summary),
 						})
 					}
 				}
@@ -776,9 +776,9 @@ func todoStatusText(summary string) string {
 }
 
 // todoReminderText 构造 todo 提醒消息文本：状态摘要 + 提醒引导。
-func todoReminderText(summary string) string {
+func todoReminderText(summary string, turnsSince int) string {
 	return summary + "\n\n" +
-		"(reminder) Update the todo list via `todo_write`. If it no longer matches what you're working on, clean it up. Ignore if not applicable — never mention this reminder to the user."
+		fmt.Sprintf("[system] %d turns since last todo_write. Your todo list is stale — call todo_write NOW to update task statuses. Mark completed tasks as 'completed' and set the next pending task to 'in_progress'.", turnsSince)
 }
 
 // findTodoStatusIndex 返回最后一条 todo-status 消息的索引，-1 表示不存在。
@@ -829,7 +829,7 @@ func (l *Loop) maybeInjectTodoReminder(state *LoopState) {
 	// 因为提醒不能替代真正的 todo_write 更新）
 	l.turnsSinceLastTodoReminder = 0
 
-	msg := todoReminderText(l.config.TodoState.StatusSummary())
+	msg := todoReminderText(l.config.TodoState.StatusSummary(), l.turnsSinceLastTodoWrite)
 
 	// 原地更新最后一条 todo-status 消息，避免消息累积。
 	// 若 compaction 路径已在本轮注入了 todo-status，此处更新而非追加。
