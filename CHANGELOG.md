@@ -1,6 +1,6 @@
 # Changelog
 
-## [v0.1.0-beta.7] — 2026-07-13
+## [v0.1.0-beta.7] — 2026-07-12
 
 ### 新增功能
 - **Claude Code 插件兼容**：自动发现并加载已安装的 Claude Code 插件中的 skills/commands，通过 `installed_plugins.json` + `enabledPlugins` 配置管理，同名 skill 以用户手动创建优先，支持标准 skills/commands 目录和 manifest 声明的自定义路径（[#2](https://github.com/Menfre01/waveloom/issues/2)）

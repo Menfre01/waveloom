@@ -134,17 +134,37 @@ Release notes 以用户可感知的功能变化为描述单位，分类汇总：
 
 `docs` / `chore` / `test` 类型不列入。
 
+**Release body 格式**：主体为中文 changelog 分类汇总，末尾追加英文 changelog 锚点，方便英文用户查看：
+
+```
+## [vX.Y.Z] — YYYY-MM-DD
+
+### 新增功能
+- ...
+
+### 修复
+- ...
+
+### 重构
+- ...
+
+---
+
+📝 [Changelog (English)](https://github.com/Menfre01/waveloom/blob/dev/CHANGELOG.en.md)
+```
+
 发布由 GitHub Actions 自动完成（tag push `v*` → `.github/workflows/release.yml`）。
 
 手动步骤（release workflow 之前完成）：
 
 1. **汇总 changelog** — 从上次 tag 到 HEAD 扫描 commit，按分类汇总，更新 `CHANGELOG.md` 和 `CHANGELOG.en.md`
-2. **审查 Windows 兼容性** — 检查本次变更涉及的代码是否存在平台依赖问题：
+2. **核对日期** — 检查 `CHANGELOG.md` 和 `CHANGELOG.en.md` 中新版本的日期是否为当天日期（`date '+%Y-%m-%d'`），防止日期偏移
+3. **审查 Windows 兼容性** — 检查本次变更涉及的代码是否存在平台依赖问题：
    - 路径拼接是否使用 `filepath.Join`，无硬编码 `/` 或 `\`
    - 文件遍历优先使用 `filepath.WalkDir` / `os.ReadDir`，无外部命令
    - 新增依赖是否声明跨平台支持
    - Git diff 中新增的 `/` 分隔符确认是 Go 导入路径（安全）而非文件系统路径
-3. **审查 README** — 检查 `README.md` 和 `docs/README.en.md` 是否需要同步新功能
-4. **审查双语文档** — 检查 `CONTRIBUTING` / `SECURITY` / `docs/` 下中英双语是否同步
-5. **文档提交** — 如有文档修改，先 commit（类型 `docs`）
-6. **打 tag 并推送** — `git tag vX.Y.Z && git push origin dev && git push origin vX.Y.Z`
+4. **审查 README** — 检查 `README.md` 和 `docs/README.en.md` 是否需要同步新功能
+5. **审查双语文档** — 检查 `CONTRIBUTING` / `SECURITY` / `docs/` 下中英双语是否同步
+6. **文档提交** — 如有文档修改，先 commit（类型 `docs`）
+7. **打 tag 并推送** — `git tag vX.Y.Z && git push origin dev && git push origin vX.Y.Z`
