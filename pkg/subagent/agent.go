@@ -513,8 +513,10 @@ func buildColdRegistry(extraDisallowed map[string]bool) tool.Registry {
 func allTools() []tool.Tool {
 	return []tool.Tool{
 		tool.Wrap(&tool.ReadFile{}),
+		tool.Wrap(&tool.ReadFileHashline{}),
 		tool.Wrap(&tool.WriteFile{}),
 		tool.Wrap(&tool.EditFile{}),
+		tool.Wrap(&tool.EditFileHashline{}),
 		tool.Wrap(&tool.WebFetch{}),
 		tool.Wrap(&tool.WebSearch{}),
 		tool.Wrap(&tool.Shell{AllowBg: false}), // bash_subagent
@@ -536,22 +538,25 @@ var allAgentDisallowed = map[string]bool{
 }
 
 var exploreDisallowed = map[string]bool{
-	"write_file": true,
-	"edit_file":  true,
+	"write_file":          true,
+	"edit_file":           true,
+	"edit_file_hashline":  true,
 }
 
 // verificationDisallowed 与 exploreDisallowed 相同：审查 agent 只读项目文件，
 // 但可通过 bash_subagent 在 /tmp 创建临时脚本。
 var verificationDisallowed = map[string]bool{
-	"write_file": true,
-	"edit_file":  true,
+	"write_file":          true,
+	"edit_file":           true,
+	"edit_file_hashline":  true,
 }
 
 // evaluateDisallowed 与 explore/verification 相同：评估 agent 只读项目文件，
 // 但可通过 bash_subagent 在 /tmp 创建临时脚本来测试行为。
 var evaluateDisallowed = map[string]bool{
-	"write_file": true,
-	"edit_file":  true,
+	"write_file":          true,
+	"edit_file":           true,
+	"edit_file_hashline":  true,
 }
 
 func agentConfig(agentType string) (systemPrompt string, extraDisallowed map[string]bool) {
@@ -750,9 +755,9 @@ func forwardEvents(ctx context.Context, subCh <-chan agentloop.TurnEvent, cb fun
 			ev := SubagentEvent{ToolCallID: toolCallID, Kind: SubagentToolResult, ToolName: e.ToolCallName, ToolResult: e.Result, ToolDurMs: e.DurationMs, ToolError: e.Error}
 			fanout <- ev
 			events = append(events, ev)
-			if e.ToolCallName == "write_file" || e.ToolCallName == "edit_file" {
+			if e.ToolCallName == "write_file" || e.ToolCallName == "edit_file" || e.ToolCallName == "edit_file_hashline" {
 				op := writeOp{ToolName: e.ToolCallName, FilePath: extractPath(e.Result), BytesIn: len(e.Result)}
-				if e.ToolCallName == "edit_file" {
+				if e.ToolCallName == "edit_file" || e.ToolCallName == "edit_file_hashline" {
 					op.LinesAdd, op.LinesDel = countDiff(e.Result)
 				}
 				writeOps = append(writeOps, op)
@@ -815,7 +820,7 @@ func ensureNonEmpty(sb *strings.Builder, lastToolCalls []string) {
 
 func formatArgs(toolName, argsJSON string) string {
 	switch toolName {
-	case "read_file", "write_file", "edit_file":
+	case "read_file", "read_file_hashline", "write_file", "edit_file", "edit_file_hashline":
 		return extractField(argsJSON, "file_path")
 	case "bash_subagent", "bash":
 		return extractField(argsJSON, "command")

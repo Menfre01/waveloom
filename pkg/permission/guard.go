@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 
 	"github.com/Menfre01/waveloom/pkg/pathutil"
 )
@@ -133,9 +134,11 @@ func NewGuard(opts ...GuardOption) *GuardImpl {
 
 	// 内置工具风险分类
 	g.toolRiskClass["read_file"] = RiskClassRead
+	g.toolRiskClass["read_file_hashline"] = RiskClassRead
 	g.toolRiskClass["web_fetch"] = RiskClassRead
 	g.toolRiskClass["write_file"] = RiskClassWrite
 	g.toolRiskClass["edit_file"] = RiskClassWrite
+	g.toolRiskClass["edit_file_hashline"] = RiskClassWrite
 	g.toolRiskClass["bash"] = RiskClassExecute
 	g.toolRiskClass["kill_background_task"] = RiskClassSafe
 
@@ -570,6 +573,7 @@ func extractFilePath(input json.RawMessage) (path, workingDir string) {
 	var params struct {
 		FilePath   string `json:"file_path"`
 		Path       string `json:"path"`
+		Patch      string `json:"patch"`
 		WorkingDir string `json:"working_dir"`
 	}
 	if json.Unmarshal(input, &params) != nil {
@@ -579,8 +583,31 @@ func extractFilePath(input json.RawMessage) (path, workingDir string) {
 	if path == "" {
 		path = params.Path
 	}
+	if path == "" && params.Patch != "" {
+		// edit_file_hashline: 从 patch 文本中提取第一个 [PATH#TAG] 中的路径
+		path = extractPathFromPatch(params.Patch)
+	}
 	if path == "" {
 		path = params.WorkingDir
 	}
 	return path, params.WorkingDir
+}
+
+// extractPathFromPatch 从 hashline patch 文本中提取第一个 [PATH#TAG] 的路径部分。
+func extractPathFromPatch(patch string) string {
+	idx := strings.Index(patch, "[")
+	if idx < 0 {
+		return ""
+	}
+	rest := patch[idx+1:]
+	end := strings.IndexByte(rest, ']')
+	if end < 0 {
+		return ""
+	}
+	header := rest[:end]
+	hashIdx := strings.LastIndex(header, "#")
+	if hashIdx < 0 {
+		return header // 无 TAG，整段当作路径
+	}
+	return header[:hashIdx]
 }

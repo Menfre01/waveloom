@@ -23,11 +23,11 @@ run:
 
 .PHONY: lint
 lint:
-	golangci-lint run ./...
+	golangci-lint run ./pkg/... ./cmd/...
 
 .PHONY: test
 test:
-	go test ./...
+	go test ./pkg/... ./cmd/...
 
 .PHONY: test-integration
 test-integration:

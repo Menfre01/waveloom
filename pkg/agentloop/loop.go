@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/Menfre01/waveloom/pkg/compaction"
+	"github.com/Menfre01/waveloom/pkg/hashline"
 	"github.com/Menfre01/waveloom/pkg/llm"
 	"github.com/Menfre01/waveloom/pkg/permission"
 	"github.com/Menfre01/waveloom/pkg/todo"
@@ -211,6 +212,15 @@ type Loop struct {
 
 	// turnsSinceLastTodoReminder 记录自上次注入 todo 提醒以来的 assistant turn 数。
 	turnsSinceLastTodoReminder int
+
+	// ── hashline 快照存储（会话级，跨 turn 持久化）──
+	//
+	// SPEC-DRIFT: 规范 §3.2 要求 per-turn 生命周期（turn 结束清空）。
+	// 但 read_file_hashline → edit_file_hashline 工作流必然跨 turn（先读后编），
+	// per-turn NewStore() 会导致下一 turn 编辑时 TAG 验证失败（"no snapshot for path"）。
+	// 因此改为会话级 Store：Loop 创建时初始化，跨 turn 复用，子代理通过 agentloop.New()
+	// 获得独立 Store 实现隔离。
+	snapshotStore *hashline.SnapshotStore
 }
 
 // New 创建一个新的 Loop 实例。
@@ -219,6 +229,7 @@ func New(llmClient llm.Client, toolRegistry tool.Registry, config Config) *Loop 
 		llmClient:    llmClient,
 		toolRegistry: toolRegistry,
 		config:       config,
+		snapshotStore: hashline.NewStore(),
 	}
 }
 
