@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -127,6 +128,9 @@ func stripCWDPrefix(field, cwd string) string {
 	if cwd == "" || field == "" {
 		return field
 	}
+	// 归一化路径分隔符为 /，确保 Windows（cwd 含 \）与 LLM 输出（/）可比对。
+	field = filepath.ToSlash(field)
+	cwd = filepath.ToSlash(cwd)
 	prefix := cwd + "/"
 	if strings.HasPrefix(field, prefix) {
 		return field[len(prefix):]

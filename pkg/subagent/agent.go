@@ -350,7 +350,7 @@ func (a *AgentTool) executeFork(ctx context.Context, p AgentParams) (*tool.ToolR
 		UserResponder: nil,
 		ToolTimeout:   agentloop.DefaultToolTimeout,
 		Model:         model,
-		TodoState:     agentloop.TodoStateFromContext(ctx),
+		TodoState:     nil,
 	})
 
 	startTime := time.Now()
@@ -443,7 +443,7 @@ func (a *AgentTool) executeCold(ctx context.Context, p AgentParams) (*tool.ToolR
 		UserResponder: nil,
 		ToolTimeout:   agentloop.DefaultToolTimeout,
 		Model:         model,
-		TodoState:     agentloop.TodoStateFromContext(ctx),
+		TodoState:     nil,
 	})
 
 	startTime := time.Now()
@@ -532,6 +532,7 @@ var allAgentDisallowed = map[string]bool{
 	"exit_plan_mode":       true,
 	"ask_user_question":    true,
 	"kill_background_task": true,
+	"todo_write":           true,
 }
 
 var exploreDisallowed = map[string]bool{
