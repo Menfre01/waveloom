@@ -4,15 +4,16 @@
 
 ### Added
 - **First-run experience optimization**: Auto-launches setup wizard on first run without config instead of erroring out; empty API Key stays in-place with error prompt; validates API Key before saving (lightweight ListModels check); TUI empty state shows onboarding panel (/ commands, @ references, ⏎ send, sample prompts); human-readable error mapping (humanizeError) instead of raw JSON leaks; environment probe results cached for 24h with PATH-change auto-invalidation, zero wait on second launch; update notification switched to footer 3-state toggle
-- **Subagent todo_write support**: TodoState propagated via context, subagents can now call todo_write with automatic state sync back to the parent agent
 
 ### Fixed
 - **plugin lint**: Fixed unchecked os.MkdirAll return value causing lint errcheck warning
+- **Windows path compatibility**: Normalized path separators in `stripCWDPrefix`, `pathPrefixMatch`, `extractDirPrefix` using `filepath.ToSlash`/`IsAbs`/`Dir` instead of hardcoded `/`, fixing file picker filtering and display issues on Windows
 
 ### Changed
 - **System prompt reorder**: C2 behavioral constraints merged into C1, sections reordered by attention mechanism priority, C3c switched to Append strategy for improved instruction adherence
 - **TodoWrite tool split**: New ToolWithPrompt optional interface — tools can provide separate short Description (~60 tokens) and Prompt usage guide (~1200 tokens). Registry auto-concatenates them; system message untouched, prefix cache unaffected
 - **Todo reminder system hardening**: StatusSummary changed from passive notes to active instruction checkpoints; idleTodoWrite/idleTodoReminder threshold lowered from 3 to 2; todoReminderText embeds staleness count and removes escape hatches; 14 new regression tests covering all reminder/injection/counter paths
+- **Subagent-todo lifecycle binding**: Reverted TodoState context propagation (removed WithTodoState chain), replaced with C1 END prompt guidance: parent agent sets todo to in_progress before spawning subagent, updates to completed after return; explicit 3-turn cadence for parallel subagents; `todo_write` added to subagent `allAgentDisallowed`
 
 ## [v0.1.0-beta.7] — 2026-07-12
 
