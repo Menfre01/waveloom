@@ -11,9 +11,10 @@ import (
 type TaskStatus int
 
 const (
-	TaskRunning   TaskStatus = iota // 进程仍在执行
-	TaskCompleted                   // 正常退出
-	TaskFailed                      // 异常退出（非零退出码）
+	TaskRunning     TaskStatus = iota // 进程仍在执行
+	TaskCompleted                     // 正常退出
+	TaskFailed                        // 异常退出（非零退出码）
+	TaskInterrupted                   // 进程被中断（session 关闭时仍在运行）
 )
 
 // String 返回 TaskStatus 的可读名称。
@@ -25,6 +26,8 @@ func (s TaskStatus) String() string {
 		return "completed"
 	case TaskFailed:
 		return "failed"
+	case TaskInterrupted:
+		return "interrupted"
 	default:
 		return "unknown"
 	}
@@ -109,9 +112,31 @@ func (r *Registry) Running() []*TaskInfo {
 	for _, t := range r.tasks {
 		if t.Status == TaskRunning {
 			running = append(running, t)
+
 		}
 	}
 	return running
+}
+
+// InterruptRunning 将所有 Running 状态的任务标记为 TaskInterrupted。
+// 用于 session 恢复时检测：原 waveloom 进程已退出，无法再监控这些任务，
+// 将它们标记为中断状态，让 agent 在下轮通知中感知到。
+// 返回被中断的任务列表。
+func (r *Registry) InterruptRunning() []*TaskInfo {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	var interrupted []*TaskInfo
+	now := time.Now()
+	for _, t := range r.tasks {
+		if t.Status == TaskRunning {
+			t.Status = TaskInterrupted
+			t.ExitCode = -1
+			t.CompletedTime = now
+			interrupted = append(interrupted, t)
+		}
+	}
+	return interrupted
 }
 
 // List 返回所有已注册任务的切片快照。

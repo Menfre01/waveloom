@@ -29,7 +29,8 @@ type sessionFile struct {
 	Stats       sessionStats        `json:"stats"`
 	Compaction  *sessionCompaction  `json:"compaction,omitempty"`
 	Tasks       []task.TaskInfo     `json:"tasks,omitempty"`
-	TodoItems   []json.RawMessage   `json:"todo_items"`
+	TodoItems            []json.RawMessage   `json:"todo_items"`
+	LastBackgroundCheck  string              `json:"last_background_check,omitempty"`
 }
 
 // sessionCompaction 是压缩状态的序列化形式。
@@ -55,7 +56,8 @@ type sessionStats struct {
 // SaveSessionToFile 将消息历史和统计信息序列化写入指定文件。
 // 使用原子写入：先写临时文件，再 rename。
 // compaction 为 nil 时不写入压缩状态。
-func SaveSessionToFile(path string, messages []llm.Message, stats Stats, compData *compaction.CompactionData, todoItems []json.RawMessage) error {
+// lastBackgroundCheck 为后台任务上次检查时间（零值时保留已有值）。
+func SaveSessionToFile(path string, messages []llm.Message, stats Stats, compData *compaction.CompactionData, todoItems []json.RawMessage, lastBackgroundCheck time.Time) error {
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return fmt.Errorf("create session dir: %w", err)
@@ -97,6 +99,12 @@ func SaveSessionToFile(path string, messages []llm.Message, stats Stats, compDat
 		}
 	}
 
+	if !lastBackgroundCheck.IsZero() {
+		sf.LastBackgroundCheck = lastBackgroundCheck.UTC().Format(time.RFC3339)
+	} else if existing != nil && existing.LastBackgroundCheck != "" {
+		sf.LastBackgroundCheck = existing.LastBackgroundCheck
+	}
+
 	// 复制一份避免直接引用 Registry 内部指针
 	list := task.DefaultRegistry.List()
 	sf.Tasks = make([]task.TaskInfo, len(list))
@@ -126,20 +134,19 @@ func SaveSessionToFile(path string, messages []llm.Message, stats Stats, compDat
 	}
 	return nil
 }
-
-// LoadSessionFromFile 从指定文件读取并返回消息历史、统计信息、压缩数据、session ID 和后台任务列表。
-// 文件不存在返回 nil, ..., nil, "", nil；格式无效返回 error。
+// LoadSessionFromFile 从指定文件读取并返回消息历史、统计信息、压缩数据、session ID、后台任务列表和上次后台检查时间。
+// 文件不存在返回 nil, ..., nil, "", nil, time.Time{}, nil；格式无效返回 error。
 //
 // 加载优先级：
 //  1. 若同目录存在 .jsonl 文件，优先从 JSONL 加载消息（增量恢复）
 //  2. 否则从 JSON 文件的 Messages 字段加载（兼容旧格式）
-func LoadSessionFromFile(path string) ([]llm.Message, Stats, *compaction.CompactionData, string, []task.TaskInfo, []json.RawMessage, error) {
+func LoadSessionFromFile(path string) ([]llm.Message, Stats, *compaction.CompactionData, string, []task.TaskInfo, []json.RawMessage, time.Time, error) {
 	sf, err := loadSessionFile(path)
 	if err != nil {
-		return nil, Stats{}, nil, "", nil, nil, err
+		return nil, Stats{}, nil, "", nil, nil, time.Time{}, err
 	}
 	if sf == nil {
-		return nil, Stats{}, nil, "", nil, nil, nil
+		return nil, Stats{}, nil, "", nil, nil, time.Time{}, nil
 	}
 
 	// 优先从 JSONL 加载消息
@@ -171,7 +178,15 @@ func LoadSessionFromFile(path string) ([]llm.Message, Stats, *compaction.Compact
 		}
 	}
 
-	return messages, stats, compData, sf.SessionID, sf.Tasks, sf.TodoItems, nil
+
+	var lastBackgroundCheck time.Time
+	if sf.LastBackgroundCheck != "" {
+		if t, parseErr := time.Parse(time.RFC3339, sf.LastBackgroundCheck); parseErr == nil {
+			lastBackgroundCheck = t
+		}
+	}
+
+	return messages, stats, compData, sf.SessionID, sf.Tasks, sf.TodoItems, lastBackgroundCheck, nil
 }
 
 // loadSessionFile 读取并解析 session 文件。文件不存在返回 nil, nil。
