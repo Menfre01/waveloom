@@ -48,6 +48,29 @@ var writeFileSchema = json.RawMessage(`{
   "required": ["file_path", "content"]
 }`)
 
+var readFileHashlineSchema = json.RawMessage(`{
+  "type": "object",
+  "properties": {
+    "file_path": {
+      "type": "string",
+      "description": "File path (absolute, or relative to working_dir / workspace root). Must be a file, not a directory — use shell('ls') first to explore directories. Paths without a file extension are likely directories."
+    },
+    "offset": {
+      "type": "integer",
+      "description": "Starting line number (0-based, 0 = first line, optional)"
+    },
+    "limit": {
+      "type": "integer",
+      "description": "Number of lines to read (optional, default: all)"
+    },
+    "working_dir": {
+      "type": "string",
+      "description": "Working directory (optional)"
+    }
+  },
+  "required": ["file_path"]
+}`)
+
 var editFileSchema = json.RawMessage(`{
   "type": "object",
   "properties": {
@@ -147,6 +170,21 @@ var killBackgroundTaskSchema = json.RawMessage(`{
     }
   },
   "required": ["task_id"]
+}`)
+
+var editFileHashlineSchema = json.RawMessage(`{
+  "type": "object",
+  "properties": {
+    "patch": {
+      "type": "string",
+      "description": "Hashline format patch text. Must start with *** Begin Patch and end with *** End Patch."
+    },
+    "working_dir": {
+      "type": "string",
+      "description": "Working directory (optional)"
+    }
+  },
+  "required": ["patch"]
 }`)
 
 var webSearchSchema = json.RawMessage(`{

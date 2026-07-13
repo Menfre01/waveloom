@@ -107,21 +107,13 @@ func (re *RuleEngine) addRuleLocked(entry RuleEntry) {
 // checkRules 在规则列表中查找匹配。
 // 先匹配工具级规则（Pattern 为空），再匹配内容级规则（Pattern 非空）。
 func (re *RuleEngine) checkRules(rules []RuleEntry, toolName string, input json.RawMessage, decision Decision, reason DecisionReason) (DecisionResult, bool) {
-	// 第一遍：工具级匹配
-	for _, e := range rules {
-		if e.Rule.Pattern == "" && e.Rule.ToolName == toolName {
-			return DecisionResult{
-				Decision: decision,
-				Reason:   reason,
-				Rule:     FormatRule(e.Rule),
-			}, true
-		}
-	}
+	// 向后兼容：hashline 工具也匹配旧工具名的规则
+	toolNames := compatToolNames(toolName)
 
-	// 第二遍：内容级匹配
-	for _, e := range rules {
-		if e.Rule.Pattern != "" && e.Rule.ToolName == toolName {
-			if matchContent(toolName, e.Rule.Pattern, input) {
+	// 第一遍：工具级匹配
+	for _, name := range toolNames {
+		for _, e := range rules {
+			if e.Rule.Pattern == "" && e.Rule.ToolName == name {
 				return DecisionResult{
 					Decision: decision,
 					Reason:   reason,
@@ -131,7 +123,34 @@ func (re *RuleEngine) checkRules(rules []RuleEntry, toolName string, input json.
 		}
 	}
 
+	// 第二遍：内容级匹配
+	for _, name := range toolNames {
+		for _, e := range rules {
+			if e.Rule.Pattern != "" && e.Rule.ToolName == name {
+				if matchContent(toolName, e.Rule.Pattern, input) {
+					return DecisionResult{
+						Decision: decision,
+						Reason:   reason,
+						Rule:     FormatRule(e.Rule),
+					}, true
+				}
+			}
+		}
+	}
+
 	return DecisionResult{}, false
+}
+
+// compatToolNames 返回应匹配的工具名列表（含向后兼容的旧名）。
+func compatToolNames(toolName string) []string {
+	switch toolName {
+	case "edit_file_hashline":
+		return []string{toolName, "edit_file"}
+	case "read_file_hashline":
+		return []string{toolName, "read_file"}
+	default:
+		return []string{toolName}
+	}
 }
 
 // matchGlob 是对 path.Match 的增强，额外支持 ** 递归匹配。
@@ -237,6 +256,7 @@ func matchContent(toolName, pattern string, input json.RawMessage) bool {
 		var params struct {
 			FilePath   string `json:"file_path"`
 			Path       string `json:"path"`
+			Patch      string `json:"patch"`
 			WorkingDir string `json:"working_dir"`
 		}
 		if json.Unmarshal(input, &params) != nil {
@@ -245,6 +265,10 @@ func matchContent(toolName, pattern string, input json.RawMessage) bool {
 		target = params.FilePath
 		if target == "" {
 			target = params.Path
+		}
+		if target == "" && params.Patch != "" {
+			// edit_file_hashline: 从 patch 中提取 [PATH#TAG] 的路径
+			target = extractPathFromPatch(params.Patch)
 		}
 		if target == "" {
 			target = params.WorkingDir

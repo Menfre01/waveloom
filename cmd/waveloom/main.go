@@ -128,7 +128,7 @@ func main() {
 	// 6. 初始化 Tool Registry
 	registry := tool.NewRegistry()
 	subModelValidation := buildValidModels(llmSettings)
-	registerBuiltinTools(registry, skillLoader, llmClient, subModelValidation, llmSettings.Model, llmSettings.SubModel, cwd)
+	registerBuiltinTools(registry, skillLoader, llmClient, subModelValidation, llmSettings.Model, llmSettings.SubModel, cwd, true)
 
 	// 8.5 启动 MCP Manager — 连接配置的 MCP Server，注册工具代理
 	// 日志输出策略：
@@ -177,7 +177,7 @@ func main() {
 	// 12. 创建 Context Manager（跨 Loop 调用累积消息历史，启用 DeepSeek 前缀缓存）
 	systemPrompt := cfg.SystemPrompt
 	if systemPrompt == "" {
-		systemPrompt = buildSystemPrompt(cwd, loc)
+		systemPrompt = buildSystemPrompt(cwd, loc, true)
 	}
 
 	// 注入环境探测结果：让 LLM 在首次交互前就知道系统可用工具链，
@@ -304,10 +304,17 @@ func main() {
 }
 
 // registerBuiltinTools 注册内置工具。
-func registerBuiltinTools(r tool.Registry, skillLoader *skill.Loader, llmClient llm.Client, validModels []string, defaultModel string, subModel string, cwd string) {
-	r.Register(tool.Wrap(&tool.ReadFile{}))
+// useHashline 控制读写工具对的选择：true → read_file_hashline + edit_file_hashline（推荐），
+// false → read_file + edit_file（旧模型，向后兼容）。
+func registerBuiltinTools(r tool.Registry, skillLoader *skill.Loader, llmClient llm.Client, validModels []string, defaultModel string, subModel string, cwd string, useHashline bool) {
+	if useHashline {
+		r.Register(tool.Wrap(&tool.ReadFileHashline{}))
+		r.Register(tool.Wrap(&tool.EditFileHashline{}))
+	} else {
+		r.Register(tool.Wrap(&tool.ReadFile{}))
+		r.Register(tool.Wrap(&tool.EditFile{}))
+	}
 	r.Register(tool.Wrap(&tool.WriteFile{}))
-	r.Register(tool.Wrap(&tool.EditFile{}))
 	r.Register(tool.Wrap(&tool.Shell{AllowBg: true})) // "bash"
 	r.Register(tool.Wrap(&tool.WebFetch{}))
 	r.Register(tool.Wrap(&tool.WebSearch{}))

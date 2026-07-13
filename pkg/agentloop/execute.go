@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Menfre01/waveloom/pkg/hashline"
 	"github.com/Menfre01/waveloom/pkg/llm"
 	"github.com/Menfre01/waveloom/pkg/permission"
 	"github.com/Menfre01/waveloom/pkg/todo"
@@ -53,6 +54,9 @@ func (l *Loop) executeToolCalls(ctx context.Context, calls []llm.ToolCall, state
 	if l.config.AgentsMD != "" {
 		ctx = WithAgentsMD(ctx, l.config.AgentsMD)
 	}
+
+	// Inject session-level SnapshotStore for hashline read/edit tools (跨 turn 持久化).
+	ctx = hashline.WithStore(ctx, l.snapshotStore)
 
 	// 1. 按 ConcurrentSafe 分区
 	var concurrent, serial []llm.ToolCall
