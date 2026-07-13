@@ -1,5 +1,19 @@
 # Changelog
 
+## [v0.1.0-beta.8] — 2026-07-13
+
+### 新增功能
+- **首次使用体验优化**：首次运行无配置时自动进入 setup 向导，不再报错退出；空 API Key 留在原地提示错误；保存前校验 API Key 有效性（ListModels 轻量验证）；TUI 空状态显示引导面板（/ 命令、@ 引用、⏎ 发送、示例 prompt）；LLM/网络错误人性化映射（humanizeError），不再透传原始 JSON；环境探测结果缓存 24h，PATH 变化自动失效，二次启动免等待；更新通知改为 footer 三态切换
+- **子代理 todo_write 支持**：通过 context 传播 TodoState，子代理内可调用 todo_write，任务状态自动同步回主代理
+
+### 修复
+- **plugin lint**：修复 os.MkdirAll 返回值未检查导致的 lint errcheck 警告
+
+### 重构
+- **System Prompt 重排**：C2 行为约束移入 C1，按注意力机制重排 section 顺序，C3c 改为 Append 策略，提升指令遵循率
+- **TodoWrite 工具拆分**：新增 ToolWithPrompt 可选接口，工具可分别提供短 Description（~60 token）和 Prompt 使用指南（~1200 token），Registry 自动拼接，不侵入 system message，前缀缓存不受影响
+- **Todo 提醒系统强化**：StatusSummary 被动备注改为主动指令检查点；idleTodoWrite/idleTodoReminder 阈值从 3 降为 2；todoReminderText 嵌入 staleness 计数去除忽略出口；新增 14 个回归测试覆盖提醒/注入/计数器全部路径
+
 ## [v0.1.0-beta.7] — 2026-07-12
 
 ### 新增功能
