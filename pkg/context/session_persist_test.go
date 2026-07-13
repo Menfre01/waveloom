@@ -36,11 +36,11 @@ func TestSaveAndLoad_RoundTrip(t *testing.T) {
 		MessageCount:          3,
 	}
 
-	if err := SaveSessionToFile(path, messages, stats, nil, nil); err != nil {
+	if err := SaveSessionToFile(path, messages, stats, nil, nil, time.Time{}); err != nil {
 		t.Fatalf("SaveSessionToFile: %v", err)
 	}
 
-	loaded, loadedStats, compData, sid, _, _, err := LoadSessionFromFile(path)
+	loaded, loadedStats, compData, sid, _, _, _, err := LoadSessionFromFile(path)
 	if err != nil {
 		t.Fatalf("LoadSessionFromFile: %v", err)
 	}
@@ -85,11 +85,11 @@ func TestSaveAndLoad_RoundTripWithToolCalls(t *testing.T) {
 	}
 	stats := Stats{TotalTurns: 1, TotalPromptTokens: 500, TotalCompletionTokens: 200, MessageCount: 6}
 
-	if err := SaveSessionToFile(path, messages, stats, nil, nil); err != nil {
+	if err := SaveSessionToFile(path, messages, stats, nil, nil, time.Time{}); err != nil {
 		t.Fatalf("SaveSessionToFile: %v", err)
 	}
 
-	loaded, _, _, _, _, _, err := LoadSessionFromFile(path)
+	loaded, _, _, _, _, _, _, err := LoadSessionFromFile(path)
 	if err != nil {
 		t.Fatalf("LoadSessionFromFile: %v", err)
 	}
@@ -168,11 +168,11 @@ func TestSaveAndLoad_WithCompaction(t *testing.T) {
 		TotalTurns: 5,
 	}
 
-	if err := SaveSessionToFile(path, messages, stats, compData, nil); err != nil {
+	if err := SaveSessionToFile(path, messages, stats, compData, nil, time.Time{}); err != nil {
 		t.Fatalf("SaveSessionToFile: %v", err)
 	}
 
-	_, loadedStats, loadedComp, _, _, _, err := LoadSessionFromFile(path)
+	_, loadedStats, loadedComp, _, _, _, _, err := LoadSessionFromFile(path)
 	if err != nil {
 		t.Fatalf("LoadSessionFromFile: %v", err)
 	}
@@ -203,23 +203,23 @@ func TestSave_UpdateExisting(t *testing.T) {
 	stats := Stats{TotalTurns: 1, MessageCount: 1}
 
 	// 第一次保存
-	if err := SaveSessionToFile(path, messages, stats, nil, nil); err != nil {
+	if err := SaveSessionToFile(path, messages, stats, nil, nil, time.Time{}); err != nil {
 		t.Fatalf("first save: %v", err)
 	}
 
 	// 读取 session ID
-	_, _, _, sid1, _, _, _ := LoadSessionFromFile(path)
+	_, _, _, sid1, _, _, _, _ := LoadSessionFromFile(path)
 
 	// 第二次保存（模拟 Append 新的 turn）
 	messages = append(messages, llm.Message{Role: llm.RoleAssistant, Content: "response"})
 	stats.TotalTurns = 2
 	stats.MessageCount = 2
 
-	if err := SaveSessionToFile(path, messages, stats, nil, nil); err != nil {
+	if err := SaveSessionToFile(path, messages, stats, nil, nil, time.Time{}); err != nil {
 		t.Fatalf("second save: %v", err)
 	}
 
-	loaded, loadedStats, _, sid2, _, _, _ := LoadSessionFromFile(path)
+	loaded, loadedStats, _, sid2, _, _, _, _ := LoadSessionFromFile(path)
 	if len(loaded) != 2 {
 		t.Fatalf("expected 2 messages, got %d", len(loaded))
 	}
@@ -269,7 +269,7 @@ func TestLoadSessionFile_EmptyFile(t *testing.T) {
 }
 
 func TestLoadSessionFromFile_NotFound(t *testing.T) {
-	msgs, stats, comp, sid, tasks, _, err := LoadSessionFromFile("/nonexistent/path.json")
+	msgs, stats, comp, sid, tasks, _, _, err := LoadSessionFromFile("/nonexistent/path.json")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -300,11 +300,11 @@ func TestSessionPersist_WithTasks(t *testing.T) {
 	msgs := []llm.Message{
 		{Role: llm.RoleSystem, Content: "test"},
 	}
-	if err := SaveSessionToFile(path, msgs, Stats{TotalTurns: 1}, nil, nil); err != nil {
+	if err := SaveSessionToFile(path, msgs, Stats{TotalTurns: 1}, nil, nil, time.Time{}); err != nil {
 		t.Fatalf("SaveSessionToFile: %v", err)
 	}
 
-	loaded, loadedStats, _, _, loadedTasks, _, err := LoadSessionFromFile(path)
+	loaded, loadedStats, _, _, loadedTasks, _, _, err := LoadSessionFromFile(path)
 	if err != nil {
 		t.Fatalf("LoadSessionFromFile: %v", err)
 	}

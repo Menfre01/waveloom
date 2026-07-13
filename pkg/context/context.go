@@ -175,8 +175,11 @@ func (cm *ContextManager) checkBackgroundTasksLocked() string {
 
 	for _, t := range completed {
 		status := "completed"
-		if t.Status == task.TaskFailed {
+		switch t.Status {
+		case task.TaskFailed:
 			status = fmt.Sprintf("failed (exit code %d)", t.ExitCode)
+		case task.TaskInterrupted:
+			status = "interrupted (session was closed while this task was running)"
 		}
 		parts = append(parts, fmt.Sprintf(
 			`<background-task id="%s" command="%s" exit_code="%d" log="%s">%s</background-task>`,
@@ -293,6 +296,7 @@ func (cm *ContextManager) Save() {
 	todoItems := make([]json.RawMessage, len(cm.todoItems))
 	copy(todoItems, cm.todoItems)
 	jsonlWritten := cm.jsonlMessageCount
+	lastCheck := cm.lastBackgroundCheck
 	cm.mu.RUnlock()
 
 	// 防御：过滤空 role 消息
@@ -309,7 +313,7 @@ func (cm *ContextManager) Save() {
 	}
 
 	if path != "" {
-		_ = SaveSessionToFile(path, messages, stats, &compaction, todoItems)
+		_ = SaveSessionToFile(path, messages, stats, &compaction, todoItems, lastCheck)
 		// JSONL 落盘
 		n := len(messages)
 		jlPath := jsonlPathForJSON(path)
@@ -345,6 +349,7 @@ func (cm *ContextManager) saveToPath(path string) {
 	todoItems := make([]json.RawMessage, len(cm.todoItems))
 	copy(todoItems, cm.todoItems)
 	jsonlWritten := cm.jsonlMessageCount
+	lastCheck := cm.lastBackgroundCheck
 	cm.mu.RUnlock()
 
 	// 防御：过滤空 role 消息（避免非法数据落盘）
@@ -362,7 +367,7 @@ func (cm *ContextManager) saveToPath(path string) {
 	}
 
 	// 保存 JSON 元数据（stats / compaction / tasks / todo）
-	_ = SaveSessionToFile(path, messages, stats, &compaction, todoItems)
+	_ = SaveSessionToFile(path, messages, stats, &compaction, todoItems, lastCheck)
 
 	// JSONL 落盘
 	n := len(messages)
@@ -416,7 +421,7 @@ func (cm *ContextManager) compactionData() compaction.CompactionData {
 //
 // 修复详情通过 stderr 输出（静默修复不阻塞恢复流程）。
 func (cm *ContextManager) LoadFromFile(path string) bool {
-	messages, stats, compactionData, _, tasks, todoItems, err := LoadSessionFromFile(path)
+	messages, stats, compactionData, _, tasks, todoItems, lastCheck, err := LoadSessionFromFile(path)
 	if err != nil || messages == nil {
 		return false
 	}
@@ -428,6 +433,16 @@ func (cm *ContextManager) LoadFromFile(path string) bool {
 	for _, t := range tasks {
 		taskInfo := t // copy
 		task.DefaultRegistry.Register(t.ID, &taskInfo)
+	}
+
+	// 标记 session 关闭时仍在运行的任务为中断（原进程失去监控，无法确定最终状态）
+	task.DefaultRegistry.InterruptRunning()
+
+	// 恢复上次后台检查时间（避免 --resume 回放历史通知）
+	if !lastCheck.IsZero() {
+		cm.lastBackgroundCheck = lastCheck
+	} else {
+		cm.lastBackgroundCheck = time.Now()
 	}
 
 	// 反序列化后完整性校验
@@ -550,7 +565,7 @@ func (cm *ContextManager) RewindConversationTo(messageIndex int, sessionDir stri
 	// 写入新 JSON 元数据（零值状态）
 	jsonPath := filepath.Join(sessionDir, newID+".json")
 	compData := cm.compactionData()
-	if err := SaveSessionToFile(jsonPath, cm.messages, cm.stats, &compData, nil); err != nil {
+	if err := SaveSessionToFile(jsonPath, cm.messages, cm.stats, &compData, nil, time.Time{}); err != nil {
 		return "", "", fmt.Errorf("write fork json: %w", err)
 	}
 
