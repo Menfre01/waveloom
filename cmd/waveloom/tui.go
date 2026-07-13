@@ -220,7 +220,31 @@ Anti-pattern — DO NOT:
 - **You should change your approach before the warning appears.** After any tool fails twice with the same error:
   - Try a different tool to achieve the same goal.
   - Try the same tool with substantially different arguments (different path, different command, different pattern).
-  - If neither works, stop and ask the user for guidance.`
+  - If neither works, stop and ask the user for guidance.
+
+## Subagent-Todo Lifecycle
+
+When you spawn a subagent via the `+"`agent`"+` tool to work on a todo list item, follow this lifecycle:
+
+### Serial (single subagent)
+
+1. **Before agent call**: `+"`todo_write`"+` → set the item to `+"`in_progress`"+`
+2. **Agent call**: spawn the subagent
+3. **After agent returns**: `+"`todo_write`"+` → set to `+"`completed`"+` on success, or keep `+"`in_progress`"+` on error
+
+### Parallel (multiple subagents)
+
+`+"`todo_write`"+` and `+"`agent`"+` cannot be called in the same turn. For N parallel subagents:
+
+1. **Turn 1**: `+"`todo_write`"+` → set ALL N items to `+"`in_progress`"+`
+2. **Turn 2**: `+"`agent`"+` × N (parallel, all in one turn)
+3. **Turn 3**: After all subagents complete, `+"`todo_write`"+` → batch-update their statuses
+
+### On subagent failure
+
+If a subagent encounters an unrecoverable error, do NOT leave it stuck at `+"`in_progress`"+`. Either:
+- Create a new todo item describing the blocker, then mark the failed item as `+"`completed`"+` with a note
+- Or revert the item to `+"`pending`"+` and add a description explaining what went wrong`
 
 // ---------------------------------------------------------------------------
 // 自定义消息类型
@@ -2877,7 +2901,7 @@ func doScanRelative(ctx context.Context, registry tool.Registry, cwd, filter str
 		})
 
 		dir := filepath.Dir(file)
-		for dir != "." && dir != "/" && dir != "" {
+		for dir != "" && filepath.Dir(dir) != dir {
 			if seenDirs[dir] {
 				break
 			}
@@ -2983,7 +3007,7 @@ func doScanAbsolute(ctx context.Context, registry tool.Registry, cwd, filter str
 	namePattern := "*"
 	if relFilter != "" {
 		baseName := filepath.Base(relFilter)
-		if baseName != "" && baseName != "." && baseName != "/" {
+		if baseName != "" && filepath.Dir(baseName) != baseName {
 			namePattern = baseName + "*"
 		}
 	}
@@ -3080,7 +3104,7 @@ func doScanAbsolute(ctx context.Context, registry tool.Registry, cwd, filter str
 
 		// 提取父目录链
 		dir := filepath.Dir(entry)
-		for dir != searchRoot && dir != "/" && dir != "" && strings.HasPrefix(dir, searchRoot) {
+		for dir != searchRoot && filepath.Dir(dir) != dir && dir != "" && strings.HasPrefix(dir, searchRoot) {
 			if seenDirs[dir] {
 				break
 			}
@@ -3107,7 +3131,7 @@ func doScanAbsolute(ctx context.Context, registry tool.Registry, cwd, filter str
 
 		// 提取父目录链
 		dir := filepath.Dir(entry)
-		for dir != searchRoot && dir != "/" && dir != "" && strings.HasPrefix(dir, searchRoot) {
+		for dir != searchRoot && filepath.Dir(dir) != dir && dir != "" && strings.HasPrefix(dir, searchRoot) {
 			if seenDirs[dir] {
 				break
 			}
@@ -3129,15 +3153,16 @@ func doScanAbsolute(ctx context.Context, registry tool.Registry, cwd, filter str
 }
 
 // extractDirPrefix 从 filter 中提取可能的外部目录前缀。
-// 若 filter 以 /、~ 或 . 开头，返回其目录部分作为搜索起点。
-// 绝对路径（/）和 ~ 直接使用；相对路径（./、../）基于 cwd 解析。
+// 若 filter 为绝对路径、~ 或 . 开头，返回其目录部分作为搜索起点。
+// 绝对路径和 ~ 直接使用；相对路径（./、../）基于 cwd 解析。
 func extractDirPrefix(filter string) string {
 	if filter == "" {
 		return ""
 	}
-	if filter[0] == '/' || filter[0] == '~' || filter[0] == '.' {
-		if idx := strings.LastIndex(filter, "/"); idx >= 0 {
-			return filter[:idx+1]
+	if filter[0] == '~' || filter[0] == '.' || filepath.IsAbs(filter) {
+		normalized := filepath.ToSlash(filter)
+		if idx := strings.LastIndex(normalized, "/"); idx >= 0 {
+			return normalized[:idx+1]
 		}
 		return filter
 	}
@@ -3278,8 +3303,9 @@ func fuzzyFilter(filter string, items []pickerItem) []pickerItem {
 //
 //	因为 spec ≤ specs 且 reference ≤ reference-context.md。
 func pathPrefixMatch(filter, display string) bool {
-	filterParts := strings.Split(filter, "/")
-	displayParts := strings.Split(display, "/")
+	// 归一化路径分隔符为 /，确保 Windows 下 filepath.WalkDir 返回的 \ 与用户输入的 / 可比对。
+	filterParts := strings.Split(filepath.ToSlash(filter), "/")
+	displayParts := strings.Split(filepath.ToSlash(display), "/")
 
 	if len(filterParts) > len(displayParts) {
 		return false

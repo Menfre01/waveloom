@@ -53,10 +53,6 @@ func (l *Loop) executeToolCalls(ctx context.Context, calls []llm.ToolCall, state
 	if l.config.AgentsMD != "" {
 		ctx = WithAgentsMD(ctx, l.config.AgentsMD)
 	}
-	// Inject TodoState for subagent todo_write support.
-	if l.config.TodoState != nil {
-		ctx = WithTodoState(ctx, l.config.TodoState)
-	}
 
 	// 1. 按 ConcurrentSafe 分区
 	var concurrent, serial []llm.ToolCall
