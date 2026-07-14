@@ -48,16 +48,17 @@ specs/           各组件规格书（修改前先阅读；内部文档，不纳
 
 | 阶段 | 操作 |
 |------|------|
-| 修改前 | shell('find . -name "*.go"') / shell('grep -rn "pattern" .') 定位 → read_file 确认行号和内容 |
+| 修改前 | shell('find . -name "*.go"') / shell('grep -rn "pattern" .') 定位 → read 确认行号和 TAG |
 | 修改后 | 构建验证 → make build 编译 → make test（涉及 pkg/ 时） |
-| 重构前 | shell('grep -rn ...') → read_file → 评估影响范围 |
+| 重构前 | shell('grep -rn ...') → read → 评估影响范围 |
 
 ### 工具调用原则
 
-- **独立只读操作并行**（read_file），写操作串行
-- **局部修改用 edit_file**，新建或完全覆写才用 write_file
-- **edit_file 铁律**：old_string 必须精确匹配文件当前内容（缩进、空行、标点完全一致）。可靠来源：2 轮内 read_file 返回且期间无其他编辑。不可靠：记忆、跨多轮的旧 read、期间有编辑的旧 read。不确定时宁可多读一次，浪费一次调用好过 no_match 循环。
-- `no_match` → 不要盲目重试，先 read_file 确认 old_string 精确内容（含缩进），再重试
+- **独立只读操作并行**（read），写操作（edit/write）串行
+- **edit 铁律**：每次编辑后 TAG 必然变化。两次编辑之间必须重新 read 确认当前 TAG 和行号，禁止凭记忆构造 SWAP 范围。TAG 过期 + 行号偏移 = 静默替换错误内容，不会报错。
+- **read 后 edit 黄金法则**：read 返回的 TAG 是文件内容摘要。文件不变 → TAG 不变；文件被修改（包括你刚做的 edit）→ 新 TAG。构造下一个 edit 之前，问自己：我用的 TAG 是最近一次 read 返回的吗？
+- **edit 报 tag_mismatch** → 文件在 read 之后被外部修改（子代理、其他 session）。重新 read 获取新 TAG 和行号，再构造 edit。不要重试同一个 patch。
+- **新建文件用 write**，改已有文件用 edit。write 后必须 read 获取 TAG，后续用 edit。
 - `security_violation` → 致命错误，停止当前路径
 
 ## 开发流程
