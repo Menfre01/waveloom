@@ -101,6 +101,10 @@ func (fs *MemoryFS) Remove(path string) error {
 	return nil
 }
 
+func (fs *MemoryFS) ResolvePath(path string) string {
+	return path
+}
+
 // ---------------------------------------------------------------------------
 // 解析测试
 // ---------------------------------------------------------------------------
@@ -1304,5 +1308,56 @@ INS.HEAD:
 	expected := "+// this line starts with a literal +\n+\n+line\npackage main\n"
 	if actual != expected {
 		t.Errorf("expected %q, got %q", expected, actual)
+	}
+}
+
+// resolvingMemoryFS 模拟 OSFS 的路径解析行为：将相对路径基于 baseDir
+// 解析为绝对路径，用于测试 store key 对齐逻辑。
+type resolvingMemoryFS struct {
+	*MemoryFS
+	baseDir string
+}
+
+func (fs *resolvingMemoryFS) ResolvePath(path string) string {
+	if path == "" {
+		return path
+	}
+	if path[0] == '/' || (len(path) > 1 && path[1] == ':') {
+		return path
+	}
+	if fs.baseDir == "" {
+		fs.baseDir = "/workspace"
+	}
+	return fs.baseDir + "/" + path
+}
+
+// TestRegression_ApplyEditRelativePathStoreAbsolutePath 验证：
+// read 阶段 Record 用绝对路径，edit 阶段 patch header 用相对路径时，
+// applySection 通过 ResolvePath 对齐，不会 tag_mismatch。
+func TestRegression_ApplyEditRelativePathStoreAbsolutePath(t *testing.T) {
+	inner := NewMemoryFS()
+	fs := &resolvingMemoryFS{MemoryFS: inner, baseDir: "/workspace"}
+	_ = fs.WriteFile("src/main.go", "line1\nline2\nline3\n")
+
+	store := NewStore()
+	// 模拟 read 阶段：Record 用绝对路径（OSFS.ResolvePath 的效果）
+	absPath := fs.ResolvePath("src/main.go")
+	tag, _ := store.Record(absPath, "line1\nline2\nline3\n")
+
+	// edit: patch header 用相对路径（LLM 可能从 read 输出中截取相对形式）
+	patch, _ := ParsePatch(`*** Begin Patch
+[src/main.go#` + tag + `]
+SWAP 2.=2:
++modified line2
+*** End Patch`)
+
+	results := ApplyPatch(patch, fs, store)
+	if len(results) != 1 || results[0].Error != nil {
+		t.Fatalf("ApplyPatch failed: %+v", results[0].Error)
+	}
+
+	content, _ := fs.ReadFile("src/main.go")
+	if content != "line1\nmodified line2\nline3\n" {
+		t.Errorf("unexpected content: got %q", content)
 	}
 }
