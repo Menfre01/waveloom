@@ -524,6 +524,7 @@ type FileSystem interface {
 	WriteFile(path string, content string) error
 	MkdirAll(path string) error
 	Remove(path string) error
+	ResolvePath(path string) string
 }
 
 // OSFS 是真实文件系统的 FileSystem 实现。
@@ -567,6 +568,14 @@ func (fs *OSFS) Remove(path string) error {
 	return os.Remove(fullPath)
 }
 
+func (fs *OSFS) ResolvePath(path string) string {
+	fullPath, err := pathutil.ResolvePathWithDir(path, fs.WorkingDir)
+	if err != nil {
+		return path
+	}
+	return fullPath
+}
+
 // ---------------------------------------------------------------------------
 // ApplyPatch 应用 patch 到文件系统。
 // ---------------------------------------------------------------------------
@@ -585,6 +594,11 @@ func ApplyPatch(patch *Patch, fs FileSystem, store *SnapshotStore) []SectionResu
 }
 
 func applySection(sec Section, fs FileSystem, store *SnapshotStore) SectionResult {
+	// storePath 是解析后的绝对路径，用于 store 操作（Verify / Get / Update）。
+	// fs.ReadFile 内部自行解析路径，但 store 的 key 必须是绝对路径才能
+	// 与 ReadFileHashline 中 Record 的路径对齐（Record 也会解析为绝对路径）。
+	storePath := fs.ResolvePath(sec.Path)
+
 	result := SectionResult{
 		Path:   sec.Path,
 		OldTAG: sec.TAG,
@@ -614,10 +628,10 @@ func applySection(sec Section, fs FileSystem, store *SnapshotStore) SectionResul
 	}
 
 	if store != nil {
-		_, verifyErr := store.Verify(sec.Path, sec.TAG, currentContent)
+		_, verifyErr := store.Verify(storePath, sec.TAG, currentContent)
 		if verifyErr != nil {
 			// TAG 不匹配 → 尝试 Recovery
-			if snap, ok := store.Get(sec.Path); ok {
+			if snap, ok := store.Get(storePath); ok {
 				recovery := RecoverOps(snap.Content, currentContent, sec.Ops)
 				if recovery.Success {
 					// Recovery 成功：使用重映射后的操作
@@ -678,7 +692,7 @@ func applySection(sec Section, fs FileSystem, store *SnapshotStore) SectionResul
 
 	newTAG := sec.TAG
 	if store != nil {
-		newTAG = store.Update(sec.Path, newContent)
+		newTAG = store.Update(storePath, newContent)
 	}
 
 	oldLines := countLines(currentContent)
@@ -731,7 +745,7 @@ func applyMV(sec Section, op Op, fs FileSystem, store *SnapshotStore, currentCon
 
 	newTAG := sec.TAG
 	if store != nil {
-		newTAG = store.Update(destPath, currentContent)
+		newTAG = store.Update(fs.ResolvePath(destPath), currentContent)
 	}
 
 	result.NewTAG = newTAG
