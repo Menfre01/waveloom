@@ -220,6 +220,13 @@ func PathSafetyCheck(path string, workingDirs []string) PathCheckResult {
 	}
 }
 
+
+// IsSensitiveFile 检查文件路径是否指向已知敏感配置文件（如 .env、.gitconfig 等）。
+// 仅基于文件名进行匹配，与路径位置无关（workspace 内外均适用）。
+func IsSensitiveFile(path string) bool {
+	base := filepath.Base(path)
+	return sensitiveFiles[base]
+}
 // ---------------------------------------------------------------------------
 // PathSafetyDecision — 路径安全 + 操作类型 → 权限决策
 // ---------------------------------------------------------------------------

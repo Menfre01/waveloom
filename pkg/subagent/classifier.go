@@ -81,7 +81,30 @@ func classifyCommand(findings []SecurityFinding, command string) []SecurityFindi
 func classifyFile(findings []SecurityFinding, toolName, filePath, workspaceDir string) []SecurityFinding {
 	inWS := isWithinWorkspace(filePath, workspaceDir)
 
-	// 工作目录外写入 → out_of_workspace_write
+	// 0. 敏感文件名检查（无论 workspace 内外均适用）
+	//    对写入操作 → HIGH；对读取操作 → MEDIUM
+	if permission.IsSensitiveFile(filePath) {
+		severity := "HIGH"
+		if toolName != "write_file" && toolName != "edit_file" {
+			severity = "MEDIUM"
+		}
+		findings = append(findings, SecurityFinding{
+			Severity: severity,
+			Category: "sensitive_file",
+			Detail:   fmt.Sprintf("%s accessed sensitive file: %s — %s", toolName, filePath, filepath.Base(filePath)),
+		})
+		if !inWS && (toolName == "write_file" || toolName == "edit_file") {
+			// 同时报告 workspace 外写入
+			findings = append(findings, SecurityFinding{
+				Severity: "LOW",
+				Category: "out_of_workspace_write",
+				Detail:   fmt.Sprintf("%s wrote to path outside workspace: %s", toolName, filePath),
+			})
+		}
+		return findings
+	}
+
+	// 1. 工作目录外写入 → out_of_workspace_write
 	if !inWS && (toolName == "write_file" || toolName == "edit_file") {
 		findings = append(findings, SecurityFinding{
 			Severity: "LOW",
@@ -91,13 +114,13 @@ func classifyFile(findings []SecurityFinding, toolName, filePath, workspaceDir s
 		return findings
 	}
 
-	// 工作目录外读操作：PathSafetyCheck 会把任意外部路径标为 PathDangerous，
-	// 但对于只读操作这是预期行为（读取系统头文件、配置等），不报告。
+	// 2. 工作目录外读操作：PathSafetyCheck 会把任意外部路径标为 PathDangerous，
+	//    但对于只读操作这是预期行为（读取系统头文件、配置等），不报告。
 	if !inWS {
 		return findings
 	}
 
-	// 工作目录内：使用完整路径安全检查
+	// 3. 工作目录内：使用完整路径安全检查
 	result := permission.PathSafetyCheck(filePath, []string{workspaceDir})
 
 	switch result.Level {

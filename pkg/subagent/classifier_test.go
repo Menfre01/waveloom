@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/Menfre01/waveloom/pkg/llm"
 )
 
 // ---------------------------------------------------------------------------
@@ -580,5 +582,84 @@ func TestRegression_IsWithinWorkspaceNonExistent(t *testing.T) {
 
 	if !isWithinWorkspace(nonExistent, tmpDir) {
 		t.Errorf("non-existent path within workspace should return true, got false")
+	}
+}
+
+// REGRESSION: Bug 2 — workspace 外写入 .env 等敏感文件应触发 [HIGH] sensitive_file，
+// 而非仅 [LOW] out_of_workspace_write。
+func TestRegression_OutsideWorkspaceSensitiveFile(t *testing.T) {
+	workspace := t.TempDir()
+	otherDir := t.TempDir()
+	envPath := filepath.Join(otherDir, ".env")
+	if err := os.WriteFile(envPath, []byte("API_KEY=test"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	events := []SubagentEvent{
+		{Kind: SubagentToolStart, ToolName: "write_file", ToolArgs: envPath},
+		{Kind: SubagentToolResult, ToolName: "write_file", ToolResult: "file written"},
+	}
+	findings := classify(events, workspace)
+	if len(findings) < 2 {
+		t.Fatalf("expected at least 2 findings (sensitive_file + out_of_workspace_write), got %d: %+v", len(findings), findings)
+	}
+
+	var foundSensitive, foundOOW bool
+	for _, f := range findings {
+		if f.Category == "sensitive_file" && f.Severity == "HIGH" {
+			foundSensitive = true
+		}
+		if f.Category == "out_of_workspace_write" {
+			foundOOW = true
+		}
+	}
+	if !foundSensitive {
+		t.Error("missing [HIGH] sensitive_file finding for workspace-external .env write")
+	}
+	if !foundOOW {
+		t.Error("missing out_of_workspace_write finding for workspace-external .env write")
+	}
+}
+
+// REGRESSION: Bug 1 — buildForkMessages 只继承到最后一个 user 消息，
+// 完全排除 assistant 及其 tool_calls，从根源避免占位符混淆。
+func TestRegression_BuildForkMessages_ExcludesLastAssistant(t *testing.T) {
+	parent := []llm.Message{
+		{Role: llm.RoleSystem, Content: "You are a coding agent."},
+		{Role: llm.RoleUser, Content: "Execute task."},
+		{Role: llm.RoleAssistant, Content: "", ToolCalls: []llm.ToolCall{
+			{ID: "call_1", Name: "agent", Arguments: `{"description":"test","prompt":"do something"}`},
+			{ID: "call_2", Name: "read_file", Arguments: `{"file_path":"test.go"}`},
+		}},
+	}
+	result := buildForkMessages(parent, "test fork", "do it")
+
+	// 不应有任何 assistant 或 tool 消息
+	for i, m := range result {
+		if m.Role == llm.RoleAssistant {
+			t.Errorf("assistant should be excluded at index %d", i)
+		}
+		if m.Role == llm.RoleTool {
+			t.Errorf("tool message should not appear at index %d", i)
+		}
+	}
+
+	// 只有 sys + user + fork directive = 3
+	if len(result) != 3 {
+		t.Fatalf("expected 3 messages, got %d", len(result))
+	}
+
+	lastUserIdx := -1
+	for i := len(result) - 1; i >= 0; i-- {
+		if result[i].Role == llm.RoleUser {
+			lastUserIdx = i
+			break
+		}
+	}
+	if lastUserIdx < 0 {
+		t.Fatal("no user message")
+	}
+	if !strings.Contains(result[lastUserIdx].Content, "<fork-boilerplate>") {
+		t.Error("fork directive missing boilerplate tag")
 	}
 }
