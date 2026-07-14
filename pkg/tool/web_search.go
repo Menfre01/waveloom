@@ -23,11 +23,14 @@ import (
 const (
 	DefaultWebSearchMaxResults = 10
 	MaxWebSearchMaxResults     = 20
+	DefaultWebSearchTimeoutMs  = 45000  // 45s
+	MaxWebSearchTimeoutMs      = 120000 // 120s
 )
 
 type WebSearchParams struct {
 	Query      string `json:"query"`
 	MaxResults int    `json:"max_results"` // 返回结果数（可选，默认 10，最大 20）
+	TimeoutMs  int    `json:"timeout_ms"`  // 超时时间（毫秒，可选，默认 45000，最大 120000）
 }
 
 type SearchResult struct {
@@ -65,7 +68,7 @@ func (t *WebSearch) client() *http.Client {
 	}
 	// 复用 web_fetch 的 SSRF 安全客户端（共享 Dialer + 重定向校验）
 	return &http.Client{
-		Timeout: 30 * time.Second,
+		Timeout: time.Duration(MaxWebSearchTimeoutMs) * time.Millisecond,
 		Transport: &http.Transport{
 			DialContext: (&net.Dialer{
 				Timeout: 10 * time.Second,
@@ -99,6 +102,19 @@ func (t *WebSearch) Execute(ctx context.Context, p WebSearchParams) (*ToolResult
 		maxResults = MaxWebSearchMaxResults
 	}
 
+	// 超时设置
+	timeoutMs := p.TimeoutMs
+	if timeoutMs <= 0 {
+		timeoutMs = DefaultWebSearchTimeoutMs
+	}
+	if timeoutMs > MaxWebSearchTimeoutMs {
+		timeoutMs = MaxWebSearchTimeoutMs
+	}
+	timeout := time.Duration(timeoutMs) * time.Millisecond
+
+	reqCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
 	start := time.Now()
 
 	// 自动选择后端：BRAVE_API_KEY 存在 → Brave，否则 → DuckDuckGo
@@ -108,15 +124,27 @@ func (t *WebSearch) Execute(ctx context.Context, p WebSearchParams) (*ToolResult
 
 	if braveKey := os.Getenv("BRAVE_API_KEY"); braveKey != "" {
 		source = "Brave Search"
-		results, execErr = t.searchBrave(ctx, p.Query, maxResults, braveKey)
+		results, execErr = t.searchBrave(reqCtx, p.Query, maxResults, braveKey)
 	} else {
 		source = "DuckDuckGo"
-		results, execErr = t.searchDDG(ctx, p.Query, maxResults)
+		results, execErr = t.searchDDG(reqCtx, p.Query, maxResults)
 	}
 
 	duration := time.Since(start)
 
 	if execErr != nil {
+		// 检测 context 超时
+		if reqCtx.Err() == context.DeadlineExceeded {
+			return &ToolResult{
+				Content: fmt.Sprintf("Search timed out after %s.\nQuery: %s  (%s)", formatDuration(timeout), p.Query, source),
+				Meta:    ToolMeta{Duration: duration},
+				Error: &ToolError{
+					Class:   ErrorClassRecoverable,
+					Kind:    ErrKindTimeout,
+					Message: fmt.Sprintf("search timed out after %s", formatDuration(timeout)),
+				},
+			}, nil
+		}
 		return &ToolResult{
 			Content: fmt.Sprintf("Search failed (%s): %s\nQuery: %s", source, execErr.Error(), p.Query),
 			Meta:    ToolMeta{Duration: duration},
