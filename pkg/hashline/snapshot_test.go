@@ -129,3 +129,38 @@ func TestEmptyContent(t *testing.T) {
 	}
 	_ = snap
 }
+
+// REGRESSION: 重复 Record 同一文件相同内容应返回相同 TAG。
+// 之前的实现中 generateUniqueTag 将同路径旧快照视为冲突，
+// 导致用随机种子生成新 TAG，文件未变但 TAG 变了。
+func TestRegression_RecordSameContentSameTag(t *testing.T) {
+	store := NewStore()
+	content := "package main\n\nfunc main() {\n}\n"
+
+	tag1, err := store.Record("/tmp/test.go", content)
+	if err != nil {
+		t.Fatalf("first Record failed: %v", err)
+	}
+
+	// 第二次 Record，文件内容未变 → TAG 必须相同
+	tag2, err := store.Record("/tmp/test.go", content)
+	if err != nil {
+		t.Fatalf("second Record failed: %v", err)
+	}
+
+	if tag1 != tag2 {
+		t.Fatalf("same content produced different TAGs: %s vs %s", tag1, tag2)
+	}
+}
+
+// 验证内容变化时 TAG 确实会变化（确保快速路径不会误触发）。
+func TestRegression_RecordChangedContentChangesTag(t *testing.T) {
+	store := NewStore()
+
+	tag1, _ := store.Record("/tmp/test.go", "content v1")
+	tag2, _ := store.Record("/tmp/test.go", "content v2")
+
+	if tag1 == tag2 {
+		t.Fatal("different content should produce different TAGs")
+	}
+}

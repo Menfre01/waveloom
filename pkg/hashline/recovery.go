@@ -12,8 +12,8 @@ import (
 // RecoverResult 表示恢复尝试的结果。
 type RecoverResult struct {
 	Success   bool
-	MappedOps []Op       // 重映射后的操作
-	Warnings  []string   // 警告信息
+	MappedOps []Op     // 重映射后的操作
+	Warnings  []string // 警告信息
 }
 
 // MapStatus 表示快照行在当前文件中的映射状态。
@@ -47,7 +47,7 @@ func RecoverOps(snapshot, current string, ops []Op) *RecoverResult {
 	lcs := computeLCS(snapLines, currLines)
 
 	// 建立行号映射
-	mappings := buildLineMappings(lcs, len(snapLines), len(currLines))
+	mappings := buildLineMappings(lcs, snapLines, currLines)
 
 	// 重映射每个操作
 	result := &RecoverResult{Success: true}
@@ -90,6 +90,11 @@ func mapOp(op Op, mappings []LineMapping) (Op, error) {
 			return Op{}, fmt.Errorf("line %d modified in current version — conflict", op.LineStart)
 		}
 
+		// 范围校验：连续性 + 均匀性 + 每行可映射。
+		if err := validateRange(mappings, op.LineStart, op.LineEnd); err != nil {
+			return Op{}, err
+		}
+
 		mapped.LineStart = startMapping.NewLine
 		mapped.LineEnd = endMapping.NewLine
 
@@ -113,6 +118,10 @@ func mapOp(op Op, mappings []LineMapping) (Op, error) {
 			if endMapping.Status == MapModified {
 				return Op{}, fmt.Errorf("line %d modified in current version — conflict", op.LineEnd)
 			}
+			// 范围校验：连续性 + 均匀性 + 每行可映射。
+			if err := validateRange(mappings, op.LineStart, op.LineEnd); err != nil {
+				return Op{}, err
+			}
 			mapped.LineEnd = endMapping.NewLine
 		} else {
 			mapped.LineEnd = mapped.LineStart
@@ -120,7 +129,6 @@ func mapOp(op Op, mappings []LineMapping) (Op, error) {
 
 	case OpINS:
 		if op.Position == "head" || op.Position == "tail" {
-			// INS.HEAD / INS.TAIL 不依赖行号，无需重映射
 			return mapped, nil
 		}
 
@@ -141,10 +149,53 @@ func mapOp(op Op, mappings []LineMapping) (Op, error) {
 	return mapped, nil
 }
 
+
 func findMapping(mappings []LineMapping, oldLine int) *LineMapping {
 	for i := range mappings {
 		if mappings[i].OldLine == oldLine {
 			return &mappings[i]
+		}
+	}
+	return nil
+}
+
+// validateRange 检查 [startLine, endLine] 范围内：
+//  1. 所有行都可通过映射找到且未被修改/删除；
+//  2. 重映射后的范围长度与原始范围一致（连续性）；
+//  3. 范围内所有行的偏移量一致（均匀性，防止 LCS 歧义对齐）。
+//
+// 三项全部通过才视为安全的简单平移；任一项失败表示文件结构变化超出纯偏移，
+// 必须拒绝以避免静默损坏。
+func validateRange(mappings []LineMapping, startLine, endLine int) error {
+	if startLine > endLine {
+		return nil // 空范围，无需校验
+	}
+
+	startM := findMapping(mappings, startLine)
+	endM := findMapping(mappings, endLine)
+	if startM == nil || endM == nil {
+		return fmt.Errorf("range boundary not found in mappings")
+	}
+
+	expectedDelta := startM.NewLine - startLine
+	expectedLen := endLine - startLine
+	actualLen := endM.NewLine - startM.NewLine
+
+	if actualLen != expectedLen {
+		return fmt.Errorf("range length mismatch: original=%d, remapped=%d — file structure changed, cannot safely remap", expectedLen, actualLen)
+	}
+
+	for line := startLine; line <= endLine; line++ {
+		m := findMapping(mappings, line)
+		if m == nil || m.Status == MapDeleted {
+			return fmt.Errorf("line %d in range deleted in current version", line)
+		}
+		if m.Status == MapModified {
+			return fmt.Errorf("line %d in range modified in current version — conflict", line)
+		}
+		actualDelta := m.NewLine - line
+		if actualDelta != expectedDelta {
+			return fmt.Errorf("non-uniform offset at line %d: expected delta %d, got %d — ambiguous LCS alignment", line, expectedDelta, actualDelta)
 		}
 	}
 	return nil
@@ -243,8 +294,12 @@ func computeFastLCS(a, b []string) []lcsPair {
 }
 
 // buildLineMappings 从 LCS 匹配对构建行号映射。
-func buildLineMappings(lcs []lcsPair, snapLen, currLen int) []LineMapping {
-	// 初始化所有快照行 → 映射
+// 两遍扫描：第一遍基于 LCS 分类 Unchanged/Shifted/Modified；
+// 第二遍将 Modified 中内容已完全消失的行精确标记为 Deleted。
+func buildLineMappings(lcs []lcsPair, snapLines, currLines []string) []LineMapping {
+	snapLen := len(snapLines)
+
+	// 第一遍：基于 LCS 建立行号映射
 	mappings := make([]LineMapping, snapLen)
 	lcsIdx := 0
 
@@ -262,12 +317,29 @@ func buildLineMappings(lcs []lcsPair, snapLen, currLen int) []LineMapping {
 			mapping.NewLine = currLCSIdx + 1
 			lcsIdx++
 		} else {
-			// 该行不在 LCS 中 → 被修改或删除
+			// 该行不在 LCS 中 → 暂时标记为 Modified，第二遍精确区分
 			mapping.Status = MapModified
 			mapping.NewLine = 0
 		}
 
 		mappings[snapLine] = mapping
+	}
+
+	// 第二遍：区分 MapModified（内容被改）和 MapDeleted（完全删除）。
+	// 对第一遍标记为 MapModified 的行，检查其内容是否仍存在于当前文件的任意位置。
+	// 仅当内容在 currLines 中完全找不到时才标记为 MapDeleted。
+	if len(currLines) > 0 {
+		currSet := make(map[string]bool, len(currLines))
+		for _, line := range currLines {
+			currSet[line] = true
+		}
+		for i := range mappings {
+			if mappings[i].Status == MapModified {
+				if !currSet[snapLines[i]] {
+					mappings[i].Status = MapDeleted
+				}
+			}
+		}
 	}
 
 	return mappings
