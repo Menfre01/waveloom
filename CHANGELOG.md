@@ -29,6 +29,10 @@
 ### 重构
 - **工具统一重命名**：移除旧 read_file/edit_file 工具注册和 hashline 开关，read/edit/write 短名统一注册
 - **TUI Logo 布局**：将 logo 从 header 移入 viewport 可滚动区域，释放固定行高
+
+---
+
+📝 [Changelog (English)](https://github.com/Menfre01/waveloom/blob/dev/CHANGELOG.en.md)
 ## [v0.1.0-beta.8] — 2026-07-13
 
 ### 新增功能
