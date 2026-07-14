@@ -437,6 +437,13 @@ func parseLineRange(s string) (start, end int, err error) {
 		}
 	}
 
+	// Friendly hint: detect := confusion (用户写了 N:=M 而非 N.=M)
+	if idx := strings.Index(s, ":="); idx >= 0 {
+		left := strings.TrimSpace(s[:idx])
+		right := strings.TrimSuffix(strings.TrimSpace(s[idx+2:]), ":")
+		return 0, 0, fmt.Errorf("invalid range %q: did you mean %s.=%s? (SWAP/DEL ranges use N.=M format, not N:=M)", s, left, right)
+	}
+
 	start, err = parseSingleLine(s)
 	if err != nil {
 		return 0, 0, err
