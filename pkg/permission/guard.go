@@ -159,7 +159,7 @@ func NewGuard(opts ...GuardOption) *GuardImpl {
 	if runtime.GOOS != "windows" {
 		g.workingDirs = append(g.workingDirs, "/tmp")
 	}
-	g.workingDirs = append(g.workingDirs, os.TempDir())
+	g.workingDirs = append(g.workingDirs, pathutil.TempDir())
 
 	for _, opt := range opts {
 		opt(g)
