@@ -159,7 +159,7 @@ func ParsePatch(text string) (*Patch, error) {
 		}
 
 		// 检查结束标记
-		if line == "*** End Patch" {
+		if strings.EqualFold(line, "*** End Patch") {
 			scanner.pos++
 			break
 		}
@@ -270,7 +270,7 @@ func (s *patchScanner) parseSection() (Section, error) {
 		}
 
 		// 下一个 section 或结束标记 → 停止
-		if strings.HasPrefix(trimmed, "[") || trimmed == "*** End Patch" {
+		if strings.HasPrefix(trimmed, "[") || strings.EqualFold(trimmed, "*** End Patch") {
 			break
 		}
 
@@ -292,31 +292,60 @@ func (s *patchScanner) parseSection() (Section, error) {
 	return Section{Path: path, TAG: tag, Ops: ops}, nil
 }
 
+// normalizeOpLine 对操作行做 LLM 兼容性规范化：
+// - 剥离行尾注释（# ... 和 // ...）
+// - 修复 INS. PRE / INS. POST / INS. HEAD / INS. TAIL（dot 后多余空格）
+func normalizeOpLine(line string) string {
+	// 剥离行尾注释（空格 + # 或 // 开始的后缀）
+	line = stripTrailingComment(line)
+
+	// 修复 dot 后多余空格：INS. PRE → INS.PRE 等
+	line = strings.Replace(line, "INS. PRE", "INS.PRE", 1)
+	line = strings.Replace(line, "INS. POST", "INS.POST", 1)
+	line = strings.Replace(line, "INS. HEAD", "INS.HEAD", 1)
+	line = strings.Replace(line, "INS. TAIL", "INS.TAIL", 1)
+
+	return line
+}
+
+// stripTrailingComment 剥离操作行行尾注释。模式：空格 + # 或 //。
+func stripTrailingComment(line string) string {
+	if idx := strings.Index(line, " //"); idx >= 0 {
+		return strings.TrimSpace(line[:idx])
+	}
+	if idx := strings.Index(line, " #"); idx > 0 {
+		return strings.TrimSpace(line[:idx])
+	}
+	return line
+}
+
 // parseOp 解析一个操作及可选的 body 行。
+// 对操作行做 LLM 兼容性规范化后再解析。
 func (s *patchScanner) parseOp() (Op, error) {
 	trimmed := strings.TrimSpace(s.rawLine())
+	normalized := normalizeOpLine(trimmed)
 	lineNum := s.currentLine()
 
-	upper := strings.ToUpper(trimmed)
+	upper := strings.ToUpper(normalized)
 
 	switch {
 	case strings.HasPrefix(upper, "SWAP "):
-		return s.parseSwapOp(trimmed, lineNum)
+		return s.parseSwapOp(normalized, lineNum)
 	case strings.HasPrefix(upper, "DEL "):
-		return s.parseDelOp(trimmed, lineNum)
+		return s.parseDelOp(normalized, lineNum)
 	case strings.HasPrefix(upper, "INS.PRE "):
-		return s.parseInsOp(trimmed, "pre", lineNum)
+		return s.parseInsOp(normalized, "pre", lineNum)
 	case strings.HasPrefix(upper, "INS.POST "):
-		return s.parseInsOp(trimmed, "post", lineNum)
-	case strings.HasPrefix(upper, "INS.HEAD:"):
-		return s.parseInsHeadTailOp(trimmed, "head", lineNum)
-	case strings.HasPrefix(upper, "INS.TAIL:"):
-		return s.parseInsHeadTailOp(trimmed, "tail", lineNum)
+		return s.parseInsOp(normalized, "post", lineNum)
+	case strings.HasPrefix(upper, "INS.HEAD"):
+		return s.parseInsHeadTailOp(normalized, "head", lineNum)
+	case strings.HasPrefix(upper, "INS.TAIL"):
+		return s.parseInsHeadTailOp(normalized, "tail", lineNum)
 	case strings.HasPrefix(upper, "REM"):
 		s.pos++ // consume REM line
 		return Op{Kind: OpREM}, nil
 	case strings.HasPrefix(upper, "MV "):
-		return s.parseMvOp(trimmed, lineNum)
+		return s.parseMvOp(normalized, lineNum)
 	default:
 		return Op{}, &ParseError{
 			Line: lineNum,
@@ -349,6 +378,9 @@ func (s *patchScanner) parseSwapOp(line string, lineNum int) (Op, error) {
 
 func (s *patchScanner) parseDelOp(line string, lineNum int) (Op, error) {
 	rest := line[4:] // after "DEL "
+	rest = strings.TrimSuffix(strings.TrimSpace(rest), ":")
+	rest = strings.TrimSpace(rest)
+
 	start, end, err := parseLineRange(rest)
 	if err != nil {
 		return Op{}, &ParseError{Line: lineNum, Msg: fmt.Sprintf("invalid DEL range: %v", err)}
@@ -386,7 +418,9 @@ func (s *patchScanner) parseMvOp(line string, lineNum int) (Op, error) {
 	if rest == "" {
 		return Op{}, &ParseError{Line: lineNum, Msg: "MV requires a destination path"}
 	}
-	if strings.HasPrefix(rest, `"`) && strings.HasSuffix(rest, `"`) {
+	// 剥离双引号或单引号（LLM 可能使用任一种）
+	if (strings.HasPrefix(rest, `"`) && strings.HasSuffix(rest, `"`)) ||
+		(strings.HasPrefix(rest, "'") && strings.HasSuffix(rest, "'")) {
 		rest = rest[1 : len(rest)-1]
 	}
 	s.pos++
@@ -395,21 +429,26 @@ func (s *patchScanner) parseMvOp(line string, lineNum int) (Op, error) {
 
 // readBody 读取以 + 开头的 body 行，返回去除前缀后的行列表（nil 表示无 body 行）。
 // \+ 开头的行会被转义：去掉反斜杠，保留后面的 + 作为字面量内容。
+// 容忍 LLM 在 + 前加空白字符，跳过 body 内部的空行。
 func (s *patchScanner) readBody() []string {
 	var bodyLines []string
 	for s.pos < len(s.lines) {
 		raw := s.rawLine()
-		if raw == "" {
+		trimmed := strings.TrimLeft(raw, " \t")
+
+		// 跳过空行（LLM 可能在 body 行之间插入空行）
+		if raw == "" || trimmed == "" {
 			s.pos++
-			break
+			continue
 		}
-		if strings.HasPrefix(raw, `\+`) {
+
+		if strings.HasPrefix(trimmed, `\+`) {
 			// 转义：\+ 开头 → 字面量 + 开头的内容
-			content := raw[1:] // 去掉 \，保留 + 及后续内容
+			content := trimmed[1:] // 去掉 \，保留 + 及后续内容
 			bodyLines = append(bodyLines, content)
 			s.pos++
-		} else if strings.HasPrefix(raw, "+") {
-			content := raw[1:]
+		} else if strings.HasPrefix(trimmed, "+") {
+			content := trimmed[1:]
 			bodyLines = append(bodyLines, content)
 			s.pos++
 		} else {
