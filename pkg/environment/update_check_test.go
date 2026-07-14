@@ -40,6 +40,7 @@ func TestCheckLatestRelease_NewVersion(t *testing.T) {
 	}
 	if info == nil {
 		t.Fatal("expected non-nil info")
+		return
 	}
 	if !info.UpdateAvailable {
 		t.Error("expected UpdateAvailable=true for v1.0.0 > v0.1.0")

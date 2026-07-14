@@ -196,6 +196,7 @@ func TestLoadCompactionSettings_Valid(t *testing.T) {
 	cs := LoadCompactionSettings(path)
 	if cs == nil {
 		t.Fatal("expected non-nil for valid compaction config")
+		return
 	}
 	if cs.Tier1Threshold == nil || *cs.Tier1Threshold != 0.55 {
 		t.Errorf("Tier1Threshold = %v", cs.Tier1Threshold)
