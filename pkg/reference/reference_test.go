@@ -581,7 +581,7 @@ func TestExpandPermissionDenied(t *testing.T) {
 
 
 	guard := newMockGuard()
-	guard.setDecision("read_file", permission.DecisionDeny)
+	guard.setDecision("read", permission.DecisionDeny)
 
 	expander := New(guard)
 	refs := []Ref{{Raw: "@secret.go", Path: f, Kind: KindFile}}
@@ -1121,7 +1121,7 @@ func TestAgentsMdExpand_PermissionDenied(t *testing.T) {
 
 
 	guard := newMockGuard()
-	guard.setDecision("read_file", permission.DecisionDeny)
+	guard.setDecision("read", permission.DecisionDeny)
 
 	expander := New(guard)
 
