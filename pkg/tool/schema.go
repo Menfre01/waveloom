@@ -198,6 +198,10 @@ var webSearchSchema = json.RawMessage(`{
     "max_results": {
       "type": "integer",
       "description": "Maximum number of results to return (default: 10, max: 20)"
+    },
+    "timeout_ms": {
+      "type": "integer",
+      "description": "Timeout in milliseconds (optional, default: 45000, max: 120000)"
     }
   },
   "required": ["query"]
