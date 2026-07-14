@@ -112,11 +112,7 @@ const (
 	// 2. 检测递归 fork（isInForkChild 通过扫描此标签判断）
 	forkBoilerplateTag = "fork-boilerplate"
 
-	// forkPlaceholderResult 是所有 fork 子 agent tool_result 的统一占位文本。
-	// 必须对所有并行 fork 字节级一致，确保 DeepSeek 前缀缓存共享最大化。
-	forkPlaceholderResult = "Fork started — processing in background"
 )
-
 // ---------------------------------------------------------------------------
 // agent system prompts
 // ---------------------------------------------------------------------------
@@ -156,7 +152,7 @@ NEVER use bash_subagent for: mkdir, touch, rm, cp, mv, chmod, chown, echo > (red
 tee, sed -i, git add, git commit, npm install, pip install, or any filesystem modification
 inside the project directory.
 However, you MAY create ephemeral test scripts in /tmp via bash_subagent when inline commands
-aren't sufficient (e.g., a multi-step test harness). Clean up /tmp files when done.
+aren't sufficient (e.g., a multi-step test harness). Clean up ONLY the specific files you created in /tmp when done. Do NOT delete directories or files you did not create.
 
 === WHAT YOU RECEIVE ===
 The caller will describe: the original task, what was changed, the approach taken,
@@ -210,7 +206,7 @@ NEVER use bash_subagent for: mkdir, touch, rm, cp, mv, chmod, chown, echo > (red
 tee, sed -i, git add, git commit, npm install, pip install, or any filesystem modification
 inside the project directory.
 You MAY create ephemeral test scripts in /tmp via bash_subagent when you need to test behavior.
-Clean up /tmp files when done.
+Clean up ONLY the specific files you created in /tmp when done. Do NOT delete directories or files you did not create.
 
 Approach:
 - Read the relevant code thoroughly before forming an opinion
@@ -254,7 +250,7 @@ NEVER use bash_subagent for: mkdir, touch, rm, cp, mv, chmod, chown, echo > (red
 tee, sed -i, git add, git commit, npm install, pip install, or any filesystem modification
 inside the project directory.
 You MAY create ephemeral shell scripts in /tmp via bash_subagent when you need to
-validate a hypothesis (e.g., a quick Go snippet to test behavior). Clean up /tmp files when done.
+validate a hypothesis (e.g., a quick Go snippet to test behavior). Clean up ONLY the specific files you created in /tmp when done. Do NOT delete directories or files you did not create.
 
 Distinguish between "this is wrong" (must fix) and "this could be improved" (nice to have).
 Do not recommend changes without evidence.
@@ -890,16 +886,12 @@ func fmtBytes(n int) string {
 // buildForkMessages 从父消息构建 fork 子 agent 的消息历史。
 //
 // 策略：
-//  1. 保留完整最后一条 assistant（含所有 tool_use），不剥离 —— 保持与父 agent
-//     前缀连续性，最大化 DeepSeek 硬盘缓存命中率
-//  2. 为 assistant 中每个 tool_call 注入 tool 角色占位消息，文本统一使用
-//     forkPlaceholderResult —— 所有并行 fork 的 tool_result 前缀字节完全一致，
-//     进一步合并缓存
-//  3. 追加一条 user 消息，包含 <fork-boilerplate> 身份注入 + 任务指令
+//  1. 从父消息中过滤掉所有 tool 角色消息（父级工具执行产物，fork 不需要），
+//     同时移除最后一条 assistant（它包含触发 fork 的 agent tool_call）。
+//     两步共同防止 LLM 看到 agent 占位文本后输出 boilerplate。
+//  2. 追加一条 user 消息，包含 <fork-boilerplate> 身份注入 + 任务指令
 //
-// 结果：[...parent, assistant(tool_calls), tool(id1, placeholder), tool(id2, placeholder),
-//
-//	user(<fork-boilerplate> + task directive)]
+// 结果：[...parent clean history, user(<fork-boilerplate> + task directive)]
 //
 // 若父消息不存在则创建新的干净消息（兜底）。
 func buildForkMessages(parentRaw interface{}, description, prompt string) []llm.Message {
@@ -916,32 +908,34 @@ func buildForkMessages(parentRaw interface{}, description, prompt string) []llm.
 			{Role: llm.RoleUser, Content: buildForkDirective(description, prompt)},
 		}
 	}
-
-	// 克隆全部父消息
-	cloned := make([]llm.Message, len(msgs))
-	copy(cloned, msgs)
-
-	// 找到最后一条 assistant 消息，为其 tool_calls 注入占位 tool_result
-	lastAssistant := findLastAssistant(cloned)
-	if lastAssistant != nil && len(lastAssistant.ToolCalls) > 0 {
-		for _, tc := range lastAssistant.ToolCalls {
-			cloned = append(cloned, llm.Message{
-				Role:       llm.RoleTool,
-				ToolCallID: tc.ID,
-				Content:    forkPlaceholderResult,
-			})
+	// 1. 过滤：移除所有 tool 消息（父级工具执行产物），fork 只需要 system/user/assistant
+	// 2. 截断到最后一个 user 消息（排除包含 agent tool_call 的最后 assistant）
+	var filtered []llm.Message
+	lastUserFilteredIdx := -1
+	for _, m := range msgs {
+		if m.Role == llm.RoleTool {
+			continue
+		}
+		filtered = append(filtered, m)
+		if m.Role == llm.RoleUser {
+			lastUserFilteredIdx = len(filtered) - 1
 		}
 	}
 
+	// 截断到最后一个 user（排除其后可能存在的 assistant）
+	if lastUserFilteredIdx >= 0 {
+		filtered = filtered[:lastUserFilteredIdx+1]
+	}
+
 	// 追加 fork 身份注入 + 任务指令
-	cloned = append(cloned, llm.Message{
+	filtered = append(filtered, llm.Message{
 		Role:    llm.RoleUser,
 		Content: buildForkDirective(description, prompt),
 	})
-	return cloned
+	return filtered
 }
 
-// findLastAssistant 返回消息列表中最后一条 assistant 消息，无则返回 nil。
+// findLastAssistant 返回消息列表中最后一条 assistant 消息的指针，nil 表示不存在。
 func findLastAssistant(msgs []llm.Message) *llm.Message {
 	for i := len(msgs) - 1; i >= 0; i-- {
 		if msgs[i].Role == llm.RoleAssistant {

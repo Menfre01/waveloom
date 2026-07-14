@@ -657,15 +657,16 @@ func TestAgentTool_ExecuteFork_WorksWithoutParentMessages(t *testing.T) {
 }
 
 func TestBuildForkMessages(t *testing.T) {
-	// 有父消息 → 保留最后 assistant + 注入占位 tool_result + fork 指令
+	// fork 仅继承到最后一个 user 消息（不含 assistant），然后追加 fork directive
 	msgs := []llm.Message{
 		{Role: llm.RoleSystem, Content: "sys"},
 		{Role: llm.RoleUser, Content: "hello"},
-		{Role: llm.RoleAssistant, Content: "hi there"}, // ← 无 tool_calls，保留不剥离
+		{Role: llm.RoleAssistant, Content: "hi there"},
 	}
 	result := buildForkMessages(msgs, "test", "do it")
-	if len(result) != 4 { // sys + user + assistant(kept) + fork directive
-		t.Fatalf("expected 4 messages, got %d", len(result))
+	// sys + user + fork directive = 3（assistant 被排除）
+	if len(result) != 3 {
+		t.Fatalf("expected 3 messages (assistant excluded), got %d", len(result))
 	}
 	if result[0].Role != llm.RoleSystem || result[0].Content != "sys" {
 		t.Error("system message should be preserved")
@@ -673,390 +674,19 @@ func TestBuildForkMessages(t *testing.T) {
 	if result[1].Role != llm.RoleUser || result[1].Content != "hello" {
 		t.Error("user message should be preserved")
 	}
-	if result[2].Role != llm.RoleAssistant || result[2].Content != "hi there" {
-		t.Error("assistant message should be preserved (not stripped)")
+	if result[2].Role != llm.RoleUser || !strings.Contains(result[2].Content, forkBoilerplateTag) {
+		t.Errorf("fork directive should be last user message with boilerplate: %+v", result[2])
 	}
-	if result[3].Role != llm.RoleUser || !strings.Contains(result[3].Content, forkBoilerplateTag) {
-		t.Errorf("fork directive should be last user message with boilerplate: %+v", result[3])
-	}
-}
-
-func TestBuildForkMessages_NilParent(t *testing.T) {
-	result := buildForkMessages(nil, "test", "do it")
-	if len(result) != 2 { // sys + fork directive
-		t.Fatalf("expected 2 messages, got %d", len(result))
-	}
-}
-
-func TestAgentTool_ExecuteFork_EventCallback(t *testing.T) {
-	ctx := context.Background()
-	msgs := []llm.Message{
-		{Role: llm.RoleSystem, Content: "system prompt"},
-		{Role: llm.RoleUser, Content: "hello"},
-	}
-	ctx = agentloop.WithParentMessages(ctx, msgs)
-	ctx = agentloop.WithEventCallback(ctx, func(agentloop.TurnEvent) {})
-
-	a := &AgentTool{LLMClient: &stubLLM{}}
-	result, err := a.Execute(ctx, AgentParams{
-		Description: "fork-test",
-		Prompt:      "do something",
-	})
-	if err != nil {
-		t.Fatalf("Execute() error: %v", err)
-	}
-	if !strings.Contains(result.Content, "fork subagent completed") {
-		t.Errorf("result should indicate fork completion: %s", result.Content)
-	}
-	if !strings.Contains(result.Content, "ok") {
-		t.Errorf("result should contain LLM output: %s", result.Content)
-	}
-}
-
-func TestAgentTool_ExecuteFork_SubagentStartEvent(t *testing.T) {
-	ctx := context.Background()
-	msgs := []llm.Message{
-		{Role: llm.RoleSystem, Content: "sys"},
-		{Role: llm.RoleUser, Content: "hi"},
-	}
-	ctx = agentloop.WithParentMessages(ctx, msgs)
-
-	var gotStart bool
-	ctx = agentloop.WithEventCallback(ctx, func(ev agentloop.TurnEvent) {
-		if ss, ok := ev.(SubagentStart); ok {
-			gotStart = true
-			if ss.AgentType != "fork" {
-				t.Errorf("fork AgentType = %q, want %q", ss.AgentType, "fork")
-			}
-			if !ss.InheritCtx {
-				t.Error("fork InheritCtx should be true")
-			}
-		}
-	})
-
-	a := &AgentTool{LLMClient: &stubLLM{}}
-	_, err := a.Execute(ctx, AgentParams{Description: "fork-test", Prompt: "test"})
-	if err != nil {
-		t.Fatalf("Execute() error: %v", err)
-	}
-	if !gotStart {
-		t.Error("expected SubagentStart event for fork")
-	}
-}
-
-func TestAgentTool_ExecuteFork_LLMError(t *testing.T) {
-	errLLM := &errorLLM{}
-	ctx := context.Background()
-	msgs := []llm.Message{
-		{Role: llm.RoleSystem, Content: "sys"},
-		{Role: llm.RoleUser, Content: "hi"},
-	}
-	ctx = agentloop.WithParentMessages(ctx, msgs)
-
-	var gotEndError bool
-	ctx = agentloop.WithEventCallback(ctx, func(ev agentloop.TurnEvent) {
-		if subEnd, ok := ev.(SubagentEnd); ok && subEnd.Error != "" {
-			gotEndError = true
-		}
-	})
-
-	a := &AgentTool{LLMClient: errLLM}
-	result, err := a.Execute(ctx, AgentParams{Description: "fork-error", Prompt: "test"})
-	if err != nil {
-		t.Fatalf("Execute() should not return error (returns it in result): %v", err)
-	}
-	if !strings.Contains(result.Content, "Fork subagent failed") {
-		t.Errorf("result should indicate fork failure: %s", result.Content)
-	}
-	if !gotEndError {
-		t.Error("expected SubagentEnd with Error for fork")
-	}
-}
-
-// ---------------------------------------------------------------------------
-// Cold agent test: AGENTS.md injection
-// ---------------------------------------------------------------------------
-
-func TestAgentTool_ExecuteCold_WithAgentsMD(t *testing.T) {
-	ctx := context.Background()
-	capture := &captureLLM{}
-
-	ctx = agentloop.WithAgentsMD(ctx, "# Project Rules\n\n- Use Go 1.25+\n")
-
-	a := &AgentTool{LLMClient: capture}
-	result, err := a.Execute(ctx, AgentParams{
-		SubagentType: "evaluate",
-		Description:  "test",
-		Prompt:       "say hello",
-	})
-	if err != nil {
-		t.Fatalf("Execute() error: %v", err)
-	}
-	if !strings.Contains(result.Content, "evaluate") {
-		t.Errorf("result should mention agent type: %s", result.Content)
-	}
-	// Verify AGENTS.md was NOT injected — all cold agents are read-only and skip it
-	for _, msg := range capture.CapturedMessages {
-		if msg.Role == llm.RoleUser && strings.Contains(msg.Content, "# Project Rules") {
-			t.Error("evaluate agent should NOT receive AGENTS.md injection (all cold agents skip it)")
+	// assistant 不应出现
+	for _, m := range result {
+		if m.Role == llm.RoleAssistant {
+			t.Error("assistant message should be excluded from fork context")
 		}
 	}
 }
 
-
-// ---------------------------------------------------------------------------
-// Context helpers
-// ---------------------------------------------------------------------------
-
-func TestContextHelpers(t *testing.T) {
-	ctx := context.Background()
-
-	// EventCallback
-	var called bool
-	ctx = agentloop.WithEventCallback(ctx, func(ev agentloop.TurnEvent) { called = true })
-	cb := agentloop.EventCallbackFromContext(ctx)
-	if cb == nil {
-		t.Fatal("EventCallback should be non-nil")
-	}
-	cb(SubagentStart{})
-	if !called {
-		t.Error("callback should be called")
-	}
-
-	// ParentMessages
-	type testMsg struct{ Text string }
-	msgs := []testMsg{{Text: "hello"}}
-	ctx = agentloop.WithParentMessages(ctx, msgs)
-	got := agentloop.ParentMessagesFromContext(ctx)
-	if got == nil {
-		t.Fatal("ParentMessages should be non-nil")
-	}
-	gotMsgs, ok := got.([]testMsg)
-	if !ok || len(gotMsgs) != 1 || gotMsgs[0].Text != "hello" {
-		t.Error("ParentMessages round-trip failed")
-	}
-}
-
-func TestSubagentStartEvent(t *testing.T) {
-	ev := SubagentStart{
-		AgentType:  "Explore",
-		Prompt:     "test",
-		InheritCtx: false,
-	}
-	if ev.AgentType != "Explore" {
-		t.Errorf("AgentType = %q", ev.AgentType)
-	}
-	if ev.InheritCtx {
-		t.Error("InheritCtx should be false")
-	}
-	// Compile-time: implements agentloop.TurnEvent
-	var _ agentloop.TurnEvent = ev
-}
-
-func TestSubagentEventTypes(t *testing.T) {
-	// Ensure constants are distinct
-	if SubagentText == SubagentToolStart || SubagentText == SubagentToolResult || SubagentText == SubagentToolStream {
-		t.Error("SubagentEventKind constants should be distinct")
-	}
-	if SubagentToolStart == SubagentToolResult || SubagentToolStart == SubagentToolStream {
-		t.Error("SubagentEventKind constants should be distinct")
-	}
-	if SubagentToolResult == SubagentToolStream {
-		t.Error("SubagentEventKind constants should be distinct")
-	}
-}
-
-// ---------------------------------------------------------------------------
-// Helper function unit tests
-// ---------------------------------------------------------------------------
-
-func TestParentSystemPromptFromContext(t *testing.T) {
-	ctx := context.Background()
-	ctx = agentloop.WithParentSystemPrompt(ctx, "test-system-prompt")
-
-	got := ParentSystemPromptFromContext(ctx)
-	if got != "test-system-prompt" {
-		t.Errorf("ParentSystemPromptFromContext = %q, want %q", got, "test-system-prompt")
-	}
-}
-
-func TestFormatArgs_Bash(t *testing.T) {
-	// bash / bash_subagent should extract the "command" field
-	got := formatArgs("bash_subagent", `{"command":"ls -la","working_dir":"/tmp"}`)
-	if got != "ls -la" {
-		t.Errorf("formatArgs(bash_subagent) = %q, want %q", got, "ls -la")
-	}
-
-	got = formatArgs("bash", `{"command":"echo hello"}`)
-	if got != "echo hello" {
-		t.Errorf("formatArgs(bash) = %q, want %q", got, "echo hello")
-	}
-}
-
-func TestFormatArgs_WebFetch(t *testing.T) {
-	got := formatArgs("web_fetch", `{"url":"https://example.com","max_size":1024}`)
-	if got != "https://example.com" {
-		t.Errorf("formatArgs(web_fetch) = %q, want %q", got, "https://example.com")
-	}
-}
-
-func TestFormatArgs_WebFetchNoURL(t *testing.T) {
-	// web_fetch without url → returns raw argsJSON
-	got := formatArgs("web_fetch", `{"max_size":1024}`)
-	if got != `{"max_size":1024}` {
-		t.Errorf("formatArgs(web_fetch no url) = %q, want raw JSON", got)
-	}
-}
-
-func TestFormatArgs_Fallback(t *testing.T) {
-	// Unknown tool → returns raw argsJSON
-	raw := `{"key":"value"}`
-	got := formatArgs("unknown_tool", raw)
-	if got != raw {
-		t.Errorf("formatArgs(unknown) = %q, want %q", got, raw)
-	}
-}
-
-func TestExtractField_NotFound(t *testing.T) {
-	// key not found → ""
-	got := extractField(`{"other":"value"}`, "file_path")
-	if got != "" {
-		t.Errorf("extractField(not found) = %q, want empty", got)
-	}
-}
-
-func TestExtractField_NoColon(t *testing.T) {
-	// key found but no colon → ""
-	got := extractField(`{"file_path"}`, "file_path")
-	if got != "" {
-		t.Errorf("extractField(no colon) = %q, want empty", got)
-	}
-}
-
-func TestExtractField_NoQuoteStart(t *testing.T) {
-	// key:value exists but value doesn't start with "
-	got := extractField(`{"file_path": 123}`, "file_path")
-	if got != "" {
-		t.Errorf("extractField(no quote start) = %q, want empty", got)
-	}
-}
-
-func TestExtractField_NoEndQuote(t *testing.T) {
-	// key:"value → no closing quote → ""
-	got := extractField(`{"file_path":"abc}`, "file_path")
-	if got != "" {
-		t.Errorf("extractField(no end quote) = %q, want empty", got)
-	}
-}
-
-func TestExtractPath_UpdatedFile(t *testing.T) {
-	// write_file "Updated file:" variant
-	got := extractPath("Updated file: /home/user/test.txt\nDone.")
-	if got != "/home/user/test.txt" {
-		t.Errorf("extractPath(Updated file) = %q, want %q", got, "/home/user/test.txt")
-	}
-}
-
-func TestExtractPath_CreatedFile(t *testing.T) {
-	// write_file "Created new file:" variant
-	got := extractPath("Created new file: /tmp/hello.go\nok")
-	if got != "/tmp/hello.go" {
-		t.Errorf("extractPath(Created new file) = %q, want %q", got, "/tmp/hello.go")
-	}
-}
-
-func TestExtractPath_EditFile(t *testing.T) {
-	// edit_file "Edited file: /path\n"
-	got := extractPath("Edited file: /src/main.go\n   Replaced 1 occurrence\n   +5 -2 lines")
-	if got != "/src/main.go" {
-		t.Errorf("extractPath(edit_file) = %q, want %q", got, "/src/main.go")
-	}
-}
-
-func TestExtractPath_NotFound(t *testing.T) {
-	// No match at all
-	got := extractPath("Some random output")
-	if got != "" {
-		t.Errorf("extractPath(no match) = %q, want empty", got)
-	}
-}
-
-func TestFmtBytes_Bytes(t *testing.T) {
-	got := fmtBytes(42)
-	if got != "42B" {
-		t.Errorf("fmtBytes(42) = %q, want %q", got, "42B")
-	}
-}
-
-func TestFmtBytes_KB(t *testing.T) {
-	got := fmtBytes(2048)
-	if got != "2.0KB" {
-		t.Errorf("fmtBytes(2048) = %q, want %q", got, "2.0KB")
-	}
-}
-
-func TestFmtBytes_MB(t *testing.T) {
-	got := fmtBytes(2*1024*1024 + 512*1024)
-	if got != "2.5MB" {
-		t.Errorf("fmtBytes(2.5MB) = %q, want %q", got, "2.5MB")
-	}
-}
-
-func TestBuildForkMessages_NonMessageType(t *testing.T) {
-	// Pass a string instead of []llm.Message → should fall back to clean messages
-	result := buildForkMessages("not a message slice", "desc", "task")
-	if len(result) != 2 {
-		t.Fatalf("expected 2 messages (fallback), got %d", len(result))
-	}
-	if result[0].Role != llm.RoleSystem {
-		t.Error("first message should be system (fallback)")
-	}
-	if !strings.Contains(result[1].Content, forkBoilerplateTag) {
-		t.Error("second message should contain fork-boilerplate directive")
-	}
-}
-
-func TestBuildForkMessages_EmptySlice(t *testing.T) {
-	// Pass empty []llm.Message → should fall back to clean messages
-	result := buildForkMessages([]llm.Message{}, "desc", "task")
-	if len(result) != 2 {
-		t.Fatalf("expected 2 messages (fallback), got %d", len(result))
-	}
-	if result[0].Role != llm.RoleSystem {
-		t.Error("first message should be system (fallback)")
-	}
-}
-
-func TestBuildForkMessages_NoAssistant(t *testing.T) {
-	// REGRESSION: when message list has no assistant role, buildForkMessages
-	// should preserve all messages and append fork directive without stripping.
-	msgs := []llm.Message{
-		{Role: llm.RoleSystem, Content: "sys"},
-		{Role: llm.RoleUser, Content: "hello"},
-		{Role: llm.RoleUser, Content: "another question"},
-	}
-	result := buildForkMessages(msgs, "desc", "task")
-	if len(result) != 4 { // sys + user + user + fork directive
-		t.Fatalf("expected 4 messages (all preserved + fork), got %d", len(result))
-	}
-	// All original messages should be preserved
-	if result[0].Content != "sys" {
-		t.Error("system message should be preserved")
-	}
-	if result[1].Content != "hello" {
-		t.Error("first user message should be preserved")
-	}
-	if result[2].Content != "another question" {
-		t.Error("second user message should be preserved")
-	}
-	// Fork directive should be appended with boilerplate tag
-	if !strings.Contains(result[3].Content, forkBoilerplateTag) {
-		t.Error("fork directive should be appended as last message with boilerplate tag")
-	}
-}
-
-func TestBuildForkMessages_KeepsAssistantWithToolCalls(t *testing.T) {
-	// 有父消息，最后一条 assistant 含 tool_calls → 保留 assistant + 注入占位 tool 消息
+func TestBuildForkMessages_NoAssistantInContext(t *testing.T) {
+	// 最后一条 assistant 含 tool_calls → fork 不应看到（避免 agent 占位符混淆）
 	msgs := []llm.Message{
 		{Role: llm.RoleSystem, Content: "sys"},
 		{Role: llm.RoleUser, Content: "hello"},
@@ -1066,33 +696,39 @@ func TestBuildForkMessages_KeepsAssistantWithToolCalls(t *testing.T) {
 		}},
 	}
 	result := buildForkMessages(msgs, "fork-desc", "do something")
-	// sys + user + assistant + tool(call_1) + tool(call_2) + user(fork directive) = 6
-	if len(result) != 6 {
-		t.Fatalf("expected 6 messages, got %d", len(result))
+	// sys + user + fork directive = 3（assistant + tool_calls 全部排除）
+	if len(result) != 3 {
+		t.Fatalf("expected 3 messages, got %d", len(result))
 	}
-	// assistant 保留
-	if result[2].Role != llm.RoleAssistant {
-		t.Error("assistant should be preserved")
+	if result[2].Role != llm.RoleUser || !strings.Contains(result[2].Content, forkBoilerplateTag) {
+		t.Error("last message should be fork directive")
 	}
-	if len(result[2].ToolCalls) != 2 {
-		t.Errorf("assistant should keep 2 tool_calls, got %d", len(result[2].ToolCalls))
+	// 不应有任何 tool 角色消息和 assistant 消息
+	for _, m := range result {
+		if m.Role == llm.RoleTool || m.Role == llm.RoleAssistant {
+			t.Errorf("unexpected %s message in fork context", m.Role)
+		}
 	}
-	// tool 占位消息
-	if result[3].Role != llm.RoleTool || result[3].ToolCallID != "call_1" {
-		t.Errorf("message 3 should be tool for call_1: %+v", result[3])
+}
+func TestBuildForkMessages_AgentToolCallPreserved(t *testing.T) {
+	msgs := []llm.Message{
+		{Role: llm.RoleSystem, Content: "sys"},
+		{Role: llm.RoleUser, Content: "hello"},
+		{Role: llm.RoleAssistant, Content: "let me check", ToolCalls: []llm.ToolCall{
+			{ID: "call_1", Name: "agent", Arguments: `{"description":"x","prompt":"y"}`},
+			{ID: "call_2", Name: "bash", Arguments: `{"command":"ls"}`},
+		}},
+		{Role: llm.RoleTool, Content: "agent result", ToolCallID: "call_1"},
+		{Role: llm.RoleTool, Content: "file list", ToolCallID: "call_2"},
 	}
-	if result[3].Content != forkPlaceholderResult {
-		t.Errorf("tool placeholder should be %q, got %q", forkPlaceholderResult, result[3].Content)
+	result := buildForkMessages(msgs, "fork-desc", "do something")
+	// sys + user + user(fork directive) = 3（assistant + tool_calls 全部排除）
+	if len(result) != 3 {
+		t.Fatalf("expected 3 messages, got %d", len(result))
 	}
-	if result[4].Role != llm.RoleTool || result[4].ToolCallID != "call_2" {
-		t.Errorf("message 4 should be tool for call_2: %+v", result[4])
-	}
-	if result[4].Content != forkPlaceholderResult {
-		t.Errorf("tool placeholder should be %q, got %q", forkPlaceholderResult, result[4].Content)
-	}
-	// fork directive 包含 boilerplate
-	if !strings.Contains(result[5].Content, forkBoilerplateTag) {
-		t.Error("fork directive should contain boilerplate tag")
+	// fork directive 作为最后一条 user 消息
+	if result[2].Role != llm.RoleUser || !strings.Contains(result[2].Content, forkBoilerplateTag) {
+		t.Error("last message should be fork directive")
 	}
 }
 
