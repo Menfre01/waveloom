@@ -21,6 +21,8 @@
 
 **A DeepSeek-native terminal code agent engineered for cache economics.** Prefix-cache architecture keeps the longest common prefix cache-hot across turns; LLM auto-selects pro for deep reasoning and flash for routine tasks — maximizing cache hits and minimizing token cost. Premium TUI with `.claude/skills/` and `.claude.json` MCP configs drop in — zero-friction onboarding. One Go binary.
 
+**DeepSeek 原生终端编码代理，围绕缓存经济学设计。** 前缀缓存架构让最长公共前缀跨轮次持续命中；LLM 自动按任务选模型——pro 做深度推理，flash 处理常规任务——最大化缓存命中，最小化 token 成本。专业级 TUI，`.claude/skills/` 和 `.claude.json` MCP 配置开箱兼容，零摩擦迁移。单一 Go 二进制。
+
 <p align="center">
   <img src="./assets/demo.en.gif" alt="Waveloom Demo" width="900"/>
 </p>
