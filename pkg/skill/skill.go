@@ -807,6 +807,12 @@ func (l *Loader) substituteVariables(body, args string, argsList, namedArgs []st
 	}
 	body = strings.ReplaceAll(body, "$ARGUMENTS", args)
 
+	// 4.5 $@ — bash 兼容语法，行为等同 $ARGUMENTS
+	if strings.Contains(body, "$@") {
+		substituted = true
+	}
+	body = strings.ReplaceAll(body, "$@", args)
+
 	// 5. Session ID
 	sid := l.SessionID
 	body = strings.ReplaceAll(body, "${CLAUDE_SESSION_ID}", sid)
