@@ -5355,9 +5355,16 @@ func (m *model) syncThemeComponents() {
 	// 同步 ctx 进度条轨道颜色
 	m.ctxProgress.EmptyColor = colorFooterFg
 
-	// 同步 help 组件主题
-	isDark := m.themeMode == "dark" || m.themeMode == "darkcolorblind" || (m.themeMode == "auto" && m.autoIsDark())
-	m.help.Styles = help.DefaultStyles(isDark)
+	// 同步 help 组件样式，使用 Waveloom palette 确保对比度
+	m.help.Styles = help.Styles{
+		ShortKey:       lipgloss.NewStyle().Foreground(colorHeaderAccent).Bold(true),
+		ShortDesc:      lipgloss.NewStyle().Foreground(colorFooterFg),
+		ShortSeparator: lipgloss.NewStyle().Foreground(colorMuted),
+		Ellipsis:       lipgloss.NewStyle().Foreground(colorMuted),
+		FullKey:        lipgloss.NewStyle().Foreground(colorHeaderAccent).Bold(true),
+		FullDesc:       lipgloss.NewStyle().Foreground(colorFooterFg),
+		FullSeparator:  lipgloss.NewStyle().Foreground(colorMuted),
+	}
 
 	// 同步 input 组件样式 —— 提示符与用户消息前缀联动，placeholder 使用 muted 色
 	inputStyles := m.input.Styles()
