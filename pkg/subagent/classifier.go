@@ -44,7 +44,7 @@ func classify(events []SubagentEvent, workspaceDir string) []SecurityFinding {
 			switch current.name {
 			case "bash_subagent":
 				findings = classifyCommand(findings, current.args)
-			case "read_file", "write_file", "edit_file":
+			case "read", "write", "edit":
 				findings = classifyFile(findings, current.name, current.args, workspaceDir)
 			}
 			current = pendingTool{} // 消费完毕
@@ -85,7 +85,7 @@ func classifyFile(findings []SecurityFinding, toolName, filePath, workspaceDir s
 	//    对写入操作 → HIGH；对读取操作 → MEDIUM
 	if permission.IsSensitiveFile(filePath) {
 		severity := "HIGH"
-		if toolName != "write_file" && toolName != "edit_file" {
+		if toolName != "write" && toolName != "edit" {
 			severity = "MEDIUM"
 		}
 		findings = append(findings, SecurityFinding{
@@ -93,7 +93,7 @@ func classifyFile(findings []SecurityFinding, toolName, filePath, workspaceDir s
 			Category: "sensitive_file",
 			Detail:   fmt.Sprintf("%s accessed sensitive file: %s — %s", toolName, filePath, filepath.Base(filePath)),
 		})
-		if !inWS && (toolName == "write_file" || toolName == "edit_file") {
+		if !inWS && (toolName == "write" || toolName == "edit") {
 			// 同时报告 workspace 外写入
 			findings = append(findings, SecurityFinding{
 				Severity: "LOW",
@@ -105,7 +105,7 @@ func classifyFile(findings []SecurityFinding, toolName, filePath, workspaceDir s
 	}
 
 	// 1. 工作目录外写入 → out_of_workspace_write
-	if !inWS && (toolName == "write_file" || toolName == "edit_file") {
+	if !inWS && (toolName == "write" || toolName == "edit") {
 		findings = append(findings, SecurityFinding{
 			Severity: "LOW",
 			Category: "out_of_workspace_write",
@@ -132,7 +132,7 @@ func classifyFile(findings []SecurityFinding, toolName, filePath, workspaceDir s
 		})
 	case permission.PathSensitive:
 		severity := "MEDIUM"
-		if toolName == "write_file" || toolName == "edit_file" {
+		if toolName == "write" || toolName == "edit" {
 			severity = "HIGH"
 		}
 		findings = append(findings, SecurityFinding{

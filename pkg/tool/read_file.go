@@ -55,7 +55,7 @@ func (t *ReadFile) Execute(ctx context.Context, p ReadFileParams) (*ToolResult, 
 	info, err := os.Stat(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return t.fileNotFoundError(path), nil
+			return fileNotFoundError(path), nil
 		}
 		return toolError(ErrorClassFatal, ErrKindPermissionDenied,
 			fmt.Sprintf("cannot access file: %s", path), err), nil
@@ -168,7 +168,7 @@ func fileExtension(path string) string {
 	return ""
 }
 
-func (t *ReadFile) fileNotFoundError(path string) *ToolResult {
+func fileNotFoundError(path string) *ToolResult {
 	cwd, _ := os.Getwd()
 	msg := fmt.Sprintf("File does not exist: %s\nCWD: %s", path, cwd)
 

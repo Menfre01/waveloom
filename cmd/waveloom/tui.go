@@ -3490,7 +3490,7 @@ func (m *model) handleToolResult(ev agentloop.ToolCallResult) {
 // ToolArgs 来自 formatToolArgs，对于文件操作工具直接返回目标路径。
 func extractToolFilePaths(toolName string, toolArgs string) []string {
 	switch toolName {
-	case "read_file", "write_file", "edit_file":
+	case "read", "write", "edit":
 		if toolArgs != "" && !strings.HasPrefix(toolArgs, "{") {
 			return []string{toolArgs}
 		}

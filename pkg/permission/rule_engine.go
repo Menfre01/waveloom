@@ -145,9 +145,9 @@ func (re *RuleEngine) checkRules(rules []RuleEntry, toolName string, input json.
 func compatToolNames(toolName string) []string {
 	switch toolName {
 	case "read":
-		return []string{toolName, "read_file_hashline", "read_file"}
+		return []string{toolName, "read_file_hashline"}
 	case "edit":
-		return []string{toolName, "edit_file_hashline", "edit_file"}
+		return []string{toolName, "edit_file_hashline"}
 	case "write":
 		return []string{toolName, "write_file"}
 	default:

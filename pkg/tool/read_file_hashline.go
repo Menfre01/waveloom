@@ -54,7 +54,7 @@ func (t *ReadFileHashline) Execute(ctx context.Context, p ReadFileHashlineParams
 	info, err := os.Stat(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return (&ReadFile{}).fileNotFoundError(path), nil
+			return fileNotFoundError(path), nil
 		}
 		return toolError(ErrorClassFatal, ErrKindPermissionDenied,
 			fmt.Sprintf("cannot access file: %s", path), err), nil
