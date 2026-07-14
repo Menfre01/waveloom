@@ -108,8 +108,8 @@ func TestNormalizeWidth_AlreadyHalfwidth(t *testing.T) {
 // formatToolArgs / extractField / stripCWDPrefix
 // ---------------------------------------------------------------------------
 
-func TestFormatToolArgs_ReadFile(t *testing.T) {
-	result := formatToolArgs("read_file", `{"file_path":"/home/user/project/main.go"}`, "/home/user/project")
+func TestFormatToolArgs_Read(t *testing.T) {
+	result := formatToolArgs("read", `{"file_path":"/home/user/project/main.go"}`, "/home/user/project")
 	if result != "main.go" {
 		t.Errorf("expected 'main.go', got %q", result)
 	}
@@ -169,9 +169,9 @@ func TestStripCWDPrefix_NoMatch(t *testing.T) {
 // toolSuffix — 工具结果摘要后缀
 // ---------------------------------------------------------------------------
 
-func TestToolSuffix_ReadFile(t *testing.T) {
+func TestToolSuffix_Read(t *testing.T) {
 	p := &Paragraph{
-		ToolName:   "read_file",
+		ToolName:   "read",
 		ToolResult: strings.Repeat("x", 2048),
 		ToolDurMs:  8,
 		State:      stateDone,
@@ -225,7 +225,7 @@ func TestToolSuffix_Error(t *testing.T) {
 
 func TestToolSuffix_Streaming(t *testing.T) {
 	p := &Paragraph{
-		ToolName: "read_file",
+		ToolName: "read",
 		State:    stateStreaming,
 	}
 	suffix := toolSuffix(p, &enUS)
@@ -234,6 +234,8 @@ func TestToolSuffix_Streaming(t *testing.T) {
 	}
 }
 
+// ---------------------------------------------------------------------------
+// formatBytes / formatDuration / formatTokens
 // ---------------------------------------------------------------------------
 // formatBytes / formatDuration / formatTokens
 // ---------------------------------------------------------------------------
