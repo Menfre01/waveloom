@@ -4579,6 +4579,10 @@ func (m *model) View() tea.View {
 	ctx := m.viewportCtx()
 	allLines, _ := buildViewportContent(m.paras, ctx, m.focusIndex, 0)
 
+	// 将 logo 注入 viewport 顶部（可滚动，内容增多后会被挤出窗口）
+	logoLines := m.renderLogoLines(contentWidth)
+	allLines = append(logoLines, allLines...)
+
 	// 2. 渲染覆盖层
 	var overlayContent string
 	switch m.overlay {
@@ -4882,12 +4886,10 @@ func (m *model) renderInputSeparator(contentWidth int) string {
 
 // ---------------------------------------------------------------------------
 
-func (m *model) renderHeader() string {
-	contentWidth := max(m.width-4, 20)
-	var sb strings.Builder
-
+// renderLogoLines 返回 logo 的渲染行（不含 session/CWD 元数据），用于插入 viewport 可滚动区域。
+func (m *model) renderLogoLines(contentWidth int) []string {
 	if contentWidth >= 80 {
-		// 宽屏：6 行渐变色 ASCII art logo（颜色来自当前主题）
+		lines := make([]string, 0, 7)
 		for i, line := range asciiArt {
 			s := lipgloss.NewStyle().
 				Foreground(colorLogoGradient[i]).
@@ -4895,21 +4897,24 @@ func (m *model) renderHeader() string {
 				Width(contentWidth).
 				Align(lipgloss.Center).
 				Render(line)
-			sb.WriteString(s)
-			sb.WriteString("\n")
+			lines = append(lines, s)
 		}
-		sb.WriteString("\n")
-	} else {
-		// 窄屏：单行紧凑 logo（首色）
-		logoLine := lipgloss.NewStyle().
-			Foreground(colorLogoGradient[0]).
-			Bold(true).
-			Width(contentWidth).
-			Align(lipgloss.Center).
-			Render("WAVELOOM")
-		sb.WriteString(logoLine)
-		sb.WriteString("\n\n")
+		lines = append(lines, "") // logo 后空行分隔
+		return lines
 	}
+	// 窄屏：单行紧凑 logo
+	logoLine := lipgloss.NewStyle().
+		Foreground(colorLogoGradient[0]).
+		Bold(true).
+		Width(contentWidth).
+		Align(lipgloss.Center).
+		Render("WAVELOOM")
+	return []string{logoLine, ""}
+}
+
+func (m *model) renderHeader() string {
+	contentWidth := max(m.width-4, 20)
+	var sb strings.Builder
 
 	// 信息行：session ID（左） + 版本号（右）
 	sidLine := ""
