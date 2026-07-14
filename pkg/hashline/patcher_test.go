@@ -1000,21 +1000,6 @@ func TestMapOpMv(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// splitBody empty test
-// ---------------------------------------------------------------------------
-
-func TestSplitBodyEmpty(t *testing.T) {
-	result := splitBody("")
-	if result != nil {
-		t.Errorf("expected nil for empty body, got %v", result)
-	}
-	result = splitBody("single line")
-	if len(result) != 1 || result[0] != "single line" {
-		t.Errorf("unexpected single line: %v", result)
-	}
-}
-
-// ---------------------------------------------------------------------------
 // applyEdits INS head on empty file
 // ---------------------------------------------------------------------------
 
@@ -1066,3 +1051,100 @@ func TestApplyRemOnNonExistent(t *testing.T) {
 	}
 }
 
+
+// REGRESSION: INS.POST with only + (empty body line) should insert one blank line.
+// Previously splitBody returned nil for empty body, causing the blank line to be silently dropped.
+func TestRegressionInsertEmptyBodyLine(t *testing.T) {
+	// Parse a patch with INS.POST containing a single empty body line
+	patchText := `*** Begin Patch
+[/tmp/test-emptybody.go#ABCD]
+INS.POST 1:
++
+INS.TAIL:
++// end
+*** End Patch`
+	patch, err := ParsePatch(patchText)
+	if err != nil {
+		t.Fatalf("parse error: %v", err)
+	}
+	if len(patch.Sections) != 1 {
+		t.Fatalf("expected 1 section, got %d", len(patch.Sections))
+	}
+	sec := patch.Sections[0]
+	if len(sec.Ops) != 2 {
+		t.Fatalf("expected 2 ops, got %d", len(sec.Ops))
+	}
+
+	// First op: INS.POST 1 with one empty body line
+	ins := sec.Ops[0]
+	if ins.Kind != OpINS || ins.Position != "post" || ins.RefLine != 1 {
+		t.Errorf("unexpected INS op: kind=%v pos=%s ref=%d", ins.Kind, ins.Position, ins.RefLine)
+	}
+	if len(ins.Body) != 1 || ins.Body[0] != "" {
+		t.Errorf("expected Body=[\"\"], got %v", ins.Body)
+	}
+
+	// Second op: INS.TAIL with body "// end"
+	tail := sec.Ops[1]
+	if len(tail.Body) != 1 || tail.Body[0] != "// end" {
+		t.Errorf("expected Body=[\"// end\"], got %v", tail.Body)
+	}
+
+	// Apply to a simple file and verify blank line is inserted
+	fs := NewMemoryFS()
+	_ = fs.WriteFile("/tmp/test-emptybody.go", "line1\nline2\n")
+	store := NewStore()
+	store.Update("/tmp/test-emptybody.go", "line1\nline2\n")
+	results := ApplyPatch(patch, fs, store)
+	if len(results) != 1 || results[0].Error != nil {
+	expected := "line1\n\nline2\n// end\n"
+	actual, _ := fs.ReadFile("/tmp/test-emptybody.go")
+	if actual != expected {
+		t.Errorf("expected %q, got %q", expected, actual)
+	}
+	}
+}
+
+// TestBodyEscapeBackslashPlus verifies that \+ in body lines is treated as literal + content.
+func TestBodyEscapeBackslashPlus(t *testing.T) {
+	patchText := `*** Begin Patch
+[/tmp/escape.go#ABCD]
+INS.HEAD:
+\+// this line starts with a literal +
+\+
+\+line
+*** End Patch`
+	patch, err := ParsePatch(patchText)
+	if err != nil {
+		t.Fatalf("parse error: %v", err)
+	}
+	sec := patch.Sections[0]
+	ins := sec.Ops[0]
+	if len(ins.Body) != 3 {
+		t.Fatalf("expected 3 body lines, got %d: %v", len(ins.Body), ins.Body)
+	}
+	if ins.Body[0] != "+// this line starts with a literal +" {
+		t.Errorf("body[0] = %q", ins.Body[0])
+	}
+	if ins.Body[1] != "+" {
+		t.Errorf("body[1] = %q, expected single +", ins.Body[1])
+	}
+	if ins.Body[2] != "+line" {
+		t.Errorf("body[2] = %q", ins.Body[2])
+	}
+
+	// Verify applied result
+	fs := NewMemoryFS()
+	_ = fs.WriteFile("/tmp/escape.go", "package main\n")
+	store := NewStore()
+	store.Update("/tmp/escape.go", "package main\n")
+	results := ApplyPatch(patch, fs, store)
+	if len(results) != 1 || results[0].Error != nil {
+		t.Fatalf("apply error: %+v", results)
+	}
+	actual, _ := fs.ReadFile("/tmp/escape.go")
+	expected := "+// this line starts with a literal +\n+\n+line\npackage main\n"
+	if actual != expected {
+		t.Errorf("expected %q, got %q", expected, actual)
+	}
+}
