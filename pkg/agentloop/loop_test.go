@@ -3708,9 +3708,25 @@ func TestVerbose_WithWriter(t *testing.T) {
 func TestExecuteToolCalls_ContextCancelledDuringConcurrent(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 
+	var wg sync.WaitGroup
+	wg.Add(2)
+	proceedCh := make(chan struct{})
+
 	l := New(nil, newTestRegistry(
-		newSuccessTool("tool_a", true, "ok"),
-		newSuccessTool("tool_b", true, "ok"),
+		&barrierTool{
+			name:           "tool_a",
+			concurrentSafe: true,
+			result:         &tool.ToolResult{Content: "ok"},
+			startBarrier:   &wg,
+			proceedCh:      proceedCh,
+		},
+		&barrierTool{
+			name:           "tool_b",
+			concurrentSafe: true,
+			result:         &tool.ToolResult{Content: "ok"},
+			startBarrier:   &wg,
+			proceedCh:      proceedCh,
+		},
 	), DefaultConfig())
 
 	calls := []llm.ToolCall{
@@ -3719,13 +3735,24 @@ func TestExecuteToolCalls_ContextCancelledDuringConcurrent(t *testing.T) {
 	}
 
 	ch := make(chan TurnEvent, 16)
-	// 立即取消 ctx
-	cancel()
-
-	_, reason, err := l.executeToolCalls(ctx, calls, &LoopState{}, ch)
 	go func() { for range ch {} }()
 
-	if err == nil {
+	// 在 goroutine 中启动 executeToolCalls，工具启动后阻塞在 proceedCh 上
+	var reason TerminalReason
+	var execErr error
+	done := make(chan struct{})
+	go func() {
+		_, reason, execErr = l.executeToolCalls(ctx, calls, &LoopState{}, ch)
+		close(done)
+	}()
+
+	// 等两个工具都进入 Execute 后取消 ctx，再释放工具
+	wg.Wait()
+	cancel()
+	close(proceedCh)
+	<-done
+
+	if execErr == nil {
 		t.Fatal("expected error when ctx is cancelled")
 	}
 	if reason != ReasonAborted {
