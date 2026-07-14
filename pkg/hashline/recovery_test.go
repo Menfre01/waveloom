@@ -15,7 +15,7 @@ func TestRecoverOpsFileHeadInsert(t *testing.T) {
 	// 当前: 头部插入了一行
 	current := "// header\nline1\nline2\nline3\n"
 
-	ops := []Op{{Kind: OpSWAP, LineStart: 2, LineEnd: 2, Body: "new line2"}}
+	ops := []Op{{Kind: OpSWAP, LineStart: 2, LineEnd: 2, Body: []string{"new line2"}}}
 
 	result := RecoverOps(snapshot, current, ops)
 	if !result.Success {
@@ -38,7 +38,7 @@ func TestRecoverOpsFileTailAppend(t *testing.T) {
 	// 当前: 尾部追加了一行
 	current := "line1\nline2\nline3\nline4\n"
 
-	ops := []Op{{Kind: OpSWAP, LineStart: 2, LineEnd: 2, Body: "new line2"}}
+	ops := []Op{{Kind: OpSWAP, LineStart: 2, LineEnd: 2, Body: []string{"new line2"}}}
 
 	result := RecoverOps(snapshot, current, ops)
 	if !result.Success {
@@ -59,7 +59,7 @@ func TestRecoverOpsLineDeleted(t *testing.T) {
 	current := "line1\nline3\n"
 
 	// 尝试编辑已删除的行
-	ops := []Op{{Kind: OpSWAP, LineStart: 2, LineEnd: 2, Body: "new line"}}
+	ops := []Op{{Kind: OpSWAP, LineStart: 2, LineEnd: 2, Body: []string{"new line"}}}
 
 	result := RecoverOps(snapshot, current, ops)
 	if result.Success {
@@ -74,7 +74,7 @@ func TestRecoverOpsLineModified(t *testing.T) {
 	current := "line1\nmodified line\nline3\n"
 
 	// 尝试编辑被修改的行 → 冲突
-	ops := []Op{{Kind: OpSWAP, LineStart: 2, LineEnd: 2, Body: "new line"}}
+	ops := []Op{{Kind: OpSWAP, LineStart: 2, LineEnd: 2, Body: []string{"new line"}}}
 
 	result := RecoverOps(snapshot, current, ops)
 	if result.Success {
@@ -88,7 +88,7 @@ func TestRecoverOpsInsPost(t *testing.T) {
 	// 当前: 头部插入
 	current := "// header\nline1\nline2\nline3\n"
 
-	ops := []Op{{Kind: OpINS, Position: "post", RefLine: 2, Body: "new line"}}
+	ops := []Op{{Kind: OpINS, Position: "post", RefLine: 2, Body: []string{"new line"}}}
 
 	result := RecoverOps(snapshot, current, ops)
 	if !result.Success {
@@ -107,8 +107,8 @@ func TestRecoverOpsInsHeadTailUnaffected(t *testing.T) {
 	current := "// new\nline1\nline2\n// end\n"
 
 	ops := []Op{
-		{Kind: OpINS, Position: "head", Body: "header"},
-		{Kind: OpINS, Position: "tail", Body: "footer"},
+		{Kind: OpINS, Position: "head", Body: []string{"header"}},
+		{Kind: OpINS, Position: "tail", Body: []string{"footer"}},
 	}
 
 	result := RecoverOps(snapshot, current, ops)
@@ -144,7 +144,7 @@ func TestRecoverOpsEmptyFile(t *testing.T) {
 	snapshot := ""
 	current := "new line\n"
 
-	ops := []Op{{Kind: OpINS, Position: "tail", Body: "appended"}}
+	ops := []Op{{Kind: OpINS, Position: "tail", Body: []string{"appended"}}}
 
 	result := RecoverOps(snapshot, current, ops)
 	if !result.Success {
@@ -156,7 +156,7 @@ func TestRecoverOpsInsRefDeleted(t *testing.T) {
 	snapshot := "line1\nline2\nline3\n"
 	current := "line1\nline3\n" // line2 deleted
 
-	ops := []Op{{Kind: OpINS, Position: "post", RefLine: 2, Body: "new"}}
+	ops := []Op{{Kind: OpINS, Position: "post", RefLine: 2, Body: []string{"new"}}}
 
 	result := RecoverOps(snapshot, current, ops)
 	if result.Success {
@@ -307,7 +307,7 @@ func TestMapOpSwapUnchanged(t *testing.T) {
 		{OldLine: 2, NewLine: 2, Status: MapUnchanged},
 	}
 
-	op := Op{Kind: OpSWAP, LineStart: 2, LineEnd: 2, Body: "new"}
+	op := Op{Kind: OpSWAP, LineStart: 2, LineEnd: 2, Body: []string{"new"}}
 	mapped, err := mapOp(op, mappings)
 	if err != nil {
 		t.Fatalf("mapOp failed: %v", err)

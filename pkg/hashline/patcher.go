@@ -49,7 +49,7 @@ type Op struct {
 	LineEnd   int    // 结束行号（SWAP 必需，含；DEL 可选，缺省 = LineStart）
 	Position  string // INS 的插入位置："head" / "tail" / "pre" / "post"
 	RefLine   int    // INS pre/post 的参考行号
-	Body      string // SWAP/INS 的新内容（原始 body 文本，不含 + 前缀）
+	Body      []string // SWAP/INS 的新内容（已去除 + 前缀的 body 行，nil 表示无 body）
 	DestPath  string // MV 的目标路径
 }
 
@@ -339,7 +339,7 @@ func (s *patchScanner) parseSwapOp(line string, lineNum int) (Op, error) {
 
 	s.pos++ // consume op header
 
-	var body string
+	var body []string
 	if hasBody {
 		body = s.readBody()
 	}
@@ -393,8 +393,9 @@ func (s *patchScanner) parseMvOp(line string, lineNum int) (Op, error) {
 	return Op{Kind: OpMV, DestPath: rest}, nil
 }
 
-// readBody 读取以 + 开头的 body 行。
-func (s *patchScanner) readBody() string {
+// readBody 读取以 + 开头的 body 行，返回去除前缀后的行列表（nil 表示无 body 行）。
+// \+ 开头的行会被转义：去掉反斜杠，保留后面的 + 作为字面量内容。
+func (s *patchScanner) readBody() []string {
 	var bodyLines []string
 	for s.pos < len(s.lines) {
 		raw := s.rawLine()
@@ -402,7 +403,12 @@ func (s *patchScanner) readBody() string {
 			s.pos++
 			break
 		}
-		if strings.HasPrefix(raw, "+") {
+		if strings.HasPrefix(raw, `\+`) {
+			// 转义：\+ 开头 → 字面量 + 开头的内容
+			content := raw[1:] // 去掉 \，保留 + 及后续内容
+			bodyLines = append(bodyLines, content)
+			s.pos++
+		} else if strings.HasPrefix(raw, "+") {
 			content := raw[1:]
 			bodyLines = append(bodyLines, content)
 			s.pos++
@@ -410,7 +416,7 @@ func (s *patchScanner) readBody() string {
 			break
 		}
 	}
-	return strings.Join(bodyLines, "\n")
+	return bodyLines
 }
 
 // parseLineRange 解析 "N.=M" 或 "N" 行号格式。
@@ -799,14 +805,14 @@ func applyEdits(content string, ops []Op) (string, []EditHunk, error) {
 			if sp.end > len(lines) {
 				sp.end = len(lines)
 			}
-			bodyLines := splitBody(sp.op.Body)
+			bodyLines := sp.op.Body
 			newPart := make([]string, 0, sp.start+len(bodyLines)+len(lines)-sp.end)
 			newPart = append(newPart, lines[:sp.start]...)
 			newPart = append(newPart, bodyLines...)
 			newPart = append(newPart, lines[sp.end:]...)
 			lines = newPart
 		case OpINS:
-			bodyLines := splitBody(sp.op.Body)
+			bodyLines := sp.op.Body
 			insertAt := sp.start
 			if insertAt > len(lines) {
 				insertAt = len(lines)
@@ -823,13 +829,6 @@ func applyEdits(content string, ops []Op) (string, []EditHunk, error) {
 	return result, hunks, nil
 }
 
-func splitBody(body string) []string {
-	if body == "" {
-		return nil
-	}
-	bodyLines := strings.Split(body, "\n")
-	return bodyLines
-}
 
 func buildEditHunks(origLines []string, spans []editSpan) []EditHunk {
 	var hunks []EditHunk
@@ -855,7 +854,7 @@ func buildEditHunks(origLines []string, spans []editSpan) []EditHunk {
 			}
 
 		case OpSWAP:
-			bodyLines := splitBody(sp.op.Body)
+			bodyLines := sp.op.Body
 
 			hunk := EditHunk{
 				OldStart: sp.start + 1,
@@ -880,7 +879,7 @@ func buildEditHunks(origLines []string, spans []editSpan) []EditHunk {
 			hunks = append(hunks, hunk)
 
 		case OpINS:
-			bodyLines := splitBody(sp.op.Body)
+			bodyLines := sp.op.Body
 
 			insertAt := sp.start + 1
 			if sp.op.Position == "tail" {
