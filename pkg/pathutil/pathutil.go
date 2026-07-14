@@ -11,6 +11,18 @@ import (
 	"regexp"
 )
 
+// TempDir 返回规范化的临时目录路径。
+// 与 os.TempDir() 不同，TempDir 通过 filepath.EvalSymlinks 解析符号链接，
+// 确保返回的路径在不同上下文（Go 进程、Shell 子进程、session 持久化）中一致。
+// macOS 上 /var 是 /private/var 的符号链接，不解析会导致路径不一致。
+func TempDir() string {
+	dir := os.TempDir()
+	if resolved, err := filepath.EvalSymlinks(dir); err == nil {
+		return resolved
+	}
+	return filepath.Clean(dir)
+}
+
 // cdPattern 匹配 Shell 命令中的 "cd <path> &&" 或 "cd <path> ;" 前缀。
 // 支持单引号、双引号和无引号路径。
 //

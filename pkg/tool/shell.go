@@ -521,7 +521,7 @@ func (t *Shell) setupCommand(ctx context.Context, p *ShellParams) (*exec.Cmd, co
 	SetSysProcAttr(cmd)
 
 	// 创建临时输出文件（stdout/stderr 合并，O_APPEND 保证原子写入）
-	outputPath := filepath.Join(os.TempDir(), fmt.Sprintf("waveloom-out-%s.log", newTaskID()))
+	outputPath := filepath.Join(pathutil.TempDir(), fmt.Sprintf("waveloom-out-%s.log", newTaskID()))
 	outputFile, err := os.OpenFile(outputPath, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o600)
 	if err != nil {
 		// 文件创建失败 → fallback 到内存 buffer（向后兼容）
@@ -803,7 +803,7 @@ func prepareBackgroundCommand(p *ShellParams) (bgLogFile string, isBackground bo
 
 	// 多行命令含 & → 前景执行，但标记 log 文件路径供 agent 参考
 	if shellutil.IsBackgroundCommand(p.Command) {
-		logFile := filepath.Join(os.TempDir(), fmt.Sprintf("waveloom-bg-%d.log", time.Now().UnixNano()))
+		logFile := filepath.Join(pathutil.TempDir(), fmt.Sprintf("waveloom-bg-%d.log", time.Now().UnixNano()))
 		// 文件 fd 输出已消除 SIGPIPE，不需要 subshell 重定向改写
 		return logFile, false
 	}

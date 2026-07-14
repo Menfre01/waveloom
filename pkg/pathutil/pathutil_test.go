@@ -3,6 +3,7 @@ package pathutil
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -201,4 +202,64 @@ func TestResolvePathWithDir(t *testing.T) {
 			t.Errorf("ResolvePathWithDir() = %q, want absolute path", got)
 		}
 	})
+}
+
+// ---------------------------------------------------------------------------
+// TempDir
+// ---------------------------------------------------------------------------
+
+func TestTempDir_IsAbsolute(t *testing.T) {
+	dir := TempDir()
+	if !filepath.IsAbs(dir) {
+		t.Errorf("TempDir() = %q, want absolute path", dir)
+	}
+}
+
+func TestTempDir_IsConsistent(t *testing.T) {
+	dir1 := TempDir()
+	dir2 := TempDir()
+	if dir1 != dir2 {
+		t.Errorf("TempDir() returned different values across calls: %q vs %q", dir1, dir2)
+	}
+}
+
+// TestTempDir_ResolvesSymlinks 验证 TempDir 解析了符号链接。
+// macOS 上 /var 是 /private/var 的符号链接，os.TempDir() 常返回 /var/...，
+// 而 filepath.EvalSymlinks 会解析为 /private/var/...。
+// TempDir 应始终返回解析后的路径。
+func TestTempDir_ResolvesSymlinks(t *testing.T) {
+	dir := TempDir()
+	// 如果 os.TempDir() 以 /var/ 开头，TempDir 应在 macOS 上解析为 /private/var/...
+	raw := os.TempDir()
+	resolved, err := filepath.EvalSymlinks(raw)
+	if err != nil {
+		t.Skipf("EvalSymlinks failed on os.TempDir(): %v", err)
+	}
+	if filepath.Clean(resolved) != dir {
+		t.Errorf("TempDir() = %q, want %q (EvalSymlinks of os.TempDir())", dir, filepath.Clean(resolved))
+	}
+}
+
+// REGRESSION: TMPDIR 路径不一致 —— os.TempDir() 返回未解析路径，
+// 导致 bash 工具返回的 log path 与实际文件系统路径不匹配。
+// 修复：TempDir() 始终通过 filepath.EvalSymlinks 解析。
+func TestRegression_TempDir_SymlinkResolution(t *testing.T) {
+	raw := os.TempDir()
+	dir := TempDir()
+	// TempDir 不应以 /var（未解析）开头——应已解析为 /private/var
+	if strings.HasPrefix(dir, "/var/") {
+		resolved, err := filepath.EvalSymlinks("/var")
+		if err == nil && resolved != "/var" {
+			t.Errorf("TempDir() returned unresolved path %q, expected resolved path (not starting with /var/ when /var is a symlink)", dir)
+		}
+	}
+	// 两个路径应指向同一文件
+	fi1, err1 := os.Stat(raw)
+	fi2, err2 := os.Stat(dir)
+	if err1 != nil || err2 != nil {
+		t.Skipf("cannot stat temp dirs: raw=%v resolved=%v", err1, err2)
+	}
+	if !os.SameFile(fi1, fi2) {
+		t.Errorf("TempDir() = %q does not point to same file as os.TempDir() = %q", dir, raw)
+	}
 }

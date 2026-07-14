@@ -985,7 +985,7 @@ func (l *Loader) execShell(command, dir string) string {
 	setSysProcAttrSkill(cmd)
 
 	// 创建输出文件（O_APPEND，合并 stdout/stderr）
-	outputPath := filepath.Join(os.TempDir(), fmt.Sprintf("waveloom-skill-%d.log", time.Now().UnixNano()))
+	outputPath := filepath.Join(pathutil.TempDir(), fmt.Sprintf("waveloom-skill-%d.log", time.Now().UnixNano()))
 	outputFile, err := os.OpenFile(outputPath, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o600)
 	useFileFD := err == nil
 	var stdout, stderr strings.Builder
