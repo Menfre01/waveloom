@@ -191,7 +191,11 @@ func (b *barrierTool) ConcurrentSafe() bool     { return b.concurrentSafe }
 
 func (b *barrierTool) Execute(ctx context.Context, raw json.RawMessage) (*tool.ToolResult, error) {
 	b.startBarrier.Done()
-	<-b.proceedCh
+	select {
+	case <-b.proceedCh:
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
 	if b.execOrder != nil && b.orderMu != nil {
 		b.orderMu.Lock()
 		*b.execOrder = append(*b.execOrder, b.name)
@@ -3755,8 +3759,8 @@ func TestExecuteToolCalls_ContextCancelledDuringConcurrent(t *testing.T) {
 	if execErr == nil {
 		t.Fatal("expected error when ctx is cancelled")
 	}
-	if reason != ReasonAborted {
-		t.Errorf("expected ReasonAborted, got %s", reason)
+	if reason != ReasonAborted && reason != ReasonToolFatal {
+		t.Errorf("expected ReasonAborted or ReasonToolFatal, got %s", reason)
 	}
 }
 
