@@ -783,8 +783,8 @@ func forwardEvents(ctx context.Context, subCh <-chan agentloop.TurnEvent, cb fun
 					switch op.ToolName {
 					case "write_file":
 						fmt.Fprintf(&sb, "- write_file: %s (%s)\n", op.FilePath, fmtBytes(op.BytesIn))
-					case "edit_file":
-						fmt.Fprintf(&sb, "- edit_file: %s (+%d -%d lines)\n", op.FilePath, op.LinesAdd, op.LinesDel)
+					case "edit_file", "edit_file_hashline":
+						fmt.Fprintf(&sb, "- %s: %s (+%d -%d lines)\n", op.ToolName, op.FilePath, op.LinesAdd, op.LinesDel)
 					}
 				}
 				sb.WriteString("</subagent_write_operations>")
