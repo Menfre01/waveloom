@@ -150,8 +150,9 @@ func readFile(path string, max int) (content string, warnings []string, err erro
 	}
 
 	if !utf8.Valid(data) {
+		data = []byte(strings.ToValidUTF8(string(data), "\ufffd"))
 		warnings = append(warnings, fmt.Sprintf(
-			"%s contains invalid UTF-8; invalid sequences replaced", path))
+			"%s contains invalid UTF-8; invalid sequences replaced with U+FFFD", path))
 	}
 
 	content = strings.TrimSpace(string(data))
