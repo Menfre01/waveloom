@@ -237,12 +237,12 @@ func TestAgentTool_ExecuteCold_SubagentEndError(t *testing.T) {
 func TestBuildColdRegistry_Evaluate_IsReadOnly(t *testing.T) {
 	r := buildColdRegistry(evaluateDisallowed)
 	names := toolNames(r)
-	for _, name := range []string{"read_file", "web_fetch", "bash_subagent"} {
+	for _, name := range []string{"read", "web_fetch", "bash_subagent"} {
 		if !contains(names, name) {
 			t.Errorf("evaluate registry missing %q", name)
 		}
 	}
-	for _, name := range []string{"write_file", "edit_file"} {
+	for _, name := range []string{"write", "edit"} {
 		if contains(names, name) {
 			t.Errorf("evaluate registry should NOT have %q", name)
 		}
@@ -256,12 +256,12 @@ func TestBuildColdRegistry_Evaluate_IsReadOnly(t *testing.T) {
 func TestBuildColdRegistry_Explore_IsReadOnly(t *testing.T) {
 	r := buildColdRegistry(exploreDisallowed)
 	names := toolNames(r)
-	for _, name := range []string{"read_file", "web_fetch", "bash_subagent"} {
+	for _, name := range []string{"read", "web_fetch", "bash_subagent"} {
 		if !contains(names, name) {
 			t.Errorf("Explore registry missing %q", name)
 		}
 	}
-	for _, name := range []string{"write_file", "edit_file"} {
+	for _, name := range []string{"write", "edit"} {
 		if contains(names, name) {
 			t.Errorf("Explore registry should NOT have %q", name)
 		}
@@ -373,8 +373,8 @@ func TestForwardEvents_ToolEventsProduceCallback(t *testing.T) {
 	ch := make(chan agentloop.TurnEvent, 10)
 	go func() {
 		ch <- agentloop.StreamDelta{ContentDelta: "thinking..."}
-		ch <- agentloop.ToolCallStart{ToolCallName: "read_file", Arguments: `{"file_path":"x.go"}`}
-		ch <- agentloop.ToolCallResult{ToolCallName: "read_file", Result: "file content", DurationMs: 42}
+		ch <- agentloop.ToolCallStart{ToolCallName: "read", Arguments: `{"file_path":"x.go"}`}
+		ch <- agentloop.ToolCallResult{ToolCallName: "read", Result: "file content", DurationMs: 42}
 		ch <- agentloop.LoopDone{Turn: 1}
 		close(ch)
 	}()
@@ -390,7 +390,7 @@ func TestForwardEvents_ToolEventsProduceCallback(t *testing.T) {
 	if events[0].Kind != SubagentText || events[0].TextDelta != "thinking..." {
 		t.Errorf("event[0] wrong: %+v", events[0])
 	}
-	if events[1].Kind != SubagentToolStart || events[1].ToolName != "read_file" {
+	if events[1].Kind != SubagentToolStart || events[1].ToolName != "read" {
 		t.Errorf("event[1] wrong: %+v", events[1])
 	}
 	if events[2].Kind != SubagentToolResult || events[2].ToolDurMs != 42 {
@@ -406,11 +406,11 @@ func TestForwardEvents_WriteOperationsTracking(t *testing.T) {
 	go func() {
 		ch <- agentloop.StreamDelta{ContentDelta: "done."}
 		ch <- agentloop.ToolCallResult{
-			ToolCallName: "write_file",
+			ToolCallName: "write",
 			Result:       "Wrote 42 bytes to /tmp/test.go",
 		}
 		ch <- agentloop.ToolCallResult{
-			ToolCallName: "edit_file",
+			ToolCallName: "edit",
 			Result:       "@@ -1,0 +1,2 @@\n+added line\n+another\n",
 		}
 		ch <- agentloop.LoopDone{Turn: 1}
@@ -425,10 +425,10 @@ func TestForwardEvents_WriteOperationsTracking(t *testing.T) {
 	if !strings.Contains(aggregated, "<subagent_write_operations>") {
 		t.Error("aggregated output should contain write operations block")
 	}
-	if !strings.Contains(aggregated, "write_file") {
+	if !strings.Contains(aggregated, "write") {
 		t.Error("write operations should list write_file")
 	}
-	if !strings.Contains(aggregated, "edit_file") {
+	if !strings.Contains(aggregated, "edit") {
 		t.Error("write operations should list edit_file")
 	}
 }
@@ -554,7 +554,7 @@ func TestForwardEvents_ToolCallResultError(t *testing.T) {
 	ch := make(chan agentloop.TurnEvent, 10)
 	go func() {
 		ch <- agentloop.ToolCallResult{
-			ToolCallName: "read_file",
+			ToolCallName: "read",
 			Result:       "",
 			DurationMs:   15,
 			Error:        "file_not_found: /nonexistent.go",
@@ -615,8 +615,8 @@ func TestRegression_ForwardEvents_OnlyLastTurnText(t *testing.T) {
 		// Turn 1（中间推理，应被丢弃）
 		ch <- agentloop.StreamDelta{Turn: 1, ContentDelta: "turn 1 thinking..."}
 		ch <- agentloop.StreamDelta{Turn: 1, ContentDelta: " more turn 1"}
-		ch <- agentloop.ToolCallStart{Turn: 1, ToolCallName: "read_file", Arguments: `{"file_path":"a.go"}`}
-		ch <- agentloop.ToolCallResult{Turn: 1, ToolCallName: "read_file", Result: "content", DurationMs: 10}
+		ch <- agentloop.ToolCallStart{Turn: 1, ToolCallName: "read", Arguments: `{"file_path":"a.go"}`}
+		ch <- agentloop.ToolCallResult{Turn: 1, ToolCallName: "read", Result: "content", DurationMs: 10}
 		// Turn 2（最终结论，应保留）
 		ch <- agentloop.StreamDelta{Turn: 2, ContentDelta: "conclusion"}
 		ch <- agentloop.StreamDelta{Turn: 2, ContentDelta: " finalized"}
@@ -692,7 +692,7 @@ func TestBuildForkMessages_NoAssistantInContext(t *testing.T) {
 		{Role: llm.RoleUser, Content: "hello"},
 		{Role: llm.RoleAssistant, Content: "let me check", ToolCalls: []llm.ToolCall{
 			{ID: "call_1", Name: "agent", Arguments: `{"description":"x","prompt":"y"}`},
-			{ID: "call_2", Name: "read_file", Arguments: `{"file_path":"/f.go"}`},
+			{ID: "call_2", Name: "read", Arguments: `{"file_path":"/f.go"}`},
 		}},
 	}
 	result := buildForkMessages(msgs, "fork-desc", "do something")
@@ -988,12 +988,12 @@ func TestAgentTool_ExecuteCold_Verification(t *testing.T) {
 func TestVerificationRegistry_IsReadOnly(t *testing.T) {
 	r := buildColdRegistry(verificationDisallowed)
 	names := toolNames(r)
-	for _, name := range []string{"read_file", "web_fetch", "bash_subagent"} {
+	for _, name := range []string{"read", "web_fetch", "bash_subagent"} {
 		if !contains(names, name) {
 			t.Errorf("verification registry missing %q", name)
 		}
 	}
-	for _, name := range []string{"write_file", "edit_file"} {
+	for _, name := range []string{"write", "edit"} {
 		if contains(names, name) {
 			t.Errorf("verification registry should NOT have %q", name)
 		}
@@ -1078,7 +1078,7 @@ func TestFormatSubagentEnvironment_WithOSAndShell(t *testing.T) {
 	if !strings.Contains(got, "- Shell: /bin/zsh") {
 		t.Error("should contain Shell info from parent")
 	}
-	if !strings.Contains(got, "read_file") {
+	if !strings.Contains(got, "read") {
 		t.Error("should list read_file from registry")
 	}
 	if !strings.Contains(got, "bash_subagent") {
@@ -1109,19 +1109,19 @@ func TestFormatSubagentEnvironment_ExploreRegistry(t *testing.T) {
 	r := buildColdRegistry(exploreDisallowed)
 
 	got := formatSubagentEnvironment(ctx, r)
-	// Explore 只有 read_file, web_fetch, bash_subagent
-	if !strings.Contains(got, "read_file") {
-		t.Error("should list read_file")
+	// Explore 只有 read, web_fetch, bash_subagent
+	if !strings.Contains(got, "  read") {
+		t.Error("should list read")
 	}
 	if !strings.Contains(got, "web_fetch") {
 		t.Error("should list web_fetch")
 	}
-	// 不应包含 write_file 和 edit_file
-	if strings.Contains(got, "write_file") {
-		t.Error("Explore should NOT list write_file")
+	// 不应包含 write 和 edit
+	if strings.Contains(got, "  write") {
+		t.Error("Explore should NOT list write")
 	}
-	if strings.Contains(got, "edit_file") {
-		t.Error("Explore should NOT list edit_file")
+	if strings.Contains(got, "  edit") {
+		t.Error("Explore should NOT list edit")
 	}
 	// 不应包含 docker, node, go
 	if strings.Contains(got, "docker") {
@@ -1163,8 +1163,8 @@ func BenchmarkForwardEvents(b *testing.B) {
 			for i := 0; i < 50; i++ {
 				ch <- agentloop.StreamDelta{ContentDelta: "some text content"}
 			}
-			ch <- agentloop.ToolCallStart{ToolCallName: "read_file", Arguments: `{"file_path":"/path/to/file.go"}`}
-			ch <- agentloop.ToolCallResult{ToolCallName: "read_file", Result: "content", DurationMs: 42}
+			ch <- agentloop.ToolCallStart{ToolCallName: "read", Arguments: `{"file_path":"/path/to/file.go"}`}
+			ch <- agentloop.ToolCallResult{ToolCallName: "read", Result: "content", DurationMs: 42}
 			ch <- agentloop.LoopDone{Turn: 3}
 			close(ch)
 		}()
@@ -1495,12 +1495,12 @@ func TestAdvisorMode_AdvisorSubagent_ReadOnly(t *testing.T) {
 	// The advisor path in executeFork replaces the fork registry with this
 	r := buildColdRegistry(exploreDisallowed)
 	names := toolNames(r)
-	for _, name := range []string{"write_file", "edit_file"} {
+	for _, name := range []string{"write", "edit"} {
 		if contains(names, name) {
 			t.Errorf("advisor registry should NOT have %q", name)
 		}
 	}
-	for _, name := range []string{"read_file", "web_fetch", "bash_subagent"} {
+	for _, name := range []string{"read", "web_fetch", "bash_subagent"} {
 		if !contains(names, name) {
 			t.Errorf("advisor registry missing %q", name)
 		}

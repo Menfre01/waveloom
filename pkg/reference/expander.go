@@ -76,11 +76,11 @@ func (e *Expander) expandRefs(ctx context.Context, refs []Ref, cwd string) ([]Re
 			break
 		}
 
-		// Permission check — 文件和目录统一走 read_file 权限检查
+		// Permission check — 文件和目录统一走 read 权限检查
 		if ref.Kind != KindFile && ref.Kind != KindFolder {
 			continue
 		}
-		toolName := "read_file"
+		toolName := "read"
 		params := json.RawMessage(fmt.Sprintf(`{"file_path": "%s"}`, ref.Path))
 
 		decision := e.guard.Check(ctx, toolName, params)

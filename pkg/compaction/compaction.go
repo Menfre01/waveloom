@@ -234,6 +234,7 @@ type truncationStrategy struct {
 // toolTruncationStrategies 定义所有已知工具的 Tier 1 截断策略。
 var toolTruncationStrategies = map[string]truncationStrategy{
 	"read_file":      {200, 150, 10, 4000, 30000},
+	"read":           {200, 150, 10, 4000, 30000},
 	"bash":           {60, 20, 30, 2000, 12000},
 	"web_fetch":      {200, 150, 10, 4000, 30000},
 }
@@ -241,6 +242,7 @@ var toolTruncationStrategies = map[string]truncationStrategy{
 // truncatableTools Tier 2 中可替换为占位符的工具集合。
 var truncatableTools = map[string]bool{
 	"read_file":      true,
+	"read":           true,
 	"bash": true,
 	"web_fetch":      true,
 }

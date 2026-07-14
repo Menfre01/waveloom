@@ -508,10 +508,8 @@ func buildColdRegistry(extraDisallowed map[string]bool) tool.Registry {
 
 func allTools() []tool.Tool {
 	return []tool.Tool{
-		tool.Wrap(&tool.ReadFile{}),
 		tool.Wrap(&tool.ReadFileHashline{}),
 		tool.Wrap(&tool.WriteFile{}),
-		tool.Wrap(&tool.EditFile{}),
 		tool.Wrap(&tool.EditFileHashline{}),
 		tool.Wrap(&tool.WebFetch{}),
 		tool.Wrap(&tool.WebSearch{}),
@@ -754,9 +752,9 @@ func forwardEvents(ctx context.Context, subCh <-chan agentloop.TurnEvent, cb fun
 			ev := SubagentEvent{ToolCallID: toolCallID, Kind: SubagentToolResult, ToolName: e.ToolCallName, ToolResult: e.Result, ToolDurMs: e.DurationMs, ToolError: e.Error}
 			fanout <- ev
 			events = append(events, ev)
-			if e.ToolCallName == "write_file" || e.ToolCallName == "write" || e.ToolCallName == "edit_file" || e.ToolCallName == "edit" {
+			if e.ToolCallName == "write" || e.ToolCallName == "edit" {
 				op := writeOp{ToolName: e.ToolCallName, FilePath: extractPath(e.Result), BytesIn: len(e.Result)}
-				if e.ToolCallName == "edit_file" || e.ToolCallName == "edit" {
+				if e.ToolCallName == "edit" {
 					op.LinesAdd, op.LinesDel = countDiff(e.Result)
 				}
 				writeOps = append(writeOps, op)
@@ -780,9 +778,9 @@ func forwardEvents(ctx context.Context, subCh <-chan agentloop.TurnEvent, cb fun
 				sb.WriteString("\n\n<subagent_write_operations>\n")
 				for _, op := range writeOps {
 					switch op.ToolName {
-					case "write_file", "write":
+					case "write":
 						fmt.Fprintf(&sb, "- %s: %s (%s)\n", op.ToolName, op.FilePath, fmtBytes(op.BytesIn))
-					case "edit_file", "edit":
+					case "edit":
 						fmt.Fprintf(&sb, "- %s: %s (+%d -%d lines)\n", op.ToolName, op.FilePath, op.LinesAdd, op.LinesDel)
 					}
 				}
@@ -819,7 +817,7 @@ func ensureNonEmpty(sb *strings.Builder, lastToolCalls []string) {
 
 func formatArgs(toolName, argsJSON string) string {
 	switch toolName {
-	case "read_file", "read", "write_file", "write", "edit_file", "edit":
+	case "read", "write", "edit":
 		return extractField(argsJSON, "file_path")
 	case "bash_subagent", "bash":
 		return extractField(argsJSON, "command")

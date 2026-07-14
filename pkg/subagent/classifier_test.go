@@ -97,7 +97,7 @@ func TestClassifyFile_DangerousPath(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	findings := classifyFile(nil, "read_file", envPath, tmpDir)
+	findings := classifyFile(nil, "read", envPath, tmpDir)
 	if len(findings) == 0 {
 		t.Fatal("expected finding for reading .env (sensitive file)")
 	}
@@ -108,7 +108,7 @@ func TestClassifyFile_DangerousPath(t *testing.T) {
 	if f.Category != "sensitive_file" {
 		t.Errorf("category = %q, want sensitive_file", f.Category)
 	}
-	if !strings.Contains(f.Detail, "read_file") {
+	if !strings.Contains(f.Detail, "read") {
 		t.Errorf("Detail should mention tool name: %s", f.Detail)
 	}
 }
@@ -121,7 +121,7 @@ func TestClassifyFile_SensitivePath(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	findings := classifyFile(nil, "read_file", envPath, tmpDir)
+	findings := classifyFile(nil, "read", envPath, tmpDir)
 	if len(findings) == 0 {
 		t.Fatal("expected finding for .env (sensitive file)")
 	}
@@ -139,7 +139,7 @@ func TestClassifyFile_SensitivePath_WriteEscalates(t *testing.T) {
 	}
 
 	// Write to .env should escalate to HIGH
-	findings := classifyFile(nil, "write_file", envPath, tmpDir)
+	findings := classifyFile(nil, "write", envPath, tmpDir)
 	if len(findings) == 0 {
 		t.Fatal("expected finding for writing .env")
 	}
@@ -148,7 +148,7 @@ func TestClassifyFile_SensitivePath_WriteEscalates(t *testing.T) {
 	}
 
 	// Edit to .env should also escalate to HIGH
-	findings = classifyFile(nil, "edit_file", envPath, tmpDir)
+	findings = classifyFile(nil, "edit", envPath, tmpDir)
 	if len(findings) == 0 {
 		t.Fatal("expected finding for editing .env")
 	}
@@ -164,7 +164,7 @@ func TestClassifyFile_SafePath(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	findings := classifyFile(nil, "read_file", safePath, tmpDir)
+	findings := classifyFile(nil, "read", safePath, tmpDir)
 	if len(findings) != 0 {
 		t.Errorf("expected no findings for safe path within workspace, got %d", len(findings))
 	}
@@ -178,7 +178,7 @@ func TestClassifyFile_OutsideWorkspace_Write(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	findings := classifyFile(nil, "write_file", outsidePath, tmpDir)
+	findings := classifyFile(nil, "write", outsidePath, tmpDir)
 	if len(findings) == 0 {
 		t.Fatal("expected finding for writing outside workspace")
 	}
@@ -199,7 +199,7 @@ func TestClassifyFile_OutsideWorkspace_ReadIgnored(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	findings := classifyFile(nil, "read_file", outsidePath, tmpDir)
+	findings := classifyFile(nil, "read", outsidePath, tmpDir)
 	if len(findings) != 0 {
 		t.Errorf("read plain file outside workspace should not produce finding, got %d", len(findings))
 	}
@@ -215,7 +215,7 @@ func TestClassifyFile_AccumulatesFindings(t *testing.T) {
 	}
 
 	// Reading .env within workspace → PathSensitive
-	findings := classifyFile(existing, "read_file", envPath, tmpDir)
+	findings := classifyFile(existing, "read", envPath, tmpDir)
 	if len(findings) != 2 {
 		t.Fatalf("expected 2 findings, got %d", len(findings))
 	}
@@ -387,8 +387,8 @@ func TestClassify_DangerousFile_Detected(t *testing.T) {
 	}
 
 	events := []SubagentEvent{
-		{Kind: SubagentToolStart, ToolName: "write_file", ToolArgs: envPath},
-		{Kind: SubagentToolResult, ToolName: "write_file", ToolResult: "ok"},
+		{Kind: SubagentToolStart, ToolName: "write", ToolArgs: envPath},
+		{Kind: SubagentToolResult, ToolName: "write", ToolResult: "ok"},
 	}
 	findings := classify(events, tmpDir)
 	if len(findings) == 0 {
@@ -407,8 +407,8 @@ func TestClassify_SensitiveFile_Detected(t *testing.T) {
 	}
 
 	events := []SubagentEvent{
-		{Kind: SubagentToolStart, ToolName: "read_file", ToolArgs: envPath},
-		{Kind: SubagentToolResult, ToolName: "read_file", ToolResult: "KEY=val"},
+		{Kind: SubagentToolStart, ToolName: "read", ToolArgs: envPath},
+		{Kind: SubagentToolResult, ToolName: "read", ToolResult: "KEY=val"},
 	}
 	findings := classify(events, tmpDir)
 	if len(findings) == 0 {
@@ -427,8 +427,8 @@ func TestClassify_SensitiveFileWrite_EscalatesToHigh(t *testing.T) {
 	}
 
 	events := []SubagentEvent{
-		{Kind: SubagentToolStart, ToolName: "write_file", ToolArgs: envPath},
-		{Kind: SubagentToolResult, ToolName: "write_file", ToolResult: "file written"},
+		{Kind: SubagentToolStart, ToolName: "write", ToolArgs: envPath},
+		{Kind: SubagentToolResult, ToolName: "write", ToolResult: "file written"},
 	}
 	findings := classify(events, tmpDir)
 	if len(findings) == 0 {
@@ -447,8 +447,8 @@ func TestClassify_SafeFile_NoFinding(t *testing.T) {
 	}
 
 	events := []SubagentEvent{
-		{Kind: SubagentToolStart, ToolName: "read_file", ToolArgs: safePath},
-		{Kind: SubagentToolResult, ToolName: "read_file", ToolResult: "package main"},
+		{Kind: SubagentToolStart, ToolName: "read", ToolArgs: safePath},
+		{Kind: SubagentToolResult, ToolName: "read", ToolResult: "package main"},
 	}
 	findings := classify(events, tmpDir)
 	if len(findings) != 0 {
@@ -465,8 +465,8 @@ func TestClassify_OutsideWorkspaceWrite(t *testing.T) {
 	}
 
 	events := []SubagentEvent{
-		{Kind: SubagentToolStart, ToolName: "write_file", ToolArgs: outsidePath},
-		{Kind: SubagentToolResult, ToolName: "write_file", ToolResult: "file written"},
+		{Kind: SubagentToolStart, ToolName: "write", ToolArgs: outsidePath},
+		{Kind: SubagentToolResult, ToolName: "write", ToolResult: "file written"},
 	}
 	findings := classify(events, tmpDir)
 	if len(findings) == 0 {
@@ -489,8 +489,8 @@ func TestClassify_MixedEvents(t *testing.T) {
 		{Kind: SubagentToolStart, ToolName: "bash_subagent", ToolArgs: "rm -rf /tmp/test"},
 		{Kind: SubagentToolResult, ToolName: "bash_subagent", ToolResult: "done"},
 		{Kind: SubagentText, TextDelta: "file deleted"},
-		{Kind: SubagentToolStart, ToolName: "write_file", ToolArgs: sensitivePath},
-		{Kind: SubagentToolResult, ToolName: "write_file", ToolResult: "file written"},
+		{Kind: SubagentToolStart, ToolName: "write", ToolArgs: sensitivePath},
+		{Kind: SubagentToolResult, ToolName: "write", ToolResult: "file written"},
 		{Kind: SubagentText, TextDelta: "analysis complete"},
 	}
 	findings := classify(events, tmpDir)
@@ -504,7 +504,7 @@ func TestClassify_MixedEvents(t *testing.T) {
 		if f.Category == "dangerous_command" && strings.Contains(f.Detail, "rm") {
 			foundCmd = true
 		}
-		if f.Category == "sensitive_file" && strings.Contains(f.Detail, "write_file") {
+		if f.Category == "sensitive_file" && strings.Contains(f.Detail, "write") {
 			foundPath = true
 		}
 	}
@@ -596,8 +596,8 @@ func TestRegression_OutsideWorkspaceSensitiveFile(t *testing.T) {
 	}
 
 	events := []SubagentEvent{
-		{Kind: SubagentToolStart, ToolName: "write_file", ToolArgs: envPath},
-		{Kind: SubagentToolResult, ToolName: "write_file", ToolResult: "file written"},
+		{Kind: SubagentToolStart, ToolName: "write", ToolArgs: envPath},
+		{Kind: SubagentToolResult, ToolName: "write", ToolResult: "file written"},
 	}
 	findings := classify(events, workspace)
 	if len(findings) < 2 {
@@ -629,7 +629,7 @@ func TestRegression_BuildForkMessages_ExcludesLastAssistant(t *testing.T) {
 		{Role: llm.RoleUser, Content: "Execute task."},
 		{Role: llm.RoleAssistant, Content: "", ToolCalls: []llm.ToolCall{
 			{ID: "call_1", Name: "agent", Arguments: `{"description":"test","prompt":"do something"}`},
-			{ID: "call_2", Name: "read_file", Arguments: `{"file_path":"test.go"}`},
+			{ID: "call_2", Name: "read", Arguments: `{"file_path":"test.go"}`},
 		}},
 	}
 	result := buildForkMessages(parent, "test fork", "do it")
