@@ -1,5 +1,34 @@
 # Changelog
 
+
+## [v0.1.0-beta.9] — 2026-07-14
+
+### Added
+- **Hashline editing model**: New hashline read/edit/write editing tools replace the old read_file/edit_file, with TAG-anchored edits, SWAP/INS/DEL/REM/MV operations, and empty body line preservation; edit responses auto-append post-edit context so the LLM can chain edits without re-reading
+- **yarn/pnpm/clang toolchain detection**: Environment probes now detect yarn, pnpm, and clang, covering more frontend and C/C++ project scenarios
+- **web_search timeout control**: web_search now supports `timeout_ms` parameter to prevent long-running search requests from blocking
+- **Skill $@ bash-compatible syntax**: Variable substitution now supports `$@` bash-compatible syntax
+
+### Fixed
+- **Hashline TAG stability**: TAG digest algorithm refactored to ensure unchanged file content yields a stable TAG; recovery range invariant validation eliminates silent corruption risks
+- **Hashline LLM format tolerance**: Tolerates trailing colons, leading whitespace, end-of-line comments, colon-less INS, mixed case, and single-quoted paths — common LLM format deviations
+- **Hashline path alignment**: Fixed misalignment between edit and read paths causing cross-turn tag_mismatch
+- **Hashline syntax confusion**: parseLineRange now provides friendly error hints for `:=` format confusion
+- **Subagent fork message cleanup**: Orphan tool_calls cleaned from fork message construction, fixing cache hit rate anomalies
+- **Subagent write operation tracking**: Fixed missing hashline edit write tracking in subagent_write_operations
+- **Subagent/permission security hardening**: Fixed fork boilerplate, sensitive file classification, and cleanup guidance
+- **Permission rule fix**: edit_file/write_file rules were ineffective due to missing normalizeToolName compatibility mapping
+- **Permission Bash allowlist**: Prefix matching now includes command chain operator detection to prevent bypass
+- **Agent loop todo residue**: Detects lingering todos before ReasonCompleted and injects last-chance reminder to prevent abandoned lists
+- **Memory UTF-8 handling**: Invalid UTF-8 sequences are no longer silently replaced with U+FFFD — original content is preserved with a warning
+- **Shellutil background detection**: IsBackgroundCommand no longer misidentifies `&&`-terminated commands as background commands
+- **TempDir symlink**: os.TempDir() replaced with pathutil.TempDir() to resolve macOS symlink path inconsistencies
+- **Context/task persistence**: lastBackgroundCheck is now persisted across --resume, restoring interrupted task state
+- **TUI help overlay**: Fixed insufficient text contrast on ? help overlay shortcut key labels
+
+### Changed
+- **Unified tool naming**: Removed old read_file/edit_file tool registrations and the hashline feature flag; read/edit/write short names are now uniformly registered
+- **TUI logo layout**: Logo moved from header into the scrollable viewport, freeing up fixed header height
 ## [v0.1.0-beta.8] — 2026-07-13
 
 ### Added
