@@ -5,10 +5,12 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/Menfre01/waveloom/pkg/hashline"
 )
+
 
 // ---------------------------------------------------------------------------
 // ReadFileHashline — 正常路径
@@ -258,11 +260,16 @@ func TestReadFileHashline_EmptyFile(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestReadFileHashline_DeviceBlocked(t *testing.T) {
+	devicePath := "/dev/zero"
+	if runtime.GOOS == "windows" {
+		devicePath = "NUL"
+	}
+
 	store := hashline.NewStore()
 	ctx := hashline.WithStore(context.Background(), store)
 
 	tool := &ReadFileHashline{}
-	result, err := tool.Execute(ctx, ReadFileHashlineParams{FilePath: "/dev/zero"})
+	result, err := tool.Execute(ctx, ReadFileHashlineParams{FilePath: devicePath})
 	if err != nil {
 		t.Fatalf("Execute() error = %v", err)
 	}
