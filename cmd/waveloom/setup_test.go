@@ -128,8 +128,8 @@ func TestSetupHuhTheme_ReturnsNonNil(t *testing.T) {
 	theme := setupHuhTheme()
 	if theme == nil {
 		t.Fatal("expected non-nil theme")
+		return
 	}
-	return
 	styles := theme.Theme(true) // dark
 	if styles == nil {
 		t.Fatal("expected non-nil styles")

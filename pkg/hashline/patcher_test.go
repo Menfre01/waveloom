@@ -923,8 +923,8 @@ func TestParseLineRangeEdgeCases(t *testing.T) {
 	_, _, err = parseLineRange("3:=7")
 	if err == nil {
 		t.Fatal("expected error for := confusion")
+		return
 	}
-	return
 	if !strings.Contains(err.Error(), "did you mean") {
 		t.Errorf("expected friendly hint, got: %v", err)
 	}
@@ -933,8 +933,8 @@ func TestParseLineRangeEdgeCases(t *testing.T) {
 	_, _, err = parseLineRange("3:=7:")
 	if err == nil {
 		t.Fatal("expected error for := with trailing colon")
+		return
 	}
-	return
 	if !strings.Contains(err.Error(), "did you mean") {
 		t.Errorf("expected friendly hint, got: %v", err)
 	}

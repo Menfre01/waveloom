@@ -101,8 +101,8 @@ func TestShellInterruptKillsProcessGroup(t *testing.T) {
 	}
 	if result == nil {
 		t.Fatal("result is nil")
+		return
 	}
-	return
 	if result.Error == nil {
 		t.Fatal("expected error result for interrupted command")
 	}
@@ -660,8 +660,8 @@ func TestShell_ExecuteStreaming_Basic(t *testing.T) {
 	}
 	if result == nil {
 		t.Fatal("result is nil")
+		return
 	}
-	return
 	if len(chunks) == 0 {
 		t.Error("expected at least one chunk")
 	}
@@ -687,8 +687,8 @@ func TestShell_ExecuteStreaming_Error(t *testing.T) {
 	}
 	if result == nil {
 		t.Fatal("result is nil")
+		return
 	}
-	return
 	if result.Error == nil {
 		t.Error("expected error for exit 1")
 	}
@@ -851,8 +851,8 @@ func TestShell_BackgroundCommand_DoesNotHang(t *testing.T) {
 	}
 	if result == nil {
 		t.Fatal("result is nil")
+		return
 	}
-	return
 	if result.Meta.BackgroundTaskID == "" {
 		t.Errorf("expected non-empty BackgroundTaskID for background command")
 	}
@@ -881,8 +881,8 @@ func TestShell_BackgroundCommand_LogFileHasOutput(t *testing.T) {
 	}
 	if result == nil {
 		t.Fatal("result is nil")
+		return
 	}
-	return
 
 	if result.Meta.BackgroundTaskID == "" {
 		t.Fatal("expected non-empty BackgroundTaskID")
@@ -940,8 +940,8 @@ func TestShell_ExecuteStreaming_BackgroundCommand_DoesNotHang(t *testing.T) {
 	}
 	if result == nil {
 		t.Fatal("result is nil")
+		return
 	}
-	return
 	if result.Meta.BackgroundTaskID == "" {
 		t.Errorf("expected non-empty BackgroundTaskID")
 	}
@@ -987,8 +987,8 @@ func TestShell_ExecuteStreaming_PipeWaitTimeout(t *testing.T) {
 	}
 	if result == nil {
 		t.Fatal("result is nil")
+		return
 	}
-	return
 	if result.Error == nil || result.Error.Kind != ErrKindTimeout {
 		t.Errorf("expected timeout error, got kind=%s", result.Error.Kind)
 	}
@@ -1064,8 +1064,8 @@ func TestShell_Execute_RunInBackground(t *testing.T) {
 	}
 	if result == nil {
 		t.Fatal("result is nil")
+		return
 	}
-	return
 	if result.Meta.BackgroundTaskID == "" {
 		t.Errorf("expected non-empty BackgroundTaskID")
 	}
@@ -1094,8 +1094,8 @@ func TestShell_ExecuteStreaming_RunInBackground(t *testing.T) {
 	}
 	if result == nil {
 		t.Fatal("result is nil")
+		return
 	}
-	return
 	if result.Meta.BackgroundTaskID == "" {
 		t.Errorf("expected non-empty BackgroundTaskID")
 	}
