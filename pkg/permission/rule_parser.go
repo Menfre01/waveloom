@@ -56,11 +56,18 @@ func ParseRule(s string, behavior RuleBehavior) (Rule, error) {
 	}, nil
 }
 
-// normalizeToolName 兼容映射：Bash / Shell / shell → "bash"。
+// normalizeToolName 兼容映射：Bash / Shell → "bash"；edit_file → "edit"；write_file → "write"。
 // 用户配置中的 "Bash(git *)" 和 "Shell(git *)" 均自动归一化为 "bash(git *)"。
+// "edit_file(cmd/**)" 归一化为 "edit(cmd/**)"，"write_file(cmd/**)" 归一化为 "write(cmd/**)"。
 func normalizeToolName(name string) string {
 	if strings.EqualFold(name, "Bash") || strings.EqualFold(name, "Shell") {
 		return "bash"
+	}
+	if strings.EqualFold(name, "edit_file") {
+		return "edit"
+	}
+	if strings.EqualFold(name, "write_file") {
+		return "write"
 	}
 	return name
 }
