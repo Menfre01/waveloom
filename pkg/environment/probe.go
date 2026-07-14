@@ -49,12 +49,15 @@ func DefaultProbes() []string {
 		// Node.js 生态
 		"node --version",
 		"npm --version",
+		"yarn --version",
+		"pnpm --version",
 		// Rust 生态
 		"rustc --version",
 		"cargo --version",
 		// C/C++
 		"gcc --version",
 		"g++ --version",
+		"clang --version",
 		"cmake --version",
 		// JVM
 		"java -version",
