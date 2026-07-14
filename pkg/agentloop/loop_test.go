@@ -13,6 +13,7 @@ import (
 	"github.com/Menfre01/waveloom/pkg/compaction"
 	"github.com/Menfre01/waveloom/pkg/llm"
 	"github.com/Menfre01/waveloom/pkg/permission"
+	"github.com/Menfre01/waveloom/pkg/todo"
 	"github.com/Menfre01/waveloom/pkg/tool"
 )
 
@@ -3755,3 +3756,114 @@ func TestExecuteToolCalls_ContextCancelledDuringSerialSend(t *testing.T) {
 	}
 }
 
+
+// TestRegression_StaleTodoOnComplete 验证 LLM 忘记最后一次 todo_write 时，
+// Loop 在终止前注入最后机会提醒，防止 todo 列表残留。
+func TestRegression_StaleTodoOnComplete(t *testing.T) {
+	// 场景：LLM 完成所有工作后直接给最终答案，忘记调用 todo_write 标记完成。
+	// 预期：Loop 检测到残留任务，注入提醒并继续一轮，给 LLM 机会更新。
+
+	// 设置 TodoState，含一个 in_progress 任务
+	ts := todo.NewTodoState()
+	ts.Apply(todo.TodoWriteParams{
+		Todos: []todo.TodoItem{
+			{Content: "Fix the bug", Status: "in_progress", ActiveForm: "Fixing the bug"},
+			{Content: "Run tests", Status: "pending", ActiveForm: "Running tests"},
+		},
+	})
+
+	// LLM 第一轮：调用 todo_write 标记第一个任务完成
+	// 第二轮：执行 read_file
+	// 第三轮：忘记调用 todo_write，直接给最终答案 → 触发 last-chance 提醒
+	// 第四轮：LLM 响应提醒，调用 todo_write 全部完成
+	// 第五轮：最终答案
+	client := &mockLLMClient{
+		responses: []*llm.Response{
+			makeToolCallResponse("", makeToolCall("tc1", "todo_write", `{"todos":[{"content":"Fix the bug","status":"completed","activeForm":"Fixing the bug"},{"content":"Run tests","status":"in_progress","activeForm":"Running tests"}]}`)),
+			makeToolCallResponse("", makeToolCall("tc2", "read_file", `{"file_path":"/tmp/test.go"}`)),
+			// 第三轮：忘记 todo_write，直接给文本 → stale todo 检测 → last-chance 提醒注入 → continue
+			makeTextResponse("All done! The bug is fixed."),
+			// 第四轮：收到提醒后调用 todo_write 全部完成
+			makeToolCallResponse("", makeToolCall("tc3", "todo_write", `{"todos":[{"content":"Fix the bug","status":"completed","activeForm":"Fixing the bug"},{"content":"Run tests","status":"completed","activeForm":"Running tests"}]}`)),
+			// 第五轮：最终答案
+			makeTextResponse("All tasks completed. The bug is fixed and tests pass."),
+		},
+	}
+
+	readTool := newSuccessTool("read_file", true, "file content")
+	registry := newTestRegistry(readTool, tool.Wrap(&tool.TodoWrite{}))
+	loop := New(client, registry, Config{
+		TodoState: ts,
+	})
+
+	finalEv := drainEvents(loop.Run(context.Background(), []llm.Message{
+		{Role: llm.RoleUser, Content: "fix the bug"},
+	}))
+
+	if finalEv.Err != nil {
+		t.Fatalf("unexpected error: %v", finalEv.Err)
+	}
+	if finalEv.Reason != ReasonCompleted {
+		t.Errorf("expected ReasonCompleted, got %s", finalEv.Reason)
+	}
+
+	// 验证 TodoState 已清空（最后一次 todo_write 全部 completed → allDone 自动清理）
+	snapshot := ts.Snapshot()
+	if len(snapshot) != 0 {
+		t.Errorf("expected empty todo list after all done, got %d items: %v", len(snapshot), snapshot)
+	}
+}
+
+// TestRegression_StaleTodoOnComplete_NoInfiniteLoop 验证即使 LLM 在最后机会提醒后
+// 仍不调用 todo_write，Loop 也会正常终止，不会无限循环。
+func TestRegression_StaleTodoOnComplete_NoInfiniteLoop(t *testing.T) {
+	ts := todo.NewTodoState()
+	ts.Apply(todo.TodoWriteParams{
+		Todos: []todo.TodoItem{
+			{Content: "Do something", Status: "in_progress", ActiveForm: "Doing something"},
+		},
+	})
+
+	// LLM 持续返回文本响应（无 todo_write），验证不会无限循环
+	// 第一轮：文本响应 → 触发 last-chance 提醒（continue）
+	// 第二轮：文本响应 → lastChanceTodoInjected=true，正常完成
+	client := &mockLLMClient{
+		responses: []*llm.Response{
+			makeTextResponse("I'm done with everything."),
+			makeTextResponse("Yes, really done."),
+		},
+	}
+
+	registry := newTestRegistry()
+	loop := New(client, registry, Config{
+		TodoState: ts,
+	})
+
+	finalEv := drainEvents(loop.Run(context.Background(), []llm.Message{
+		{Role: llm.RoleUser, Content: "do something"},
+	}))
+
+	if finalEv.Err != nil {
+		t.Fatalf("unexpected error: %v", finalEv.Err)
+	}
+	if finalEv.Reason != ReasonCompleted {
+		t.Errorf("expected ReasonCompleted, got %s", finalEv.Reason)
+	}
+
+	// 验证 Turn 数：最多 2 轮（第一轮触发提醒，第二轮正常完成）
+	if finalEv.Turn > 2 {
+		t.Errorf("expected at most 2 turns, got %d — possible infinite loop", finalEv.Turn)
+	}
+
+	// 验证消息中包含 last-chance 提醒
+	hasReminder := false
+	for _, msg := range finalEv.Messages {
+		if strings.Contains(msg.Content, "You are about to finish, but your todo list still has incomplete tasks") {
+			hasReminder = true
+			break
+		}
+	}
+	if !hasReminder {
+		t.Error("expected last-chance reminder in messages, not found")
+	}
+}

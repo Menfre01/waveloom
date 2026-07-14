@@ -684,16 +684,18 @@ func TestInjectTodoStatus_NoNilTodoState(t *testing.T) {
 // ============================================================================
 
 func TestExecuteTodoWrite_ResetsReminderCounters(t *testing.T) {
-	// REGRESSION: todo_write 成功后应重置提醒计数器
+	// REGRESSION: todo_write 成功后应重置提醒计数器 + lastChanceTodoInjected 标志。
+	// lastChanceTodoInjected 为 true 时如不重置，后续 turn 将跳过最后机会检测。
 	ts := todo.NewTodoState()
 	registry := tool.NewRegistry()
 	registry.Register(tool.Wrap(&tool.TodoWrite{}))
 
 	loop := New(nil, registry, Config{TodoState: ts})
 
-	// 设置非零计数器
+	// 设置非零计数器 + lastChance 标志
 	loop.turnsSinceLastTodoWrite = 7
 	loop.turnsSinceLastTodoReminder = 5
+	loop.lastChanceTodoInjected = true
 
 	ch := make(chan TurnEvent, 2)
 	result := loop.executeTodoWrite(context.Background(), llm.ToolCall{
@@ -714,6 +716,62 @@ func TestExecuteTodoWrite_ResetsReminderCounters(t *testing.T) {
 	if loop.turnsSinceLastTodoReminder != 0 {
 		t.Errorf("turnsSinceLastTodoReminder = %d, want 0 after todo_write", loop.turnsSinceLastTodoReminder)
 	}
+	if loop.lastChanceTodoInjected {
+		t.Error("lastChanceTodoInjected should be false after successful todo_write")
+	}
 }
 
 
+
+// TestTodoLastChanceText_Format 验证 todoLastChanceText 输出正确的最后机会提醒文本。
+func TestTodoLastChanceText_Format(t *testing.T) {
+	summary := "## Current Todo Status\n[in_progress] Fix the bug\n"
+	text := todoLastChanceText(summary)
+
+	if !strings.Contains(text, summary) {
+		t.Errorf("todoLastChanceText should contain the summary, got: %s", text)
+	}
+	if !strings.Contains(text, "You are about to finish") {
+		t.Errorf("todoLastChanceText should contain 'You are about to finish', got: %s", text)
+	}
+	if !strings.Contains(text, "incomplete tasks") {
+		t.Errorf("todoLastChanceText should contain 'incomplete tasks', got: %s", text)
+	}
+	if !strings.Contains(text, "last automatic reminder") {
+		t.Errorf("todoLastChanceText should contain 'last automatic reminder', got: %s", text)
+	}
+}
+
+// TestExecuteTodoWrite_ResetsLastChanceFlag 验证 todo_write 成功后重置 lastChanceTodoInjected。
+// REGRESSION: LLM 在最后机会提醒后调用 todo_write 完成所有任务时，
+// lastChanceTodoInjected 必须重置为 false，否则后续 turn 中 last-chance 不会再次触发。
+func TestExecuteTodoWrite_ResetsLastChanceFlag(t *testing.T) {
+	ts := todo.NewTodoState()
+	registry := tool.NewRegistry()
+	registry.Register(tool.Wrap(&tool.TodoWrite{}))
+
+	loop := New(nil, registry, Config{TodoState: ts})
+
+	// 模拟：上一轮触发了 last-chance 提醒
+	loop.lastChanceTodoInjected = true
+
+	ch := make(chan TurnEvent, 2)
+	result := loop.executeTodoWrite(context.Background(), llm.ToolCall{
+		ID:   "call_1",
+		Name: "todo_write",
+		Arguments: `{"todos": [
+			{"content": "Task A", "status": "completed", "activeForm": "Doing A"}
+		]}`,
+	}, nil, ch)
+
+	if result == nil || result.Error != nil {
+		t.Fatalf("todo_write failed: %v", result)
+	}
+
+	if loop.lastChanceTodoInjected {
+		t.Error("lastChanceTodoInjected should be false after successful todo_write")
+	}
+}
+
+// TestExecuteTodoWrite_ResetsReminderCounters 验证 todo_write 重置两个提醒计数器，
+// 同时验证 lastChanceTodoInjected 也被重置。

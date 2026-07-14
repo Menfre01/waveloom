@@ -212,6 +212,11 @@ type Loop struct {
 
 	// turnsSinceLastTodoReminder 记录自上次注入 todo 提醒以来的 assistant turn 数。
 	turnsSinceLastTodoReminder int
+	// lastChanceTodoInjected 在 loop 即将以 ReasonCompleted 终止时，
+	// 若检测到残留的非 completed todo 项，注入一次"最后机会"提醒后置为 true。
+	// todo_write 成功执行时重置为 false。防止 LLM 忘记最后一次 todo 更新导致残留。
+	lastChanceTodoInjected bool
+
 
 	// ── hashline 快照存储（会话级，跨 turn 持久化）──
 	//
@@ -572,18 +577,41 @@ func (l *Loop) Run(ctx context.Context, messages []llm.Message) <-chan TurnEvent
 						return
 					}
 				}
-				if !compacted && lastUsage != nil {
-					ch <- TurnStats{
-						Turn:             state.TurnCount,
-						Model:            lastModel,
-						PromptTokens:     lastPromptTokens,
-						CompletionTokens: lastUsage.CompletionTokens,
-						CacheHitTokens:   lastUsage.CacheHitTokens,
-						CacheMissTokens:  lastUsage.CacheMissTokens,
-						ReasoningTokens:  lastUsage.ReasoningTokens,
-						MessageCount:     len(state.Messages) - 1,
+			if !compacted && lastUsage != nil {
+				ch <- TurnStats{
+					Turn:             state.TurnCount,
+					Model:            lastModel,
+					PromptTokens:     lastPromptTokens,
+					CompletionTokens: lastUsage.CompletionTokens,
+					CacheHitTokens:   lastUsage.CacheHitTokens,
+					CacheMissTokens:  lastUsage.CacheMissTokens,
+					ReasoningTokens:  lastUsage.ReasoningTokens,
+					MessageCount:     len(state.Messages) - 1,
+				}
+			}
+
+			// 最后机会：终止前检测残留的非 completed todo 项，
+			// 注入提醒并给 LLM 一次额外 turn 调用 todo_write。
+			if l.config.TodoState != nil && !l.lastChanceTodoInjected {
+				snapshot := l.config.TodoState.Snapshot()
+				hasIncomplete := false
+				for _, t := range snapshot {
+					if t.Status != "completed" {
+						hasIncomplete = true
+						break
 					}
 				}
+				if hasIncomplete {
+					l.lastChanceTodoInjected = true
+					l.verbose("    → stale todo detected, injecting last-chance reminder\n")
+					reminder := llm.Message{
+						Role:    llm.RoleUser,
+						Content: todoLastChanceText(l.config.TodoState.StatusSummary()),
+					}
+					state.Messages = append(state.Messages, reminder)
+					continue
+				}
+			}
 
 				ch <- LoopDone{
 					Turn:     state.TurnCount,
@@ -756,6 +784,14 @@ func sendEvent(ctx context.Context, ch chan<- TurnEvent, ev TurnEvent) bool {
 	case <-ctx.Done():
 		return false
 	}
+}
+
+// todoLastChanceText 构造最后机会提醒文本：告知 LLM 即将终止但有残留任务。
+func todoLastChanceText(summary string) string {
+	return summary + "\n\n" +
+		"[system] You are about to finish, but your todo list still has incomplete tasks. " +
+		"If all work is actually done, call todo_write to mark them as 'completed' before giving your final answer. " +
+		"If work remains, continue working. This is your last automatic reminder."
 }
 
 // injectTodoStatus 在每轮 LLM 调用前将当前 todo 状态注入消息列表。
