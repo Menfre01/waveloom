@@ -1,5 +1,34 @@
 # Changelog
 
+
+## [v0.1.0-beta.9] — 2026-07-14
+
+### 新增功能
+- **Hashline 编辑模型**：引入 hashline read/edit/write 编辑工具替代旧 read_file/edit_file，支持 TAG 锚定编辑、SWAP/INS/DEL/REM/MV 六种操作、空 body 行保留；edit 响应自动追加编辑后上下文，LLM 可链式编辑无需重新 read
+- **yarn/pnpm/clang 工具链探测**：环境探测新增 yarn、pnpm、clang 支持，覆盖更多前端和 C/C++ 项目场景
+- **web_search 超时控制**：web_search 新增 `timeout_ms` 参数支持，防止搜索请求长时间阻塞
+- **Skill $@ bash 兼容语法**：变量替换增加 `$@` bash 兼容语法
+
+### 修复
+- **Hashline TAG 稳定性**：TAG 内容摘要算法重构确保文件内容不变时 TAG 不变；recovery 范围不变量校验消除静默损坏风险
+- **Hashline LLM 格式兼容**：容忍尾部冒号、前导空白、行尾注释、INS 无冒号、大小写混用、单引号路径等 LLM 常见格式偏差
+- **Hashline 路径对齐**：修复 edit 与 read 路径不对齐导致跨 turn tag_mismatch
+- **Hashline 格式混淆提示**：parseLineRange 对 `:=` 格式混淆提供友好错误提示
+- **Subagent Fork 消息清理**：fork 消息构建清理孤儿 tool_calls，修复缓存命中率异常
+- **Subagent 写操作追踪**：修复 hashline edit 写操作在 subagent_write_operations 中缺失的追踪
+- **Subagent/Permission 安全加固**：修复 Fork boilerplate、敏感文件分类和清理指引
+- **Permission 规则修复**：edit_file/write_file 规则因 normalizeToolName 缺失兼容映射导致不生效
+- **Permission Bash 白名单**：前缀匹配增加命令链操作符检测，防止绕过
+- **Agent Loop Todo 残留**：ReasonCompleted 前检测残留 todo，注入最后机会提醒防止列表残留
+- **Memory UTF-8 处理**：非法 UTF-8 序列不再静默替换为 U+FFFD，改为保留原始内容并记录警告
+- **Shellutil 后台命令检测**：IsBackgroundCommand 不再误将 `&&` 结尾的命令识别为后台命令
+- **TempDir 符号链接**：os.TempDir() 替换为 pathutil.TempDir() 解决 macOS 符号链接路径不一致
+- **Context/Task 持久化**：--resume 后 lastBackgroundCheck 持久化，中断任务状态恢复
+- **TUI 帮助 overlay**：修复 ? 帮助 overlay 快捷键文字对比度不足
+
+### 重构
+- **工具统一重命名**：移除旧 read_file/edit_file 工具注册和 hashline 开关，read/edit/write 短名统一注册
+- **TUI Logo 布局**：将 logo 从 header 移入 viewport 可滚动区域，释放固定行高
 ## [v0.1.0-beta.8] — 2026-07-13
 
 ### 新增功能
