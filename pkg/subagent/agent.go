@@ -928,6 +928,22 @@ func buildForkMessages(parentRaw interface{}, description, prompt string) []llm.
 		filtered = filtered[:lastUserFilteredIdx+1]
 	}
 
+	// 3. 清理 orphaned tool_calls：剥离 filter 后残留在 assistant 消息中的 ToolCalls
+	//    （这些 tool_calls 引用的 tool 消息已在步骤 1 中被移除，不剥离会导致 API 400 错误）
+	cleanFiltered := filtered[:0]
+	for _, m := range filtered {
+		if m.Role == llm.RoleAssistant && len(m.ToolCalls) > 0 {
+			if m.Content == "" {
+				// 纯 tool_calls assistant（无文本内容）→ 整条删除
+				continue
+			}
+			// 有文本内容 → 保留消息但清除 ToolCalls
+			m.ToolCalls = nil
+		}
+		cleanFiltered = append(cleanFiltered, m)
+	}
+	filtered = cleanFiltered
+
 	// 追加 fork 身份注入 + 任务指令
 	filtered = append(filtered, llm.Message{
 		Role:    llm.RoleUser,
