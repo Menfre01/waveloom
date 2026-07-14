@@ -140,6 +140,36 @@ func TestRecoverOpsDel(t *testing.T) {
 	}
 }
 
+// REGRESSION: SWAP 范围首尾行可映射但中间行被修改时，recovery 必须拒绝。
+// 之前只检查端点，导致中间行已变时仍然执行替换，损坏文件。
+func TestRecoverOpsSwapRangeMidModified(t *testing.T) {
+	// 快照: a b c d e
+	snapshot := "line-a\nline-b\nline-c\nline-d\nline-e\n"
+	// 当前: 头部插入 + line-c 被改为 line-x（行数不变，但中间内容变了）
+	current := "// header\nline-a\nline-b\nline-x\nline-d\nline-e\n"
+
+	// 尝试 SWAP 整个范围 line-a 到 line-e（原始行号 1-5）
+	ops := []Op{{Kind: OpSWAP, LineStart: 1, LineEnd: 5, Body: []string{"replaced"}}}
+
+	result := RecoverOps(snapshot, current, ops)
+	if result.Success {
+		t.Fatal("expected RecoverOps to fail when intermediate line in range is modified")
+	}
+}
+
+// DEL range 中间行被修改同理。
+func TestRecoverOpsDelRangeMidModified(t *testing.T) {
+	snapshot := "line-a\nline-b\nline-c\nline-d\nline-e\n"
+	current := "// header\nline-a\nline-b\nline-x\nline-d\nline-e\n"
+
+	ops := []Op{{Kind: OpDEL, LineStart: 1, LineEnd: 5}}
+
+	result := RecoverOps(snapshot, current, ops)
+	if result.Success {
+		t.Fatal("expected RecoverOps DEL range to fail when intermediate line is modified")
+	}
+}
+
 func TestRecoverOpsEmptyFile(t *testing.T) {
 	snapshot := ""
 	current := "new line\n"
@@ -222,7 +252,9 @@ func TestBuildLineMappingsUnchanged(t *testing.T) {
 		{snapIdx: 1, currIdx: 1},
 		{snapIdx: 2, currIdx: 2},
 	}
-	mappings := buildLineMappings(lcs, 3, 3)
+	snapLines := []string{"a", "b", "c"}
+	currLines := []string{"a", "b", "c"}
+	mappings := buildLineMappings(lcs, snapLines, currLines)
 
 	for i, m := range mappings {
 		if m.Status != MapUnchanged {
@@ -241,7 +273,9 @@ func TestBuildLineMappingsShifted(t *testing.T) {
 		{snapIdx: 1, currIdx: 2},
 		{snapIdx: 2, currIdx: 3},
 	}
-	mappings := buildLineMappings(lcs, 3, 4)
+	snapLines := []string{"a", "b", "c"}
+	currLines := []string{"x", "a", "b", "c"}
+	mappings := buildLineMappings(lcs, snapLines, currLines)
 
 	for i, m := range mappings {
 		if m.Status != MapShifted {
@@ -253,22 +287,43 @@ func TestBuildLineMappingsShifted(t *testing.T) {
 	}
 }
 
-func TestBuildLineMappingsModified(t *testing.T) {
-	// 快照: a b c, 当前: a modified c (b 被改)
+func TestBuildLineMappingsDeleted(t *testing.T) {
+	// 快照: a b c, 当前: a modified c (b 被改，内容 "b" 完全消失)
 	lcs := []lcsPair{
 		{snapIdx: 0, currIdx: 0},
 		{snapIdx: 2, currIdx: 2},
 	}
-	mappings := buildLineMappings(lcs, 3, 3)
+	snapLines := []string{"a", "b", "c"}
+	currLines := []string{"a", "modified", "c"}
+	mappings := buildLineMappings(lcs, snapLines, currLines)
 
 	if mappings[0].Status != MapUnchanged {
 		t.Errorf("line 1: expected Unchanged, got %v", mappings[0].Status)
 	}
-	if mappings[1].Status != MapModified {
-		t.Errorf("line 2: expected Modified, got %v", mappings[1].Status)
+	if mappings[1].Status != MapDeleted {
+		t.Errorf("line 2: expected Deleted (content 'b' not in current file), got %v", mappings[1].Status)
 	}
 	if mappings[2].Status != MapUnchanged {
 		t.Errorf("line 3: expected Unchanged, got %v", mappings[2].Status)
+	}
+}
+
+// MapModified 仅在内容仍存在于当前文件但未通过 LCS 匹配时产生（如重复行超出匹配数）。
+func TestBuildLineMappingsModified(t *testing.T) {
+	// 快照: a a, 当前: a（快照有两个 "a"，当前只有一个，LCS 只能匹配一个）
+	lcs := []lcsPair{
+		{snapIdx: 0, currIdx: 0},
+	}
+	snapLines := []string{"a", "a"}
+	currLines := []string{"a"}
+	mappings := buildLineMappings(lcs, snapLines, currLines)
+
+	if mappings[0].Status != MapUnchanged {
+		t.Errorf("line 1 'a': expected Unchanged, got %v", mappings[0].Status)
+	}
+	// 第二个 "a" 内容在 currLines 中存在但 LCS 未匹配 → MapModified
+	if mappings[1].Status != MapModified {
+		t.Errorf("line 2 'a': expected Modified (content exists but LCS unmatched), got %d", mappings[1].Status)
 	}
 }
 

@@ -31,10 +31,20 @@ func NewStore() *SnapshotStore {
 }
 
 // Record 为给定文件内容生成 TAG 并存入快照。
-// 返回 4-hex TAG。若生成的 TAG 与已有快照碰撞（同一 Store 内不同路径不同内容产生相同 TAG），
+// 若该路径已有快照且内容相同，直接返回已有 TAG（保证相同内容、相同 TAG）。
+// 若内容不同，生成新 TAG（排除该路径旧 TAG 后确保全局唯一）。
+// 返回 4-hex TAG。若生成的 TAG 与已有快照碰撞（排除当前路径后），
 // 自动重新哈希（追加随机种子）直到唯一，最多重试 3 次；超过返回错误。
 func (s *SnapshotStore) Record(path string, content string) (string, error) {
-	tag, err := s.generateUniqueTag(content)
+	// 快速路径：内容未变 → 直接返回已有 TAG
+	s.mu.RLock()
+	existing, ok := s.data[path]
+	s.mu.RUnlock()
+	if ok && existing.Content == content {
+		return existing.TAG, nil
+	}
+
+	tag, err := s.generateUniqueTag(content, path)
 	if err != nil {
 		return "", err
 	}
@@ -96,25 +106,29 @@ func (s *SnapshotStore) Get(path string) (*Snapshot, bool) {
 }
 
 // generateUniqueTag 生成唯一 TAG，最多重试 3 次。
-func (s *SnapshotStore) generateUniqueTag(content string) (string, error) {
+// skipPath 指当前正在记录的路径，其旧 TAG 不参与冲突检测（允许覆盖）。
+func (s *SnapshotStore) generateUniqueTag(content string, skipPath string) (string, error) {
 	for attempt := 0; attempt < 3; attempt++ {
 		seed := content
 		if attempt > 0 {
 			seed = content + string(rune(rand.Intn(256)))
 		}
 		tag := computeTag(seed)
-		if !s.tagExists(tag) {
+		if !s.tagExistsExcept(tag, skipPath) {
 			return tag, nil
 		}
 	}
 	return "", fmt.Errorf("failed to generate unique TAG after 3 attempts")
 }
 
-// tagExists 检查 TAG 是否已在 Store 中存在（不同路径）。
-func (s *SnapshotStore) tagExists(tag string) bool {
+// tagExistsExcept 检查 TAG 是否已在 Store 中存在（排除 skipPath）。
+func (s *SnapshotStore) tagExistsExcept(tag string, skipPath string) bool {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	for _, snap := range s.data {
+	for p, snap := range s.data {
+		if p == skipPath {
+			continue
+		}
 		if snap.TAG == tag {
 			return true
 		}
