@@ -23,7 +23,7 @@ run:
 
 .PHONY: lint
 lint:
-	golangci-lint run ./pkg/... ./cmd/...
+	golangci-lint run --timeout=5m
 
 .PHONY: test
 test:
