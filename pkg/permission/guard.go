@@ -134,11 +134,12 @@ func NewGuard(opts ...GuardOption) *GuardImpl {
 
 	// 内置工具风险分类
 	g.toolRiskClass["read_file"] = RiskClassRead
-	g.toolRiskClass["read_file_hashline"] = RiskClassRead
+	g.toolRiskClass["read"] = RiskClassRead
 	g.toolRiskClass["web_fetch"] = RiskClassRead
 	g.toolRiskClass["write_file"] = RiskClassWrite
+	g.toolRiskClass["write"] = RiskClassWrite
 	g.toolRiskClass["edit_file"] = RiskClassWrite
-	g.toolRiskClass["edit_file_hashline"] = RiskClassWrite
+	g.toolRiskClass["edit"] = RiskClassWrite
 	g.toolRiskClass["bash"] = RiskClassExecute
 	g.toolRiskClass["kill_background_task"] = RiskClassSafe
 
@@ -584,7 +585,7 @@ func extractFilePath(input json.RawMessage) (path, workingDir string) {
 		path = params.Path
 	}
 	if path == "" && params.Patch != "" {
-		// edit_file_hashline: 从 patch 文本中提取第一个 [PATH#TAG] 中的路径
+		// edit: 从 patch 文本中提取第一个 [PATH#TAG] 中的路径
 		path = extractPathFromPatch(params.Patch)
 	}
 	if path == "" {

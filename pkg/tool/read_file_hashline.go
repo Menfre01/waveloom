@@ -24,12 +24,11 @@ type ReadFileHashlineParams struct {
 
 type ReadFileHashline struct{}
 
-func (t *ReadFileHashline) Name() string { return "read_file_hashline" }
+func (t *ReadFileHashline) Name() string { return "read" }
 
 func (t *ReadFileHashline) Description() string {
 	return "Read a file with TAG and line numbers for hash-anchored editing. " +
-		"Returns file content in hashline format: [PATH#TAG] header + N:CONTENT lines. " +
-		"Use with edit_file_hashline — the TAG certifies the file snapshot, " +
+		"Use with edit — the TAG certifies the file snapshot, " +
 		"line numbers are used directly in SWAP/INS/DEL operations."
 }
 

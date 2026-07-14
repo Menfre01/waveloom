@@ -24,7 +24,7 @@ type WriteFileParams struct {
 
 type WriteFile struct{}
 
-func (t *WriteFile) Name() string            { return "write_file" }
+func (t *WriteFile) Name() string            { return "write" }
 func (t *WriteFile) Description() string {
 	return "Create a new file or overwrite an existing file. Creates parent directories automatically."
 }
@@ -32,7 +32,7 @@ func (t *WriteFile) Description() string {
 // Prompt 返回 write_file 使用约束，由 Registry.FormatToolPrompts() 注入 C1 system prompt。
 func (t *WriteFile) Prompt() string {
 	return "## Write File\n\n" +
-		"Use only for new files or complete overwrites; for partial edits use edit_file. " +
+		"Use only for new files or complete overwrites; for partial edits use edit. " +
 		"file_path must be a file, not a directory — use ls to explore directories first."
 }
 func (t *WriteFile) Schema() json.RawMessage { return writeFileSchema }

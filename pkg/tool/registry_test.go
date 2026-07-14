@@ -150,7 +150,7 @@ func TestRegistry_RegisterAndList(t *testing.T) {
 	specs := r.List()
 
 	expectedTools := []string{
-		"read_file", "write_file", "edit_file",
+		"read_file", "write", "edit_file",
 		"bash", "bash_subagent",
 		"web_fetch",
 		"ask_user_question",

@@ -280,9 +280,9 @@ func TestWriteFile_Prompt(t *testing.T) {
 		t.Error("Prompt should not be empty")
 	}
 	if !strings.Contains(prompt, "new files or complete overwrites") {
-		t.Error("Prompt should mention when to use write_file")
+		t.Error("Prompt should mention when to use write")
 	}
-	if !strings.Contains(prompt, "partial edits use edit_file") {
-		t.Error("Prompt should redirect to edit_file for partial edits")
+	if !strings.Contains(prompt, "partial edits use edit") {
+		t.Error("Prompt should redirect to edit for partial edits")
 	}
 }

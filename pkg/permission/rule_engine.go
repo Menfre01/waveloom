@@ -144,10 +144,12 @@ func (re *RuleEngine) checkRules(rules []RuleEntry, toolName string, input json.
 // compatToolNames 返回应匹配的工具名列表（含向后兼容的旧名）。
 func compatToolNames(toolName string) []string {
 	switch toolName {
-	case "edit_file_hashline":
-		return []string{toolName, "edit_file"}
-	case "read_file_hashline":
-		return []string{toolName, "read_file"}
+	case "read":
+		return []string{toolName, "read_file_hashline", "read_file"}
+	case "edit":
+		return []string{toolName, "edit_file_hashline", "edit_file"}
+	case "write":
+		return []string{toolName, "write_file"}
 	default:
 		return []string{toolName}
 	}
