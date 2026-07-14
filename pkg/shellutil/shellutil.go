@@ -17,11 +17,12 @@ import (
 // 不处理同行内部的 &（如 echo foo & echo bar）。
 func IsBackgroundCommand(cmd string) bool {
 	trimmed := strings.TrimSpace(cmd)
-	if strings.HasSuffix(trimmed, "&") {
+	if strings.HasSuffix(trimmed, "&") && !strings.HasSuffix(trimmed, "&&") {
 		return true
 	}
 	for _, line := range strings.Split(cmd, "\n") {
-		if strings.HasSuffix(strings.TrimSpace(line), "&") {
+		t := strings.TrimSpace(line)
+		if strings.HasSuffix(t, "&") && !strings.HasSuffix(t, "&&") {
 			return true
 		}
 	}
