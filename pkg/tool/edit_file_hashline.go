@@ -21,11 +21,11 @@ type EditFileHashlineParams struct {
 
 type EditFileHashline struct{}
 
-func (t *EditFileHashline) Name() string { return "edit_file_hashline" }
+func (t *EditFileHashline) Name() string { return "edit" }
 
 func (t *EditFileHashline) Description() string {
 	return "Edit files using hash-anchored patches. " +
-		"Use read_file_hashline to get TAGs and line numbers, " +
+		"Use read to get TAGs and line numbers, " +
 		"then specify operations (SWAP/INS/DEL/REM/MV) by TAG and line number. " +
 		"No need to reproduce old code — just the TAG, line numbers, and new content."
 }
@@ -34,8 +34,8 @@ func (t *EditFileHashline) Description() string {
 func (t *EditFileHashline) Prompt() string {
 	return `## Edit File (Hashline) — Recommended
 
-Use edit_file_hashline to modify existing files. read_file_hashline gives you
-TAGs and line numbers; edit_file_hashline applies changes by referencing them. Never
+Use edit to modify existing files. read gives you
+TAGs and line numbers; edit applies changes by referencing them. Never
 reproduce old code — only the TAG, line numbers, and new content.
 
 ### Operations
@@ -57,13 +57,13 @@ implicitly by the range in SWAP/DEL.
 
 ### Line numbers
 
-Line numbers come directly from read_file_hashline output (N:CONTENT format).
+Line numbers come directly from read output (N:CONTENT format).
 Ranges are INCLUSIVE: SWAP 2.=3: covers lines 2 and 3.
 A range of N.=N: replaces a single line with any number of body lines.
 
 ### Rules
 
-- Use the TAG from your most recent read_file_hashline output.
+- Use the TAG from your most recent read output.
   After every edit, the response contains a new TAG — use it for the next edit.
 - Touch only lines that change. For pure additions, use INS.PRE / INS.POST — never
   widen a SWAP to include unchanged lines.
@@ -97,8 +97,8 @@ INS.POST 4:
 
 ### When NOT to use
 
-- Creating a new file → use write_file (then read_file_hashline to get a TAG)
-- Reading a file → use read_file_hashline
+- Creating a new file → use write (then read to get a TAG)
+- Reading a file → use read
 - Very simple single-word replacements on short files → ordinary edit_file is fine`
 }
 
@@ -111,7 +111,7 @@ func (t *EditFileHashline) Execute(ctx context.Context, p EditFileHashlineParams
 	store := hashline.StoreFromContext(ctx)
 	if store == nil {
 		return toolError(ErrorClassRecoverable, ErrKindInvalidArgs,
-			"hashline not available, read_file_hashline first to initialize the snapshot store", nil), nil
+			"hashline not available, read first to initialize the snapshot store", nil), nil
 	}
 
 	// ── Step 1: 解析 patch ──

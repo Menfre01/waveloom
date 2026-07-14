@@ -534,25 +534,28 @@ var allAgentDisallowed = map[string]bool{
 }
 
 var exploreDisallowed = map[string]bool{
-	"write_file":          true,
-	"edit_file":           true,
-	"edit_file_hashline":  true,
+	"write_file": true,
+	"write":      true,
+	"edit_file":  true,
+	"edit":       true,
 }
 
 // verificationDisallowed 与 exploreDisallowed 相同：审查 agent 只读项目文件，
 // 但可通过 bash_subagent 在 /tmp 创建临时脚本。
 var verificationDisallowed = map[string]bool{
-	"write_file":          true,
-	"edit_file":           true,
-	"edit_file_hashline":  true,
+	"write_file": true,
+	"write":      true,
+	"edit_file":  true,
+	"edit":       true,
 }
 
 // evaluateDisallowed 与 explore/verification 相同：评估 agent 只读项目文件，
 // 但可通过 bash_subagent 在 /tmp 创建临时脚本来测试行为。
 var evaluateDisallowed = map[string]bool{
-	"write_file":          true,
-	"edit_file":           true,
-	"edit_file_hashline":  true,
+	"write_file": true,
+	"write":      true,
+	"edit_file":  true,
+	"edit":       true,
 }
 
 func agentConfig(agentType string) (systemPrompt string, extraDisallowed map[string]bool) {
@@ -751,9 +754,9 @@ func forwardEvents(ctx context.Context, subCh <-chan agentloop.TurnEvent, cb fun
 			ev := SubagentEvent{ToolCallID: toolCallID, Kind: SubagentToolResult, ToolName: e.ToolCallName, ToolResult: e.Result, ToolDurMs: e.DurationMs, ToolError: e.Error}
 			fanout <- ev
 			events = append(events, ev)
-			if e.ToolCallName == "write_file" || e.ToolCallName == "edit_file" || e.ToolCallName == "edit_file_hashline" {
+			if e.ToolCallName == "write_file" || e.ToolCallName == "write" || e.ToolCallName == "edit_file" || e.ToolCallName == "edit" {
 				op := writeOp{ToolName: e.ToolCallName, FilePath: extractPath(e.Result), BytesIn: len(e.Result)}
-				if e.ToolCallName == "edit_file" || e.ToolCallName == "edit_file_hashline" {
+				if e.ToolCallName == "edit_file" || e.ToolCallName == "edit" {
 					op.LinesAdd, op.LinesDel = countDiff(e.Result)
 				}
 				writeOps = append(writeOps, op)
@@ -777,9 +780,9 @@ func forwardEvents(ctx context.Context, subCh <-chan agentloop.TurnEvent, cb fun
 				sb.WriteString("\n\n<subagent_write_operations>\n")
 				for _, op := range writeOps {
 					switch op.ToolName {
-					case "write_file":
-						fmt.Fprintf(&sb, "- write_file: %s (%s)\n", op.FilePath, fmtBytes(op.BytesIn))
-					case "edit_file", "edit_file_hashline":
+					case "write_file", "write":
+						fmt.Fprintf(&sb, "- %s: %s (%s)\n", op.ToolName, op.FilePath, fmtBytes(op.BytesIn))
+					case "edit_file", "edit":
 						fmt.Fprintf(&sb, "- %s: %s (+%d -%d lines)\n", op.ToolName, op.FilePath, op.LinesAdd, op.LinesDel)
 					}
 				}
@@ -816,7 +819,7 @@ func ensureNonEmpty(sb *strings.Builder, lastToolCalls []string) {
 
 func formatArgs(toolName, argsJSON string) string {
 	switch toolName {
-	case "read_file", "read_file_hashline", "write_file", "edit_file", "edit_file_hashline":
+	case "read_file", "read", "write_file", "write", "edit_file", "edit":
 		return extractField(argsJSON, "file_path")
 	case "bash_subagent", "bash":
 		return extractField(argsJSON, "command")

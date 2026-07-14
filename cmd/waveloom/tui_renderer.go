@@ -145,13 +145,13 @@ func stripCWDPrefix(field, cwd string) string {
 // formatToolArgs 将工具名和 JSON 参数格式化为一行可读摘要。
 func formatToolArgs(toolName string, argsJSON string, cwd string) string {
 	switch toolName {
-	case "read_file", "read_file_hashline":
+	case "read_file", "read":
 		return stripCWDPrefix(extractField(argsJSON, "file_path"), cwd)
-	case "write_file":
+	case "write":
 		return stripCWDPrefix(extractField(argsJSON, "file_path"), cwd)
 	case "edit_file":
 		return stripCWDPrefix(extractField(argsJSON, "file_path"), cwd)
-	case "edit_file_hashline":
+	case "edit":
 		patch := extractField(argsJSON, "patch")
 		// 从 patch 文本中提取第一个 [PATH#TAG] 中的路径
 		if idx := strings.Index(patch, "["); idx >= 0 {
@@ -407,7 +407,7 @@ func toolSuffix(p *Paragraph, lc *Messages) string {
 			return webFetchErrorSuffix(p.ToolErrorKind, p.ToolError)
 		case "web_search":
 			return webSearchErrorSuffix(p.ToolErrorKind, p.ToolError)
-		case "edit_file", "edit_file_hashline":
+		case "edit_file", "edit":
 			return editFileErrorSuffix(p.ToolErrorKind, p.ToolError)
 		case "exit_plan_mode":
 			if p.ToolErrorKind == "user_declined" {
@@ -422,11 +422,11 @@ func toolSuffix(p *Paragraph, lc *Messages) string {
 	}
 
 	switch p.ToolName {
-	case "read_file", "read_file_hashline", "write_file":
+	case "read_file", "read", "write":
 		size := formatBytes(len(p.ToolResult))
 		dur := formatDuration(p.ToolDurMs)
 		return fmt.Sprintf("(%s, %s)", size, dur)
-	case "edit_file", "edit_file_hashline":
+	case "edit_file", "edit":
 		dur := formatDuration(p.ToolDurMs)
 		var added, removed int
 		if p.DiffHunks != nil {
@@ -1573,7 +1573,7 @@ func renderToolPreview(sb *strings.Builder, p *Paragraph, textWidth int, indent 
 	}
 
 	switch p.ToolName {
-	case "write_file", "edit_file", "edit_file_hashline":
+	case "write", "edit_file", "edit":
 		lines := strings.Split(result, "\n")
 		for _, line := range lines {
 			lineStyle := styleToolPreview
@@ -1727,7 +1727,7 @@ func renderToolFullOutput(sb *strings.Builder, p *Paragraph, textWidth int, inde
 		// 展开态：显示每个问题的完整信息
 		sb.WriteString(formatQuestionExpanded(p.ToolResult, indent, textWidth, lc))
 		return
-	case "read_file", "read_file_hashline":
+	case "read_file", "read":
 		codeTextWidth := textWidth - 9
 		if codeTextWidth < 1 {
 			codeTextWidth = 1
@@ -1757,7 +1757,7 @@ func renderToolFullOutput(sb *strings.Builder, p *Paragraph, textWidth int, inde
 			}
 		}
 
-	case "write_file", "edit_file", "edit_file_hashline":
+	case "write", "edit_file", "edit":
 		for _, line := range strings.Split(result, "\n") {
 			wlines := wrapLine(line, textWidth)
 			for _, wl := range wlines {

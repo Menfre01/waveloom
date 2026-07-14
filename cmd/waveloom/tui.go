@@ -266,7 +266,7 @@ const maxToolResultBytes = 100 * 1024 // 100 KB
 //   - pkg/subagent/agent.go:formatSubagentEnvironment — 解析 "## Workspace" 和
 //     "## Environment" 节提取 OS/Shell/CWD 给冷启动子 agent
 //   - 对应的轮询测试：pkg/subagent/agent_test.go:TestFormatSubagentEnvironment_*
-func buildSystemPrompt(cwd string, loc Locale, useHashline bool) string {
+func buildSystemPrompt(cwd string, loc Locale) string {
 	prompt := defaultSystemPrompt
 	// 根据 locale 替换 Personality 中的语言指令
 	switch loc {
@@ -278,15 +278,6 @@ func buildSystemPrompt(cwd string, loc Locale, useHashline bool) string {
 		// zh-CN / auto → 保持中文指令不变
 	}
 
-	// 根据 hashline 开关替换工具名引用
-	if useHashline {
-		prompt = strings.ReplaceAll(prompt, "read_file, web_fetch, web_search", "read_file_hashline, web_fetch, web_search")
-		prompt = strings.ReplaceAll(prompt, "write_file, edit_file, and bash", "write_file, edit_file_hashline, and bash")
-		prompt = strings.ReplaceAll(prompt, "prefer edit_file over write_file", "prefer edit_file_hashline over write_file")
-		prompt = strings.ReplaceAll(prompt, "After every edit_file call", "After every edit_file_hashline call")
-		prompt = strings.ReplaceAll(prompt, "never pass a directory path to read_file", "never pass a directory path to read_file_hashline")
-		prompt = strings.ReplaceAll(prompt, "pass the actual filename to read_file", "pass the actual filename to read_file_hashline")
-	}
 	cwdInfo := fmt.Sprintf(`
 
 ## Workspace
@@ -787,7 +778,7 @@ func colorHex(c color.Color) string {
 // newTUIModel 创建 TUI model，依赖由外部注入（LLM client / tool registry / guard / expander / verboseLog / locale）。
 func newTUIModel(llmClient llm.Client, registry tool.Registry, guard permission.Guard, expander *reference.Expander, modelName string, theme string, verboseLog io.Writer, contextLimit int, maxTurns int, toolTimeout time.Duration, toolTimeoutSource string, loc Locale, todoState *todo.TodoState) *model {
 	cwd, _ := os.Getwd()
-	cm := ctxpkg.New(buildSystemPrompt(cwd, loc, true))
+	cm := ctxpkg.New(buildSystemPrompt(cwd, loc))
 	lc := messagesFor(loc)
 
 	ti := textarea.New()

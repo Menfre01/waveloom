@@ -187,7 +187,7 @@ func TestSetupVerboseLog_Enabled(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestBuildSystemPrompt_ContainsCWD(t *testing.T) {
-	prompt := buildSystemPrompt("/test/cwd", LocaleZhCN, true)
+	prompt := buildSystemPrompt("/test/cwd", LocaleZhCN)
 	if prompt == "" {
 		t.Fatal("prompt should not be empty")
 	}
@@ -200,21 +200,21 @@ func TestBuildSystemPrompt_ContainsCWD(t *testing.T) {
 }
 
 func TestBuildSystemPrompt_NonEmpty(t *testing.T) {
-	prompt := buildSystemPrompt("/tmp", LocaleZhCN, true)
+	prompt := buildSystemPrompt("/tmp", LocaleZhCN)
 	if len(prompt) < 100 {
 		t.Errorf("prompt too short: %d chars", len(prompt))
 	}
 }
 
 func TestBuildSystemPrompt_LocaleZhCN_KeepsChineseInstruction(t *testing.T) {
-	prompt := buildSystemPrompt("/tmp", LocaleZhCN, true)
+	prompt := buildSystemPrompt("/tmp", LocaleZhCN)
 	if !containsSubstr(prompt, "Communicate in Chinese when addressing the user") {
 		t.Error("zh-CN prompt should contain Chinese communication instruction")
 	}
 }
 
 func TestBuildSystemPrompt_LocaleEnUS_ReplacesWithEnglish(t *testing.T) {
-	prompt := buildSystemPrompt("/tmp", LocaleEnUS, true)
+	prompt := buildSystemPrompt("/tmp", LocaleEnUS)
 	if containsSubstr(prompt, "Communicate in Chinese") {
 		t.Error("en-US prompt should NOT contain Chinese communication instruction")
 	}
@@ -227,8 +227,8 @@ func TestBuildSystemPrompt_LocaleSwap_ExactOneReplacement(t *testing.T) {
 	originalLine := "Communicate in Chinese when addressing the user; keep English code and terminal output as-is."
 	replacementLine := "Communicate in English when addressing the user."
 
-	zhCN := buildSystemPrompt("/tmp", LocaleZhCN, true)
-	enUS := buildSystemPrompt("/tmp", LocaleEnUS, true)
+	zhCN := buildSystemPrompt("/tmp", LocaleZhCN)
+	enUS := buildSystemPrompt("/tmp", LocaleEnUS)
 
 	if c := strings.Count(zhCN, originalLine); c != 1 {
 		t.Errorf("zh-CN: expected 1 occurrence of original line, got %d", c)
