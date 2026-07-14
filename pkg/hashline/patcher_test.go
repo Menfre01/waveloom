@@ -756,6 +756,24 @@ func TestParseLineRangeEdgeCases(t *testing.T) {
 		t.Fatal("expected error for empty")
 	}
 
+
+	// := confusion (用户写了 N:=M 而非 N.=M)
+	_, _, err = parseLineRange("3:=7")
+	if err == nil {
+		t.Fatal("expected error for := confusion")
+	}
+	if !strings.Contains(err.Error(), "did you mean") {
+		t.Errorf("expected friendly hint, got: %v", err)
+	}
+
+	// := confusion with trailing colon (as in SWAP body)
+	_, _, err = parseLineRange("3:=7:")
+	if err == nil {
+		t.Fatal("expected error for := with trailing colon")
+	}
+	if !strings.Contains(err.Error(), "did you mean") {
+		t.Errorf("expected friendly hint, got: %v", err)
+	}
 	// Invalid
 	_, _, err = parseLineRange("abc")
 	if err == nil {
