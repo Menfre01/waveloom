@@ -72,14 +72,14 @@ A range of N.=N: replaces a single line with any number of body lines.
 - Never start or end a range mid-expression or mid-block.
 - If TAG verification fails, re-read the file before editing again.
 
-### Format
-
+- A patch may contain multiple [PATH#TAG] sections ONLY for different files.
+  All operations on the same file MUST be grouped under a single [PATH#TAG] section.
 *** Begin Patch
-[PATH#TAG]
+[src/pkg/foo.go#A1B2]       ← first file
 OP1
 +BODY
 
-[PATH#TAG]
+[src/pkg/bar.go#C3D4]       ← second file (different file — new section required)
 OP2
 +BODY
 *** End Patch
