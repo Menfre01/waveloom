@@ -231,6 +231,164 @@ DEL 12.=15
 	}
 }
 
+// REGRESSION: parseDelOp 未像 parseSwapOp/parseInsOp 剥离尾部冒号，
+// 导致 LLM 写 DEL 136: 时 parseLineRange("136:") 报 invalid line number。
+func TestParsePatchDelTrailingColon(t *testing.T) {
+	// Single line with trailing colon
+	input := "*** Begin Patch\n[src/main.go#A1B2]\nDEL 136:\n*** End Patch"
+	patch, err := ParsePatch(input)
+	if err != nil {
+		t.Fatalf("ParsePatch DEL 136: failed: %v", err)
+	}
+	op := patch.Sections[0].Ops[0]
+	if op.Kind != OpDEL {
+		t.Errorf("expected DEL, got %s", op.Kind)
+	}
+	if op.LineStart != 136 || op.LineEnd != 136 {
+		t.Errorf("expected single line 136, got %d.=%d", op.LineStart, op.LineEnd)
+	}
+
+	// Range with trailing colon
+	input2 := "*** Begin Patch\n[src/main.go#A1B2]\nDEL 4.=6:\n*** End Patch"
+	patch2, err := ParsePatch(input2)
+	if err != nil {
+		t.Fatalf("ParsePatch DEL 4.=6: failed: %v", err)
+	}
+	op2 := patch2.Sections[0].Ops[0]
+	if op2.LineStart != 4 || op2.LineEnd != 6 {
+		t.Errorf("expected range 4.=6, got %d.=%d", op2.LineStart, op2.LineEnd)
+	}
+
+	// Colon with spaces
+	input3 := "*** Begin Patch\n[src/main.go#A1B2]\nDEL 42  :\n*** End Patch"
+	patch3, err := ParsePatch(input3)
+	if err != nil {
+		t.Fatalf("ParsePatch DEL 42  : failed: %v", err)
+	}
+	op3 := patch3.Sections[0].Ops[0]
+	if op3.LineStart != 42 {
+		t.Errorf("expected line 42, got %d", op3.LineStart)
+	}
+}
+
+// REGRESSION: LLM 兼容性回归测试 — 覆盖 readBody / 行尾注释 / INS.HEAD 无冒号 /
+// INS. PRE 有多余空格 / End Patch 大小写 / MV 单引号等高频 LLM 格式变体。
+func TestParsePatchLLMCompat(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		check func(*testing.T, *Patch)
+	}{
+		{
+			name: "readBody tolerates leading whitespace before +",
+			input: "*** Begin Patch\n[src/main.go#A1B2]\nSWAP 1.=1:\n +indented\n*** End Patch",
+			check: func(t *testing.T, p *Patch) {
+				t.Helper()
+				if len(p.Sections[0].Ops[0].Body) != 1 || p.Sections[0].Ops[0].Body[0] != "indented" {
+					t.Errorf("expected Body=[indented], got %v", p.Sections[0].Ops[0].Body)
+				}
+			},
+		},
+		{
+			name: "readBody skips blank lines between body lines",
+			input: "*** Begin Patch\n[src/main.go#A1B2]\nSWAP 1.=1:\n+line1\n\n+line2\n*** End Patch",
+			check: func(t *testing.T, p *Patch) {
+				t.Helper()
+				body := p.Sections[0].Ops[0].Body
+				if len(body) != 2 || body[0] != "line1" || body[1] != "line2" {
+					t.Errorf("expected 2 body lines, got %v", body)
+				}
+			},
+		},
+		{
+			name: "inline comment # after SWAP",
+			input: "*** Begin Patch\n[src/main.go#A1B2]\nSWAP 2.=2: # replace greeting\n+hello\n*** End Patch",
+			check: func(t *testing.T, p *Patch) {
+				t.Helper()
+				op := p.Sections[0].Ops[0]
+				if op.LineStart != 2 || op.LineEnd != 2 {
+					t.Errorf("expected range 2.=2, got %d.=%d", op.LineStart, op.LineEnd)
+				}
+			},
+		},
+		{
+			name: "inline comment // after DEL",
+			input: "*** Begin Patch\n[src/main.go#A1B2]\nDEL 3.=5 // remove block\n*** End Patch",
+			check: func(t *testing.T, p *Patch) {
+				t.Helper()
+				op := p.Sections[0].Ops[0]
+				if op.LineStart != 3 || op.LineEnd != 5 {
+					t.Errorf("expected range 3.=5, got %d.=%d", op.LineStart, op.LineEnd)
+				}
+			},
+		},
+		{
+			name: "INS.HEAD without colon",
+			input: "*** Begin Patch\n[src/main.go#A1B2]\nINS.HEAD\n+// header\n*** End Patch",
+			check: func(t *testing.T, p *Patch) {
+				t.Helper()
+				op := p.Sections[0].Ops[0]
+				if op.Kind != OpINS || op.Position != "head" {
+					t.Errorf("expected INS head, got %s %s", op.Kind, op.Position)
+				}
+			},
+		},
+		{
+			name: "INS.TAIL without colon",
+			input: "*** Begin Patch\n[src/main.go#A1B2]\nINS.TAIL\n+// footer\n*** End Patch",
+			check: func(t *testing.T, p *Patch) {
+				t.Helper()
+				op := p.Sections[0].Ops[0]
+				if op.Kind != OpINS || op.Position != "tail" {
+					t.Errorf("expected INS tail, got %s %s", op.Kind, op.Position)
+				}
+			},
+		},
+		{
+			name: "INS. PRE with space after dot",
+			input: "*** Begin Patch\n[src/main.go#A1B2]\nINS. PRE 3:\n+before line3\n*** End Patch",
+			check: func(t *testing.T, p *Patch) {
+				t.Helper()
+				op := p.Sections[0].Ops[0]
+				if op.Kind != OpINS || op.Position != "pre" || op.RefLine != 3 {
+					t.Errorf("expected INS pre 3, got %s %s %d", op.Kind, op.Position, op.RefLine)
+				}
+			},
+		},
+		{
+			name: "*** end patch lowercase",
+			input: "*** Begin Patch\n[src/main.go#A1B2]\nDEL 1\n*** end patch",
+			check: func(t *testing.T, p *Patch) {
+				t.Helper()
+				if len(p.Sections) != 1 {
+					t.Errorf("expected 1 section, got %d", len(p.Sections))
+				}
+			},
+		},
+		{
+			name: "MV with single-quoted path",
+			input: "*** Begin Patch\n[src/main.go#A1B2]\nMV '/tmp/new.go'\n*** End Patch",
+			check: func(t *testing.T, p *Patch) {
+				t.Helper()
+				op := p.Sections[0].Ops[0]
+				if op.DestPath != "/tmp/new.go" {
+					t.Errorf("expected /tmp/new.go, got %q", op.DestPath)
+				}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			patch, err := ParsePatch(tt.input)
+			if err != nil {
+				t.Fatalf("ParsePatch failed: %v", err)
+			}
+			tt.check(t, patch)
+		})
+	}
+}
+
 func TestParsePatchRem(t *testing.T) {
 	input := `*** Begin Patch
 [src/old.go#A1B2]
