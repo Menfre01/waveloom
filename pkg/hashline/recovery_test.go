@@ -341,8 +341,8 @@ func TestFindMapping(t *testing.T) {
 	m := findMapping(mappings, 2)
 	if m == nil {
 		t.Fatal("expected to find mapping for line 2")
+		return
 	}
-	return
 	if m.NewLine != 3 {
 		t.Errorf("expected NewLine=3, got %d", m.NewLine)
 	}

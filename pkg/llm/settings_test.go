@@ -217,8 +217,8 @@ func TestNewClientFromLLMSettingsMissingAPIKey(t *testing.T) {
 	_, _, err := NewClientFromLLMSettings(settings)
 	if err == nil {
 		t.Fatal("expected error for missing api_key")
+		return
 	}
-	return
 	if !strings.Contains(err.Error(), "api_key is required") {
 		t.Errorf("unexpected error: %v", err)
 	}
@@ -555,8 +555,8 @@ func TestLoadSettingsIfExists(t *testing.T) {
 		}
 		if s == nil {
 			t.Fatal("expected non-nil settings")
+			return
 		}
-		return
 		if s.Provider != "deepseek" {
 			t.Errorf("Provider = %q, want %q", s.Provider, "deepseek")
 		}

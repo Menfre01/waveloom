@@ -59,8 +59,8 @@ func TestEnterPlanMode_Execute(t *testing.T) {
 	}
 	if result == nil {
 		t.Fatal("expected non-nil result")
+		return
 	}
-	return
 	if result.Content == "" {
 		t.Error("expected non-empty content")
 	}
@@ -127,8 +127,8 @@ func TestExitPlanMode_Execute(t *testing.T) {
 	}
 	if result == nil {
 		t.Fatal("expected non-nil result")
+		return
 	}
-	return
 	if result.Content == "" {
 		t.Error("expected non-empty content")
 	}

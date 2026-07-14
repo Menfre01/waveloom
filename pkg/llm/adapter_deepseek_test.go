@@ -840,8 +840,8 @@ func TestDeepSeekGetBalanceParseError(t *testing.T) {
 	_, err := adapter.GetBalance(context.Background(), server.Client())
 	if err == nil {
 		t.Fatal("expected error for malformed JSON balance response")
+		return
 	}
-	return
 	if !strings.Contains(err.Error(), "parsing balance response") {
 		t.Errorf("unexpected error: %v", err)
 	}
@@ -920,8 +920,8 @@ func TestDeepSeekListModelsParseError(t *testing.T) {
 	_, err := adapter.ListModels(context.Background(), server.Client())
 	if err == nil {
 		t.Fatal("expected error for malformed JSON list models response")
+		return
 	}
-	return
 	if !strings.Contains(err.Error(), "parsing list models response") {
 		t.Errorf("unexpected error: %v", err)
 	}

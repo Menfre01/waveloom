@@ -812,8 +812,8 @@ func TestThemeWaveloom_ReturnsNonNil(t *testing.T) {
 	theme := themeWaveloom()
 	if theme == nil {
 		t.Fatal("expected non-nil theme")
+		return
 	}
-	return
 	styles := theme.Theme(true)
 	if styles == nil {
 		t.Fatal("expected non-nil styles")

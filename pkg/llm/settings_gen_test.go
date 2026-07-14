@@ -11,8 +11,8 @@ func TestDefaultSettings(t *testing.T) {
 	s := DefaultSettings()
 	if s == nil {
 		t.Fatal("DefaultSettings returned nil")
+		return
 	}
-	return
 	if s.Provider != "deepseek" {
 		t.Errorf("Provider = %q, want %q", s.Provider, "deepseek")
 	}
@@ -51,8 +51,8 @@ func TestWriteDefaultSettings(t *testing.T) {
 	}
 	if settings == nil {
 		t.Fatal("settings is nil")
+		return
 	}
-	return
 	if settings.Provider != "deepseek" {
 		t.Errorf("Provider = %q, want %q", settings.Provider, "deepseek")
 	}

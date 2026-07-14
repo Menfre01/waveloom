@@ -61,8 +61,8 @@ func TestKillBackgroundTask_Kill(t *testing.T) {
 	info := task.DefaultRegistry.Get("kill-me")
 	if info == nil {
 		t.Fatal("task not found after kill")
+		return
 	}
-	return
 	if info.Status == task.TaskRunning {
 		t.Errorf("expected task to be completed/failed after kill, got status=%s", info.Status)
 	}

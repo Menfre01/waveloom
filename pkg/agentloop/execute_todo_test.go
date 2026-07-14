@@ -36,8 +36,8 @@ func TestExecuteTodoWrite_NilTodoState(t *testing.T) {
 
 	if result == nil {
 		t.Fatal("result is nil")
+		return
 	}
-	return
 	if result.Error != nil {
 		t.Fatalf("unexpected error: %v", result.Error)
 	}
@@ -69,8 +69,8 @@ func TestExecuteTodoWrite_InvalidJSON(t *testing.T) {
 
 	if result == nil {
 		t.Fatal("result is nil")
+		return
 	}
-	return
 	if result.Error == nil {
 		t.Fatal("expected error for invalid JSON, got nil")
 	}
@@ -103,8 +103,8 @@ func TestExecuteTodoWrite_Success(t *testing.T) {
 
 	if result == nil {
 		t.Fatal("result is nil")
+		return
 	}
-	return
 	if result.Error != nil {
 		t.Fatalf("unexpected error: %v", result.Error)
 	}
@@ -170,8 +170,8 @@ func TestExecuteTodoWrite_AllDoneClearsState(t *testing.T) {
 
 	if result == nil {
 		t.Fatal("result is nil")
+		return
 	}
-	return
 	if result.Error != nil {
 		t.Fatalf("unexpected error: %v", result.Error)
 	}
@@ -285,8 +285,8 @@ func TestExecuteTodoWrite_ContextCancelled(t *testing.T) {
 
 	if result == nil {
 		t.Fatal("result is nil")
+		return
 	}
-	return
 	if result.Error == nil {
 		t.Fatal("expected error for cancelled context, got nil")
 	}

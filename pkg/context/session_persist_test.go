@@ -182,8 +182,8 @@ func TestSaveAndLoad_WithCompaction(t *testing.T) {
 	if loadedComp == nil {
 		t.Fatal("compaction data not loaded")
 		return
+		return
 	}
-	return
 	if loadedComp.TotalTurns != 5 {
 		t.Errorf("CompactionData.TotalTurns mismatch: %d, want 5", loadedComp.TotalTurns)
 	}

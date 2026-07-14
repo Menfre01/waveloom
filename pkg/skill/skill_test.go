@@ -994,8 +994,8 @@ name: test
 	_, err := l.Load("test", "")
 	if err == nil {
 		t.Fatal("expected Load to fail: skill has injection but no allowed-tools whitelist")
+		return
 	}
-	return
 	if !strings.Contains(err.Error(), "no allowed-tools Bash whitelist") {
 		t.Errorf("error should mention missing whitelist, got: %v", err)
 	}
@@ -1017,8 +1017,8 @@ allowed-tools:
 	_, err := l.Load("test", "")
 	if err == nil {
 		t.Fatal("expected Load to fail: date command not whitelisted")
+		return
 	}
-	return
 	if !strings.Contains(err.Error(), "is not covered by allowed-tools") {
 		t.Errorf("error should mention uncovered command, got: %v", err)
 	}
@@ -1095,8 +1095,8 @@ func TestLintInjections_MultilinePartialWhitelist_Rejected(t *testing.T) {
 	_, err := l.Load("test", "")
 	if err == nil {
 		t.Fatal("expected Load to fail: uname not whitelisted")
+		return
 	}
-	return
 	if !strings.Contains(err.Error(), "uname") {
 		t.Errorf("error should mention uname command, got: %v", err)
 	}

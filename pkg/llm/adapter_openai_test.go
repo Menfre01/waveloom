@@ -433,8 +433,8 @@ func TestNewJSONRequestInvalidURL(t *testing.T) {
 	_, err := newJSONRequest(http.MethodPost, "http://example.com/\x00path", map[string]any{"key": "value"})
 	if err == nil {
 		t.Fatal("expected error for invalid URL")
+		return
 	}
-	return
 	if !strings.Contains(err.Error(), "creating request") {
 		t.Errorf("expected 'creating request' in error, got: %v", err)
 	}
@@ -738,8 +738,8 @@ func TestOpenAIListModelsParseError(t *testing.T) {
 	_, err := adapter.ListModels(context.Background(), server.Client())
 	if err == nil {
 		t.Fatal("expected error for malformed JSON list models response")
+		return
 	}
-	return
 	if !strings.Contains(err.Error(), "parsing list models response") {
 		t.Errorf("unexpected error: %v", err)
 	}
