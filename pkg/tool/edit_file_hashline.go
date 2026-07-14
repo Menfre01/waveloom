@@ -146,8 +146,9 @@ func (t *EditFileHashline) Execute(ctx context.Context, p EditFileHashlineParams
 	fs := &hashline.OSFS{WorkingDir: p.WorkingDir}
 	results := hashline.ApplyPatch(patch, fs, store)
 
-	// ── Step 5: 构造返回结果 ──
+	// ── Step 5: 构造返回结果（含编辑后上下文，LLM 可链式编辑无需 re-read）──
 	content := formatSectionResults(results)
+	content += formatPostEditContext(fs, results)
 
 	// 收集第一个错误（如有）
 	var firstError *ToolError
@@ -205,7 +206,7 @@ func formatSectionResults(results []hashline.SectionResult) string {
 			continue
 		}
 		if r.Warning != "" {
-			fmt.Fprintf(&b, "[%s#%s] ⚠ %s: %s (+%d lines)\n", r.Path, r.NewTAG, r.Op, r.Warning, r.LinesDelta)
+			fmt.Fprintf(&b, "[%s#%s] ⚠ %s: %s (%+d lines)\n", r.Path, r.NewTAG, r.Op, r.Warning, r.LinesDelta)
 			continue
 		}
 		switch r.Op {
@@ -240,4 +241,134 @@ func convertHunk(h hashline.EditHunk) DiffHunk {
 		})
 	}
 	return out
+}
+
+// ---------------------------------------------------------------------------
+// 编辑后上下文 — LLM 无需 re-read 即可链式编辑
+// ---------------------------------------------------------------------------
+
+// editContextLines 编辑后上下文中变更区域前后各显示的行数。
+const editContextLines = 3
+
+// maxEditDisplay 编辑区域本身最多显示的行数（超出则截断）。
+const maxEditDisplay = 20
+
+// formatPostEditContext 为每个成功的 update 操作追加编辑后文件上下文。
+// 显示变更区域 ±editContextLines 行的实际内容及行号，
+// 编辑区域过大时自动截断，让 LLM 无需重新 read 即可构造下一个 edit。
+// 注意：TAG 头已由 formatSectionResults 输出，此处不重复。
+func formatPostEditContext(fs hashline.FileSystem, results []hashline.SectionResult) string {
+	var b strings.Builder
+
+	for _, r := range results {
+		if r.Error != nil || r.Op != "update" || len(r.DiffHunks) == 0 {
+			continue
+		}
+
+		fileContent, err := fs.ReadFile(r.Path)
+		if err != nil {
+			continue
+		}
+
+		lines := splitFileLines(fileContent)
+		if len(lines) == 0 {
+			continue
+		}
+		totalLines := len(lines)
+
+		// 确定所有 hunk 覆盖的变更区域
+		firstChanged, lastChanged := totalLines+1, 0
+		for _, h := range r.DiffHunks {
+			if h.NewCount > 0 {
+				start := h.NewStart
+				end := h.NewStart + h.NewCount - 1
+				if start < firstChanged {
+					firstChanged = start
+				}
+				if end > lastChanged {
+					lastChanged = end
+				}
+			} else {
+				if h.NewStart < firstChanged {
+					firstChanged = h.NewStart
+				}
+				if h.NewStart > lastChanged {
+					lastChanged = h.NewStart
+				}
+			}
+		}
+		if lastChanged == 0 {
+			continue
+		}
+
+		editLen := lastChanged - firstChanged + 1
+		truncated := editLen > maxEditDisplay
+
+		// 计算显示范围（扩展上下文）
+		showStart := firstChanged - editContextLines
+		showEnd := lastChanged + editContextLines
+		if showStart < 1 {
+			showStart = 1
+		}
+		if showEnd > totalLines {
+			showEnd = totalLines
+		}
+
+		b.WriteByte('\n')
+
+		// 文件头部省略
+		if showStart > 1 {
+			fmt.Fprintf(&b, "... [%d lines above omitted]\n", showStart-1)
+		}
+
+		if truncated {
+			// 大编辑区域：显示前 5 行 + 截断提示 + 后 5 行
+			prefixEnd := firstChanged + 4
+			suffixStart := lastChanged - 4
+			if prefixEnd >= suffixStart {
+				// 编辑区域不够大，退化为全量显示
+				truncated = false
+			}
+		}
+
+		if !truncated {
+			for i := showStart - 1; i < showEnd; i++ {
+				fmt.Fprintf(&b, "%d:%s\n", i+1, lines[i])
+			}
+		} else {
+			prefixEnd := firstChanged + 4
+			suffixStart := lastChanged - 4
+
+			// 上文 + 编辑区前 5 行
+			for i := showStart - 1; i < prefixEnd; i++ {
+				fmt.Fprintf(&b, "%d:%s\n", i+1, lines[i])
+			}
+
+			omitted := suffixStart - prefixEnd
+			fmt.Fprintf(&b, "... [%d lines in edit region omitted]\n", omitted)
+
+			// 编辑区后 5 行 + 下文
+			for i := suffixStart; i < showEnd; i++ {
+				fmt.Fprintf(&b, "%d:%s\n", i+1, lines[i])
+			}
+		}
+
+		// 文件尾部省略
+		if showEnd < totalLines {
+			fmt.Fprintf(&b, "... [%d lines below omitted]\n", totalLines-showEnd)
+		}
+	}
+
+	return b.String()
+}
+
+// splitFileLines 将文件内容按行分割，去除尾部空行。
+func splitFileLines(content string) []string {
+	content = strings.ReplaceAll(content, "\r\n", "\n")
+	content = strings.TrimSuffix(content, "\r")
+	lines := strings.Split(content, "\n")
+	if len(lines) > 0 && lines[len(lines)-1] == "" {
+		lines = lines[:len(lines)-1]
+	}
+	return lines
 }
