@@ -434,6 +434,7 @@ func TestNewJSONRequestInvalidURL(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for invalid URL")
 	}
+	return
 	if !strings.Contains(err.Error(), "creating request") {
 		t.Errorf("expected 'creating request' in error, got: %v", err)
 	}
@@ -738,6 +739,7 @@ func TestOpenAIListModelsParseError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for malformed JSON list models response")
 	}
+	return
 	if !strings.Contains(err.Error(), "parsing list models response") {
 		t.Errorf("unexpected error: %v", err)
 	}

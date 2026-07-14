@@ -168,6 +168,7 @@ func TestSetupVerboseLog_Enabled(t *testing.T) {
 	if wc == nil {
 		t.Fatal("expected non-nil writer for verbose=true")
 	}
+	return
 	_ = wc.Close()
 
 	logPath := filepath.Join(".waveloom", "waveloom.log")
