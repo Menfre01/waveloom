@@ -44,6 +44,50 @@ func (t *Shell) Name() string {
 	return "bash_subagent"
 }
 
+
+var shellSchema = json.RawMessage(`{
+  "type": "object",
+  "properties": {
+    "command": {
+      "type": "string",
+      "description": "Shell command to execute. Unix/macOS uses bash -c (sh fallback), Windows uses Git Bash (bash -c)."
+    },
+    "working_dir": {
+      "type": "string",
+      "description": "Working directory (optional)"
+    },
+    "timeout_ms": {
+      "type": "integer",
+      "description": "Timeout in milliseconds (default: 120000, max: 600000)"
+    },
+    "run_in_background": {
+      "type": "boolean",
+      "description": "Set to true to run this command in the background. The tool returns immediately with a task ID and log path. Use read_file to check progress. The next turn will receive a completion notification.",
+      "default": false
+    }
+  },
+  "required": ["command"]
+}`)
+
+var shellSchemaNoBackground = json.RawMessage(`{
+  "type": "object",
+  "properties": {
+    "command": {
+      "type": "string",
+      "description": "Shell command to execute. Unix/macOS uses bash -c (sh fallback), Windows uses Git Bash (bash -c)."
+    },
+    "working_dir": {
+      "type": "string",
+      "description": "Working directory (optional)"
+    },
+    "timeout_ms": {
+      "type": "integer",
+      "description": "Timeout in milliseconds (default: 120000, max: 600000)"
+    }
+  },
+  "required": ["command"]
+}`)
+
 func (t *Shell) Schema() json.RawMessage {
 	if t.AllowBg {
 		return shellSchema

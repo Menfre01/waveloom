@@ -102,6 +102,22 @@ INS.POST 4:
 - Very simple single-word replacements on short files → ordinary edit_file is fine`
 }
 
+
+var editFileHashlineSchema = json.RawMessage(`{
+  "type": "object",
+  "properties": {
+    "patch": {
+      "type": "string",
+      "description": "Hashline format patch text. Must start with *** Begin Patch and end with *** End Patch."
+    },
+    "working_dir": {
+      "type": "string",
+      "description": "Working directory (optional)"
+    }
+  },
+  "required": ["patch"]
+}`)
+
 func (t *EditFileHashline) Schema() json.RawMessage { return editFileHashlineSchema }
 
 func (t *EditFileHashline) ConcurrentSafe() bool { return false }

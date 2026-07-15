@@ -37,6 +37,26 @@ type WebFetch struct{
 }
 
 func (t *WebFetch) Name() string         { return "web_fetch" }
+
+var webFetchSchema = json.RawMessage(`{
+  "type": "object",
+  "properties": {
+    "url": {
+      "type": "string",
+      "description": "URL to fetch (http/https only)"
+    },
+    "max_size": {
+      "type": "integer",
+      "description": "Maximum response size in bytes (optional, default: 1MB, max: 5MB)"
+    },
+    "timeout_ms": {
+      "type": "integer",
+      "description": "Timeout in milliseconds (optional, default: 30000, max: 120000)"
+    }
+  },
+  "required": ["url"]
+}`)
+
 func (t *WebFetch) Schema() json.RawMessage { return webFetchSchema }
 func (t *WebFetch) ConcurrentSafe() bool { return true }
 

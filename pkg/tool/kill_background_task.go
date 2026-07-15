@@ -22,6 +22,18 @@ type KillBackgroundTaskParams struct {
 type KillBackgroundTask struct{}
 
 func (t *KillBackgroundTask) Name() string             { return "kill_background_task" }
+
+var killBackgroundTaskSchema = json.RawMessage(`{
+  "type": "object",
+  "properties": {
+    "task_id": {
+      "type": "string",
+      "description": "The task ID of the background command to kill. Obtained from the bash tool response or background-task notifications."
+    }
+  },
+  "required": ["task_id"]
+}`)
+
 func (t *KillBackgroundTask) Schema() json.RawMessage   { return killBackgroundTaskSchema }
 func (t *KillBackgroundTask) ConcurrentSafe() bool       { return true }
 func (t *KillBackgroundTask) SupportsStreaming() bool    { return false }

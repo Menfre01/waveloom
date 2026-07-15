@@ -36,6 +36,35 @@ func (t *EditFile) Description() string {
 func (t *EditFile) Prompt() string {
 	return "## Edit File\n\nWhen NOT to use edit_file: creating new files → use write_file. Reading files → use read_file. Large rewrites → use write_file."
 }
+
+var editFileSchema = json.RawMessage(`{
+  "type": "object",
+  "properties": {
+    "file_path": {
+      "type": "string",
+      "description": "File path (absolute, or relative to working_dir / workspace root)"
+    },
+    "old_string": {
+      "type": "string",
+      "description": "Text to replace — should match the file content as closely as possible. Minor differences in whitespace, blank lines, and Unicode punctuation (tabs/spaces, smart quotes, em dashes → ASCII, etc.) are auto-corrected when the match is unambiguous. If ambiguous, include more surrounding context lines."
+    },
+    "new_string": {
+      "type": "string",
+      "description": "Replacement text. Use empty string to delete the matched text."
+    },
+    "replace_all": {
+      "type": "boolean",
+      "description": "Replace all occurrences (default: false, first match only)",
+      "default": false
+    },
+    "working_dir": {
+      "type": "string",
+      "description": "Working directory (optional)"
+    }
+  },
+  "required": ["file_path", "old_string", "new_string"]
+}`)
+
 func (t *EditFile) Schema() json.RawMessage { return editFileSchema }
 func (t *EditFile) ConcurrentSafe() bool    { return false }
 

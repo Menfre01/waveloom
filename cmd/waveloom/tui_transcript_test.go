@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	ctxpkg "github.com/Menfre01/waveloom/pkg/context"
+	"github.com/Menfre01/waveloom/pkg/session"
 	"github.com/Menfre01/waveloom/pkg/subagent"
 )
 
@@ -128,13 +128,13 @@ func TestTranscriptFileRoundTrip(t *testing.T) {
 
 	for _, p := range []*Paragraph{&p1, &p2, &p3} {
 		line := paragraphToTranscriptLine(p)
-		if err := ctxpkg.AppendTranscriptLine(tp, line); err != nil {
+		if err := session.AppendTranscriptLine(tp, line); err != nil {
 			t.Fatalf("AppendTranscriptLine: %v", err)
 		}
 	}
 
 	// Load
-	lines, err := ctxpkg.LoadTranscriptLines(tp)
+	lines, err := session.LoadTranscriptLines(tp)
 	if err != nil {
 		t.Fatalf("LoadTranscriptLines: %v", err)
 	}
@@ -156,7 +156,7 @@ func TestTranscriptFileRoundTrip(t *testing.T) {
 
 func TestTranscriptLineToParagraph(t *testing.T) {
 	// Verify unknown type/state fields produce valid Paragraph defaults
-	line := ctxpkg.TranscriptLine{Type: "unknown", State: "unknown"}
+	line := session.TranscriptLine{Type: "unknown", State: "unknown"}
 	p := transcriptLineToParagraph(line)
 	// Should default to zero values for type (paraUser = 0) and state (stateStreaming = 0)
 	if p.Type != paraUser {
@@ -187,8 +187,8 @@ func TestReplayTranscript(t *testing.T) {
 
 	// Create a transcript file
 	tp := filepath.Join(dir, "test.jsonl")
-	_ = ctxpkg.AppendTranscriptLine(tp, ctxpkg.TranscriptLine{Type: "user", State: "done", Text: "question"})
-	_ = ctxpkg.AppendTranscriptLine(tp, ctxpkg.TranscriptLine{Type: "assistant", State: "done", Text: "answer"})
+	_ = session.AppendTranscriptLine(tp, session.TranscriptLine{Type: "user", State: "done", Text: "question"})
+	_ = session.AppendTranscriptLine(tp, session.TranscriptLine{Type: "assistant", State: "done", Text: "answer"})
 
 	// Replay
 	m := &model{transcriptPath: tp}
@@ -245,7 +245,7 @@ func TestFlushTranscriptSkipsStreaming(t *testing.T) {
 	}
 
 	// Verify transcript file content
-	lines, err := ctxpkg.LoadTranscriptLines(tp)
+	lines, err := session.LoadTranscriptLines(tp)
 	if err != nil {
 		t.Fatal(err)
 	}
