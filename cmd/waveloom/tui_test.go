@@ -14,18 +14,18 @@ import (
 	"charm.land/lipgloss/v2"
 
 	"github.com/Menfre01/waveloom/pkg/agentloop"
-	ctxpkg "github.com/Menfre01/waveloom/pkg/context"
+	"github.com/Menfre01/waveloom/pkg/session"
 	"github.com/Menfre01/waveloom/pkg/llm"
 )
 
 // newTestCM 创建一个用于测试的 ContextManager（无 hard limit）。
-func newTestCM() *ctxpkg.ContextManager {
-	return ctxpkg.New("system")
+func newTestCM() *session.ContextManager {
+	return session.New("system")
 }
 
 // newTestCMWithHardLimit 通过 Compactor.Compact 注入高 contextTokens 触发硬临界值。
-func newTestCMWithHardLimit() *ctxpkg.ContextManager {
-	cm := ctxpkg.New("system")
+func newTestCMWithHardLimit() *session.ContextManager {
+	cm := session.New("system")
 	// 先 PrepareRun 注入消息
 	cm.PrepareRun("hello")
 	messages := []llm.Message{

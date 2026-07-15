@@ -34,6 +34,30 @@ func (t *ReadFile) Description() string {
 		"file_path must be a file, not a directory. " +
 		"On directory error, pick a file from the listing — use the Did you mean suggestion if present."
 }
+
+var readFileSchema = json.RawMessage(`{
+  "type": "object",
+  "properties": {
+    "file_path": {
+      "type": "string",
+      "description": "File path (absolute, or relative to working_dir / workspace root). Must be a file, not a directory — use shell('ls') first to explore directories. Paths without a file extension are likely directories."
+    },
+    "offset": {
+      "type": "integer",
+      "description": "Starting line number (0-based, 0 = first line, optional)"
+    },
+    "limit": {
+      "type": "integer",
+      "description": "Number of lines to read (optional, default: all)"
+    },
+    "working_dir": {
+      "type": "string",
+      "description": "Working directory (optional)"
+    }
+  },
+  "required": ["file_path"]
+}`)
+
 func (t *ReadFile) Schema() json.RawMessage { return readFileSchema }
 func (t *ReadFile) ConcurrentSafe() bool { return true }
 

@@ -12,7 +12,7 @@ import (
 
 	"github.com/Menfre01/waveloom/pkg/agentloop"
 	"github.com/Menfre01/waveloom/pkg/compaction"
-	ctxpkg "github.com/Menfre01/waveloom/pkg/context"
+	"github.com/Menfre01/waveloom/pkg/session"
 	"github.com/Menfre01/waveloom/pkg/environment"
 	"github.com/Menfre01/waveloom/pkg/llm"
 	"github.com/Menfre01/waveloom/pkg/mcp"
@@ -28,7 +28,7 @@ import (
 
 func main() {
 	// 0. 注入构建版本号到 context 包（ldflags → session 文件兼容性检查）
-	ctxpkg.BuildVersion = Version
+	session.BuildVersion = Version
 
 	// 1. 解析命令行参数
 	cfg := parseCLI()
@@ -231,7 +231,7 @@ func main() {
 		cfg.ToolTimeout = agentloop.DefaultToolTimeout
 		cfg.ToolTimeoutSource = "default"
 	}
-	ctxMgr := ctxpkg.NewWithCompaction(systemPrompt, compactionConfig, compaction.NewCompactionSummarizer(summarizerClient, 0))
+	ctxMgr := session.NewWithCompaction(systemPrompt, compactionConfig, compaction.NewCompactionSummarizer(summarizerClient, 0))
 
 	// 13. 将 AGENTS.md 作为 user 消息注入
 	ctxMgr.InjectUserInstructions(agentsMdText)
@@ -239,15 +239,15 @@ func main() {
 	// 14. 计算 session 落盘路径
 	// 优先级：settings.json session.dir > WAVELOOM_SESSION_DIR 环境变量 > ~/.waveloom/<project>/sessions/
 	// --continue 恢复最近 session，--resume 指定 session ID 恢复，否则新建
-	sessionOverride := ctxpkg.LoadSessionDir(projectPath)
+	sessionOverride := session.LoadSessionDir(projectPath)
 	if sessionOverride == "" {
-		sessionOverride = ctxpkg.LoadSessionDir(globalPath)
+		sessionOverride = session.LoadSessionDir(globalPath)
 	}
-	sessionDir, dirErr := ctxpkg.ResolveSessionDir(cwd, sessionOverride)
+	sessionDir, dirErr := session.ResolveSessionDir(cwd, sessionOverride)
 	isResume := false
 	if dirErr == nil {
 		if cfg.ContinueSession {
-			if sid, err := ctxpkg.ContinueSessionID(sessionDir); err == nil && sid != "" {
+			if sid, err := session.ContinueSessionID(sessionDir); err == nil && sid != "" {
 				cfg.ResumeSessionID = sid
 				fmt.Fprintf(os.Stderr, messagesFor(loc).CLIContinueSession, sid)
 			} else {
@@ -263,7 +263,7 @@ func main() {
 			isResume = true
 			fmt.Fprintf(os.Stderr, messagesFor(loc).CLIResumedSession, cfg.ResumeSessionID)
 		} else {
-			sessionPath := filepath.Join(sessionDir, ctxpkg.NewSessionID()+".json")
+			sessionPath := filepath.Join(sessionDir, session.NewSessionID()+".json")
 			ctxMgr.SetSessionPath(sessionPath)
 		}
 	}
@@ -469,22 +469,22 @@ func formatEnvironmentSection(results []environment.ProbeResult, cwd, globalPath
 // listSessions 列出最近的 sessions（waveloom ls）。
 func listSessions(projectPath, globalPath string, loc Locale) {
 	lc := messagesFor(loc)
-	sessionOverride := ctxpkg.LoadSessionDir(projectPath)
+	sessionOverride := session.LoadSessionDir(projectPath)
 	if sessionOverride == "" {
-		sessionOverride = ctxpkg.LoadSessionDir(globalPath)
+		sessionOverride = session.LoadSessionDir(globalPath)
 	}
 	cwd, err := os.Getwd()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: get current directory: %v\n", err)
 		os.Exit(1)
 	}
-	sessionDir, err := ctxpkg.ResolveSessionDir(cwd, sessionOverride)
+	sessionDir, err := session.ResolveSessionDir(cwd, sessionOverride)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: resolve session directory: %v\n", err)
 		os.Exit(1)
 	}
 
-	entries, err := ctxpkg.LoadRecentSessions(sessionDir)
+	entries, err := session.LoadRecentSessions(sessionDir)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: load recent sessions: %v\n", err)
 		os.Exit(1)

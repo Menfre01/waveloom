@@ -1,4 +1,4 @@
-// Package context 提供跨 Agent Loop 调用的消息历史累积，
+// Package session 提供跨 Agent Loop 调用的消息历史累积，
 // 使 DeepSeek 前缀缓存系统能够跨轮次命中。
 //
 // 核心机制:
@@ -6,7 +6,7 @@
 //   - CompleteRun 用 Loop 完成后的完整消息替换内部状态
 //   - System Prompt 固定为 messages[0]，确保它是最长公共前缀的起点
 //   - 四级水位线上下文压缩（Tier 0/1/2/3）在 CompleteRun 中自动执行
-package context
+package session
 
 import (
 	"crypto/rand"

@@ -15,6 +15,8 @@ cmd/waveloom/    CLI 入口（main, config, runner, tui）
 pkg/
   agentloop/     Think-Act-Observe 循环（Run → <-chan TurnEvent）
   compaction/    四级水位线上下文压缩（Snip/Prune/Summarize）
+  filehistory/   文件历史备份、快照、回退
+  hashline/      Hashline 编辑模型
   context/       跨轮次消息历史（PrepareRun / CompleteRun）
   environment/   工具链探测
   llm/           LLM Client（DeepSeek + OpenAI 适配、流式、重试）
@@ -24,6 +26,7 @@ pkg/
   permission/    权限守门人（规则引擎、路径/命令安全）
   reference/     @ 文件引用展开
   shellutil/     Shell 工具
+  plugin/        插件发现
   skill/         Skill 系统（.claude/skills/ 加载执行）
   slashcommand/  / 命令面板
   subagent/      子代理（Fork/Cold/Explore）

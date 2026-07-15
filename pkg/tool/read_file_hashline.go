@@ -32,6 +32,30 @@ func (t *ReadFileHashline) Description() string {
 		"line numbers are used directly in SWAP/INS/DEL operations."
 }
 
+
+var readFileHashlineSchema = json.RawMessage(`{
+  "type": "object",
+  "properties": {
+    "file_path": {
+      "type": "string",
+      "description": "File path (absolute, or relative to working_dir / workspace root). Must be a file, not a directory — use shell('ls') first to explore directories. Paths without a file extension are likely directories."
+    },
+    "offset": {
+      "type": "integer",
+      "description": "Starting line number (0-based, 0 = first line, optional)"
+    },
+    "limit": {
+      "type": "integer",
+      "description": "Number of lines to read (optional, default: all)"
+    },
+    "working_dir": {
+      "type": "string",
+      "description": "Working directory (optional)"
+    }
+  },
+  "required": ["file_path"]
+}`)
+
 func (t *ReadFileHashline) Schema() json.RawMessage { return readFileHashlineSchema }
 
 func (t *ReadFileHashline) ConcurrentSafe() bool { return true }

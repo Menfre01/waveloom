@@ -35,6 +35,26 @@ func (t *WriteFile) Prompt() string {
 		"Use only for new files or complete overwrites; for partial edits use edit. " +
 		"file_path must be a file, not a directory — use ls to explore directories first."
 }
+
+var writeFileSchema = json.RawMessage(`{
+  "type": "object",
+  "properties": {
+    "file_path": {
+      "type": "string",
+      "description": "File path (absolute, or relative to working_dir / workspace root). Must be a file, not a directory — use shell('ls') to explore directories first."
+    },
+    "content": {
+      "type": "string",
+      "description": "File content to write"
+    },
+    "working_dir": {
+      "type": "string",
+      "description": "Working directory (optional)"
+    }
+  },
+  "required": ["file_path", "content"]
+}`)
+
 func (t *WriteFile) Schema() json.RawMessage { return writeFileSchema }
 func (t *WriteFile) ConcurrentSafe() bool    { return false }
 

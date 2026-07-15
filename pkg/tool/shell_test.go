@@ -1147,7 +1147,7 @@ func TestShell_Schema_WithAndWithoutBackground(t *testing.T) {
 		t.Error("bash schema should have run_in_background")
 	}
 	if strings.Contains(noBgSchema, "run_in_background") {
-		t.Error("bash_subagent schema should NOT have run_in_background")
+		t.Error("bash_subagent schema should NOT have run_in_background (AllowBg=false)")
 	}
 }
 

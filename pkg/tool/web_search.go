@@ -46,6 +46,27 @@ type WebSearch struct {
 }
 
 func (t *WebSearch) Name() string            { return "web_search" }
+
+var webSearchSchema = json.RawMessage(`{
+  "type": "object",
+  "properties": {
+    "query": {
+      "type": "string",
+      "description": "Search query — keywords, natural language, or technical terms",
+      "minLength": 1
+    },
+    "max_results": {
+      "type": "integer",
+      "description": "Maximum number of results to return (default: 10, max: 20)"
+    },
+    "timeout_ms": {
+      "type": "integer",
+      "description": "Timeout in milliseconds (optional, default: 45000, max: 120000)"
+    }
+  },
+  "required": ["query"]
+}`)
+
 func (t *WebSearch) Schema() json.RawMessage { return webSearchSchema }
 func (t *WebSearch) ConcurrentSafe() bool    { return true }
 
