@@ -1,6 +1,24 @@
 # Changelog
 
 
+## [v0.1.0-beta.10] — 2026-07-16
+
+### Added
+- **Multi-file edit diff rendering**: Multi-file edit patch responses now include file header path summaries, so the LLM can visually confirm post-edit content state for each file
+
+### Fixed
+- **CLI help and code alignment**: `--help` output and shell completion now match actual code functionality; oneshot mode output internationalized
+- **Agent loop concurrency race**: barrierTool now context-aware, eliminating race conditions in concurrent tool call scenarios
+- **Windows path compatibility**: Replaced `/dev/zero` with Windows-compatible `NUL` device in tests
+- **Hashline stability**: Lint fixes and read error handling improvements for a more robust editing model
+- **Lint zero-warning cleanup**: Eliminated all SA5011/ineffassign/SA4010 static analysis warnings
+
+### Changed
+- **Hashline edit model refactor**: Introduced declaration-order offset calculation and operation overlap detection for more reliable multi-operation patch parsing
+- **Todo apply mechanism optimization**: Apply switched from full replacement to content-based matching merge, preventing lost tasks from concurrent updates
+- **Structured logging migration**: `fmt.Fprintf(os.Stderr)` + `--verbose` fully migrated to `log/slog` with unified, controllable log levels and formatting
+- **Session package rename and module split**: `pkg/context` → `pkg/session`, tool schema inlined, `tui.go` split into 4 files by responsibility
+
 ## [v0.1.0-beta.9] — 2026-07-14
 
 ### Added
