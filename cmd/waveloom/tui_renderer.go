@@ -151,15 +151,16 @@ func formatToolArgs(toolName string, argsJSON string, cwd string) string {
 		return stripCWDPrefix(extractField(argsJSON, "file_path"), cwd)
 	case "edit":
 		patch := extractField(argsJSON, "patch")
-		if idx := strings.Index(patch, "["); idx >= 0 {
-			end := strings.IndexByte(patch[idx:], ']')
-			hash := strings.IndexByte(patch[idx:], '#')
-			if end >= 0 && hash >= 0 && hash < end {
-				filePath := patch[idx+1 : idx+hash]
-				return stripCWDPrefix(filePath, cwd)
-			}
+		// 提取所有 [PATH#TAG] 中的文件路径
+		paths := extractPatchFilePaths(patch)
+		if len(paths) == 0 {
+			return truncateStr(patch, 40)
 		}
-		return truncateStr(patch, 40)
+		first := stripCWDPrefix(paths[0], cwd)
+		if len(paths) > 1 {
+			return first + fmt.Sprintf(" +%d more", len(paths)-1)
+		}
+		return first
 	case "bash":
 		cmd := extractField(argsJSON, "command")
 		// 归一化：剥离 "cd <path> &&" 前缀，避免 turn log 中显示冗长的 cd 前缀
@@ -253,6 +254,35 @@ func truncateStr(s string, maxLen int) string {
 		return s
 	}
 	return string(runes[:maxLen])
+}
+// extractPatchFilePaths 从 hashline patch 文本中提取所有 [PATH#TAG] 节的文件路径。
+// 返回去重后的路径列表（保持首次出现的顺序）。
+func extractPatchFilePaths(patch string) []string {
+	var paths []string
+	seen := make(map[string]bool)
+	rest := patch
+	for {
+		idx := strings.Index(rest, "[")
+		if idx < 0 {
+			break
+		}
+		rest = rest[idx+1:]
+		end := strings.IndexByte(rest, ']')
+		if end < 0 {
+			break
+		}
+		header := rest[:end]
+		hashIdx := strings.LastIndex(header, "#")
+		if hashIdx > 0 {
+			path := header[:hashIdx]
+			if !seen[path] {
+				seen[path] = true
+				paths = append(paths, path)
+			}
+		}
+		rest = rest[end+1:]
+	}
+	return paths
 }
 
 // formatQuestionArgs 从 ask_user_question 的 JSON 参数中提取问题 header 摘要。
@@ -1928,9 +1958,22 @@ func renderDiffView(sb *strings.Builder, hunks []tool.DiffHunk, textWidth int, i
 	wrapped := 0
 	truncated := false
 
+	var lastFilePath string
 	for hi, h := range hunks {
-		// hunk 之间空行分隔，第一个前不加空行
-		if hi > 0 {
+		// 文件路径变化时（多文件编辑），渲染 hashline 风格的文件头
+		if h.FilePath != "" && h.FilePath != lastFilePath {
+			lastFilePath = h.FilePath
+			if hi > 0 {
+				// 文件间用双线分隔
+				sb.WriteString(indent)
+				sb.WriteString(styleMuted.Render(strings.Repeat("═", textWidth)))
+				sb.WriteString("\n")
+			}
+			sb.WriteString(indent)
+			sb.WriteString(styleDiffHeader.Render("── " + stripCWDPrefix(h.FilePath, "") + " ──"))
+			sb.WriteString("\n")
+		} else if hi > 0 {
+			// 同文件 hunks 之间单线分隔（兼容旧行为及单文件多 hunk 场景）
 			sb.WriteString(indent)
 			sb.WriteString(styleMuted.Render(strings.Repeat("─", textWidth)))
 			sb.WriteString("\n")

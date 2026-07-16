@@ -205,7 +205,7 @@ func (t *EditFileHashline) Execute(ctx context.Context, p EditFileHashlineParams
 	var allHunks []DiffHunk
 	for _, r := range results {
 		for _, h := range r.DiffHunks {
-			allHunks = append(allHunks, convertHunk(h))
+			allHunks = append(allHunks, convertHunk(h, r.Path))
 		}
 	}
 
@@ -250,8 +250,9 @@ func formatSectionResults(results []hashline.SectionResult) string {
 	return b.String()
 }
 
-func convertHunk(h hashline.EditHunk) DiffHunk {
+func convertHunk(h hashline.EditHunk, filePath string) DiffHunk {
 	out := DiffHunk{
+		FilePath:       filePath,
 		OldStart:       h.OldStart,
 		OldCount:       h.OldCount,
 		NewStart:       h.NewStart,

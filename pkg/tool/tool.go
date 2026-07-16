@@ -207,12 +207,13 @@ type DiffLine struct {
 
 // DiffHunk 表示一个 diff 块（一段连续的变更 + 上下文）。
 type DiffHunk struct {
-	OldStart int        // 旧文件起始行号（1-based）
-	OldCount int        // 旧文件覆盖行数
-	NewStart int        // 新文件起始行号（1-based）
-	NewCount int        // 新文件覆盖行数
-	Heading  string     // hunk 头部函数上下文（如 "func main() {"）
-	Lines    []DiffLine
+	FilePath  string     // 所属文件路径（多文件编辑时标识 hunk 来源，空表示不适用）
+	OldStart  int        // 旧文件起始行号（1-based）
+	OldCount  int        // 旧文件覆盖行数
+	NewStart  int        // 新文件起始行号（1-based）
+	NewCount  int        // 新文件覆盖行数
+	Heading   string     // hunk 头部函数上下文（如 "func main() {"）
+	Lines     []DiffLine
 
 	// NoNewlineAtEOF 表示 hunk 末尾的旧文件或新文件不以换行结尾。
 	// 渲染时输出 "\ No newline at end of file" 标记（符合 POSIX unified diff 规范）。
