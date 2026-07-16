@@ -2,7 +2,7 @@ package main
 
 import (
 	"fmt"
-	"os"
+	"log/slog"
 	"sort"
 	"strings"
 
@@ -430,7 +430,7 @@ func (m *model) applyThemeMode(mode string) {
 	// 落盘到 project settings.json
 	if m.settingsStore != nil {
 		if err := m.settingsStore.SaveTheme(mode); err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: failed to save theme: %v\n", err)
+			slog.Warn("failed to save theme", "err", err)
 		}
 	}
 }
@@ -523,7 +523,7 @@ func (m *model) applyLocale(loc Locale) {
 	m.commandPickerItems = nil
 	if m.settingsStore != nil {
 		if err := m.settingsStore.SaveLocale(string(loc)); err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: failed to save locale: %v\n", err)
+			slog.Warn("failed to save locale", "err", err)
 		}
 	}
 }
@@ -627,7 +627,7 @@ func (m *model) commitModelSwitch(modelID string) {
 
 	settings.Model = modelID
 	if err := m.settingsStore.SaveLLM(settings); err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: failed to save LLM settings: %v\n", err)
+		slog.Warn("failed to save LLM settings", "err", err)
 	}
 	m.hudModel = normalizeWidth(modelID)
 	m.hudThinkingEffort = resolveThinkingEffort(settings)

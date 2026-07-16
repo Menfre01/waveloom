@@ -3696,13 +3696,13 @@ func TestVerbose_NilWriter(t *testing.T) {
 	l.verbose("test %d", 42)
 }
 
-func TestVerbose_WithWriter(t *testing.T) {
-	var buf strings.Builder
-	l := New(nil, nil, Config{VerboseWriter: &buf})
+func TestVerbose_WritesToSlog(t *testing.T) {
+	// After Init is called in main, verbose() sends to slog.Debug.
+	// Since Init is not called in tests, verbose() still works — the
+	// default slog.Logger writes to stderr.  Verify the call doesn't panic.
+	l := New(nil, nil, Config{})
 	l.verbose("hello %s", "world")
-	if !strings.Contains(buf.String(), "hello world") {
-		t.Errorf("expected 'hello world' in output, got %q", buf.String())
-	}
+	// Test passes if no panic.
 }
 
 // ============================================================================

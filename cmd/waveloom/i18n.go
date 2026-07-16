@@ -430,7 +430,7 @@ var zhCN = Messages{
                           auto 自动检测终端背景色
   --locale LANG           界面语言: auto（默认）/ zh-CN / en-US
                           auto 从 LANG 环境变量自动检测
-  --verbose               记录 LLM 调用和工具执行日志到 .waveloom/waveloom.log
+  --log-level            日志级别: debug / info（默认）/ warn / error
   --max-turns N           最大 turn 数（0=无限制）
   --system-prompt TEXT    系统提示词
   --context-limit N       上下文窗口 token 上限，支持 1M / 200k / 1048576 等格式（默认: 1M）
@@ -705,7 +705,7 @@ Options:
                           auto detects terminal background color
   --locale LANG           Interface language: auto (default) / zh-CN / en-US
                           auto detects from LANG environment variable
-  --verbose               Log LLM calls and tool execution to .waveloom/waveloom.log
+  --log-level            Log level: debug / info (default) / warn / error
   --max-turns N           Max turns (0=unlimited)
   --system-prompt TEXT    System prompt
   --context-limit N       Context window token limit, supports 1M / 200k / 1048576 etc. (default: 1M)

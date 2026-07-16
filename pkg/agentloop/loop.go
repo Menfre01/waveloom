@@ -11,7 +11,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -45,11 +45,6 @@ type Config struct {
 	// UserResponder 处理 ask 决策的用户交互。
 	// nil → ask 自动降级为 deny。
 	UserResponder permission.UserResponder
-
-	// VerboseWriter 非 nil 时，Loop 在每一步输出明细到该 Writer。
-	// 典型使用: os.Stderr（CLI）、log.Writer()、或 ioutil.Discard。
-	// 输出格式为 "→ LLM Turn N …" / "← Response …" / "→ tool …" 前缀行。
-	VerboseWriter io.Writer
 
 	// Compactor 每轮 LLM 调用后执行上下文压缩。
 	// nil → 跳过（向后兼容，由 CompleteRun 兜底）。
@@ -759,12 +754,12 @@ func toLLMToolSpecs(specs []tool.ToolSpec) []llm.ToolSpec {
 	return result
 }
 
-// verbose 打印调试行到 VerboseWriter（如已配置）。
+// verbose 打印调试日志。仅 Debug 级别时才格式化，避免热路径浪费。
 func (l *Loop) verbose(format string, args ...any) {
-	if l.config.VerboseWriter == nil {
+	if !slog.Default().Enabled(context.Background(), slog.LevelDebug) {
 		return
 	}
-	_, _ = fmt.Fprintf(l.config.VerboseWriter, format, args...)
+	slog.Debug(fmt.Sprintf(format, args...))
 }
 
 // truncateText 截断字符串到 maxLen，追加 "…"。

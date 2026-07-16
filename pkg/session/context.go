@@ -13,6 +13,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -227,8 +228,7 @@ func (cm *ContextManager) CompleteRun(messages []llm.Message, promptTokens, cont
 		// 强制下次 saveToPath 全量重写 JSONL（而非增量追加），
 		// 避免已写入但被丢弃的消息残留在 JSONL 中。
 		for _, entry := range repairReport {
-			fmt.Fprintf(os.Stderr, "turn repair: msg[%d] role=%s action=%s — %s\n",
-				entry.Index, entry.Role, entry.Action, entry.Detail)
+			slog.Warn("turn repair", "index", entry.Index, "role", entry.Role, "action", entry.Action, "detail", entry.Detail)
 		}
 		cm.jsonlMessageCount = 0
 	}
@@ -319,7 +319,7 @@ func (cm *ContextManager) Save() {
 		jlPath := jsonlPathForJSON(path)
 		if forceRewrite || n < jsonlWritten {
 			if err := writeMessagesToJSONL(jlPath, messages); err != nil {
-				fmt.Fprintf(os.Stderr, "jsonl rewrite: %v\n", err)
+				slog.Warn("jsonl rewrite failed", "err", err)
 			} else {
 				cm.mu.Lock()
 				cm.jsonlMessageCount = n
@@ -327,7 +327,7 @@ func (cm *ContextManager) Save() {
 			}
 		} else if n > jsonlWritten {
 			if err := appendMessagesToJSONL(jlPath, messages[jsonlWritten:]); err != nil {
-				fmt.Fprintf(os.Stderr, "jsonl append: %v\n", err)
+				slog.Warn("jsonl append failed", "err", err)
 			} else {
 				cm.mu.Lock()
 				cm.jsonlMessageCount = n
@@ -355,7 +355,7 @@ func (cm *ContextManager) saveToPath(path string) {
 	// 防御：过滤空 role 消息（避免非法数据落盘）
 	forceRewrite := false
 	if dropped := filterInvalidMessages(messages); dropped > 0 {
-		fmt.Fprintf(os.Stderr, "saveToPath: dropped %d messages with invalid role from %d total\n", dropped, len(messages))
+		slog.Warn("saveToPath dropped invalid messages", "dropped", dropped, "total", len(messages))
 		valid := make([]llm.Message, 0, len(messages))
 		for i := range messages {
 			if messages[i].Role != "" {
@@ -375,7 +375,7 @@ func (cm *ContextManager) saveToPath(path string) {
 	if forceRewrite || n < jsonlWritten {
 		// 消息被过滤/移除 → 全量重写 JSONL
 		if err := writeMessagesToJSONL(jlPath, messages); err != nil {
-			fmt.Fprintf(os.Stderr, "jsonl rewrite: %v\n", err)
+			slog.Warn("jsonl rewrite failed", "err", err)
 		} else {
 			cm.mu.Lock()
 			cm.jsonlMessageCount = n
@@ -384,7 +384,7 @@ func (cm *ContextManager) saveToPath(path string) {
 	} else if n > jsonlWritten {
 		// 增量追加新消息
 		if err := appendMessagesToJSONL(jlPath, messages[jsonlWritten:]); err != nil {
-			fmt.Fprintf(os.Stderr, "jsonl append: %v\n", err)
+			slog.Warn("jsonl append failed", "err", err)
 		} else {
 			cm.mu.Lock()
 			cm.jsonlMessageCount = n
@@ -449,8 +449,7 @@ func (cm *ContextManager) LoadFromFile(path string) bool {
 	cleaned, report := llm.ValidateMessages(messages)
 	if len(report) > 0 {
 		for _, entry := range report {
-			fmt.Fprintf(os.Stderr, "session repair: msg[%d] role=%s action=%s — %s\n",
-				entry.Index, entry.Role, entry.Action, entry.Detail)
+			slog.Warn("session repair", "index", entry.Index, "role", entry.Role, "action", entry.Action, "detail", entry.Detail)
 		}
 		messages = cleaned
 
@@ -583,8 +582,7 @@ func filterInvalidMessages(msgs []llm.Message) int {
 		if msgs[i].Role == "" {
 			if count == 0 {
 				// 只在首次发现时打印详情，避免刷屏
-				fmt.Fprintf(os.Stderr, "corrupt message at idx %d: role=%q content=%q\n",
-					i, msgs[i].Role, truncStr(msgs[i].Content, 80))
+				slog.Warn("corrupt message", "index", i, "role", msgs[i].Role, "content", truncStr(msgs[i].Content, 80))
 			}
 			count++
 		}

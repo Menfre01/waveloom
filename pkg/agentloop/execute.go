@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -18,7 +19,6 @@ import (
 	"github.com/Menfre01/waveloom/pkg/todo"
 	"github.com/Menfre01/waveloom/pkg/tool"
 )
-
 // executeToolCalls 按并发安全性分区执行工具调用。
 //
 // 执行流程：
@@ -137,6 +137,7 @@ func (l *Loop) executeToolCalls(ctx context.Context, calls []llm.ToolCall, state
 				defer wg.Done()
 			defer func() {
 				if r := recover(); r != nil {
+					slog.Error("tool panic", "tool", tc.Name, "panic", fmt.Sprintf("%v", r))
 					safeSend(resultsCh, execResult{
 						tc: tc,
 						result: &tool.ToolResult{
@@ -192,6 +193,7 @@ func (l *Loop) executeToolCalls(ctx context.Context, calls []llm.ToolCall, state
 			case <-time.After(5 * time.Second):
 				// 工具未在宽限期内退出。异步等待避免 goroutine 泄漏，
 				// 继续处理已收集的结果。
+				slog.Warn("tool timeout grace expired, proceeding with collected results")
 				go func() { <-wgDone }()
 			}
 		}
@@ -211,6 +213,7 @@ func (l *Loop) executeToolCalls(ctx context.Context, calls []llm.ToolCall, state
 					firstExecErr = er.err
 				}
 			} else if er.result == nil {
+				slog.Warn("tool returned nil result", "tool", er.tc.Name)
 				results[er.tc.ID] = &tool.ToolResult{
 					Error: &tool.ToolError{
 						Class:   tool.ErrorClassFatal,
@@ -616,6 +619,7 @@ func (l *Loop) buildToolMessages(
 				Role:    llm.RoleUser,
 				Content: warnContent,
 			}
+			slog.Warn("backoff warning injected", "count", l.consecutiveSameError, "kind", firstRecoverableKind, "tool", firstRecoverableTool)
 			messages = append(messages, warnMsg)
 		}
 
@@ -626,6 +630,7 @@ func (l *Loop) buildToolMessages(
 					"tool %q error %q repeated %d times consecutively — stopping to avoid infinite retry loop",
 					firstRecoverableTool, firstRecoverableKind, l.consecutiveSameError,
 				)
+				slog.Error("backoff escalated to fatal", "count", l.consecutiveSameError, "kind", firstRecoverableKind, "tool", firstRecoverableTool)
 			}
 		}
 	} else {
@@ -661,18 +666,21 @@ func (l *Loop) checkPermission(ctx context.Context, tc llm.ToolCall, results map
 
 	switch guardResult.Decision {
 	case permission.DecisionDeny:
+		slog.Info("tool denied", "tool", tc.Name, "reason", guardResult.Message)
 		results[tc.ID] = permissionDeniedResult(guardResult)
 		skip[tc.ID] = true
 		return true
 
 	case permission.DecisionAsk:
 		if l.config.UserResponder == nil {
+			slog.Info("tool denied", "tool", tc.Name, "reason", "no user responder")
 			results[tc.ID] = permissionDeniedResult(guardResult)
 			skip[tc.ID] = true
 			return true
 		}
 		choice := l.config.UserResponder.AskUser(ctx, tc.Name, rawArgs, guardResult)
 		if choice.Decision != permission.DecisionAllow {
+			slog.Info("tool denied", "tool", tc.Name, "reason", "user declined")
 			results[tc.ID] = permissionDeniedResult(guardResult)
 			skip[tc.ID] = true
 		}

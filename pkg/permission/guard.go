@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -189,6 +190,7 @@ func NewGuard(opts ...GuardOption) *GuardImpl {
 func (g *GuardImpl) Check(ctx context.Context, toolName string, input json.RawMessage) DecisionResult {
 	// Step 0: 内置白名单 — 直接放行，不经过规则/安全检查/默认策略
 	if g.builtinAllow[toolName] {
+		slog.Debug("perm step0 builtin allow", "tool", toolName)
 		g.denialTracker.RecordAllow()
 		return DecisionResult{
 			Decision: DecisionAllow,
@@ -199,6 +201,7 @@ func (g *GuardImpl) Check(ctx context.Context, toolName string, input json.RawMe
 
 	// Step 1: deny 规则检查（最高优先级）
 	if result, found := g.ruleEngine.CheckDeny(toolName, input); found {
+		slog.Info("perm step1 rule deny", "tool", toolName, "pattern", result.Rule)
 		g.denialTracker.RecordDenial()
 		return result
 	}
@@ -233,6 +236,7 @@ func (g *GuardImpl) Check(ctx context.Context, toolName string, input json.RawMe
 	// Step 3: 工具特有安全检查（硬拦截，在 allow 规则之前执行）
 	if safetyResult := g.toolSafetyCheck(toolName, input); safetyResult.Decision != "" {
 		if safetyResult.Decision == DecisionDeny {
+			slog.Info("perm step3 security deny", "tool", toolName, "message", safetyResult.Message)
 			g.denialTracker.RecordDenial()
 		}
 		return safetyResult
@@ -244,8 +248,10 @@ func (g *GuardImpl) Check(ctx context.Context, toolName string, input json.RawMe
 		return result
 	}
 
+
 	// Step 5: session 记忆检查
 	if d, found := g.sessionMemory.Lookup(toolName, ExtractPattern(toolName, input)); found {
+		slog.Debug("perm step5 memory", "tool", toolName, "decision", d)
 		if d == DecisionAllow {
 			g.denialTracker.RecordAllow()
 		} else {
@@ -269,6 +275,9 @@ func (g *GuardImpl) Check(ctx context.Context, toolName string, input json.RawMe
 
 	// Step 7: 默认策略
 	result := g.defaultDecision(toolName)
+	if result.Decision == DecisionAsk {
+		slog.Info("perm default ask", "tool", toolName)
+	}
 
 	// 所有 ASK 决策都附带建议记住的 pattern，供 UI 层展示
 	if result.Decision == DecisionAsk && result.SuggestedPattern == "" {

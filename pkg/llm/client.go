@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -223,6 +224,7 @@ func (c *client) readStream(ctx context.Context, req *http.Request, ch chan<- St
 		ev, err := c.adapter.ParseStreamEvent([]byte(data))
 		if err != nil {
 			// 跳过无法解析的 chunk，继续消费后续数据
+			slog.Debug("sse chunk parse skipped", "err", err)
 			continue
 		}
 		acc.accumulate(ev)
@@ -368,6 +370,7 @@ func (c *client) sendWithRetry(ctx context.Context, req *http.Request) (*Respons
 				WillRetry:   false,
 				Timestamp:   time.Now(),
 			})
+			slog.Error("llm retries exhausted", "attempts", maxAttempts, "last_err", lastErr)
 			break
 		}
 
@@ -431,6 +434,8 @@ func (c *client) doRequest(req *http.Request) (*Response, error) {
 		StatusCode: resp.StatusCode,
 		Body:       string(body),
 	}
+
+	slog.Warn("llm http error", "status", resp.StatusCode)
 
 	// 429 含 Retry-After 头时包装为 RetryableError
 	if resp.StatusCode == 429 {

@@ -4,6 +4,7 @@ package shellutil
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -83,7 +84,7 @@ func resolveWindowsShell() (string, []string) {
 		if fi, err := os.Stat(envPath); err == nil && !fi.IsDir() {
 			return envPath, []string{"-c"}
 		}
-		fmt.Fprintf(os.Stderr, "WAVELOOM_GIT_BASH_PATH is set but file not found: %s\n", envPath)
+		slog.Warn("WAVELOOM_GIT_BASH_PATH set but path does not exist, falling back to PATH lookup", "path", envPath)
 	}
 
 	// 2. 从 git.exe 推算

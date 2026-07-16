@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -527,7 +528,7 @@ func runSetup(loc Locale) {
 	m := newSetupModel(loc)
 	p := tea.NewProgram(m)
 	if _, err := p.Run(); err != nil {
-		fmt.Fprintf(os.Stderr, "Setup error: %v\n", err)
+		slog.Error("setup error", "err", err)
 		os.Exit(1)
 	}
 	lc := m.state.lc
