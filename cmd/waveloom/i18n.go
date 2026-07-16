@@ -188,8 +188,9 @@ type Messages struct {
 	CLILsRestoreHint   string
 
 	// ── One-shot mode ──────────────────────────────────────
-	OneShotHeader string // 含 %s, %s
+	OneShotHeader string // 含 %s (cwd)
 	OneShotError  string // 含 %v
+	OneShotFooter string // 含 %s (model), %s (turns), %s (elapsed), %s (↑input), %s (↓output)
 
 	// ── Session save on exit ──────────────────────────────
 	SessionSaved      string // 含 %s
@@ -416,17 +417,16 @@ var zhCN = Messages{
 用法:
   waveloom                     交互式 TUI 模式
   waveloom ls                  列出最近 sessions
+  waveloom mcp                 MCP Server 管理
   waveloom setup               首次设置向导
   waveloom completion <shell>  输出 shell 补全脚本 (bash/zsh/fish)
-  waveloom "prompt"            单次执行模式
   waveloom --help              显示帮助
   waveloom --version           显示版本号
 
 选项:
   --settings PATH         配置文件路径（项目级；全局 ~/.waveloom/settings.json 自动合并）
   --version               显示版本号
-  --model NAME            LLM 模型名称
-  --theme MODE            主题模式: auto（默认）/ dark / light
+  --theme MODE            主题模式: auto（默认）/ dark / light / darkcolorblind / lightcolorblind
                           auto 自动检测终端背景色
   --locale LANG           界面语言: auto（默认）/ zh-CN / en-US
                           auto 从 LANG 环境变量自动检测
@@ -469,8 +469,8 @@ var zhCN = Messages{
 	CLILsRestoreHint:        "恢复: waveloom --resume <id>  或  waveloom --continue",
 
 	// One-shot mode
-	OneShotHeader: "🤖 Waveloom (单次模式) — %s — %s\n\n",
-	OneShotError:  "❌ Error: %v\n",
+	OneShotHeader: "🤖 Waveloom (单次模式) — %s\n\n",
+	OneShotFooter: "\n(%s, %s, %s, ↑%s, ↓%s)\n",
 
 	// Session save
 	SessionSaved:      "已保存 session: %s\n",
@@ -691,17 +691,16 @@ var enUS = Messages{
 Usage:
   waveloom                     Interactive TUI mode
   waveloom ls                  List recent sessions
+  waveloom mcp                 Manage MCP servers
   waveloom setup               First-time setup wizard
   waveloom completion <shell>  Output shell completion script (bash/zsh/fish)
-  waveloom "prompt"            Single-shot execution mode
   waveloom --help              Show help
   waveloom --version           Show version
 
 Options:
   --settings PATH         Config file path (project-level; global ~/.waveloom/settings.json auto-merged)
   --version               Show version
-  --model NAME            LLM model name
-  --theme MODE            Theme mode: auto (default) / dark / light
+  --theme MODE            Theme mode: auto (default) / dark / light / darkcolorblind / lightcolorblind
                           auto detects terminal background color
   --locale LANG           Interface language: auto (default) / zh-CN / en-US
                           auto detects from LANG environment variable
@@ -744,8 +743,8 @@ Environment variables:
 	CLILsRestoreHint:        "Restore: waveloom --resume <id>  or  waveloom --continue",
 
 	// One-shot mode
-	OneShotHeader: "🤖 Waveloom (oneshot) — %s — %s\n\n",
-	OneShotError:  "❌ Error: %v\n",
+	OneShotHeader: "🤖 Waveloom (oneshot) — %s\n\n",
+	OneShotFooter: "\n(%s, %s, %s, ↑%s, ↓%s)\n",
 
 	// Session save
 	SessionSaved:      "Session saved: %s\n",
