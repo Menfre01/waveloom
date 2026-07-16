@@ -1,6 +1,27 @@
 # Changelog
 
 
+## [v0.1.0-beta.10] — 2026-07-16
+
+### 新增功能
+- **多文件编辑 diff 渲染**：多文件编辑 patch 响应增加文件头路径摘要，LLM 可直观确认每个文件编辑后的内容状态
+
+### 修复
+- **CLI 帮助与代码对齐**：`--help` 输出和 shell 补全与实际代码功能同步，oneshot 模式输出国际化
+- **Agent Loop 并发竞态**：barrierTool 增加 context 感知，消除并发工具调用场景下的竞态条件
+- **Windows 路径兼容**：测试中 `/dev/zero` 替换为 Windows 兼容的 `NUL` 设备
+- **Hashline 稳定性**：lint 修复 + read 错误处理补充，提升编辑模型健壮性
+- **Lint 全面清零**：消除全部 SA5011/ineffassign/SA4010 静态分析警告
+
+### 重构
+- **Hashline edit 模型重构**：引入声明顺序偏移计算 + 操作重叠检测，多操作 patch 解析更可靠
+- **Todo Apply 机制优化**：Apply 从全量替换改为 content 匹配合并，避免并发更新丢任务
+- **结构化日志迁移**：`fmt.Fprintf(os.Stderr)` + `--verbose` 全面迁移至 `log/slog`，日志级别与格式统一可控
+- **Session 包重命名与模块拆分**：`pkg/context` → `pkg/session`，tool schema 内联，`tui.go` 按职责拆分为 4 个文件
+
+---
+
+📝 [Changelog (English)](https://github.com/Menfre01/waveloom/blob/dev/CHANGELOG.en.md)
 ## [v0.1.0-beta.9] — 2026-07-14
 
 ### 新增功能
