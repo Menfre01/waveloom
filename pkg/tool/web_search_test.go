@@ -301,8 +301,11 @@ func TestWebSearch_Description(t *testing.T) {
 	if !strings.Contains(desc, "Search the web") {
 		t.Errorf("Description() should explain search, got %q", desc)
 	}
-	if !strings.Contains(desc, "web_fetch") {
-		t.Errorf("Description() should mention web_fetch, got %q", desc)
+	// Cross-tool reference (web_fetch) now lives in Prompt() → C1, not Description → C2.
+	// Verify Prompt() carries the web_fetch cross-reference.
+	prompt := tool.Prompt()
+	if !strings.Contains(prompt, "web_fetch") {
+		t.Errorf("Prompt() should mention web_fetch, got %q", prompt)
 	}
 }
 

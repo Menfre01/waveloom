@@ -61,15 +61,18 @@ func (t *WebFetch) Schema() json.RawMessage { return webFetchSchema }
 func (t *WebFetch) ConcurrentSafe() bool { return true }
 
 func (t *WebFetch) Description() string {
-	return strings.Join([]string{
-		"Fetch content from a URL and return text. Use for consulting online docs, API references, package registries, etc.",
-		"",
-		"Only text-based content is supported (text/*, application/json, application/xml, application/javascript).",
-		"HTML pages are automatically stripped to plain text.",
-		"Binary content (images, videos, etc.) is rejected.",
-		"",
-		"Note: this tool only makes GET requests, and does not modify any remote resources.",
-	}, "\n")
+	return "Fetch content from a URL and return text (HTML stripped to plain text). Only text/*, JSON, XML, JavaScript. Rules: see system prompt ## Web Fetch."
+}
+
+// Prompt 返回 web_fetch 使用指南和跨工具引用，由 Registry.FormatToolPrompts() 注入 C1。
+func (t *WebFetch) Prompt() string {
+	return `## Web Fetch
+
+Use web_fetch to read full content from a specific URL (docs, API references, package registries).
+For discovering URLs, use web_search first, then web_fetch the best results.
+Only text-based content is supported — binary content will be rejected.
+Use web_search to find text-friendly alternatives for binary resources.
+This tool only makes GET requests — cannot modify remote resources.`
 }
 
 func (t *WebFetch) client() *http.Client {
@@ -157,12 +160,12 @@ func (t *WebFetch) Execute(ctx context.Context, p WebFetchParams) (*ToolResult, 
 				Error: &ToolError{
 					Class:   ErrorClassRecoverable,
 					Kind:    ErrKindTimeout,
-					Message: fmt.Sprintf("request timed out after %s", formatDuration(timeout)),
+					Message: fmt.Sprintf("request timed out after %s. Increase timeout_ms or try a lighter URL", formatDuration(timeout)),
 				},
 			}, nil
 		}
 		return toolError(ErrorClassRecoverable, ErrKindCommandFailed,
-			fmt.Sprintf("request failed: %v", err), err), nil
+			fmt.Sprintf("request failed: %v. Check the URL and your network, or try web_search to find the resource", err), err), nil
 	}
 	defer func() { _ = resp.Body.Close() }()
 
@@ -170,7 +173,7 @@ func (t *WebFetch) Execute(ctx context.Context, p WebFetchParams) (*ToolResult, 
 	contentType := resp.Header.Get("Content-Type")
 	if !isTextContentType(contentType) {
 		return toolError(ErrorClassRecoverable, ErrKindBinaryFile,
-			fmt.Sprintf("unsupported content type: %s (only text/*, application/json, application/xml, application/javascript are supported)",
+			fmt.Sprintf("unsupported content type: %s (only text/*, application/json, application/xml, application/javascript are supported). Use web_search to find a text-friendly version of this resource",
 				contentType), nil), nil
 	}
 
@@ -212,11 +215,11 @@ func (t *WebFetch) Execute(ctx context.Context, p WebFetchParams) (*ToolResult, 
 			Error: &ToolError{
 				Class:   ErrorClassRecoverable,
 				Kind:    ErrKindCommandFailed,
-				Message: fmt.Sprintf("HTTP %d %s", resp.StatusCode, resp.Status),
+				Message: fmt.Sprintf("HTTP %d %s. Use web_search to find an alternative URL if the page is unavailable", resp.StatusCode, resp.Status),
 			},
 		}, nil
-	}
 
+	}
 	// ── Step 9: 文本提取 ──
 	bodyText := string(bodyBytes)
 	if isHTMLContentType(contentType) {
