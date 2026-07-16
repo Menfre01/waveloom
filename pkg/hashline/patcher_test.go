@@ -1639,7 +1639,6 @@ func TestMultiSectionSameFileRecovery(t *testing.T) {
 // memFS is a simple in-memory FileSystem for testing.
 type memFS struct {
 	files map[string]string
-	wd    string
 }
 
 func (fs *memFS) ReadFile(path string) (string, error) {
@@ -1775,8 +1774,8 @@ func TestApplyPatch_MultiFile_OneConflict_OtherSucceeds(t *testing.T) {
 	store := NewStore()
 	contentA := "fileA content\n"
 	contentB := "fileB content\n"
-	store.Record("/tmp/fileA.go", contentA)
-	store.Record("/tmp/fileB.go", contentB)
+	_, _ = store.Record("/tmp/fileA.go", contentA)
+	_, _ = store.Record("/tmp/fileB.go", contentB)
 
 	fs := &memFS{files: map[string]string{
 		"/tmp/fileA.go": contentA,
