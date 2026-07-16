@@ -2,6 +2,7 @@ package compaction
 
 import (
 	"context"
+	"log/slog"
 	"sync"
 
 	"github.com/Menfre01/waveloom/pkg/llm"
@@ -64,6 +65,10 @@ func (c *TieredCompactor) Compact(ctx context.Context, messages *[]llm.Message, 
 		&c.existingSummaries,
 	)
 	c.lastResult = result
+	if result.Tier > 0 {
+		removed := result.MessagesPruned + result.MessagesSnipped
+		slog.Info("compaction triggered", "tier", result.Tier, "removed", removed, "tokens_saved", result.TokensSaved)
+	}
 
 	return Tick{
 		Tier:                     result.Tier,

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -288,6 +289,7 @@ func (a *AgentTool) Execute(ctx context.Context, p AgentParams) (*tool.ToolResul
 		// message history and reject the fork attempt at call time.
 		if parentRaw := agentloop.ParentMessagesFromContext(ctx); parentRaw != nil {
 			if msgs, ok := parentRaw.([]llm.Message); ok && isInForkChild(msgs) {
+				slog.Warn("recursive fork blocked")
 				return &tool.ToolResult{
 					Content: "Error: You are already a fork child. Recursive forking is forbidden — execute the task directly instead of delegating.",
 					Error: &tool.ToolError{
@@ -570,6 +572,7 @@ func agentConfig(agentType string) (systemPrompt string, extraDisallowed map[str
 		// Unknown type: fall back to evaluate (safe default, read-only).
 		// This path is reachable if the schema adds a new type before the
 		// code is deployed — not a silent data-loss risk.
+		slog.Warn("unknown subagent type, falling back to evaluate", "type", agentType)
 		return evaluateSystemPrompt(), evaluateDisallowed
 	}
 }

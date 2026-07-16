@@ -35,7 +35,7 @@ _waveloom() {
 
     case "$prev" in
         waveloom)
-            opts="setup ls completion --model --system-prompt --max-turns --context-limit --theme --verbose --bypass-permissions --tool-timeout --resume --continue --settings --version --help"
+            opts="setup ls completion --model --system-prompt --max-turns --context-limit --theme --log-level --bypass-permissions --tool-timeout --resume --continue --settings --version --help"
             COMPREPLY=( $(compgen -W "$opts" -- "$cur") )
             return 0
             ;;
@@ -58,7 +58,7 @@ _waveloom() {
             ;;
     esac
 
-    opts="setup ls completion --model --system-prompt --max-turns --context-limit --theme --verbose --bypass-permissions --tool-timeout --resume --continue --settings --version --help"
+    opts="setup ls completion --model --system-prompt --max-turns --context-limit --theme --log-level --bypass-permissions --tool-timeout --resume --continue --settings --version --help"
     COMPREPLY=( $(compgen -W "$opts" -- "$cur") )
     return 0
 }
@@ -83,7 +83,7 @@ _waveloom() {
         '--max-turns[最大轮数，0不限制]:turns'
         '--context-limit[上下文窗口大小]:limit'
         '--theme[主题]:theme:(auto dark light)'
-        '--verbose[输出详细日志]'
+        '--log-level[日志级别]:level:(debug info warn error)'
         '--bypass-permissions[跳过权限检查]'
         '--tool-timeout[单工具执行超时]:duration'
         '--resume[恢复指定会话]:session_id'
@@ -130,7 +130,7 @@ complete -c waveloom -l system-prompt -d "自定义系统提示词" -r
 complete -c waveloom -l max-turns -d "最大轮数，0不限制" -r
 complete -c waveloom -l context-limit -d "上下文窗口大小" -r
 complete -c waveloom -l theme -d "主题" -a "auto dark light"
-complete -c waveloom -l verbose -d "输出详细日志"
+complete -c waveloom -l log-level -d "日志级别"
 complete -c waveloom -l bypass-permissions -d "跳过权限检查"
 complete -c waveloom -l tool-timeout -d "单工具执行超时" -r
 complete -c waveloom -l resume -d "恢复指定会话" -r

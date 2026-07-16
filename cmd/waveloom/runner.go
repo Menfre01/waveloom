@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 
 	"github.com/Menfre01/waveloom/pkg/agentloop"
@@ -16,7 +17,7 @@ import (
 )
 
 // runOneShot 执行单次/管道模式（无 TUI，纯文本输出）。
-func runOneShot(cfg CLIConfig, llmClient llm.Client, registry tool.Registry, guard permission.Guard, expander *reference.Expander, cwd string, verboseLog io.Writer, cm *session.ContextManager, agentsMdText string, loc Locale, todoState *todo.TodoState, advisorMode bool, subModel string) {
+func runOneShot(cfg CLIConfig, llmClient llm.Client, registry tool.Registry, guard permission.Guard, expander *reference.Expander, cwd string, cm *session.ContextManager, agentsMdText string, loc Locale, todoState *todo.TodoState, advisorMode bool, subModel string) {
 	lc := messagesFor(loc)
 	// Context Manager 已管理 system prompt，Loop 无需重复注入
 	initialModel := ""
@@ -24,15 +25,14 @@ func runOneShot(cfg CLIConfig, llmClient llm.Client, registry tool.Registry, gua
 		initialModel = subModel
 	}
 	loopCfg := agentloop.Config{
-		MaxTurns:      cfg.MaxTurns,
-		SystemPrompt:  "",
-		VerboseWriter: verboseLog,
-		ToolTimeout:   cfg.ToolTimeout,
-		AgentsMD:      agentsMdText,
-		TodoState:     todoState,
-		AdvisorMode:   advisorMode,
-		SubModel:      subModel,
-		Model:         initialModel,
+		MaxTurns:    cfg.MaxTurns,
+		SystemPrompt: "",
+		ToolTimeout: cfg.ToolTimeout,
+		AgentsMD:    agentsMdText,
+		TodoState:   todoState,
+		AdvisorMode: advisorMode,
+		SubModel:    subModel,
+		Model:       initialModel,
 	}
 
 	// bypass 模式：覆盖 guard 为全放行模式
@@ -57,7 +57,7 @@ func runOneShot(cfg CLIConfig, llmClient llm.Client, registry tool.Registry, gua
 	ctx := context.Background()
 	expandedInput, _, expandErr := expander.Expand(ctx, userInput, cwd)
 	if expandErr != nil {
-		fmt.Fprintf(os.Stderr, "Warning: @ reference expansion failed: %v\n", expandErr)
+		slog.Warn("@ reference expansion failed", "err", expandErr)
 		expandedInput = userInput
 	}
 

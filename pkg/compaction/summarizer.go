@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"strings"
 
 	"github.com/Menfre01/waveloom/pkg/llm"
@@ -25,25 +26,31 @@ func NewCompactionSummarizer(client llm.Client, maxTokens int) *CompactionSummar
 }
 
 // Summarize 实现 Summarizer 接口。
-func (s *CompactionSummarizer) Summarize(ctx context.Context, existingSummaries []string, deltaMessages []llm.Message) (string, error) {
+func (s *CompactionSummarizer) Summarize(ctx context.Context, existingSummaries []string, deltaMessages []llm.Message) (content string, err error) {
 	messages := []llm.Message{
 		{Role: llm.RoleSystem, Content: FormatSummaryPrompt()},
 		{Role: llm.RoleUser, Content: FormatSummaryUserMessage(existingSummaries, deltaMessages)},
 	}
 
-	resp, err := s.client.SendMessage(ctx, messages, nil)
-	if err != nil {
-		return "", fmt.Errorf("compaction summarizer: LLM call failed: %w", err)
+	resp, callErr := s.client.SendMessage(ctx, messages, nil)
+	if callErr != nil {
+		err = fmt.Errorf("compaction summarizer: LLM call failed: %w", callErr)
+		slog.Warn("compaction summary LLM call failed", "err", err)
+		return
 	}
 
-	content := strings.TrimSpace(resp.Content)
+	content = strings.TrimSpace(resp.Content)
 	if content == "" {
-		return "", fmt.Errorf("compaction summarizer: empty response")
+		err = fmt.Errorf("compaction summarizer: empty response")
+		slog.Warn("compaction summary returned empty response")
+		return
 	}
 
 	// 验证输出为合法 JSON
 	if !json.Valid([]byte(extractJSON(content))) {
-		return "", fmt.Errorf("compaction summarizer: response is not valid JSON: %s", truncateString(content, 200))
+		err = fmt.Errorf("compaction summarizer: response is not valid JSON: %s", truncateString(content, 200))
+		slog.Warn("compaction summary JSON parse failed", "err", err)
+		return
 	}
 
 	return content, nil

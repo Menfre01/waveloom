@@ -140,48 +140,6 @@ func TestResolveSettingsPaths_Explicit(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// setupVerboseLog
-// ---------------------------------------------------------------------------
-
-func TestSetupVerboseLog_Disabled(t *testing.T) {
-	wc, err := setupVerboseLog(false)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if wc != nil {
-		t.Error("expected nil for verbose=false")
-	}
-}
-
-func TestSetupVerboseLog_Enabled(t *testing.T) {
-	dir := filepath.Join(".waveloom")
-	origExists := false
-	if _, err := os.Stat(dir); err == nil {
-		origExists = true
-	}
-
-	wc, err := setupVerboseLog(true)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if wc == nil {
-		t.Fatal("expected non-nil writer for verbose=true")
-		return
-	}
-	_ = wc.Close()
-
-	logPath := filepath.Join(".waveloom", "waveloom.log")
-	if _, err := os.Stat(logPath); os.IsNotExist(err) {
-		t.Error("waveloom.log not created")
-	}
-
-	_ = os.Remove(logPath)
-	_ = os.Remove(logPath + ".1")
-	if !origExists {
-		_ = os.Remove(dir)
-	}
-}
 
 // ---------------------------------------------------------------------------
 // buildSystemPrompt
@@ -349,10 +307,17 @@ func TestParseCLI_BypassPermissions(t *testing.T) {
 	}
 }
 
-func TestParseCLI_Verbose(t *testing.T) {
-	cfg := parseCLIForTest([]string{"--verbose", "test"})
-	if !cfg.Verbose {
-		t.Error("expected Verbose=true")
+func TestParseCLI_LogLevelDefault(t *testing.T) {
+	cfg := parseCLIForTest([]string{"test"})
+	if cfg.LogLevel != "info" {
+		t.Errorf("expected default LogLevel=info, got %q", cfg.LogLevel)
+	}
+}
+
+func TestParseCLI_LogLevelDebug(t *testing.T) {
+	cfg := parseCLIForTest([]string{"--log-level", "debug", "test"})
+	if cfg.LogLevel != "debug" {
+		t.Errorf("expected LogLevel=debug, got %q", cfg.LogLevel)
 	}
 }
 
@@ -448,8 +413,8 @@ func TestParseCLI_DefaultValues(t *testing.T) {
 	if cfg.Model != "" {
 		t.Errorf("default Model should be empty, got %q", cfg.Model)
 	}
-	if cfg.Verbose {
-		t.Error("default Verbose should be false")
+	if cfg.LogLevel != "info" {
+		t.Errorf("default LogLevel should be info, got %q", cfg.LogLevel)
 	}
 	if cfg.BypassPerm {
 		t.Error("default BypassPerm should be false")

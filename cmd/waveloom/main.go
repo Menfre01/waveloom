@@ -4,8 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
-	"log"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -15,6 +14,7 @@ import (
 	"github.com/Menfre01/waveloom/pkg/session"
 	"github.com/Menfre01/waveloom/pkg/environment"
 	"github.com/Menfre01/waveloom/pkg/llm"
+	"github.com/Menfre01/waveloom/pkg/logging"
 	"github.com/Menfre01/waveloom/pkg/mcp"
 	"github.com/Menfre01/waveloom/pkg/memory"
 	"github.com/Menfre01/waveloom/pkg/permission"
@@ -45,14 +45,20 @@ func main() {
 	// 注意：setup 需要 settings paths，放在 resolveSettingsPaths 之后
 	// 1.6 shell 补全 — 无需任何初始化
 
-	// 2. 设置 verbose 日志（放在 LLM 之前，确保无 API Key 也能记录启动错误）
-	verboseLog, logErr := setupVerboseLog(cfg.Verbose)
-	if logErr != nil {
-		fmt.Fprintf(os.Stderr, "Warning: failed to open verbose log: %v\n", logErr)
+	// 2. 初始化结构化日志（始终写入文件，debug 级别时额外输出 stderr）
+	var logLevel slog.Level
+	switch cfg.LogLevel {
+	case "error":
+		logLevel = slog.LevelError
+	case "warn":
+		logLevel = slog.LevelWarn
+	case "debug":
+		logLevel = slog.LevelDebug
+	default:
+		logLevel = slog.LevelInfo
 	}
-	if verboseLog != nil {
-		defer func() { _ = verboseLog.Close() }()
-	}
+	cleanup := logging.Init(filepath.Join(".waveloom"), logLevel)
+	defer cleanup()
 
 	// 3. 解析配置文件路径（全局 + 项目）
 	globalPath, projectPath := resolveSettingsPaths(cfg.SettingsPath)
@@ -85,7 +91,7 @@ func main() {
 			runSetup(loc)
 			return
 		}
-		fmt.Fprintf(os.Stderr, "Error: %v\n", humanizeError(err))
+		slog.Error("create LLM client", "err", humanizeError(err))
 		os.Exit(1)
 	}
 
@@ -131,19 +137,7 @@ func main() {
 	registerBuiltinTools(registry, skillLoader, llmClient, subModelValidation, llmSettings.Model, llmSettings.SubModel, cwd)
 
 	// 8.5 启动 MCP Manager — 连接配置的 MCP Server，注册工具代理
-	// 日志输出策略：
-	//   - --verbose：写入滚动日志文件
-	//   - TUI 模式（默认）：丢弃（避免泄漏到界面）
-	//   - One-shot 模式：输出到 stderr（无 TUI，安全）
-	mcpLogger := io.Discard
-	if verboseLog != nil {
-		mcpLogger = verboseLog
-	} else if cfg.OneShot != "" {
-		mcpLogger = os.Stderr
-	}
-	mcpManager := mcp.NewManager(registry,
-		mcp.WithLogger(log.New(mcpLogger, "[mcp] ", log.LstdFlags)),
-	)
+	mcpManager := mcp.NewManager(registry)
 	mcpManager.Start(context.Background(), mcp.LoadConfigs(cwd, homeDir))
 	defer func() { _ = mcpManager.Stop() }()
 
@@ -156,10 +150,10 @@ func main() {
 		loader := memory.NewLoader(cwd, homeDir)
 		text, warnings, loadErr := loader.Load()
 		if loadErr != nil {
-			fmt.Fprintf(os.Stderr, "Warning: failed to load AGENTS.md: %v\n", loadErr)
+			slog.Warn("failed to load AGENTS.md", "err", loadErr)
 		}
 		for _, w := range warnings {
-			fmt.Fprintf(os.Stderr, "Warning: %s\n", w)
+			slog.Warn("AGENTS.md warning", "warning", w)
 		}
 		agentsMdText = text
 	}
@@ -168,7 +162,7 @@ func main() {
 	if agentsMdText != "" {
 		expanded, _, expandErr := expander.Expand(context.Background(), agentsMdText, cwd)
 		if expandErr != nil {
-			fmt.Fprintf(os.Stderr, "Warning: AGENTS.md @ reference expansion failed: %v\n", expandErr)
+			slog.Warn("AGENTS.md @ expansion failed", "err", expandErr)
 		} else {
 			agentsMdText = expanded
 		}
@@ -249,19 +243,19 @@ func main() {
 		if cfg.ContinueSession {
 			if sid, err := session.ContinueSessionID(sessionDir); err == nil && sid != "" {
 				cfg.ResumeSessionID = sid
-				fmt.Fprintf(os.Stderr, messagesFor(loc).CLIContinueSession, sid)
+				fmt.Printf(messagesFor(loc).CLIContinueSession, sid)
 			} else {
-				fmt.Fprint(os.Stderr, messagesFor(loc).CLINoRecentSession)
+				fmt.Print(messagesFor(loc).CLINoRecentSession)
 			}
 		}
 		if cfg.ResumeSessionID != "" {
 			sessionPath := filepath.Join(sessionDir, cfg.ResumeSessionID+".json")
 			if !ctxMgr.LoadFromFile(sessionPath) {
-				fmt.Fprintf(os.Stderr, "Error: session '%s' not found at %s\n", cfg.ResumeSessionID, sessionPath)
+				slog.Error("session not found", "id", cfg.ResumeSessionID, "path", sessionPath)
 				os.Exit(1)
 			}
 			isResume = true
-			fmt.Fprintf(os.Stderr, messagesFor(loc).CLIResumedSession, cfg.ResumeSessionID)
+				fmt.Printf(messagesFor(loc).CLIResumedSession, cfg.ResumeSessionID)
 		} else {
 			sessionPath := filepath.Join(sessionDir, session.NewSessionID()+".json")
 			ctxMgr.SetSessionPath(sessionPath)
@@ -296,11 +290,11 @@ func main() {
 
 	// 16. 分支：无 prompt → 交互式 TUI，有 prompt → 单次执行
 	if cfg.OneShot == "" {
-		runTUI(llmClient, registry, guard, expander, llmSettings.Model, cfg.Theme, verboseLog, cfg.ContextLimit, cfg.MaxTurns, cfg.ToolTimeout, cfg.ToolTimeoutSource, cfg.BypassPerm, ctxMgr, isResume, sessionDir, globalPath, projectPath, agentsMdText, loc, todoState, advisorMode, subModel)
+		runTUI(llmClient, registry, guard, expander, llmSettings.Model, cfg.Theme, cfg.ContextLimit, cfg.MaxTurns, cfg.ToolTimeout, cfg.ToolTimeoutSource, cfg.BypassPerm, ctxMgr, isResume, sessionDir, globalPath, projectPath, agentsMdText, loc, todoState, advisorMode, subModel)
 		return
 	}
 
-	runOneShot(cfg, llmClient, registry, guard, expander, cwd, verboseLog, ctxMgr, agentsMdText, loc, todoState, advisorMode, subModel)
+	runOneShot(cfg, llmClient, registry, guard, expander, cwd, ctxMgr, agentsMdText, loc, todoState, advisorMode, subModel)
 }
 
 // registerBuiltinTools 注册内置工具。
@@ -384,44 +378,13 @@ func createLLMClient(globalPath, projectPath, cliModel string, loc Locale) (llm.
 	return client, cfg, merged, nil
 }
 
-// setupVerboseLog 在 .waveloom/ 下创建滚动日志。
-// --verbose 时：waveloom.log → waveloom.log.1（丢弃更旧的），创建新 waveloom.log。
-// 非 verbose 时返回 nil, nil。
-func setupVerboseLog(verbose bool) (io.WriteCloser, error) {
-	if !verbose {
-		return nil, nil
-	}
-
-	logDir := filepath.Join(".waveloom")
-	if err := os.MkdirAll(logDir, 0o755); err != nil {
-		return nil, fmt.Errorf("create log dir: %w", err)
-	}
-
-	logPath := filepath.Join(logDir, "waveloom.log")
-	oldPath := logPath + ".1"
-
-	// 轮换: waveloom.log → waveloom.log.1
-	if _, err := os.Stat(logPath); err == nil {
-		_ = os.Remove(oldPath)          // 丢弃更旧
-		_ = os.Rename(logPath, oldPath) // 当前 → .1
-	}
-
-	f, err := os.Create(logPath)
-	if err != nil {
-		return nil, fmt.Errorf("create log file: %w", err)
-	}
-
-	fmt.Fprintf(os.Stderr, "Verbose log: %s\n", logPath)
-	fmt.Fprintf(os.Stderr, "   Monitor: tail -f %s\n", logPath)
-	return f, nil
-}
 
 // createGuard 创建权限守门人，合并全局和项目权限规则。
 // 以 (Behavior, ToolName, Pattern) 为键，项目规则覆盖全局同键规则。
 func createGuard(globalPath, projectPath string) permission.Guard {
 	rules, err := permission.LoadRulesFromConfigFiles(globalPath, projectPath)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: failed to load permission rules: %v\n", err)
+		slog.Warn("failed to load permission rules", "err", err)
 		return permission.NewGuard(
 			permission.WithProjectConfigPath(projectPath),
 		)
@@ -475,18 +438,18 @@ func listSessions(projectPath, globalPath string, loc Locale) {
 	}
 	cwd, err := os.Getwd()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: get current directory: %v\n", err)
+		slog.Error("get current directory", "err", err)
 		os.Exit(1)
 	}
 	sessionDir, err := session.ResolveSessionDir(cwd, sessionOverride)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: resolve session directory: %v\n", err)
+		slog.Error("resolve session directory", "err", err)
 		os.Exit(1)
 	}
 
 	entries, err := session.LoadRecentSessions(sessionDir)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: load recent sessions: %v\n", err)
+		slog.Error("load recent sessions", "err", err)
 		os.Exit(1)
 	}
 	if len(entries) == 0 {

@@ -3,6 +3,7 @@ package permission
 import (
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os"
 )
 
@@ -40,7 +41,7 @@ func LoadRulesFromSettings(ps *PermissionSettings, source RuleSource) []RuleEntr
 	for _, s := range ps.Allow {
 		rule, err := ParseRule(s, RuleAllow)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "warning: skipping invalid allow rule %q: %v\n", s, err)
+			slog.Warn("skipping invalid allow rule", "rule", s, "err", err)
 			continue
 		}
 		entries = append(entries, RuleEntry{
@@ -54,7 +55,7 @@ func LoadRulesFromSettings(ps *PermissionSettings, source RuleSource) []RuleEntr
 	for _, s := range ps.Deny {
 		rule, err := ParseRule(s, RuleDeny)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "warning: skipping invalid deny rule %q: %v\n", s, err)
+			slog.Warn("skipping invalid deny rule", "rule", s, "err", err)
 			continue
 		}
 		entries = append(entries, RuleEntry{
@@ -68,7 +69,7 @@ func LoadRulesFromSettings(ps *PermissionSettings, source RuleSource) []RuleEntr
 	for _, s := range ps.Ask {
 		rule, err := ParseRule(s, RuleAsk)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "warning: skipping invalid ask rule %q: %v\n", s, err)
+			slog.Warn("skipping invalid ask rule", "rule", s, "err", err)
 			continue
 		}
 		entries = append(entries, RuleEntry{

@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -334,7 +335,7 @@ func loadMessagesFromJSONL(path string) ([]llm.Message, error) {
 		var msg llm.Message
 		if err := json.Unmarshal(line, &msg); err != nil {
 			// 跳过损坏的行（不阻塞整个恢复流程）
-			fmt.Fprintf(os.Stderr, "jsonl: skip malformed line: %v\n", err)
+			slog.Warn("jsonl skip malformed line", "err", err)
 			continue
 		}
 		messages = append(messages, msg)

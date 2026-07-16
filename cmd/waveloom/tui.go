@@ -29,9 +29,8 @@ import (
 	"errors"
 	"fmt"
 	"image/color"
-	"io"
+	"log/slog"
 	"os"
-
 	"path/filepath"
 	"strings"
 	"time"
@@ -376,7 +375,6 @@ type model struct {
 	slashRegistry *slashcommand.Registry
 	skillLoader   *skill.Loader
 	cwd           string
-	verboseLog    io.Writer // --verbose 日志输出（nil = 不记录）
 	loop          *agentloop.Loop
 
 	// Advisor mode
@@ -665,8 +663,8 @@ func colorHex(c color.Color) string {
 
 // ---------------------------------------------------------------------------
 
-// newTUIModel 创建 TUI model，依赖由外部注入（LLM client / tool registry / guard / expander / verboseLog / locale）。
-func newTUIModel(llmClient llm.Client, registry tool.Registry, guard permission.Guard, expander *reference.Expander, modelName string, theme string, verboseLog io.Writer, contextLimit int, maxTurns int, toolTimeout time.Duration, toolTimeoutSource string, loc Locale, todoState *todo.TodoState) *model {
+// newTUIModel 创建 TUI model，依赖由外部注入（LLM client / tool registry / guard / expander / locale）。
+func newTUIModel(llmClient llm.Client, registry tool.Registry, guard permission.Guard, expander *reference.Expander, modelName string, theme string, contextLimit int, maxTurns int, toolTimeout time.Duration, toolTimeoutSource string, loc Locale, todoState *todo.TodoState) *model {
 	cwd, _ := os.Getwd()
 	cm := session.New(buildSystemPrompt(cwd, loc))
 	lc := messagesFor(loc)
@@ -761,7 +759,6 @@ func newTUIModel(llmClient llm.Client, registry tool.Registry, guard permission.
 		guard:             guard,
 		expander:          expander,
 		cwd:               cwd,
-		verboseLog:        verboseLog,
 		hudModel:          normalizeWidth(modelName),
 		contextLimit:      contextLimit,
 		maxTurns:          maxTurns,
@@ -809,7 +806,6 @@ func (m *model) wireLoop() {
 		SystemPrompt:  "",
 		Guard:         guard,
 		UserResponder: &tuiUserResponder{program: m.program, cwd: m.cwd},
-		VerboseWriter: m.verboseLog,
 		Compactor:     m.cm.Compactor(),
 		ToolTimeout:   m.toolTimeout,
 		AgentsMD:      m.agentsMdText,
@@ -3705,7 +3701,7 @@ func (m *model) toggleTheme() {
 	m.syncThemeComponents()
 	if m.settingsStore != nil {
 		if err := m.settingsStore.SaveTheme(m.themeMode); err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: failed to save theme: %v\n", err)
+			slog.Warn("failed to save theme", "err", err)
 		}
 	}
 }
@@ -4578,10 +4574,10 @@ func newSlashRegistry(creator slashcommand.SessionCreator, store slashcommand.Se
 // ---------------------------------------------------------------------------
 
 // runTUI 启动交互式 TUI 模式。依赖由 main() 统一初始化后传入，无需重复创建。
-func runTUI(llmClient llm.Client, registry tool.Registry, guard permission.Guard, expander *reference.Expander, modelName string, theme string, verboseLog io.Writer, contextLimit int, maxTurns int, toolTimeout time.Duration, toolTimeoutSource string, bypassPerm bool, ctxMgr *session.ContextManager, isResume bool, sessionDir string, globalPath string, projectPath string, agentsMdText string, loc Locale, todoState *todo.TodoState, advisorMode bool, subModel string) {
-	m := newTUIModel(llmClient, registry, guard, expander, modelName, theme, verboseLog, contextLimit, maxTurns, toolTimeout, toolTimeoutSource, loc, todoState)
-	m.agentsMdText = agentsMdText
+func runTUI(llmClient llm.Client, registry tool.Registry, guard permission.Guard, expander *reference.Expander, modelName string, theme string, contextLimit int, maxTurns int, toolTimeout time.Duration, toolTimeoutSource string, bypassPerm bool, ctxMgr *session.ContextManager, isResume bool, sessionDir string, globalPath string, projectPath string, agentsMdText string, loc Locale, todoState *todo.TodoState, advisorMode bool, subModel string) {
+	m := newTUIModel(llmClient, registry, guard, expander, modelName, theme, contextLimit, maxTurns, toolTimeout, toolTimeoutSource, loc, todoState)
 	m.sessionDir = sessionDir
+	m.agentsMdText = agentsMdText
 	m.advisorMode = advisorMode
 	m.subModel = subModel
 	if advisorMode {
@@ -4649,7 +4645,7 @@ func runTUI(llmClient llm.Client, registry tool.Registry, guard permission.Guard
 	m.initTheme() // 根据 themeMode + 终端背景自动检测并应用主题
 
 	if _, err := p.Run(); err != nil {
-		fmt.Fprintf(os.Stderr, "TUI runtime error: %v\n", err)
+		slog.Error("TUI runtime error", "err", err)
 		os.Exit(1)
 	}
 
@@ -4658,9 +4654,9 @@ func runTUI(llmClient llm.Client, registry tool.Registry, guard permission.Guard
 	m.cm.SetTodoItems(serializeTodoItems(m.todoState))
 	m.cm.Save()
 	if sid := m.cm.SessionID(); sid != "" {
-		// 退出时用最终统计更新 recent.json（覆盖启动时写入的初始值）
 		stats := m.cm.Stats()
 		_ = session.UpdateRecentSessions(sessionDir, sid, stats.MessageCount)
+		slog.Info("session saved", "id", sid)
 		fmt.Fprintf(os.Stderr, m.lc.SessionSaved, sid)
 		fmt.Fprintf(os.Stderr, m.lc.SessionResumeHint, sid)
 	}

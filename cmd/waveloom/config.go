@@ -3,6 +3,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"log/slog"
 	"os"
 	"strconv"
 	"strings"
@@ -28,7 +29,7 @@ type CLIConfig struct {
 	ListSessions    bool   // 列出最近 sessions
 	CompletionShell string // shell 补全脚本名称（bash/zsh/fish），空 = 不输出
 	BypassPerm      bool
-	Verbose      bool   // 输出 LLM / 工具执行明细到 stderr
+	LogLevel  string // 日志级别: error / warn / info / debug，默认 info
 	SettingsPath string // settings.json 路径
 	ToolTimeoutRaw string // 单个工具执行超时（Go Duration 格式，如 "10m" / "600s"），空 = 默认 10m
 	ToolTimeout    time.Duration // 解析后的值
@@ -53,7 +54,7 @@ func parseCLI() CLIConfig {
 	flag.StringVar(&cfg.SettingsPath, "settings", "", "显式指定项目配置文件路径（默认: .waveloom/settings.json）")
 	flag.StringVar(&cfg.ResumeSessionID, "resume", "", "恢复指定 session ID 的对话（空 = 新建 session）")
 	flag.BoolVar(&cfg.ContinueSession, "continue", false, "恢复最近一个 session 的对话")
-	flag.BoolVar(&cfg.Verbose, "verbose", false, "输出 LLM 调用和工具执行的详细日志到 stderr")
+	flag.StringVar(&cfg.LogLevel, "log-level", "info", "日志级别 (error/warn/info/debug)")
 	flag.BoolVar(&cfg.BypassPerm, "bypass-permissions", false, "跳过权限检查（CI/测试）")
 	flag.StringVar(&cfg.ToolTimeoutRaw, "tool-timeout", "", "单个工具执行超时（Go Duration 格式，如 10m/600s/0s，0=禁用，默认 10m）")
 
@@ -73,7 +74,7 @@ func parseCLI() CLIConfig {
 	var parseErr error
 	cfg.ContextLimit, parseErr = parseTokenLimit(contextLimitRaw)
 	if parseErr != nil {
-		fmt.Fprintf(os.Stderr, "Warning: cannot parse --context-limit '%s' (%v), falling back to 1M\n", contextLimitRaw, parseErr)
+		slog.Warn("cannot parse --context-limit, falling back to 1M", "value", contextLimitRaw, "err", parseErr)
 		cfg.ContextLimit = 1000000
 	}
 
@@ -83,7 +84,7 @@ func parseCLI() CLIConfig {
 	} else {
 		d, err := time.ParseDuration(cfg.ToolTimeoutRaw)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: cannot parse --tool-timeout '%s' (%v), falling back to 10m\n", cfg.ToolTimeoutRaw, err)
+			slog.Warn("cannot parse --tool-timeout, falling back to 10m", "value", cfg.ToolTimeoutRaw, "err", err)
 			cfg.ToolTimeout = agentloop.DefaultToolTimeout
 			cfg.ToolTimeoutSource = "default"
 		} else {
@@ -120,7 +121,7 @@ func parseCLI() CLIConfig {
 	case "auto", "dark", "light", "darkcolorblind", "lightcolorblind":
 		// ok
 	default:
-		fmt.Fprintf(os.Stderr, "Warning: unknown theme '%s', falling back to auto\n", cfg.Theme)
+		slog.Warn("unknown theme, falling back to auto", "theme", cfg.Theme)
 		cfg.Theme = "auto"
 	}
 
@@ -129,12 +130,13 @@ func parseCLI() CLIConfig {
 	case "auto", "zh-CN", "en-US":
 		// ok
 	default:
-		fmt.Fprintf(os.Stderr, "Warning: unknown locale '%s', falling back to auto\n", cfg.Locale)
+		slog.Warn("unknown locale, falling back to auto", "locale", cfg.Locale)
 		cfg.Locale = "auto"
 	}
 
 	return cfg
 }
+
 // parseTokenLimit 解析上下文窗口大小字符串（支持 1M / 200k / 1048576 等格式）。
 func parseTokenLimit(s string) (int, error) {
 	s = strings.TrimSpace(s)
@@ -166,7 +168,7 @@ func parseTokenLimit(s string) (int, error) {
 
 // printHelp 显示帮助信息。
 func printHelp(loc Locale) {
-	fmt.Fprint(os.Stderr, messagesFor(loc).HelpUsageText)
+	fmt.Print(messagesFor(loc).HelpUsageText)
 }
 
 // printHelpWithAutoDetect 用于 flag.Usage，此时可能尚未解析 --locale，从环境变量自动检测。
