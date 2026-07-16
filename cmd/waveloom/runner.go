@@ -6,18 +6,20 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"time"
 
 	"github.com/Menfre01/waveloom/pkg/agentloop"
-	"github.com/Menfre01/waveloom/pkg/session"
 	"github.com/Menfre01/waveloom/pkg/llm"
 	"github.com/Menfre01/waveloom/pkg/permission"
 	"github.com/Menfre01/waveloom/pkg/reference"
+	"github.com/Menfre01/waveloom/pkg/session"
 	"github.com/Menfre01/waveloom/pkg/todo"
 	"github.com/Menfre01/waveloom/pkg/tool"
 )
 
 // runOneShot 执行单次/管道模式（无 TUI，纯文本输出）。
-func runOneShot(cfg CLIConfig, llmClient llm.Client, registry tool.Registry, guard permission.Guard, expander *reference.Expander, cwd string, cm *session.ContextManager, agentsMdText string, loc Locale, todoState *todo.TodoState, advisorMode bool, subModel string) {
+// model 是从 settings.json 解析后的实际模型名（非 CLI --model 原始参数）。
+func runOneShot(cfg CLIConfig, llmClient llm.Client, registry tool.Registry, guard permission.Guard, expander *reference.Expander, cwd string, cm *session.ContextManager, agentsMdText string, loc Locale, todoState *todo.TodoState, advisorMode bool, subModel string, model string) {
 	lc := messagesFor(loc)
 	// Context Manager 已管理 system prompt，Loop 无需重复注入
 	initialModel := ""
@@ -25,14 +27,14 @@ func runOneShot(cfg CLIConfig, llmClient llm.Client, registry tool.Registry, gua
 		initialModel = subModel
 	}
 	loopCfg := agentloop.Config{
-		MaxTurns:    cfg.MaxTurns,
+		MaxTurns:     cfg.MaxTurns,
 		SystemPrompt: "",
-		ToolTimeout: cfg.ToolTimeout,
-		AgentsMD:    agentsMdText,
-		TodoState:   todoState,
-		AdvisorMode: advisorMode,
-		SubModel:    subModel,
-		Model:       initialModel,
+		ToolTimeout:  cfg.ToolTimeout,
+		AgentsMD:     agentsMdText,
+		TodoState:    todoState,
+		AdvisorMode:  advisorMode,
+		SubModel:     subModel,
+		Model:        initialModel,
 	}
 
 	// bypass 模式：覆盖 guard 为全放行模式
@@ -65,9 +67,10 @@ func runOneShot(cfg CLIConfig, llmClient llm.Client, registry tool.Registry, gua
 	messages, _ := cm.PrepareRun(expandedInput)
 
 	ctx = context.Background()
-	fmt.Fprintf(os.Stderr, lc.OneShotHeader, cfg.Model, cwd)
+	fmt.Fprintf(os.Stderr, lc.OneShotHeader, cwd)
 
 	// Drain 事件 channel，取最终 LoopDone 事件 + 累计 token 统计
+	startTime := time.Now()
 	var finalEv agentloop.LoopDone
 	var runPromptTokens, runComplTokens, runCacheHit, runCacheMiss, runReasoningTokens int
 	var lastTurnPrompt int // 最后一个 TurnStats 的 PromptTokens（完整上下文）
@@ -87,6 +90,8 @@ func runOneShot(cfg CLIConfig, llmClient llm.Client, registry tool.Registry, gua
 		}
 	}
 
+	elapsed := time.Since(startTime)
+
 	if finalEv.Err != nil {
 		fmt.Fprintf(os.Stderr, lc.OneShotError, humanizeError(finalEv.Err))
 		os.Exit(1)
@@ -103,7 +108,15 @@ func runOneShot(cfg CLIConfig, llmClient llm.Client, registry tool.Registry, gua
 		}
 	}
 
-	fmt.Fprintf(os.Stderr, "\n(%d turns, reason: %s)\n", finalEv.Turn, finalEv.Reason)
+	// footer：格式对齐 subagent 输出 (model, N轮, 2.3s, ↑12.5k, ↓3.2k)
+	turnsText := fmt.Sprintf(lc.SubagentTurnsFmt, finalEv.Turn)
+	fmt.Fprintf(os.Stderr, lc.OneShotFooter,
+		model,
+		turnsText,
+		formatDuration(elapsed.Milliseconds()),
+		formatTokens(runPromptTokens),
+		formatTokens(runComplTokens),
+	)
 }
 
 // isPiped 检查 stdin 是否为管道。
