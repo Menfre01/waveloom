@@ -167,6 +167,10 @@ func (t *ReadFileHashline) Execute(ctx context.Context, p ReadFileHashlineParams
 	}
 
 	fullContent, _, totalLines, err := readFullFile(ctx, path)
+	if err != nil {
+		return toolError(ErrorClassRecoverable, ErrKindInvalidArgs,
+			fmt.Sprintf("failed to read file: %v", err), err), nil
+	}
 
 	// ── Step 6: 生成 TAG（无论截断与否，TAG 对应完整文件内容）──
 	var tag string
