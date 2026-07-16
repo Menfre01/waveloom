@@ -62,7 +62,7 @@ var shellSchema = json.RawMessage(`{
     },
     "run_in_background": {
       "type": "boolean",
-      "description": "Set to true to run this command in the background. The tool returns immediately with a task ID and log path. Use read_file to check progress. The next turn will receive a completion notification.",
+      "description": "Set to true to run this command in the background. The tool returns immediately with a task ID and log path. Use read to check progress. The next turn will receive a completion notification.",
       "default": false
     }
   },
@@ -105,7 +105,7 @@ func (t *Shell) Description() string {
 	}
 	if t.AllowBg {
 		lines = append(lines,
-			"Set run_in_background to true for long-running commands (servers, watchers, daemons). The tool returns immediately with a task ID and log path — use read_file to check progress. Use kill_background_task to stop a running background task.",
+			"Set run_in_background to true for long-running commands (servers, watchers, daemons). The tool returns immediately with a task ID and log path — use read to check progress. Use kill_background_task to stop a running background task.",
 		)
 	}
 	lines = append(lines,
@@ -121,10 +121,10 @@ func (t *Shell) Prompt() string {
 		"## Shell Usage",
 		"",
 		"Prefer dedicated tools over shell:",
-		"  - Read files: read_file (not cat/head/tail)",
-		"  - Write files: write_file (not echo >/cat <<EOF)",
-		"  - Edit files: edit_file (not sed/awk)",
-		"",
+		"  - Read files: read (not cat/head/tail)",
+		"  - Write files: write (not echo >/cat <<EOF)",
+		"  - Edit files: edit (not sed/awk)",
+		"  Exception for files >10MB (rejected by read): use head/tail/grep to read, sed/awk to edit.",
 		"Keep commands to a SINGLE LINE. Chain dependent commands with && — do NOT use newlines or \\ line continuation.",
 		"If you absolutely must split, escape newlines as \\\\\\n in JSON (three backslashes + n).",
 		"Do NOT prefix commands with # comment lines — they prevent permission rules from matching the actual command. Run the command directly.",
@@ -137,7 +137,7 @@ func (t *Shell) Prompt() string {
 		"",
 		"Examples:",
 		`  {"command":"python /tmp/check.py && rm /tmp/check.py"}  — Unix/macOS or Windows (Git Bash)`,
-		`  {"command":"make build"}                                 — runs in workspace`,
+		"",
 		`  {"command":"ls", "working_dir":"/tmp"}                   — runs in /tmp, clean`,
 	}
 	return strings.Join(lines, "\n")

@@ -423,3 +423,34 @@ func TestReadFileHashline_BinaryByContent(t *testing.T) {
 	}
 }
 
+
+// ---------------------------------------------------------------------------
+// ReadFileHashline — 超大文件拒绝（>10MB）
+// ---------------------------------------------------------------------------
+
+func TestReadFileHashline_LargeFileRejected(t *testing.T) {
+	dir := t.TempDir()
+	filePath := filepath.Join(dir, "large.log")
+	// 创建 11MB 稀疏文件，Size()=11MB 但不占磁盘空间
+	if err := os.WriteFile(filePath, []byte("hello\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Truncate(filePath, 11*1024*1024); err != nil {
+		t.Fatal(err)
+	}
+
+	store := hashline.NewStore()
+	ctx := hashline.WithStore(context.Background(), store)
+
+	tool := &ReadFileHashline{}
+	result, err := tool.Execute(ctx, ReadFileHashlineParams{FilePath: filePath})
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if result.Error == nil {
+		t.Fatal("expected error for large file")
+	}
+	if result.Error.Kind != ErrKindLargeFile {
+		t.Errorf("expected ErrKindLargeFile, got %q", result.Error.Kind)
+	}
+}

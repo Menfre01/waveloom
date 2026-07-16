@@ -557,14 +557,14 @@ INS.TAIL:
 	}
 }
 
-func TestApplyMultipleOpsSorted(t *testing.T) {
+func TestApplyMultipleOpsSequential(t *testing.T) {
 	fs := NewMemoryFS()
 	_ = fs.WriteFile("src/main.go", "line1\nline2\nline3\nline4\nline5\n")
 
 	store := NewStore()
 	tag, _ := store.Record("src/main.go", fs.files["src/main.go"])
 
-	// DEL line 4, INS after line 2 — same section, system handles ordering
+	// INS.POST 2 then DEL 4 — applied sequentially with offset tracking
 	patch, _ := ParsePatch(`*** Begin Patch
 [src/main.go#` + tag + `]
 INS.POST 2:
@@ -582,6 +582,33 @@ DEL 4
 		t.Errorf("unexpected content:\n got: %q\nwant: %q", fs.files["src/main.go"], expected)
 	}
 }
+// TestApplyEdits_Descending 验证降序声明操作在位置感知偏移模型下结果正确。
+func TestApplyEdits_Descending(t *testing.T) {
+	fs := NewMemoryFS()
+	_ = fs.WriteFile("src/main.go", "L1\nL2\nL3\nL4\nL5\n")
+
+	store := NewStore()
+	tag, _ := store.Record("src/main.go", fs.files["src/main.go"])
+
+	// DEL 5 后 DEL 2（降序，第二个操作不应受第一个偏移影响）
+	patch, _ := ParsePatch(`*** Begin Patch
+[src/main.go#` + tag + `]
+DEL 5
+DEL 2
+*** End Patch`)
+
+
+	results := ApplyPatch(patch, fs, store)
+	if len(results) != 1 || results[0].Error != nil {
+		t.Fatalf("ApplyPatch descending DELs failed: %+v", results[0].Error)
+	}
+
+	expected := "L1\nL3\nL4\n"
+	if fs.files["src/main.go"] != expected {
+		t.Errorf("descending DEL 5 → DEL 2:\n got: %q\nwant: %q", fs.files["src/main.go"], expected)
+	}
+}
+
 
 func TestTagMismatch(t *testing.T) {
 	fs := NewMemoryFS()
@@ -652,24 +679,34 @@ REM
 	}
 }
 
-func TestSortOps(t *testing.T) {
+func TestDetectOverlaps_NoOverlap(t *testing.T) {
 	ops := []Op{
 		{Kind: OpINS, Position: "post", RefLine: 2},
 		{Kind: OpDEL, LineStart: 4, LineEnd: 4},
 		{Kind: OpSWAP, LineStart: 1, LineEnd: 1},
 	}
-
-	sorted := sortOps(ops)
-
-	// Sorted by descending line number: DEL(4) > INS(2) > SWAP(1)
-	if sorted[0].Kind != OpDEL {
-		t.Errorf("expected DEL first (line 4), got %s (line %d)", sorted[0].Kind, opLineNum(sorted[0]))
+	if err := detectOverlaps(ops); err != nil {
+		t.Errorf("expected no overlap, got: %v", err)
 	}
-	if sorted[1].Kind != OpINS {
-		t.Errorf("expected INS second (line 2), got %s (line %d)", sorted[1].Kind, opLineNum(sorted[1]))
+}
+
+func TestDetectOverlaps_Overlap(t *testing.T) {
+	ops := []Op{
+		{Kind: OpSWAP, LineStart: 1, LineEnd: 3},
+		{Kind: OpDEL, LineStart: 2, LineEnd: 5},
 	}
-	if sorted[2].Kind != OpSWAP {
-		t.Errorf("expected SWAP third (line 1), got %s (line %d)", sorted[2].Kind, opLineNum(sorted[2]))
+	if err := detectOverlaps(ops); err == nil {
+		t.Fatal("expected overlap error, got nil")
+	}
+}
+
+func TestDetectOverlaps_SwapDelOverlap(t *testing.T) {
+	ops := []Op{
+		{Kind: OpSWAP, LineStart: 105, LineEnd: 106},
+		{Kind: OpDEL, LineStart: 106, LineEnd: 106},
+	}
+	if err := detectOverlaps(ops); err == nil {
+		t.Fatal("expected overlap error for SWAP 105-106 + DEL 106, got nil")
 	}
 }
 
@@ -810,24 +847,59 @@ func TestWithStoreAndStoreFromContext(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// opPriority direct test
+// TestOpRange 验证 opRange 将操作转换为 0-based 行范围
 // ---------------------------------------------------------------------------
 
-func TestOpPriority(t *testing.T) {
-	if opPriority(Op{Kind: OpDEL}) != 1 {
-		t.Error("DEL priority should be 1")
+func TestOpRange(t *testing.T) {
+	// SWAP: 0-based [start-1, end)
+	r := opRange(Op{Kind: OpSWAP, LineStart: 5, LineEnd: 8})
+	if r == nil || r.start != 4 || r.end != 8 {
+		t.Errorf("SWAP(5,8): expected [4,8), got %+v", r)
 	}
-	if opPriority(Op{Kind: OpREM}) != 1 {
-		t.Error("REM priority should be 1")
+
+	// DEL: 0-based [start-1, end)
+	r = opRange(Op{Kind: OpDEL, LineStart: 3, LineEnd: 3})
+	if r == nil || r.start != 2 || r.end != 3 {
+		t.Errorf("DEL(3,3): expected [2,3), got %+v", r)
 	}
-	if opPriority(Op{Kind: OpSWAP}) != 2 {
-		t.Error("SWAP priority should be 2")
+
+	// INS pre — 零宽度插入点，在参考行之前（RefLine-1 位置）
+	r = opRange(Op{Kind: OpINS, Position: "pre", RefLine: 7})
+	if r == nil || r.start != 6 || r.end != 6 {
+		t.Errorf("INS pre 7: expected [6,6), got %+v", r)
 	}
-	if opPriority(Op{Kind: OpINS}) != 3 {
-		t.Error("INS priority should be 3")
+
+	// INS post — 零宽度插入点，在参考行之后（RefLine 位置）
+	r = opRange(Op{Kind: OpINS, Position: "post", RefLine: 2})
+	if r == nil || r.start != 2 || r.end != 2 {
+		t.Errorf("INS post 2: expected [2,2), got %+v", r)
 	}
-	if opPriority(Op{Kind: OpMV}) != 4 {
-		t.Error("MV priority should be 4")
+
+	// INS head/tail, REM, MV → nil
+	for _, op := range []Op{
+		{Kind: OpINS, Position: "head"},
+		{Kind: OpINS, Position: "tail"},
+		{Kind: OpREM},
+		{Kind: OpMV},
+	} {
+		if r := opRange(op); r != nil {
+			t.Errorf("expected nil range for %v, got %+v", op, r)
+		}
+	}
+}
+
+func TestRangesOverlap(t *testing.T) {
+	if !rangesOverlap(2, 5, 4, 7) {
+		t.Error("expected overlap [2,5) and [4,7)")
+	}
+	if !rangesOverlap(4, 7, 2, 5) {
+		t.Error("expected overlap (reversed order)")
+	}
+	if rangesOverlap(2, 4, 4, 7) {
+		t.Error("expected no overlap [2,4) and [4,7) — adjacent")
+	}
+	if rangesOverlap(5, 8, 1, 3) {
+		t.Error("expected no overlap [5,8) and [1,3)")
 	}
 }
 
@@ -855,30 +927,36 @@ func TestEditError(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// opLineNum test
+// detectOverlaps with INS pre/post
 // ---------------------------------------------------------------------------
 
-func TestOpLineNum(t *testing.T) {
-	if n := opLineNum(Op{Kind: OpSWAP, LineStart: 5}); n != 5 {
-		t.Errorf("SWAP lineNum: expected 5, got %d", n)
+func TestDetectOverlaps_InsPrePost(t *testing.T) {
+	// INS.PRE 2 + INS.POST 3: no overlap (different reference lines)
+	noOverlap := []Op{
+		{Kind: OpINS, Position: "pre", RefLine: 2},
+		{Kind: OpINS, Position: "post", RefLine: 3},
 	}
-	if n := opLineNum(Op{Kind: OpDEL, LineStart: 3}); n != 3 {
-		t.Errorf("DEL lineNum: expected 3, got %d", n)
+	if err := detectOverlaps(noOverlap); err != nil {
+		t.Errorf("expected no overlap, got: %v", err)
 	}
-	if n := opLineNum(Op{Kind: OpINS, Position: "head"}); n != 0 {
-		t.Errorf("INS head lineNum: expected 0, got %d", n)
+
+	// INS.PRE 2 + SWAP 2: no overlap — INS.PRE 插入在行 2 之前（零宽度 [1,1)），
+	// SWAP 替换行 2 ([1,2))，两者不重叠。applyEdits 的偏移计算会自动处理行号重映射。
+	preSwap := []Op{
+		{Kind: OpINS, Position: "pre", RefLine: 2},
+		{Kind: OpSWAP, LineStart: 2, LineEnd: 2},
 	}
-	if n := opLineNum(Op{Kind: OpINS, Position: "tail"}); n != 1<<30 {
-		t.Errorf("INS tail lineNum: expected %d, got %d", 1<<30, n)
+	if err := detectOverlaps(preSwap); err != nil {
+		t.Errorf("expected no overlap for INS.PRE 2 + SWAP 2, got: %v", err)
 	}
-	if n := opLineNum(Op{Kind: OpINS, Position: "pre", RefLine: 7}); n != 7 {
-		t.Errorf("INS pre lineNum: expected 7, got %d", n)
+
+	// INS.PRE 2 + INS.POST 2: should overlap (same reference line, order-dependent)
+	prePost := []Op{
+		{Kind: OpINS, Position: "pre", RefLine: 2},
+		{Kind: OpINS, Position: "post", RefLine: 2},
 	}
-	if n := opLineNum(Op{Kind: OpREM}); n != 0 {
-		t.Errorf("REM lineNum: expected 0, got %d", n)
-	}
-	if n := opLineNum(Op{Kind: OpMV}); n != 0 {
-		t.Errorf("MV lineNum: expected 0, got %d", n)
+	if err := detectOverlaps(prePost); err == nil {
+		t.Fatal("expected overlap for INS.PRE 2 + INS.POST 2, got nil")
 	}
 }
 
@@ -1186,6 +1264,33 @@ func TestApplyEditInsHeadOnEmpty(t *testing.T) {
 		t.Errorf("unexpected content:\n got: %q\nwant: %q", fs.files["main.go"], expected)
 	}
 }
+// TestApplyEditInsTailOnEmpty 验证 INS.TAIL 在空文件上退化为 head（不产生前导换行）。
+func TestApplyEditInsTailOnEmpty(t *testing.T) {
+	fs := NewMemoryFS()
+	_ = fs.WriteFile("empty.go", "")
+
+	store := NewStore()
+	tag, _ := store.Record("empty.go", "")
+
+	patch, _ := ParsePatch(`*** Begin Patch
+[empty.go#` + tag + `]
+INS.TAIL:
++line1
++line2
+*** End Patch`)
+
+
+	results := ApplyPatch(patch, fs, store)
+	if len(results) != 1 || results[0].Error != nil {
+		t.Fatalf("ApplyPatch INS.TAIL on empty failed: %+v", results[0].Error)
+	}
+
+	expected := "line1\nline2\n"
+	if fs.files["empty.go"] != expected {
+		t.Errorf("unexpected content:\n got: %q\nwant: %q", fs.files["empty.go"], expected)
+	}
+}
+
 
 // ---------------------------------------------------------------------------
 // applySection REM on non-existent file
@@ -1361,5 +1466,386 @@ SWAP 2.=2:
 	content, _ := fs.ReadFile("src/main.go")
 	if content != "line1\nmodified line2\nline3\n" {
 		t.Errorf("unexpected content: got %q", content)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// 多操作偏移场景回归测试
+// ---------------------------------------------------------------------------
+
+func TestOffsetRegression_DEL_then_SWAP(t *testing.T) {
+	// DEL 行 2 → SWAP 行 4 需自动偏移到行 3
+	content := "L1\nL2\nL3\nL4\nL5\n"
+	patch := parsePatch(t, "DEL 2\nSWAP 4.=4:\n+NEW L4")
+	result := applyPatchContent(t, content, patch)
+	expected := "L1\nL3\nNEW L4\nL5\n"
+	if result != expected {
+		t.Errorf("offset error:\ngot:  %q\nwant: %q", result, expected)
+	}
+}
+
+func TestOffsetRegression_SWAP_expand_then_INS_POST(t *testing.T) {
+	// SWAP 行 2 扩展 (1→2 行) → INS.POST 3 的行号不变但目标偏移
+	content := "L1\nL2\nL3\n"
+	patch := parsePatch(t, "SWAP 2.=2:\n+NEW L2a\n+NEW L2b\nINS.POST 3:\n+after L3")
+	result := applyPatchContent(t, content, patch)
+	expected := "L1\nNEW L2a\nNEW L2b\nL3\nafter L3\n"
+	if result != expected {
+		t.Errorf("offset error:\ngot:  %q\nwant: %q", result, expected)
+	}
+}
+
+func TestOffsetRegression_INS_PRE_then_SWAP_same_ref(t *testing.T) {
+	// I3 修复: INS.PRE 2 + SWAP 2 不应重叠，偏移自动处理
+	content := "L1\nL2\nL3\n"
+	patch := parsePatch(t, "INS.PRE 2:\n+before L2\nSWAP 2.=2:\n+NEW L2")
+	result := applyPatchContent(t, content, patch)
+	expected := "L1\nbefore L2\nNEW L2\nL3\n"
+	if result != expected {
+		t.Errorf("offset error:\ngot:  %q\nwant: %q", result, expected)
+	}
+}
+
+func TestOffsetRegression_SWAP_shrink_then_DEL(t *testing.T) {
+	// SWAP 行 2-3 收缩 (2→1 行) → DEL 4 自动偏移到行 3
+	content := "L1\nL2a\nL2b\nL3\nL4\n"
+	patch := parsePatch(t, "SWAP 2.=3:\n+NEW L2\nDEL 4")
+	result := applyPatchContent(t, content, patch)
+	expected := "L1\nNEW L2\nL4\n"
+	if result != expected {
+		t.Errorf("offset error:\ngot:  %q\nwant: %q", result, expected)
+	}
+}
+
+func TestOffsetRegression_Three_ops_cascade(t *testing.T) {
+	// INS.PRE 2 → SWAP 4 → DEL 6，三重偏移级联
+	content := "L1\nL2\nL3\nL4\nL5\nL6\n"
+	patch := parsePatch(t, "INS.PRE 2:\n+before\nSWAP 4.=4:\n+NEW L4\nDEL 6")
+	result := applyPatchContent(t, content, patch)
+	expected := "L1\nbefore\nL2\nL3\nNEW L4\nL5\n"
+	if result != expected {
+		t.Errorf("offset error:\ngot:  %q\nwant: %q", result, expected)
+	}
+}
+
+func TestOffsetRegression_DEL_then_INS_PRE(t *testing.T) {
+	// DEL 2 → INS.PRE 3 的参考行偏移到行 2
+	content := "L1\nL2\nL3\nL4\n"
+	patch := parsePatch(t, "DEL 2\nINS.PRE 3:\n+before L3")
+	result := applyPatchContent(t, content, patch)
+	expected := "L1\nbefore L3\nL3\nL4\n"
+	if result != expected {
+		t.Errorf("offset error:\ngot:  %q\nwant: %q", result, expected)
+	}
+}
+
+func TestOffsetRegression_Descending_DELs(t *testing.T) {
+	// 降序 DEL 5 → DEL 2，互不影响
+	content := "L1\nL2\nL3\nL4\nL5\n"
+	patch := parsePatch(t, "DEL 5\nDEL 2")
+	result := applyPatchContent(t, content, patch)
+	expected := "L1\nL3\nL4\n"
+	if result != expected {
+		t.Errorf("offset error:\ngot:  %q\nwant: %q", result, expected)
+	}
+}
+
+// parsePatch 解析简单 patch 文本（绕过 TAG 验证）
+func parsePatch(t *testing.T, opsBlock string) *Patch {
+	t.Helper()
+	patch, err := ParsePatch("*** Begin Patch\n[/tmp/f#0000]\n" + opsBlock + "\n*** End Patch")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return patch
+}
+
+// applyPatchContent 在内存中应用 patch（绕过文件系统和 TAG 验证）
+func applyPatchContent(t *testing.T, content string, patch *Patch) string {
+	t.Helper()
+	if len(patch.Sections) == 0 {
+		t.Fatal("no sections")
+	}
+	result, _, err := ApplyEditsForTest(content, patch.Sections[0].Ops)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return result
+}
+
+// ---------------------------------------------------------------------------
+// Multi-section same file recovery regression test
+// ---------------------------------------------------------------------------
+
+func TestMultiSectionSameFileRecovery(t *testing.T) {
+	// 模拟场景：Section 1 插入 2 行，Section 2 用相同旧 TAG 编辑被偏移的行。
+	// 验证 Recovery 使用原始快照（而非 Section 1 更新后的快照）正确重映射行号。
+	content := "L1\nL2\nL3\nL4\nL5\n"
+
+	store := NewStore()
+	tag, err := store.Record("/tmp/test-recovery-store.go", content)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	fs := &memFS{files: map[string]string{"/tmp/test-recovery-store.go": content}}
+
+	// 模拟两个 Section，同一个文件，同一个旧 TAG
+	patch := &Patch{
+		Sections: []Section{
+			{
+				Path: "/tmp/test-recovery-store.go",
+				TAG:  tag,
+				Ops: []Op{
+					{Kind: OpINS, Position: "pre", RefLine: 2, Body: []string{"INSERTED A", "INSERTED B"}},
+				},
+			},
+			{
+				Path: "/tmp/test-recovery-store.go",
+				TAG:  tag, // 同一个旧 TAG — Section 1 后 store 已更新
+				Ops: []Op{
+					{Kind: OpSWAP, LineStart: 5, LineEnd: 5, Body: []string{"SHIFTED L5"}},
+				},
+			},
+		},
+	}
+
+	results := ApplyPatch(patch, fs, store)
+
+	// Section 1: 应该成功
+	if results[0].Error != nil {
+		t.Fatalf("Section 1 failed: %v", results[0].Error)
+	}
+	if results[0].LinesDelta != 2 {
+		t.Errorf("Section 1 LinesDelta: expected 2, got %d", results[0].LinesDelta)
+	}
+
+	// Section 2: Recovery 应该成功（⚠ 而非 ✗）
+	if results[1].Error != nil {
+		t.Fatalf("Section 2 failed with error: %v", results[1].Error)
+	}
+	if results[1].Warning == "" {
+		t.Error("Section 2 should have a recovery warning")
+	}
+
+	// 验证最终文件内容
+	final := fs.files["/tmp/test-recovery-store.go"]
+	expected := "L1\nINSERTED A\nINSERTED B\nL2\nL3\nL4\nSHIFTED L5\n"
+	if final != expected {
+		t.Errorf("bad final content:\ngot:  %q\nwant: %q", final, expected)
+	}
+}
+
+// memFS is a simple in-memory FileSystem for testing.
+type memFS struct {
+	files map[string]string
+	wd    string
+}
+
+func (fs *memFS) ReadFile(path string) (string, error) {
+	if content, ok := fs.files[path]; ok {
+		return content, nil
+	}
+	return "", os.ErrNotExist
+}
+
+func (fs *memFS) WriteFile(path string, content string) error {
+	fs.files[path] = content
+	return nil
+}
+
+func (fs *memFS) MkdirAll(path string) error { return nil }
+
+func (fs *memFS) Remove(path string) error {
+	delete(fs.files, path)
+	return nil
+}
+
+func (fs *memFS) ResolvePath(path string) string { return path }
+
+// ---------------------------------------------------------------------------
+// detectCrossSectionConflicts tests
+// ---------------------------------------------------------------------------
+
+func TestDetectCrossSectionConflicts_Overlap(t *testing.T) {
+	patch := &Patch{
+		Sections: []Section{
+			{Path: "/tmp/f.go", TAG: "AAAA", Ops: []Op{
+				{Kind: OpSWAP, LineStart: 2, LineEnd: 2, Body: []string{"new"}},
+			}},
+			{Path: "/tmp/f.go", TAG: "AAAA", Ops: []Op{
+				{Kind: OpSWAP, LineStart: 2, LineEnd: 2, Body: []string{"new2"}},
+			}},
+		},
+	}
+	errs := detectCrossSectionConflicts(patch)
+	if errs == nil {
+		t.Fatal("expected cross-section conflict, got nil")
+	}
+	if errs[0] == nil || errs[1] == nil {
+		t.Fatal("both sections should have conflict errors")
+	}
+	if !strings.Contains(errs[0].Message, "overlap") {
+		t.Errorf("error should mention overlap: %s", errs[0].Message)
+	}
+}
+
+func TestDetectCrossSectionConflicts_NoOverlap(t *testing.T) {
+	patch := &Patch{
+		Sections: []Section{
+			{Path: "/tmp/f.go", TAG: "AAAA", Ops: []Op{
+				{Kind: OpSWAP, LineStart: 1, LineEnd: 1, Body: []string{"new1"}},
+			}},
+			{Path: "/tmp/f.go", TAG: "AAAA", Ops: []Op{
+				{Kind: OpSWAP, LineStart: 5, LineEnd: 5, Body: []string{"new5"}},
+			}},
+		},
+	}
+	errs := detectCrossSectionConflicts(patch)
+	if errs != nil {
+		t.Fatalf("expected no conflict, got: %v", errs)
+	}
+}
+
+func TestDetectCrossSectionConflicts_REM_with_LineOp(t *testing.T) {
+	patch := &Patch{
+		Sections: []Section{
+			{Path: "/tmp/f.go", TAG: "AAAA", Ops: []Op{
+				{Kind: OpREM},
+			}},
+			{Path: "/tmp/f.go", TAG: "AAAA", Ops: []Op{
+				{Kind: OpSWAP, LineStart: 1, LineEnd: 1, Body: []string{"new"}},
+			}},
+		},
+	}
+	errs := detectCrossSectionConflicts(patch)
+	if errs == nil {
+		t.Fatal("expected REM vs line-op conflict, got nil")
+	}
+	if !strings.Contains(errs[0].Message, "REM") {
+		t.Errorf("error should mention REM: %s", errs[0].Message)
+	}
+}
+
+func TestDetectCrossSectionConflicts_MV_with_LineOp(t *testing.T) {
+	patch := &Patch{
+		Sections: []Section{
+			{Path: "/tmp/f.go", TAG: "AAAA", Ops: []Op{
+				{Kind: OpMV, DestPath: "/tmp/other.go"},
+			}},
+			{Path: "/tmp/f.go", TAG: "AAAA", Ops: []Op{
+				{Kind: OpINS, Position: "head", Body: []string{"new"}},
+			}},
+		},
+	}
+	errs := detectCrossSectionConflicts(patch)
+	if errs == nil {
+		t.Fatal("expected MV vs line-op conflict, got nil")
+	}
+}
+
+func TestDetectCrossSectionConflicts_MultiFile_OneConflict(t *testing.T) {
+	// fileA has conflict, fileB doesn't — only fileA should be rejected
+	patch := &Patch{
+		Sections: []Section{
+			{Path: "/tmp/fileA.go", TAG: "AAAA", Ops: []Op{
+				{Kind: OpSWAP, LineStart: 2, LineEnd: 2, Body: []string{"a"}},
+			}},
+			{Path: "/tmp/fileA.go", TAG: "AAAA", Ops: []Op{
+				{Kind: OpSWAP, LineStart: 2, LineEnd: 2, Body: []string{"b"}},
+			}},
+			{Path: "/tmp/fileB.go", TAG: "BBBB", Ops: []Op{
+				{Kind: OpINS, Position: "head", Body: []string{"header"}},
+			}},
+		},
+	}
+	errs := detectCrossSectionConflicts(patch)
+	if errs == nil {
+		t.Fatal("expected conflicts for fileA")
+	}
+	if errs[0] == nil || errs[1] == nil {
+		t.Fatal("fileA sections (0,1) should have conflict errors")
+	}
+	if errs[2] != nil {
+		t.Fatalf("fileB section (2) should NOT have conflict: %v", errs[2])
+	}
+}
+
+func TestApplyPatch_MultiFile_OneConflict_OtherSucceeds(t *testing.T) {
+	store := NewStore()
+	contentA := "fileA content\n"
+	contentB := "fileB content\n"
+	store.Record("/tmp/fileA.go", contentA)
+	store.Record("/tmp/fileB.go", contentB)
+
+	fs := &memFS{files: map[string]string{
+		"/tmp/fileA.go": contentA,
+		"/tmp/fileB.go": contentB,
+	}}
+
+	patch := &Patch{
+		Sections: []Section{
+			{Path: "/tmp/fileA.go", TAG: mustGetTag(store, "/tmp/fileA.go"), Ops: []Op{
+				{Kind: OpSWAP, LineStart: 1, LineEnd: 1, Body: []string{"FileA Section 1"}},
+			}},
+			{Path: "/tmp/fileA.go", TAG: mustGetTag(store, "/tmp/fileA.go"), Ops: []Op{
+				{Kind: OpSWAP, LineStart: 1, LineEnd: 1, Body: []string{"FileA Section 2"}},
+			}},
+			{Path: "/tmp/fileB.go", TAG: mustGetTag(store, "/tmp/fileB.go"), Ops: []Op{
+				{Kind: OpSWAP, LineStart: 1, LineEnd: 1, Body: []string{"FileB updated"}},
+			}},
+		},
+	}
+
+	results := ApplyPatch(patch, fs, store)
+
+	// Section 0 (FileA): should have error
+	if results[0].Error == nil {
+		t.Fatal("Section 0 (FileA) should have conflict error")
+	}
+	// Section 1 (FileA): should have error
+	if results[1].Error == nil {
+		t.Fatal("Section 1 (FileA) should have conflict error")
+	}
+	// Section 2 (FileB): should have NO error
+	if results[2].Error != nil {
+		t.Fatalf("Section 2 (FileB) should succeed, got: %v", results[2].Error)
+	}
+
+	// FileB should have been modified
+	if fs.files["/tmp/fileB.go"] != "FileB updated\n" {
+		t.Errorf("FileB should be updated, got: %q", fs.files["/tmp/fileB.go"])
+	}
+	// FileA should be unchanged
+	if fs.files["/tmp/fileA.go"] != contentA {
+		t.Errorf("FileA should be unchanged, got: %q", fs.files["/tmp/fileA.go"])
+	}
+}
+
+func mustGetTag(store *SnapshotStore, path string) string {
+	snap, ok := store.Get(path)
+	if !ok {
+		panic("no snapshot for " + path)
+	}
+	return snap.TAG
+}
+
+func TestDetectCrossSectionConflicts_INS_to_INS_SameRefLine(t *testing.T) {
+	patch := &Patch{
+		Sections: []Section{
+			{Path: "/tmp/f.go", TAG: "AAAA", Ops: []Op{
+				{Kind: OpINS, Position: "pre", RefLine: 5, Body: []string{"a"}},
+			}},
+			{Path: "/tmp/f.go", TAG: "AAAA", Ops: []Op{
+				{Kind: OpINS, Position: "post", RefLine: 5, Body: []string{"b"}},
+			}},
+		},
+	}
+	errs := detectCrossSectionConflicts(patch)
+	if errs == nil {
+		t.Fatal("expected INS-to-INS cross-section conflict, got nil")
+	}
+	if errs[0] == nil || errs[1] == nil {
+		t.Fatal("both sections should have conflict errors")
 	}
 }

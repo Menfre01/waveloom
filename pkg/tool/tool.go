@@ -292,6 +292,7 @@ const (
 	ErrKindBinaryFile            = "binary_file"
 	ErrKindMultipleMatch         = "multiple_matches"
 	ErrKindNoMatch               = "no_match"
+	ErrKindLargeFile             = "large_file"
 )
 
 // Fatal — 不可恢复

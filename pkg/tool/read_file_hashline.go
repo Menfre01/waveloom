@@ -32,6 +32,22 @@ func (t *ReadFileHashline) Description() string {
 		"line numbers are used directly in SWAP/INS/DEL operations."
 }
 
+// Prompt 返回 read 工具使用指南，由 Registry.FormatToolPrompts() 注入 system prompt。
+func (t *ReadFileHashline) Prompt() string {
+	return `## Read File (Hashline)
+
+Use read to get a TAG and line-numbered content for hash-anchored editing.
+Always read a file before editing it — the TAG certifies the file snapshot
+and must match the TAG in the edit patch section header.
+
+- TAG is computed from the COMPLETE file content, even when offset/limit
+  are used to display only a range of lines.
+- Files larger than 10MB are rejected — use shell tools (head/tail/grep/sed/awk)
+  to both read and edit large files.
+- Empty files return a TAG with a warning; INS.HEAD / INS.TAIL work normally.
+`
+}
+
 
 var readFileHashlineSchema = json.RawMessage(`{
   "type": "object",
@@ -117,7 +133,17 @@ func (t *ReadFileHashline) Execute(ctx context.Context, p ReadFileHashlineParams
 			fmt.Sprintf("path is a directory, not a file: %s", path), nil), nil
 	}
 
-	// ── Step 4: 二进制检测 ──
+	// ── Step 4: 大文件门限 ──
+	// 在读取任何内容之前先检查文件大小。hashline read 需要完整文件内容
+	// 计算 TAG + 存入 snapshot store，超大文件（>10MB）可能导致 OOM。
+	const maxReadBytes = 10 * 1024 * 1024 // 10MB
+	if info.Size() > maxReadBytes {
+		s := fmt.Sprintf("%.1fMB", float64(info.Size())/(1024*1024))
+		return toolError(ErrorClassRecoverable, ErrKindLargeFile,
+			fmt.Sprintf("file too large for hashline read (%s > 10MB): %s. Use shell tools to both read (head/tail/grep) and edit (sed/awk) large files.", s, path), nil), nil
+	}
+
+	// ── Step 5: 二进制检测 ──
 	if HasBinaryExtension(path) {
 		return toolError(ErrorClassRecoverable, ErrKindBinaryFile,
 			fmt.Sprintf("file appears to be a binary %s file: %s",
@@ -134,16 +160,13 @@ func (t *ReadFileHashline) Execute(ctx context.Context, p ReadFileHashlineParams
 			fmt.Sprintf("file appears to be binary: %s", path), nil), nil
 	}
 
-	// ── Step 5: 读取文件内容 ──
+	// ── Step 6: 读取文件内容 ──
+
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 
 	fullContent, _, totalLines, err := readFullFile(ctx, path)
-	if err != nil {
-		return toolError(ErrorClassRecoverable, ErrKindCommandFailed,
-			fmt.Sprintf("error reading file: %v", err), err), nil
-	}
 
 	// ── Step 6: 生成 TAG（无论截断与否，TAG 对应完整文件内容）──
 	var tag string

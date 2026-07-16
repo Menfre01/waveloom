@@ -403,11 +403,13 @@ func TestEditFileHashline_DuplicateSection(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Execute() error = %v", err)
 	}
-	if result.Error == nil {
-		t.Fatal("expected error for duplicate section")
+	// J2 修复后，同一文件多 Section 不再被拒绝，每个 Section 独立验证 TAG 并应用操作
+	if result.Error != nil {
+		t.Fatalf("expected success for multi-section same file, got error: %s", result.Error.Message)
 	}
-	if result.Error.Kind != ErrKindInvalidArgs {
-		t.Errorf("expected ErrKindInvalidArgs, got %q", result.Error.Kind)
+	content := readTestFile(t, filePath)
+	if !strings.Contains(content, "var x = 10") || !strings.Contains(content, "var y = 20") {
+		t.Errorf("expected both SWAPs applied, got: %s", content)
 	}
 }
 
@@ -499,24 +501,46 @@ func TestEditFileHashline_WorkingDirResolution(t *testing.T) {
 // 多操作复合
 // ---------------------------------------------------------------------------
 
+// TestEditFileHashline_MultipleOps 验证非重叠多操作按声明顺序应用。
+// INS.PRE 4 和 INS.POST 4 同参考行重叠已被拒绝，分两次 edit 调用。
 func TestEditFileHashline_MultipleOps(t *testing.T) {
 	ctx, dir, filePath, tag := setupEditTest(t, "main.go",
 		"package main\n\nfunc main() {\n\tfmt.Println(\"hello\")\n}\n")
 
-	patch := makePatch(makeSection(filePath, tag,
+	tool := &EditFileHashline{}
+
+	// 第一步：INS.PRE 4 + SWAP 2（无重叠）
+	patch1 := makePatch(makeSection(filePath, tag,
 		"INS.PRE 4:", "+\t// before",
-		"INS.POST 4:", "+\t// after",
 		"SWAP 2.=2:", "+", "+import \"fmt\"",
 	))
-
-	tool := &EditFileHashline{}
-	result, err := tool.Execute(ctx, EditFileHashlineParams{Patch: patch, WorkingDir: dir})
+	result1, err := tool.Execute(ctx, EditFileHashlineParams{Patch: patch1, WorkingDir: dir})
 	if err != nil {
-		t.Fatalf("Execute() error = %v", err)
+		t.Fatalf("Execute() step1 error = %v", err)
 	}
-	if result.Error != nil {
-		t.Fatalf("unexpected error: %s", result.Error.Message)
+	if result1.Error != nil {
+		t.Fatalf("step1 unexpected error: %s", result1.Error.Message)
 	}
+
+	// 第二步：重新 read 获取新 TAG，再 INS.POST
+	reader := &ReadFileHashline{}
+	readResult, readErr := reader.Execute(ctx, ReadFileHashlineParams{FilePath: "main.go", WorkingDir: dir})
+	if readErr != nil || readResult.Error != nil {
+		t.Fatalf("read step2 failed: err=%v, toolErr=%v", readErr, readResult.Error)
+	}
+	newTag := extractTag(readResult.Content)
+
+	patch2 := makePatch(makeSection(filePath, newTag,
+		"INS.POST 4:", "+\t// after",
+	))
+	result2, err := tool.Execute(ctx, EditFileHashlineParams{Patch: patch2, WorkingDir: dir})
+	if err != nil {
+		t.Fatalf("Execute() step2 error = %v", err)
+	}
+	if result2.Error != nil {
+		t.Fatalf("step2 unexpected error: %s", result2.Error.Message)
+	}
+
 	content := readTestFile(t, filePath)
 	if !strings.Contains(content, "// before") {
 		t.Error("missing // before")
@@ -527,6 +551,21 @@ func TestEditFileHashline_MultipleOps(t *testing.T) {
 	if !strings.Contains(content, `"fmt"`) {
 		t.Error("missing import")
 	}
+}
+
+// extractTag 从编辑返回内容中提取 TAG（格式 [path#XXXX]）。
+func extractTag(output string) string {
+	// Format: [path#TAG] ✓ update ...
+	idx := strings.Index(output, "#")
+	if idx < 0 {
+		return ""
+	}
+	start := idx + 1
+	end := start
+	for end < len(output) && output[end] != ']' && output[end] != ' ' {
+		end++
+	}
+	return output[start:end]
 }
 
 // ---------------------------------------------------------------------------
