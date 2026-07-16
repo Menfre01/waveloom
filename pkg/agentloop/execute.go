@@ -725,7 +725,7 @@ func (l *Loop) checkPermission(ctx context.Context, tc llm.ToolCall, results map
 }
 
 // executeTodoWrite 处理 todo_write 工具调用。
-// 解析参数 → 更新 TodoState → 推送 TodoUpdateEvent → 返回格式化结果给 LLM。
+// 解析参数 → 增量合并到 TodoState → 推送 TodoUpdateEvent → 返回格式化结果给 LLM。
 func (l *Loop) executeTodoWrite(ctx context.Context, tc llm.ToolCall, state *LoopState, ch chan<- TurnEvent) *tool.ToolResult {
 	if l.config.TodoState == nil {
 		return &tool.ToolResult{
@@ -744,14 +744,14 @@ func (l *Loop) executeTodoWrite(ctx context.Context, tc llm.ToolCall, state *Loo
 		}
 	}
 
-	oldItems, newItems := l.config.TodoState.Apply(params)
+	result := l.config.TodoState.Apply(params)
 
 	// 成功更新后重置周期性提醒计数器
 	l.turnsSinceLastTodoWrite = 0
 	l.turnsSinceLastTodoReminder = 0
 	l.lastChanceTodoInjected = false
 	// 推送更新事件给 TUI
-	if !sendEvent(ctx, ch, TodoUpdateEvent{Items: newItems}) {
+	if !sendEvent(ctx, ch, TodoUpdateEvent{Items: result.Items}) {
 		return &tool.ToolResult{
 			Error: &tool.ToolError{
 				Class:   tool.ErrorClassRecoverable,
@@ -761,16 +761,16 @@ func (l *Loop) executeTodoWrite(ctx context.Context, tc llm.ToolCall, state *Loo
 		}
 	}
 
-	result := todo.FormatResult(newItems)
+	msg := todo.FormatResult(result)
 
-	// 检测无状态变更的 no-op 调用：若新旧列表状态完全一致，追加提示
-	if todoItemsEqual(oldItems, newItems) && len(newItems) > 0 {
-		result += "\n⚠️ No status changes detected. Did you forget to update task statuses? " +
+	// 检测无状态变更的 no-op 调用：无创建且无更新时追加提示
+	if result.Created == 0 && result.Updated == 0 && len(result.Items) > 0 {
+		msg += "\n⚠️ No status changes detected. Did you forget to update task statuses? " +
 			"Mark completed tasks as 'completed' and start the next task by setting it to 'in_progress'."
 	}
 
 	return &tool.ToolResult{
-		Content: result,
+		Content: msg,
 	}
 }
 
@@ -1161,19 +1161,6 @@ var nouns = []string{
 	"viper", "weasel", "xerus", "yak", "zebra",
 }
 
-// todoItemsEqual 比较两个 todo 列表的状态是否完全一致（content + status + activeForm）。
-// 用于检测 no-op todo_write 调用（LLM 传入相同状态但未做任何变更）。
-func todoItemsEqual(a, b []todo.TodoItem) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i].Content != b[i].Content || a[i].Status != b[i].Status || a[i].ActiveForm != b[i].ActiveForm {
-			return false
-		}
-	}
-	return true
-}
 
 // safeSend 向 channel 安全发送，channel 已关闭时静默丢弃（不 panic）。
 // REGRESSION: 工具 goroutine 可能在 resultsCh 关闭后仍尝试发送（工具忽略 context 取消），

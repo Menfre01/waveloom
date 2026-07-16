@@ -131,11 +131,25 @@ Single straightforward task confined to one location — tracking provides no or
 </reasoning>
 </example>
 
+## How This Tool Works
+
+content is the immutable key — once a task is created, its content cannot be changed.
+Use the exact same content string to update an existing task.
+
+Incremental updates: Only include tasks you want to CREATE or UPDATE — NOT the full list.
+Tasks not mentioned remain unchanged (no accidental deletion).
+
+- To create a new task: send a new content string.
+- To update a task's status: send the same content with the new status.
+- To mark progress: set status to "in_progress".
+- To complete: set status to "completed".
+- To remove tasks: mark them "completed". When ALL tasks are completed, the list auto-clears.
+
 ## Task States and Management
 
 1. **Task States**: Use these states to track progress:
    - pending: Task not yet started
-   - in_progress: Currently working on (limit to ONE task at a time)
+   - in_progress: Currently working on (multiple tasks can be in_progress when running parallel work)
    - completed: Task finished successfully
 
    **IMPORTANT**: Task descriptions must have two forms:
@@ -145,9 +159,8 @@ Single straightforward task confined to one location — tracking provides no or
 2. **Task Management**:
    - Update task status in real-time as you work
    - Mark tasks complete IMMEDIATELY after finishing (don't batch completions)
-   - Exactly ONE task must be in_progress at any time (not less, not more)
+   - At least one task should be in_progress. Multiple in_progress is allowed when running parallel subagents.
    - Complete current tasks before starting new ones
-   - Remove tasks that are no longer relevant from the list entirely
 
 3. **Task Completion Requirements**:
    - ONLY mark a task as completed when you have FULLY accomplished it
