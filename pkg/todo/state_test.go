@@ -5,11 +5,10 @@ import (
 	"testing"
 )
 
-func TestTodoState_Replace(t *testing.T) {
+func TestTodoState_CreateNew(t *testing.T) {
 	s := NewTodoState()
 
-	// First write
-	old, new := s.Apply(TodoWriteParams{
+	result := s.Apply(TodoWriteParams{
 		Todos: []TodoItem{
 			{Content: "Task A", Status: "in_progress", ActiveForm: "Doing A"},
 			{Content: "Task B", Status: "pending", ActiveForm: "Doing B"},
@@ -17,29 +16,18 @@ func TestTodoState_Replace(t *testing.T) {
 		},
 	})
 
-	if len(old) != 0 {
-		t.Errorf("first Apply old len = %d, want 0", len(old))
+	if result.Created != 3 {
+		t.Errorf("Created = %d, want 3", result.Created)
 	}
-	if len(new) != 3 {
-		t.Fatalf("first Apply new len = %d, want 3", len(new))
+	if result.Updated != 0 {
+		t.Errorf("Updated = %d, want 0", result.Updated)
 	}
-
-	// Second write — full replacement
-	old2, new2 := s.Apply(TodoWriteParams{
-		Todos: []TodoItem{
-			{Content: "Task X", Status: "pending", ActiveForm: "Doing X"},
-		},
-	})
-
-	if len(old2) != 3 {
-		t.Errorf("second Apply old len = %d, want 3", len(old2))
-	}
-	if len(new2) != 1 {
-		t.Fatalf("second Apply new len = %d, want 1", len(new2))
+	if len(result.Items) != 3 {
+		t.Fatalf("len = %d, want 3", len(result.Items))
 	}
 }
 
-func TestTodoState_UpdateStatus(t *testing.T) {
+func TestTodoState_UpdateByContent(t *testing.T) {
 	s := NewTodoState()
 
 	s.Apply(TodoWriteParams{
@@ -49,30 +37,34 @@ func TestTodoState_UpdateStatus(t *testing.T) {
 		},
 	})
 
-	// Update status + add new task
-	_, new := s.Apply(TodoWriteParams{
+	// Update status + add new task — only send items that change
+	result := s.Apply(TodoWriteParams{
 		Todos: []TodoItem{
 			{Content: "Task A", Status: "completed", ActiveForm: "Did A"},
-			{Content: "Task B", Status: "in_progress", ActiveForm: "Doing B"},
 			{Content: "Task C", Status: "pending", ActiveForm: "Doing C"},
 		},
 	})
 
-	if len(new) != 3 {
-		t.Fatalf("len = %d, want 3", len(new))
+	if result.Updated != 1 {
+		t.Errorf("Updated = %d, want 1", result.Updated)
 	}
-	if new[0].Status != "completed" {
-		t.Errorf("Task A status = %s, want completed", new[0].Status)
+	if result.Created != 1 {
+		t.Errorf("Created = %d, want 1", result.Created)
 	}
-	if new[1].Status != "in_progress" {
-		t.Errorf("Task B status = %s, want in_progress", new[1].Status)
+	if result.Unchanged != 1 {
+		t.Errorf("Unchanged = %d, want 1 (Task B)", result.Unchanged)
 	}
-	if new[2].Content != "Task C" {
-		t.Errorf("new item = %s, want Task C", new[2].Content)
+
+	// Verify Task A was updated
+	for _, item := range result.Items {
+		if item.Content == "Task A" && item.Status != "completed" {
+			t.Errorf("Task A status = %s, want completed", item.Status)
+		}
 	}
 }
 
-func TestTodoState_RemoveItem(t *testing.T) {
+func TestTodoState_UnmentionedKept(t *testing.T) {
+	// 未在 params 中出现的项保持原样（无隐式删除）
 	s := NewTodoState()
 
 	s.Apply(TodoWriteParams{
@@ -83,22 +75,31 @@ func TestTodoState_RemoveItem(t *testing.T) {
 		},
 	})
 
-	// Remove Task B by not including it
-	_, new := s.Apply(TodoWriteParams{
+	// Only send Task A and Task C — Task B should remain
+	result := s.Apply(TodoWriteParams{
 		Todos: []TodoItem{
 			{Content: "Task A", Status: "completed", ActiveForm: "Did A"},
 			{Content: "Task C", Status: "in_progress", ActiveForm: "Doing C"},
 		},
 	})
 
-	if len(new) != 2 {
-		t.Fatalf("after remove len = %d, want 2", len(new))
+	if len(result.Items) != 3 {
+		t.Fatalf("after update len = %d, want 3 (Task B kept)", len(result.Items))
 	}
-	if new[0].Content != "Task A" {
-		t.Errorf("first item = %s, want Task A", new[0].Content)
+
+	// Verify all three exist
+	contents := make(map[string]string)
+	for _, item := range result.Items {
+		contents[item.Content] = item.Status
 	}
-	if new[1].Content != "Task C" {
-		t.Errorf("second item = %s, want Task C", new[1].Content)
+	if contents["Task A"] != "completed" {
+		t.Errorf("Task A = %s, want completed", contents["Task A"])
+	}
+	if contents["Task B"] != "pending" {
+		t.Errorf("Task B = %s, want pending (unchanged)", contents["Task B"])
+	}
+	if contents["Task C"] != "in_progress" {
+		t.Errorf("Task C = %s, want in_progress", contents["Task C"])
 	}
 }
 
@@ -125,7 +126,7 @@ func TestTodoState_AllDone(t *testing.T) {
 func TestTodoState_Description(t *testing.T) {
 	s := NewTodoState()
 
-	_, new := s.Apply(TodoWriteParams{
+	result := s.Apply(TodoWriteParams{
 		Todos: []TodoItem{
 			{
 				Content:     "Add dark mode",
@@ -136,8 +137,8 @@ func TestTodoState_Description(t *testing.T) {
 		},
 	})
 
-	if new[0].Description != "Add a toggle button in the settings page" {
-		t.Errorf("description not preserved: %s", new[0].Description)
+	if result.Items[0].Description != "Add a toggle button in the settings page" {
+		t.Errorf("description not preserved: %s", result.Items[0].Description)
 	}
 }
 
@@ -149,20 +150,28 @@ func TestTodoState_EmptyNotAllDone(t *testing.T) {
 }
 
 func TestTodoState_FormatResult(t *testing.T) {
-	items := []TodoItem{
-		{Content: "Task A", Status: "completed", ActiveForm: "Did A"},
-		{Content: "Task B", Status: "in_progress", ActiveForm: "Doing B"},
+	result := MergeResult{
+		Items: []TodoItem{
+			{Content: "Task A", Status: "completed", ActiveForm: "Did A"},
+			{Content: "Task B", Status: "in_progress", ActiveForm: "Doing B"},
+		},
+		Created:   0,
+		Updated:   1,
+		Unchanged: 1,
 	}
 
-	result := FormatResult(items)
-	if result == "" {
+	text := FormatResult(result)
+	if text == "" {
 		t.Error("FormatResult should not be empty")
 	}
-	if !contains(result, "[completed] Task A") {
-		t.Errorf("FormatResult missing Task A: %s", result)
+	if !contains(text, "[completed] Task A") {
+		t.Errorf("FormatResult missing Task A: %s", text)
 	}
-	if !contains(result, "[in_progress] Task B") {
-		t.Errorf("FormatResult missing Task B: %s", result)
+	if !contains(text, "[in_progress] Task B") {
+		t.Errorf("FormatResult missing Task B: %s", text)
+	}
+	if !contains(text, "0 created") {
+		t.Errorf("FormatResult missing created count: %s", text)
 	}
 }
 
@@ -222,24 +231,25 @@ func TestTodoState_Concurrency(t *testing.T) {
 	wg.Wait()
 }
 
-func TestTodoState_ReplaceWithCustomContent(t *testing.T) {
+func TestTodoState_SingleItem(t *testing.T) {
 	s := NewTodoState()
 
-	_, new := s.Apply(TodoWriteParams{
+	result := s.Apply(TodoWriteParams{
 		Todos: []TodoItem{
 			{Content: "Custom task", Status: "pending", ActiveForm: "Doing custom"},
 		},
 	})
 
-	if len(new) != 1 {
-		t.Fatalf("len = %d, want 1", len(new))
+	if len(result.Items) != 1 {
+		t.Fatalf("len = %d, want 1", len(result.Items))
 	}
-	if new[0].Content != "Custom task" {
-		t.Errorf("Content = %s, want Custom task", new[0].Content)
+	if result.Items[0].Content != "Custom task" {
+		t.Errorf("Content = %s, want Custom task", result.Items[0].Content)
 	}
 }
 
-func TestTodoState_EmptyList(t *testing.T) {
+func TestTodoState_ContentImmutable(t *testing.T) {
+	// content 匹配 → UPDATE，不会创建重复项
 	s := NewTodoState()
 
 	s.Apply(TodoWriteParams{
@@ -249,13 +259,21 @@ func TestTodoState_EmptyList(t *testing.T) {
 		},
 	})
 
-	// Empty list → items cleared
-	_, new := s.Apply(TodoWriteParams{
-		Todos: []TodoItem{},
+	// Send Task A again — should UPDATE, not create duplicate
+	result := s.Apply(TodoWriteParams{
+		Todos: []TodoItem{
+			{Content: "Task A", Status: "completed", ActiveForm: "Did A"},
+		},
 	})
 
-	if len(new) != 0 {
-		t.Errorf("after empty list, len = %d, want 0", len(new))
+	if result.Created != 0 {
+		t.Errorf("Created = %d, want 0 (content match should UPDATE)", result.Created)
+	}
+	if result.Updated != 1 {
+		t.Errorf("Updated = %d, want 1", result.Updated)
+	}
+	if len(result.Items) != 2 {
+		t.Errorf("len = %d, want 2 (no duplicates)", len(result.Items))
 	}
 }
 
@@ -283,47 +301,56 @@ func TestTodoState_AllDoneCount(t *testing.T) {
 	})
 
 	if s.AllDone() {
-		t.Error("AllDone() should be false after clear")
+		t.Error("AllDone() should be false after clear (single item completed → clear)")
 	}
 }
 
 func TestFormatResult_Empty(t *testing.T) {
-	result := FormatResult(nil)
+	result := FormatResult(MergeResult{})
 	if result != "All todos completed and cleared." {
-		t.Errorf("FormatResult(nil) = %q, want 'All todos completed and cleared.'", result)
+		t.Errorf("FormatResult(empty) = %q, want 'All todos completed and cleared.'", result)
 	}
 
-	result2 := FormatResult([]TodoItem{})
+	result2 := FormatResult(MergeResult{Items: nil})
 	if result2 != "All todos completed and cleared." {
-		t.Errorf("FormatResult([]) = %q, want 'All todos completed and cleared.'", result2)
+		t.Errorf("FormatResult(nil items) = %q, want 'All todos completed and cleared.'", result2)
 	}
 }
 
 func TestFormatResult_WithDescription(t *testing.T) {
-	items := []TodoItem{
-		{Content: "Task A", Status: "completed", ActiveForm: "Did A", Description: "Long description here"},
+	result := MergeResult{
+		Items: []TodoItem{
+			{Content: "Task A", Status: "completed", ActiveForm: "Did A", Description: "Long description here"},
+		},
+		Created:   1,
+		Updated:   0,
+		Unchanged: 0,
 	}
-	result := FormatResult(items)
-	if !contains(result, " — Long description here") {
-		t.Errorf("FormatResult missing description: %s", result)
+	text := FormatResult(result)
+	if !contains(text, " — Long description here") {
+		t.Errorf("FormatResult missing description: %s", text)
 	}
 }
 
 func TestFormatResult_WithoutDescription(t *testing.T) {
-	items := []TodoItem{
-		{Content: "Task A", Status: "completed", ActiveForm: "Did A"},
+	result := MergeResult{
+		Items: []TodoItem{
+			{Content: "Task A", Status: "completed", ActiveForm: "Did A"},
+		},
+		Created:   1,
+		Updated:   0,
+		Unchanged: 0,
 	}
-	result := FormatResult(items)
-	if contains(result, " — ") {
-		t.Errorf("FormatResult should not contain ' — ' when no description: %s", result)
+	text := FormatResult(result)
+	if contains(text, " — ") {
+		t.Errorf("FormatResult should not contain ' — ' when no description: %s", text)
 	}
-	if !contains(result, "[completed] Task A") {
+	if !contains(text, "[completed] Task A") {
 		t.Error("FormatResult missing task")
 	}
 }
 
 func TestTodoState_SessionResume(t *testing.T) {
-	// Verify Restore() works for --resume scenario
 	s := NewTodoState()
 	s.Restore([]TodoItem{
 		{Content: "Task A", Status: "completed", ActiveForm: "Did A"},
@@ -336,6 +363,30 @@ func TestTodoState_SessionResume(t *testing.T) {
 	}
 	if snapshot[0].Content != "Task A" {
 		t.Errorf("first item = %s", snapshot[0].Content)
+	}
+}
+
+func TestTodoState_NoOpUpdate(t *testing.T) {
+	// Sending the same values should not count as updated
+	s := NewTodoState()
+
+	s.Apply(TodoWriteParams{
+		Todos: []TodoItem{
+			{Content: "Task A", Status: "in_progress", ActiveForm: "Doing A"},
+		},
+	})
+
+	result := s.Apply(TodoWriteParams{
+		Todos: []TodoItem{
+			{Content: "Task A", Status: "in_progress", ActiveForm: "Doing A"},
+		},
+	})
+
+	if result.Updated != 0 {
+		t.Errorf("Updated = %d, want 0 (no actual change)", result.Updated)
+	}
+	if result.Created != 0 {
+		t.Errorf("Created = %d, want 0", result.Created)
 	}
 }
 
