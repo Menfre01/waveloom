@@ -55,11 +55,15 @@ Every body line starts with + followed by the actual content (including leading 
 + alone adds a blank line. The body is ONLY the new content — old lines are deleted
 implicitly by the range in SWAP/DEL.
 
+Blank lines between body lines are silently skipped by the parser. To insert
+an intentional blank line, use a standalone + line (no content after the +).
+
 ### Line numbers
 
 Line numbers come directly from read output (N:CONTENT format).
 Ranges are INCLUSIVE: SWAP 2.=3: covers lines 2 and 3.
 A range of N.=N: replaces a single line with any number of body lines.
+Note: files without a trailing newline may acquire one after editing — normal.
 
 ### Rules
 
@@ -67,19 +71,35 @@ A range of N.=N: replaces a single line with any number of body lines.
   After every edit, the response contains a new TAG — use it for the next edit.
 - Touch only lines that change. For pure additions, use INS.PRE / INS.POST — never
   widen a SWAP to include unchanged lines.
-- Line numbers refer to the original file as shown in the read. The system handles
-  ordering when a section has multiple operations.
-- Never start or end a range mid-expression or mid-block.
-- If TAG verification fails, re-read the file before editing again.
-
-- A patch may contain multiple [PATH#TAG] sections ONLY for different files.
-  All operations on the same file MUST be grouped under a single [PATH#TAG] section.
+- Operations are applied in declaration order. After each operation, the system
+  automatically computes the line offset and adjusts subsequent operations' line
+  numbers accordingly. All line numbers refer to the original file — you do NOT
+  need to manually calculate offsets. This allows editing multiple places in
+  a single edit call.
+- Do NOT create overlapping operations on the same lines (e.g., SWAP 5.=6: and
+  DEL 5 in the same patch; or INS.PRE 4: and INS.POST 4: on the same reference
+  line). Note: INS.PRE N followed by SWAP N (or DEL N) is safe — the system
+  automatically offsets the SWAP/DEL line number after the insertion.
+  Overlapping ops will be rejected with an error — split them into
+  separate edit calls.
+- On tag_mismatch error: the file was modified since your last read — re-read to
+  get a fresh TAG and line numbers before editing again.
+- A patch may contain multiple [PATH#TAG] sections for different files, or
+  multiple sections for the same file — each section independently validates
+  its TAG and applies its operations. If an earlier section modifies a line's
+  content that a later section targets, the later section will fail with a
+  specific reason (e.g. "line N modified in current version"). Earlier sections
+  are already applied to disk; use the post-edit context returned in the result
+  to construct a new edit for the remaining changes without re-reading.
+  Cross-section conflicts only affect the conflicting file — edits to other
+  files in the same patch still execute normally. REM/MV cannot be combined
+  with line-range operations on the same file in one patch; split them.
 *** Begin Patch
 [src/pkg/foo.go#A1B2]       ← first file
 OP1
 +BODY
 
-[src/pkg/bar.go#C3D4]       ← second file (different file — new section required)
+[src/pkg/bar.go#C3D4]       ← second file
 OP2
 +BODY
 *** End Patch
@@ -99,7 +119,7 @@ INS.POST 4:
 
 - Creating a new file → use write (then read to get a TAG)
 - Reading a file → use read
-- Very simple single-word replacements on short files → ordinary edit_file is fine`
+- Very simple single-word replacements on short files → use edit with a single SWAP line.`
 }
 
 
@@ -137,15 +157,6 @@ func (t *EditFileHashline) Execute(ctx context.Context, p EditFileHashlineParams
 			fmt.Sprintf("patch parse error: %v", err), err), nil
 	}
 
-	// ── Step 2: 检测同文件多 Section ──
-	seenPaths := make(map[string]bool)
-	for _, sec := range patch.Sections {
-		if seenPaths[sec.Path] {
-			return toolError(ErrorClassRecoverable, ErrKindInvalidArgs,
-				fmt.Sprintf("duplicate section for %q: merge all operations into a single [PATH#TAG] section", sec.Path), nil), nil
-		}
-		seenPaths[sec.Path] = true
-	}
 
 	// ── Step 3: FileHistory 追踪 ──
 	if fh := filehistory.FromContext(ctx); fh != nil {

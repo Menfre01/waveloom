@@ -467,7 +467,7 @@ func TestShellDescriptionGuidesToolUsage(t *testing.T) {
 
 	// Prompt 应引导 LLM 优先用专用工具（行为约束在 Prompt → C1）
 	expectedMentions := []string{
-		"read_file", "write_file", "edit_file",
+		"read", "write", "edit",
 	}
 	for _, toolName := range expectedMentions {
 		if !strings.Contains(prompt, toolName) {

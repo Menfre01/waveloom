@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
+	"sync"
 
 	"github.com/Menfre01/waveloom/pkg/pathutil"
 )
@@ -582,21 +582,75 @@ func (fs *OSFS) ResolvePath(path string) string {
 
 // ApplyPatch 解析后的 patch 应用到文件系统。
 // store 可为 nil（无 TAG 验证时跳过 Verify，但仍可执行编辑）。
-func ApplyPatch(patch *Patch, fs FileSystem, store *SnapshotStore) []SectionResult {
-	var results []SectionResult
 
-	for _, sec := range patch.Sections {
-		result := applySection(sec, fs, store)
-		results = append(results, result)
+// ApplyPatch 解析后的 patch 应用到文件系统。
+// store 可为 nil（无 TAG 验证时跳过 Verify，但仍可执行编辑）。
+// 不同文件的 Section 并行执行；同一文件的 Section 按声明顺序串行。
+func ApplyPatch(patch *Patch, fs FileSystem, store *SnapshotStore) []SectionResult {
+	n := len(patch.Sections)
+	results := make([]SectionResult, n)
+
+	// ── Step 0: 跨 Section 冲突检测（同文件多 Section）──
+	conflictErrors := detectCrossSectionConflicts(patch)
+	for i, err := range conflictErrors {
+		results[i] = SectionResult{Path: patch.Sections[i].Path, OldTAG: patch.Sections[i].TAG, Error: err}
 	}
 
+	// 预先保存每个文件路径的原始快照内容
+	originalSnapshots := make(map[string]string)
+	if store != nil {
+		for _, sec := range patch.Sections {
+			storePath := fs.ResolvePath(sec.Path)
+			if _, exists := originalSnapshots[storePath]; !exists {
+				if snap, ok := store.Get(storePath); ok {
+					originalSnapshots[storePath] = snap.Content
+				}
+			}
+		}
+	}
+
+	// 按文件路径分组：同一文件的 Section 保持声明顺序，不同文件并行。
+	type fileGroup struct {
+		path     string
+		indices  []int // 该文件中非冲突 Section 的索引
+	}
+	groupMap := make(map[string]*fileGroup)
+	groupOrder := make([]*fileGroup, 0)
+
+	for i, sec := range patch.Sections {
+		if _, isConflict := conflictErrors[i]; isConflict {
+			continue
+		}
+		fg, exists := groupMap[sec.Path]
+		if !exists {
+			fg = &fileGroup{path: sec.Path}
+			groupMap[sec.Path] = fg
+			groupOrder = append(groupOrder, fg)
+		}
+		fg.indices = append(fg.indices, i)
+	}
+
+	if len(groupOrder) == 0 {
+		return results
+	}
+
+	var wg sync.WaitGroup
+	wg.Add(len(groupOrder))
+
+	for _, fg := range groupOrder {
+		go func(g *fileGroup) {
+			defer wg.Done()
+			for _, idx := range g.indices {
+				results[idx] = applySection(patch.Sections[idx], fs, store, originalSnapshots)
+			}
+		}(fg)
+	}
+
+	wg.Wait()
 	return results
 }
 
-func applySection(sec Section, fs FileSystem, store *SnapshotStore) SectionResult {
-	// storePath 是解析后的绝对路径，用于 store 操作（Verify / Get / Update）。
-	// fs.ReadFile 内部自行解析路径，但 store 的 key 必须是绝对路径才能
-	// 与 ReadFileHashline 中 Record 的路径对齐（Record 也会解析为绝对路径）。
+func applySection(sec Section, fs FileSystem, store *SnapshotStore, originalSnapshots map[string]string) SectionResult {
 	storePath := fs.ResolvePath(sec.Path)
 
 	result := SectionResult{
@@ -630,19 +684,26 @@ func applySection(sec Section, fs FileSystem, store *SnapshotStore) SectionResul
 	if store != nil {
 		_, verifyErr := store.Verify(storePath, sec.TAG, currentContent)
 		if verifyErr != nil {
-			// TAG 不匹配 → 尝试 Recovery
-			if snap, ok := store.Get(storePath); ok {
-				recovery := RecoverOps(snap.Content, currentContent, sec.Ops)
+			snapContent := ""
+			if orig, ok := originalSnapshots[storePath]; ok {
+				snapContent = orig
+			} else if snap, ok := store.Get(storePath); ok {
+				snapContent = snap.Content
+			}
+			if snapContent != "" {
+				recovery := RecoverOps(snapContent, currentContent, sec.Ops)
 				if recovery.Success {
-					// Recovery 成功：使用重映射后的操作
 					result.Warning = fmt.Sprintf("TAG expired, auto-recovered: %v", verifyErr)
 					sec.Ops = recovery.MappedOps
 				} else {
-					// Recovery 失败：返回错误
+					reason := "unknown"
+					if len(recovery.Warnings) > 0 {
+						reason = strings.Join(recovery.Warnings, "; ")
+					}
 					result.Error = &EditError{
 						Fatal:   false,
 						Kind:    "tag_mismatch",
-						Message: fmt.Sprintf("TAG mismatch for %q and recovery failed: the file has been modified since last read. Re-read the file with read_file_hashline and retry. (%v)", sec.Path, verifyErr),
+						Message: fmt.Sprintf("TAG mismatch for %q and recovery failed (%s): the file has been modified since last read. Previous sections in this patch may have already been applied — use the post-edit context above to construct a new edit without re-reading. (%v)", sec.Path, reason, verifyErr),
 					}
 					return result
 				}
@@ -659,19 +720,44 @@ func applySection(sec Section, fs FileSystem, store *SnapshotStore) SectionResul
 
 	for _, op := range sec.Ops {
 		if op.Kind == OpMV {
+			if len(sec.Ops) > 1 {
+				result.Error = &EditError{
+					Fatal:   false,
+					Kind:    "invalid_args",
+					Message: "MV cannot be combined with other operations in the same section. Use a separate section for MV.",
+				}
+				return result
+			}
 			return applyMV(sec, op, fs, store, currentContent)
 		}
 	}
 
 	for _, op := range sec.Ops {
 		if op.Kind == OpREM {
+			if len(sec.Ops) > 1 {
+				result.Error = &EditError{
+					Fatal:   false,
+					Kind:    "invalid_args",
+					Message: "REM cannot be combined with other operations in the same section. Use a separate section for REM.",
+				}
+				return result
+			}
 			return applyREM(sec, fs, store)
 		}
 	}
 
-	sortedOps := sortOps(sec.Ops)
+	// 检测操作重叠（改进 1：在原始行号上检测，重叠时返回明确错误）
+	if err := detectOverlaps(sec.Ops); err != nil {
+		result.Error = &EditError{
+			Fatal:   false,
+			Kind:    "invalid_args",
+			Message: err.Error(),
+		}
+		return result
+	}
 
-	newContent, hunks, err := applyEdits(currentContent, sortedOps)
+	// 按声明顺序应用操作，自动计算累计行偏移（改进 2）
+	newContent, hunks, err := applyEdits(currentContent, sec.Ops)
 	if err != nil {
 		result.Error = &EditError{
 			Fatal:   false,
@@ -786,7 +872,7 @@ func countLines(s string) int {
 }
 
 // ---------------------------------------------------------------------------
-// applyEdits — 在内存中应用排序后的操作
+// applyEdits — 在内存中按声明顺序应用操作，自动计算累计行偏移
 // ---------------------------------------------------------------------------
 
 type editSpan struct {
@@ -795,11 +881,14 @@ type editSpan struct {
 	end   int // 0-based end line in original (exclusive)
 }
 
+// applyEdits 按声明顺序处理操作。每次操作后自动计算行偏移量并调整
+// 后续操作的行号，LLM 无需手动计算偏移。所有操作的行号均以原始文件为基准，
+// 系统在应用时按顺序累计偏移。
 func applyEdits(content string, ops []Op) (string, []EditHunk, error) {
 	lines := strings.Split(content, "\n")
 	hasTrailingNewline := strings.HasSuffix(content, "\n")
 
-	// 验证行号
+	// 验证原始行号在范围内
 	for _, op := range ops {
 		if op.Kind == OpSWAP || op.Kind == OpDEL {
 			if op.LineEnd > len(lines) {
@@ -813,60 +902,69 @@ func applyEdits(content string, ops []Op) (string, []EditHunk, error) {
 		}
 	}
 
-	var spans []editSpan
+	// 构建 editSpan（使用原始行号，用于 diff hunks 的 OldStart）
+	var origSpans []editSpan
 	for _, op := range ops {
-		switch op.Kind {
-		case OpDEL:
-			start := op.LineStart - 1
-			end := op.LineEnd
-			spans = append(spans, editSpan{op: op, start: start, end: end})
-		case OpSWAP:
-			start := op.LineStart - 1
-			end := op.LineEnd
-			spans = append(spans, editSpan{op: op, start: start, end: end})
-		case OpINS:
-			switch op.Position {
-			case "head":
-				spans = append(spans, editSpan{op: op, start: 0, end: 0})
-			case "tail":
-				end := len(lines)
-				if hasTrailingNewline {
-					end--
-				}
-				spans = append(spans, editSpan{op: op, start: end, end: end})
-			case "pre":
-				start := op.RefLine - 1
-				spans = append(spans, editSpan{op: op, start: start, end: start})
-			case "post":
-				start := op.RefLine
-				spans = append(spans, editSpan{op: op, start: start, end: start})
-			}
-		}
+		sp := opToSpan(op, lines, hasTrailingNewline)
+		origSpans = append(origSpans, sp)
 	}
 
-	hunks := buildEditHunks(lines, spans)
+	// 按声明顺序应用操作，使用位置感知的偏移追踪：
+	// 每个操作记录 (applyPos, delta) — 仅当后续操作的操作位置 ≥ applyPos 时才受此 delta 影响。
+	type posDelta struct {
+		pos   int // 操作后的影响起始位置（0-based，仅 ≥pos 的行被偏移）
+		delta int // 行数变化
+	}
+	var deltas []posDelta
+	var appliedSpans []editSpan
 
-	// 前向迭代（spans 已按行号降序排列）
-	for _, sp := range spans {
+	originalLines := lines
+
+	for _, sp := range origSpans {
+		// 计算当前操作的有效偏移：仅累加 applyPos ≤ 当前 start 的 delta
+		offset := 0
+		for _, pd := range deltas {
+			if pd.pos <= sp.start {
+				offset += pd.delta
+			}
+		}
+
+		offsetSp := sp
+		offsetSp.start += offset
+		offsetSp.end += offset
+
+		if offsetSp.start < 0 {
+			offsetSp.start = 0
+		}
+		if offsetSp.end < 0 {
+			offsetSp.end = 0
+		}
+
 		switch sp.op.Kind {
 		case OpDEL:
-			if sp.end > len(lines) {
-				sp.end = len(lines)
+			if offsetSp.end > len(lines) {
+				offsetSp.end = len(lines)
 			}
-			lines = append(lines[:sp.start], lines[sp.end:]...)
+			if offsetSp.start < offsetSp.end {
+				lines = append(lines[:offsetSp.start], lines[offsetSp.end:]...)
+			}
+			delta := -(offsetSp.end - offsetSp.start)
+			deltas = append(deltas, posDelta{pos: offsetSp.end, delta: delta})
 		case OpSWAP:
-			if sp.end > len(lines) {
-				sp.end = len(lines)
+			if offsetSp.end > len(lines) {
+				offsetSp.end = len(lines)
 			}
-			bodyLines := sp.op.Body
-			newPart := make([]string, 0, sp.start+len(bodyLines)+len(lines)-sp.end)
-			newPart = append(newPart, lines[:sp.start]...)
-			newPart = append(newPart, bodyLines...)
-			newPart = append(newPart, lines[sp.end:]...)
+			oldLen := offsetSp.end - offsetSp.start
+			newLen := len(sp.op.Body)
+			newPart := make([]string, 0, offsetSp.start+newLen+len(lines)-offsetSp.end)
+			newPart = append(newPart, lines[:offsetSp.start]...)
+			newPart = append(newPart, sp.op.Body...)
+			newPart = append(newPart, lines[offsetSp.end:]...)
 			lines = newPart
+			deltas = append(deltas, posDelta{pos: offsetSp.end, delta: newLen - oldLen})
 		case OpINS:
 			bodyLines := sp.op.Body
-			insertAt := sp.start
+			insertAt := offsetSp.start
 			if insertAt > len(lines) {
 				insertAt = len(lines)
 			}
@@ -875,31 +973,312 @@ func applyEdits(content string, ops []Op) (string, []EditHunk, error) {
 			newPart = append(newPart, bodyLines...)
 			newPart = append(newPart, lines[insertAt:]...)
 			lines = newPart
+			deltas = append(deltas, posDelta{pos: insertAt, delta: len(bodyLines)})
 		}
+		appliedSpans = append(appliedSpans, offsetSp)
 	}
 
+
+	// Normalize lines to preserve trailing newline semantics from the
+	// original file. When hasTrailingNewline is true, lines must end
+	// with "" (Split's marker for trailing \n). When false, lines must
+	// NOT end with "" — unless a SWAP/INS at the end of the file
+	// introduced a real empty last line that needs a trailing newline
+	// to be representable.
+	if hasTrailingNewline {
+		if len(lines) == 0 || lines[len(lines)-1] != "" {
+			lines = append(lines, "")
+		}
+	} else {
+		if len(lines) > 0 && lines[len(lines)-1] == "" {
+			// The original file being empty ([""]) creates a
+			// trailing "" artifact — skip, it's not a real
+			// empty line introduced by an operation.
+			isEmptyArtifact := len(originalLines) == 1 && originalLines[0] == ""
+			if !isEmptyArtifact {
+				lines = append(lines, "")
+			}
+		}
+	}
 	result := strings.Join(lines, "\n")
+	hunks := buildEditHunksFromApplied(lines, origSpans, appliedSpans)
 	return result, hunks, nil
 }
 
+// ApplyEditsForTest 是 applyEdits 的导出包装，仅供测试使用。
+func ApplyEditsForTest(content string, ops []Op) (string, []EditHunk, error) {
+	return applyEdits(content, ops)
+}
 
-func buildEditHunks(origLines []string, spans []editSpan) []EditHunk {
+// ---------------------------------------------------------------------------
+// detectOverlaps — 操作重叠检测（改进 1）
+// ---------------------------------------------------------------------------
+
+// lineRange 表示操作在原始文件中的行范围（0-based）。
+type lineRange struct {
+	start int // 0-based, inclusive
+	end   int // 0-based, exclusive
+}
+
+// detectOverlaps 检查多个操作是否在原始行号上有重叠范围。
+// 重叠操作意味着 LLM 可能未考虑操作间的交互，应返回错误让其拆分为多个 edit 调用。
+// 
+// INS.PRE 使用零宽度插入点（RefLine-1），INS.POST 使用 RefLine 作为插入点。
+// 这样 INS.PRE N 不会与 SWAP N（范围 N-1..N）重叠，让 applyEdits 的偏移计算
+// 自动处理行号重映射。但 INS-to-INS 冲突（同 RefLine 上的 PRE+PRE/POST+POST/PRE+POST）
+// 通过额外的同位检测捕获。
+func detectOverlaps(ops []Op) error {
+	for i := 0; i < len(ops); i++ {
+		for j := i + 1; j < len(ops); j++ {
+			ri := opRange(ops[i])
+			rj := opRange(ops[j])
+
+			// 额外的 INS-to-INS 同位检测：两个 INS 操作指向同一个 RefLine
+			// 即为冲突（顺序依赖），无论 PRE/POST 组合。
+			if ops[i].Kind == OpINS && ops[j].Kind == OpINS &&
+				ops[i].RefLine > 0 && ops[j].RefLine > 0 &&
+				ops[i].RefLine == ops[j].RefLine {
+				return fmt.Errorf(
+					"overlapping operations on reference line %d: %s (op %d) and %s (op %d) both target the same reference line; split overlapping ops into separate edit calls",
+					ops[i].RefLine,
+					ops[i].Kind, i+1, ops[j].Kind, j+1,
+				)
+			}
+
+			if ri == nil || rj == nil {
+				continue
+			}
+			if rangesOverlap(ri.start, ri.end, rj.start, rj.end) {
+				return fmt.Errorf(
+					"overlapping operations on lines %d-%d: %s (op %d) and %s (op %d) both touch overlapping ranges; split overlapping ops into separate edit calls",
+					overlapStart(ri.start, rj.start), overlapEnd(ri.end, rj.end),
+					ops[i].Kind, i+1, ops[j].Kind, j+1,
+				)
+			}
+		}
+	}
+	return nil
+}
+
+func opRange(op Op) *lineRange {
+	switch op.Kind {
+	case OpSWAP, OpDEL:
+		start := op.LineStart - 1
+		end := op.LineEnd
+		return &lineRange{start: start, end: end}
+	case OpINS:
+		if op.Position == "pre" {
+			// INS.PRE 在参考行之前插入，不替换参考行本身。
+			// 使用零宽度插入点：{RefLine-1, RefLine-1}，
+			// 这样不会与 SWAP/DEL 在同一参考行上重叠。
+			return &lineRange{start: op.RefLine - 1, end: op.RefLine - 1}
+		}
+		if op.Position == "post" {
+			// INS.POST 在参考行之后插入，使用 {RefLine, RefLine}。
+			return &lineRange{start: op.RefLine, end: op.RefLine}
+		}
+		// head/tail 不与任何行重叠
+		return nil
+	default:
+		return nil
+	}
+}
+
+// detectCrossSectionConflicts 检测同文件多 Section 之间的操作冲突。
+// 返回冲突 Section 索引到错误信息的映射；若映射非空，ApplyPatch 对这些 Section
+// 返回预构建的错误结果且不修改文件（其他文件不受影响）。无冲突返回 nil。
+func detectCrossSectionConflicts(patch *Patch) map[int]*EditError {
+	groups := make(map[string][]int) // path → section indices
+	for i, sec := range patch.Sections {
+		groups[sec.Path] = append(groups[sec.Path], i)
+	}
+
+	conflicts := make(map[int]*EditError)
+
+	for path, indices := range groups {
+		if len(indices) <= 1 {
+			continue
+		}
+
+		// REM/MV + 其他操作 = 冲突（Section 1 删/移文件 → Section 2 无法操作）
+		hasRemMV := false
+		hasLineOps := false
+		for _, si := range indices {
+			for _, op := range patch.Sections[si].Ops {
+				switch op.Kind {
+				case OpREM, OpMV:
+					hasRemMV = true
+				case OpSWAP, OpDEL, OpINS:
+					hasLineOps = true
+				}
+			}
+		}
+		if hasRemMV && hasLineOps {
+			for _, si := range indices {
+				conflicts[si] = &EditError{
+					Fatal: false,
+					Kind:  "invalid_args",
+					Message: fmt.Sprintf(
+						"cross-section conflict in %q: one section uses REM/MV while another uses line-range operations. "+
+							"REM/MV and line operations on the same file cannot be combined in one patch. "+
+							"Split REM/MV into its own edit call.",
+						path,
+					),
+				}
+			}
+			continue
+		}
+
+		// 合并所有操作检测行范围重叠
+		type opWithSrc struct {
+			op       Op
+			secIndex int
+		}
+		var allOps []opWithSrc
+		for _, si := range indices {
+			for _, op := range patch.Sections[si].Ops {
+				if op.Kind == OpREM || op.Kind == OpMV {
+					continue // 已在上面的 REM/MV 检测中处理
+				}
+				allOps = append(allOps, opWithSrc{op: op, secIndex: si + 1})
+			}
+		}
+
+		hasOverlap := false
+		var overlapDetail string
+		for i := 0; i < len(allOps); i++ {
+			for j := i + 1; j < len(allOps); j++ {
+				ri := opRange(allOps[i].op)
+				rj := opRange(allOps[j].op)
+
+				// INS-to-INS 同位检测
+				if allOps[i].op.Kind == OpINS && allOps[j].op.Kind == OpINS &&
+					allOps[i].op.RefLine > 0 && allOps[j].op.RefLine > 0 &&
+					allOps[i].op.RefLine == allOps[j].op.RefLine {
+					hasOverlap = true
+					overlapDetail = fmt.Sprintf("%s (section %d) and %s (section %d) both target reference line %d",
+						allOps[i].op.Kind, allOps[i].secIndex,
+						allOps[j].op.Kind, allOps[j].secIndex,
+						allOps[i].op.RefLine)
+					break
+				}
+
+				if ri == nil || rj == nil {
+					continue
+				}
+				if rangesOverlap(ri.start, ri.end, rj.start, rj.end) {
+					hasOverlap = true
+					overlapDetail = fmt.Sprintf("%s (section %d, lines %d-%d) and %s (section %d, lines %d-%d) overlap",
+						allOps[i].op.Kind, allOps[i].secIndex,
+						ri.start+1, ri.end,
+						allOps[j].op.Kind, allOps[j].secIndex,
+						rj.start+1, rj.end)
+					break
+				}
+			}
+			if hasOverlap {
+				break
+			}
+		}
+
+		if hasOverlap {
+			for _, si := range indices {
+				conflicts[si] = &EditError{
+					Fatal: false,
+					Kind:  "invalid_args",
+					Message: fmt.Sprintf(
+						"cross-section conflict in %q: %s. "+
+							"Merge overlapping operations into a single section, or split conflicting changes into separate edit calls.",
+						path, overlapDetail,
+					),
+				}
+			}
+		}
+	}
+
+	if len(conflicts) == 0 {
+		return nil
+	}
+	return conflicts
+}
+
+func rangesOverlap(aStart, aEnd, bStart, bEnd int) bool {
+	return aStart < bEnd && bStart < aEnd
+}
+
+func overlapStart(a, b int) int {
+	if a < b {
+		return a + 1 // 回到 1-based
+	}
+	return b + 1
+}
+
+func overlapEnd(a, b int) int {
+	if a > b {
+		return a // 0-based exclusive = 1-based last
+	}
+	return b
+}
+
+// ---------------------------------------------------------------------------
+// opToSpan / buildEditHunksFromApplied
+// ---------------------------------------------------------------------------
+
+func opToSpan(op Op, lines []string, hasTrailingNewline bool) editSpan {
+	switch op.Kind {
+	case OpDEL:
+		start := op.LineStart - 1
+		end := op.LineEnd
+		return editSpan{op: op, start: start, end: end}
+	case OpSWAP:
+		start := op.LineStart - 1
+		end := op.LineEnd
+		return editSpan{op: op, start: start, end: end}
+	case OpINS:
+		switch op.Position {
+		case "head":
+			return editSpan{op: op, start: 0, end: 0}
+		case "tail":
+			// 空文件（split("") → [""]）退化为 head，避免前导换行
+			if len(lines) == 1 && lines[0] == "" && !hasTrailingNewline {
+				return editSpan{op: op, start: 0, end: 0}
+			}
+			end := len(lines)
+			if hasTrailingNewline {
+				end--
+			}
+			return editSpan{op: op, start: end, end: end}
+		case "pre":
+			start := op.RefLine - 1
+			return editSpan{op: op, start: start, end: start}
+		case "post":
+			start := op.RefLine
+			return editSpan{op: op, start: start, end: start}
+		}
+	}
+	return editSpan{}
+}
+
+// buildEditHunksFromApplied 使用原始和应用后的 span 构建 diff hunks。
+func buildEditHunksFromApplied(origLines []string, origSpans, appliedSpans []editSpan) []EditHunk {
 	var hunks []EditHunk
+	for i := range origSpans {
+		orig := origSpans[i]
+		offset := appliedSpans[i]
 
-	for _, sp := range spans {
-		switch sp.op.Kind {
+		switch orig.op.Kind {
 		case OpDEL:
 			hunk := EditHunk{
-				OldStart: sp.start + 1,
-				OldCount: sp.end - sp.start,
-				NewStart: sp.start + 1,
+				OldStart: orig.start + 1,
+				OldCount: orig.end - orig.start,
+				NewStart: offset.start + 1,
 				NewCount: 0,
 			}
-			for i := sp.start; i < sp.end && i < len(origLines); i++ {
+			for j := orig.start; j < orig.end && j < len(origLines); j++ {
 				hunk.Lines = append(hunk.Lines, EditLine{
 					Kind:    LineDel,
-					Content: origLines[i],
-					OldNum:  i + 1,
+					Content: origLines[j],
+					OldNum:  j + 1,
 				})
 			}
 			if len(hunk.Lines) > 0 {
@@ -907,110 +1286,46 @@ func buildEditHunks(origLines []string, spans []editSpan) []EditHunk {
 			}
 
 		case OpSWAP:
-			bodyLines := sp.op.Body
-
+			bodyLines := orig.op.Body
 			hunk := EditHunk{
-				OldStart: sp.start + 1,
-				OldCount: sp.end - sp.start,
-				NewStart: sp.start + 1,
+				OldStart: orig.start + 1,
+				OldCount: orig.end - orig.start,
+				NewStart: offset.start + 1,
 				NewCount: len(bodyLines),
 			}
-			for i := sp.start; i < sp.end && i < len(origLines); i++ {
+			for j := orig.start; j < orig.end && j < len(origLines); j++ {
 				hunk.Lines = append(hunk.Lines, EditLine{
 					Kind:    LineDel,
-					Content: origLines[i],
-					OldNum:  i + 1,
+					Content: origLines[j],
+					OldNum:  j + 1,
 				})
 			}
 			for j, bl := range bodyLines {
 				hunk.Lines = append(hunk.Lines, EditLine{
 					Kind:    LineAdd,
 					Content: bl,
-					NewNum:  sp.start + 1 + j,
+					NewNum:  offset.start + 1 + j,
 				})
 			}
 			hunks = append(hunks, hunk)
 
 		case OpINS:
-			bodyLines := sp.op.Body
-
-			insertAt := sp.start + 1
-			if sp.op.Position == "tail" {
-				insertAt = len(origLines) + 1
-			}
-
+			bodyLines := orig.op.Body
 			hunk := EditHunk{
-				OldStart: insertAt,
+				OldStart: offset.start + 1,
 				OldCount: 0,
-				NewStart: insertAt,
+				NewStart: offset.start + 1,
 				NewCount: len(bodyLines),
 			}
 			for j, bl := range bodyLines {
 				hunk.Lines = append(hunk.Lines, EditLine{
 					Kind:    LineAdd,
 					Content: bl,
-					NewNum:  insertAt + j,
+					NewNum:  offset.start + 1 + j,
 				})
 			}
 			hunks = append(hunks, hunk)
 		}
 	}
-
 	return hunks
-}
-
-// ---------------------------------------------------------------------------
-// sortOps — 按行号降序排列，前向迭代避免行号漂移
-// ---------------------------------------------------------------------------
-
-func sortOps(ops []Op) []Op {
-	if len(ops) <= 1 {
-		return ops
-	}
-
-	sorted := make([]Op, len(ops))
-	copy(sorted, ops)
-
-	sort.SliceStable(sorted, func(i, j int) bool {
-		li := opLineNum(sorted[i])
-		lj := opLineNum(sorted[j])
-		if li != lj {
-			return li > lj
-		}
-		return opPriority(sorted[i]) < opPriority(sorted[j])
-	})
-
-	return sorted
-}
-
-func opPriority(op Op) int {
-	switch op.Kind {
-	case OpDEL, OpREM:
-		return 1
-	case OpSWAP:
-		return 2
-	case OpINS:
-		return 3
-	case OpMV:
-		return 4
-	default:
-		return 5
-	}
-}
-
-func opLineNum(op Op) int {
-	switch op.Kind {
-	case OpSWAP, OpDEL:
-		return op.LineStart
-	case OpINS:
-		if op.Position == "head" {
-			return 0
-		}
-		if op.Position == "tail" {
-			return 1 << 30
-		}
-		return op.RefLine
-	default:
-		return 0
-	}
 }
