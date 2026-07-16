@@ -71,16 +71,20 @@ func (t *WebSearch) Schema() json.RawMessage { return webSearchSchema }
 func (t *WebSearch) ConcurrentSafe() bool    { return true }
 
 func (t *WebSearch) Description() string {
-	return strings.Join([]string{
-		"Search the web and return a list of results (title, URL, snippet).",
-		"Use this to find current documentation, API references, solutions, or any information not in your training data.",
-		"",
-		"After searching, use web_fetch to read the full content of promising URLs.",
-		"",
-		"Backends (auto-selected):",
-		"- DuckDuckGo (default, no configuration needed)",
-		"- Brave Search (set BRAVE_API_KEY environment variable for better results)",
-	}, "\n")
+	return "Search the web and return a list of results (title, URL, snippet). Backends: DuckDuckGo (default) or Brave Search. Rules: see system prompt ## Web Search."
+}
+
+// Prompt 返回 web_search 使用指南和跨工具引用，由 Registry.FormatToolPrompts() 注入 C1。
+func (t *WebSearch) Prompt() string {
+	return `## Web Search
+
+Use web_search to find current documentation, API references, solutions, or information beyond your training cutoff.
+After searching, use web_fetch to read the full content of promising URLs.
+For known URLs, skip web_search and use web_fetch directly.
+
+Backends (auto-selected):
+- DuckDuckGo (default, no configuration needed)
+- Brave Search (set BRAVE_API_KEY environment variable for better results)`
 }
 
 func (t *WebSearch) client() *http.Client {
@@ -162,7 +166,7 @@ func (t *WebSearch) Execute(ctx context.Context, p WebSearchParams) (*ToolResult
 				Error: &ToolError{
 					Class:   ErrorClassRecoverable,
 					Kind:    ErrKindTimeout,
-					Message: fmt.Sprintf("search timed out after %s", formatDuration(timeout)),
+					Message: fmt.Sprintf("search timed out after %s. Try increasing timeout_ms or using fewer keywords", formatDuration(timeout)),
 				},
 			}, nil
 		}
@@ -172,7 +176,7 @@ func (t *WebSearch) Execute(ctx context.Context, p WebSearchParams) (*ToolResult
 			Error: &ToolError{
 				Class:   ErrorClassRecoverable,
 				Kind:    ErrKindCommandFailed,
-				Message: fmt.Sprintf("search failed: %s", execErr.Error()),
+				Message: fmt.Sprintf("search failed: %s. Check your network or try web_fetch with a known URL", execErr.Error()),
 				Cause:   execErr,
 			},
 		}, nil
@@ -182,7 +186,7 @@ func (t *WebSearch) Execute(ctx context.Context, p WebSearchParams) (*ToolResult
 	var buf bytes.Buffer
 	fmt.Fprintf(&buf, "Search results for: \"%s\"  (%s)  %s\n", p.Query, source, duration.Round(time.Millisecond))
 	if len(results) == 0 {
-		fmt.Fprintf(&buf, "No results found.")
+		fmt.Fprintf(&buf, "No results found. Try different or fewer keywords, or use web_fetch with a known URL.")
 	} else {
 		fmt.Fprintf(&buf, "Found %d result(s):\n\n", len(results))
 		for i, r := range results {

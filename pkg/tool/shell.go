@@ -606,7 +606,7 @@ func (t *Shell) formatResult(execErr error, cmdCtx context.Context, output []byt
 		toolErr = &ToolError{
 			Class:   ErrorClassRecoverable,
 			Kind:    ErrKindTimeout,
-			Message: fmt.Sprintf("command timed out after %s", formatDuration(timeout)),
+			Message: fmt.Sprintf("command timed out after %s. Increase timeout_ms or simplify the command", formatDuration(timeout)),
 		}
 	case cmdCtx.Err() == context.Canceled:
 		partialOutput := truncateOutput(string(output), MaxShellLines)
@@ -620,10 +620,15 @@ func (t *Shell) formatResult(execErr error, cmdCtx context.Context, output []byt
 		stderrOutput := truncateOutput(string(output), MaxShellLines)
 		content = formatShellResult("Command failed", exitCode, duration, timeout, stderrOutput, true)
 		kind := classifyShellError(exitCode, stderrOutput)
+		recovery := classifyShellRecovery(kind)
+		msg := fmt.Sprintf("command exited with code %d", exitCode)
+		if recovery != "" {
+			msg += ". " + recovery
+		}
 		toolErr = &ToolError{
 			Class:   ErrorClassRecoverable,
 			Kind:    kind,
-			Message: fmt.Sprintf("command exited with code %d", exitCode),
+			Message: msg,
 		}
 	}
 
@@ -809,6 +814,23 @@ func classifyShellError(exitCode int, fallbackOutput string) string {
 	}
 
 	return ErrKindCommandFailed
+}
+
+// classifyShellRecovery 基于错误 Kind 返回恢复建议提示。
+// 返回值作为 ToolError.Message 的后缀，帮助 LLM 在下一轮选择正确的排查工具。
+func classifyShellRecovery(kind string) string {
+	switch kind {
+	case ErrKindCommandNotFound:
+		return "Check the command name with 'which <cmd>' or look for the correct binary. Use 'ls' to explore project directories"
+	case ErrKindFileNotFound:
+		return "Verify the file path with 'ls' or 'read'. Check if the working_dir is correct"
+	case ErrKindCommandPermission:
+		return "Check file permissions with 'ls -la'. You may need 'chmod +x' or a different approach"
+	case ErrKindInvalidArgs:
+		return "Check the command syntax. Use '--help' or 'man' for usage"
+	default:
+		return ""
+	}
 }
 
 // ── formatDuration ──

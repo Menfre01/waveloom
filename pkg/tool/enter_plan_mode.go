@@ -3,7 +3,6 @@ package tool
 import (
 	"context"
 	"encoding/json"
-	"strings"
 )
 
 // ---------------------------------------------------------------------------
@@ -26,15 +25,21 @@ func (t *EnterPlanMode) ConcurrentSafe() bool     { return false }
 func (t *EnterPlanMode) RequiresUserInteraction() bool { return true }
 
 func (t *EnterPlanMode) Description() string {
-	return strings.TrimSpace(`
-Enter plan mode for complex tasks requiring exploration and design before coding.
-→ When to use (or not use): see system prompt ## Plan Mode.
+	return "Enter plan mode for complex tasks. Rules: see system prompt ## Plan Mode. Exit with exit_plan_mode."
+}
 
-In plan mode you CAN: read/search/explore code, ask questions, use shell for analysis commands (lint, test, version checks, git log/diff), and write/edit the plan file.
-In plan mode you CANNOT: write or edit source files — those operations will be blocked by the permission system and must wait until after plan approval.
+// Prompt 返回 enter_plan_mode 的详细使用规则，由 Registry.FormatToolPrompts() 注入 C1。
+func (t *EnterPlanMode) Prompt() string {
+	return `## Plan Mode — Rules
 
-Exit with exit_plan_mode when your plan is complete and ready for review.
-`)
+Call enter_plan_mode ONLY when implementing a complex feature or refactoring (3+ files, architectural decisions, multiple valid approaches).
+Do NOT use plan mode for: code review, bug analysis, performance investigation, explaining code, answering questions.
+Skip for single-file fixes, trivial bugs, or when the user gives precise step-by-step instructions.
+
+In plan mode you CAN: read/search/explore code, ask questions, use shell for analysis (lint, test, version checks, git log/diff), and write/edit the plan file.
+In plan mode you CANNOT: write or edit source files — blocked by permission system until plan approval.
+
+Exit with exit_plan_mode when your plan is complete and ready for review.`
 }
 
 func (t *EnterPlanMode) Schema() json.RawMessage { return enterPlanModeSchema }
