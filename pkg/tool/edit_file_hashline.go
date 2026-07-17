@@ -58,6 +58,26 @@ implicitly by the range in SWAP/DEL.
 Blank lines between body lines are silently skipped by the parser. To insert
 an intentional blank line, use a standalone + line (no content after the +).
 
+Operation lines (SWAP, DEL, INS.PRE, INS.POST, INS.HEAD, INS.TAIL, REM, MV)
+must NOT start with +. Adding + before an operation line causes it to be
+treated as body content inserted into the file — the operation is silently lost.
+
+Wrong (DEL treated as body text, not as an operation):
+*** Begin Patch
+[src/main.go#A1B2]
+SWAP 2.=2:
++new line
++DEL 5             ← +DEL interpreted as literal text in file, not a delete op
+*** End Patch
+
+Correct:
+*** Begin Patch
+[src/main.go#A1B2]
+SWAP 2.=2:
++new line
+DEL 5               ← no + prefix, recognized as an operation
+*** End Patch
+
 ### Line numbers
 
 Line numbers come directly from read output (N:CONTENT format).

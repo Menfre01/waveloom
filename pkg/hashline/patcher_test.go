@@ -473,6 +473,32 @@ func TestParsePatchBodyMissingPlus(t *testing.T) {
 			input: "*** Begin Patch\n[src/main.go#A1B2]\nDEL 1\nINS.HEAD:\n+new line\n*** End Patch",
 			// DEL without body, INS.HEAD with valid body — 应该成功解析
 		},
+		// —— 多余 + 前缀：LLM 误给操作行加了 + ——
+		{
+			name:    "+SWAP 误给操作行加了 +",
+			input:   "*** Begin Patch\n[src/main.go#A1B2]\nSWAP 1.=1:\n+SWAP 2.=2:\n*** End Patch",
+			wantMsg: `operation lines must NOT start with '+'`,
+		},
+		{
+			name:    "+DEL 误给操作行加了 +",
+			input:   "*** Begin Patch\n[src/main.go#A1B2]\nSWAP 1.=1:\n+DEL 5\n*** End Patch",
+			wantMsg: `operation lines must NOT start with '+'`,
+		},
+		{
+			name:    "+INS.PRE 误给操作行加了 +",
+			input:   "*** Begin Patch\n[src/main.go#A1B2]\nSWAP 1.=1:\n+line\n+INS.PRE 3:\n*** End Patch",
+			wantMsg: `operation lines must NOT start with '+'`,
+		},
+		{
+			name:    "+REM 误给操作行加了 +",
+			input:   "*** Begin Patch\n[src/main.go#A1B2]\nSWAP 1.=1:\n+line\n+REM\n*** End Patch",
+			wantMsg: `operation lines must NOT start with '+'`,
+		},
+		{
+			name:  "+ 后带空格是合法 body（非误报）",
+			input: "*** Begin Patch\n[src/main.go#A1B2]\nSWAP 1.=1:\n+ SWAP 2.=2:\n*** End Patch",
+			// + 后面是空格 → body 内容是 " SWAP 2.=2:"，合法
+		},
 	}
 
 	for _, tt := range tests {
