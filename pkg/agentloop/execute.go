@@ -160,19 +160,65 @@ func (l *Loop) executeToolCalls(ctx context.Context, calls []llm.ToolCall, state
 					defer cancel()
 				}
 				execCtx = WithToolCallID(execCtx, tc.ID)
+
+				// ── PreToolUse Hook ──
+				toolArgs := json.RawMessage(tc.Arguments)
+				var hookWarnings []string
+				if l.hookRunner != nil {
+					hookResult, hookErr := l.hookRunner.RunPreToolUse(execCtx, tc.Name, tc.ID, toolArgs)
+					hookWarnings = append(hookWarnings, l.hookRunner.FlushWarnings()...)
+					if hookErr != nil {
+						slog.Warn("PreToolUse hook error", "tool", tc.Name, "error", hookErr)
+					} else if hookResult != nil && hookResult.Denied {
+						content := fmt.Sprintf("Tool %q execution denied by PreToolUse hook: %s", tc.Name, hookResult.DenyReason)
+						for _, w := range hookWarnings {
+							content += "\n[system] Hook warning: " + w
+						}
+						safeSend(resultsCh, execResult{tc: tc, result: &tool.ToolResult{
+							Content: content,
+							Error: &tool.ToolError{
+								Class:   tool.ErrorClassRecoverable,
+								Kind:    tool.ErrKindPermissionDenied,
+								Message: hookResult.DenyReason,
+							},
+						}, err: nil, start: start})
+						return
+					} else if hookResult != nil && hookResult.ModifiedInput != nil {
+						toolArgs = hookResult.ModifiedInput
+					}
+				}
+
 				var result *tool.ToolResult
 				var execErr error
 				if l.toolRegistry.IsStreamable(tc.Name) {
-					result, execErr = l.toolRegistry.ExecuteStreaming(execCtx, tc.Name, json.RawMessage(tc.Arguments), func(chunk string) {
+					result, execErr = l.toolRegistry.ExecuteStreaming(execCtx, tc.Name, toolArgs, func(chunk string) {
 						sendEvent(ctx, ch, ToolCallStream{
 							Turn: state.TurnCount, ToolCallID: tc.ID,
 							ToolCallName: tc.Name, Chunk: chunk,
 						})
 					})
 				} else {
-					result, execErr = l.toolRegistry.Execute(execCtx, tc.Name, json.RawMessage(tc.Arguments))
+					result, execErr = l.toolRegistry.Execute(execCtx, tc.Name, toolArgs)
+				}
+				// ── PostToolUse Hook ──
+				if result != nil && l.hookRunner != nil {
+					hookResult, hookErr := l.hookRunner.RunPostToolUse(execCtx, tc.Name, tc.ID, toolArgs, result.Content, result.Meta.ExitCode)
+					hookWarnings = append(hookWarnings, l.hookRunner.FlushWarnings()...)
+					if hookErr != nil {
+						slog.Warn("PostToolUse hook error", "tool", tc.Name, "error", hookErr)
+					} else if hookResult != nil && hookResult.ModifiedResult != "" {
+						result.Content = hookResult.ModifiedResult
+					}
+				}
+
+				// 注入累计的 hook 警告到工具结果，让用户即时感知
+				if result != nil && len(hookWarnings) > 0 {
+					for _, w := range hookWarnings {
+						result.Content += "\n[system] Hook warning: " + w
+					}
 				}
 				safeSend(resultsCh, execResult{tc: tc, result: result, err: execErr, start: start})
+
 			}(tc)
 		}
 		// REGRESSION: wg.Wait() 无超时保护。每个 goroutine 有 ToolTimeout，
@@ -413,15 +459,61 @@ func (l *Loop) executeToolCalls(ctx context.Context, calls []llm.ToolCall, state
 		execCtx = WithToolCallID(execCtx, tc.ID)
 		var result *tool.ToolResult
 		var execErr error
+
+		// ── PreToolUse Hook ──
+		toolArgs := json.RawMessage(tc.Arguments)
+		var hookWarnings []string
+		if l.hookRunner != nil {
+			hookResult, hookErr := l.hookRunner.RunPreToolUse(execCtx, tc.Name, tc.ID, toolArgs)
+			hookWarnings = append(hookWarnings, l.hookRunner.FlushWarnings()...)
+			if hookErr != nil {
+				slog.Warn("PreToolUse hook error", "tool", tc.Name, "error", hookErr)
+			} else if hookResult != nil && hookResult.Denied {
+				content := fmt.Sprintf("Tool %q execution denied by PreToolUse hook: %s", tc.Name, hookResult.DenyReason)
+				for _, w := range hookWarnings {
+					content += "\n[system] Hook warning: " + w
+				}
+				results[tc.ID] = &tool.ToolResult{
+					Content: content,
+					Error: &tool.ToolError{
+						Class:   tool.ErrorClassRecoverable,
+						Kind:    tool.ErrKindPermissionDenied,
+						Message: hookResult.DenyReason,
+					},
+				}
+				continue
+			} else if hookResult != nil && hookResult.ModifiedInput != nil {
+				toolArgs = hookResult.ModifiedInput
+			}
+		}
+
 		if l.toolRegistry.IsStreamable(tc.Name) {
-			result, execErr = l.toolRegistry.ExecuteStreaming(execCtx, tc.Name, json.RawMessage(tc.Arguments), func(chunk string) {
+			result, execErr = l.toolRegistry.ExecuteStreaming(execCtx, tc.Name, toolArgs, func(chunk string) {
 				sendEvent(ctx, ch, ToolCallStream{
 					Turn: state.TurnCount, ToolCallID: tc.ID,
 					ToolCallName: tc.Name, Chunk: chunk,
 				})
 			})
 		} else {
-			result, execErr = l.toolRegistry.Execute(execCtx, tc.Name, json.RawMessage(tc.Arguments))
+			result, execErr = l.toolRegistry.Execute(execCtx, tc.Name, toolArgs)
+		}
+
+		// ── PostToolUse Hook ──
+		if result != nil && l.hookRunner != nil {
+			hookResult, hookErr := l.hookRunner.RunPostToolUse(execCtx, tc.Name, tc.ID, toolArgs, result.Content, result.Meta.ExitCode)
+			hookWarnings = append(hookWarnings, l.hookRunner.FlushWarnings()...)
+			if hookErr != nil {
+				slog.Warn("PostToolUse hook error", "tool", tc.Name, "error", hookErr)
+			} else if hookResult != nil && hookResult.ModifiedResult != "" {
+				result.Content = hookResult.ModifiedResult
+			}
+		}
+
+		// 注入累计的 hook 警告
+		if result != nil && len(hookWarnings) > 0 {
+			for _, w := range hookWarnings {
+				result.Content += "\n[system] Hook warning: " + w
+			}
 		}
 		if execErr != nil {
 			return nil, ReasonToolFatal, fmt.Errorf("serial tool execution: %w", execErr)

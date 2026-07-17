@@ -10,6 +10,7 @@ import (
 	"runtime"
 
 	"github.com/Menfre01/waveloom/pkg/agentloop"
+	"github.com/Menfre01/waveloom/pkg/hook"
 	"github.com/Menfre01/waveloom/pkg/compaction"
 	"github.com/Menfre01/waveloom/pkg/session"
 	"github.com/Menfre01/waveloom/pkg/environment"
@@ -290,12 +291,17 @@ func main() {
 
 	// 16. 分支：无 prompt → 交互式 TUI，有 prompt → 单次执行
 	if cfg.OneShot == "" {
-		runTUI(llmClient, registry, guard, expander, llmSettings.Model, cfg.Theme, cfg.ContextLimit, cfg.MaxTurns, cfg.ToolTimeout, cfg.ToolTimeoutSource, cfg.BypassPerm, ctxMgr, isResume, sessionDir, globalPath, projectPath, agentsMdText, loc, todoState, advisorMode, subModel)
+		// 16.5 加载 Hook Runner（RTK 等 Claude Code 兼容 hooks）
+		hookRunner := loadHookRunner()
+		runTUI(llmClient, registry, guard, expander, llmSettings.Model, cfg.Theme, cfg.ContextLimit, cfg.MaxTurns, cfg.ToolTimeout, cfg.ToolTimeoutSource, cfg.BypassPerm, ctxMgr, isResume, sessionDir, globalPath, projectPath, agentsMdText, loc, todoState, advisorMode, subModel, hookRunner)
 		return
 	}
 
-	runOneShot(cfg, llmClient, registry, guard, expander, cwd, ctxMgr, agentsMdText, loc, todoState, advisorMode, subModel, llmSettings.Model)
+	// 16.5 加载 Hook Runner（RTK 等 Claude Code 兼容 hooks）
+	hookRunner := loadHookRunner()
+	runOneShot(cfg, llmClient, registry, guard, expander, cwd, ctxMgr, agentsMdText, loc, todoState, advisorMode, subModel, llmSettings.Model, hookRunner)
 }
+
 
 // registerBuiltinTools 注册内置工具。
 func registerBuiltinTools(r tool.Registry, skillLoader *skill.Loader, llmClient llm.Client, validModels []string, defaultModel string, subModel string, cwd string) {
@@ -623,4 +629,64 @@ You are running in **advisor mode** to optimize token costs:
   safety-critical code — auth, crypto, input validation, permissions — always
   warrants advisor regardless of scope.)
 `, subModel, primaryModel, subModel, primaryModel, subModel)
+}
+
+// loadHookRunner 从 settings.json 加载 hook 配置并创建 Runner。
+// 配置来源：~/.claude/settings.json、.claude/settings.json、.claude/settings.local.json
+// 按优先级从低到高合并（local > project > user）。
+func loadHookRunner() *hook.Runner {
+	var hookSources []map[hook.EventType][]hook.HookConfig
+
+	for _, path := range hookSettingsPaths() {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			continue
+		}
+		cfg, err := hook.LoadFromSettings(data)
+		if err != nil {
+			slog.Warn("failed to load hooks from settings", "path", path, "err", err)
+			continue
+		}
+		if len(cfg) > 0 {
+			hookSources = append(hookSources, cfg)
+			slog.Info("hooks loaded", "path", path, "eventCount", len(cfg))
+		}
+	}
+
+	if len(hookSources) == 0 {
+		return nil
+	}
+
+	merged := hook.MergeConfigs(hookSources...)
+	runner := hook.NewRunner(merged, "", "")
+
+	// 启动时校验 hook 命令可达性，提前暴露配置错误
+	for _, w := range runner.Validate() {
+		slog.Warn("hook configuration warning", "warning", w)
+	}
+
+	return runner
+}
+
+// hookSettingsPaths 返回需要检查 hooks 配置的文件路径（按优先级从低到高）。
+// 优先级：~/.claude → .claude → .claude/local → ~/.waveloom → .waveloom
+// Waveloom 自有配置优先级高于 Claude Code 兼容配置。
+func hookSettingsPaths() []string {
+	homeDir, _ := os.UserHomeDir()
+	var paths []string
+
+	// Claude Code 兼容：用户全局 → 项目 → 本地
+	if homeDir != "" {
+		paths = append(paths, filepath.Join(homeDir, ".claude", "settings.json"))
+	}
+	paths = append(paths, filepath.Join(".claude", "settings.json"))
+	paths = append(paths, filepath.Join(".claude", "settings.local.json"))
+
+	// Waveloom 自有配置：优先级高于 Claude Code（后覆盖前）
+	if homeDir != "" {
+		paths = append(paths, filepath.Join(homeDir, ".waveloom", "settings.json"))
+	}
+	paths = append(paths, filepath.Join(".waveloom", "settings.json"))
+
+	return paths
 }

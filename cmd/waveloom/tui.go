@@ -50,6 +50,7 @@ import (
 	"charm.land/lipgloss/v2"
 
 	"github.com/Menfre01/waveloom/pkg/agentloop"
+	"github.com/Menfre01/waveloom/pkg/hook"
 	"github.com/Menfre01/waveloom/pkg/environment"
 	"github.com/Menfre01/waveloom/pkg/filehistory"
 	"github.com/Menfre01/waveloom/pkg/llm"
@@ -376,6 +377,7 @@ type model struct {
 	skillLoader   *skill.Loader
 	cwd           string
 	loop          *agentloop.Loop
+	hookRunner    *hook.Runner // Claude Code 兼容 hooks（RTK 等）
 
 	// Advisor mode
 	advisorMode  bool   // 是否启用 advisor mode
@@ -664,7 +666,7 @@ func colorHex(c color.Color) string {
 // ---------------------------------------------------------------------------
 
 // newTUIModel 创建 TUI model，依赖由外部注入（LLM client / tool registry / guard / expander / locale）。
-func newTUIModel(llmClient llm.Client, registry tool.Registry, guard permission.Guard, expander *reference.Expander, modelName string, theme string, contextLimit int, maxTurns int, toolTimeout time.Duration, toolTimeoutSource string, loc Locale, todoState *todo.TodoState) *model {
+func newTUIModel(llmClient llm.Client, registry tool.Registry, guard permission.Guard, expander *reference.Expander, modelName string, theme string, contextLimit int, maxTurns int, toolTimeout time.Duration, toolTimeoutSource string, loc Locale, todoState *todo.TodoState, hookRunner *hook.Runner) *model {
 	cwd, _ := os.Getwd()
 	cm := session.New(buildSystemPrompt(cwd, loc))
 	lc := messagesFor(loc)
@@ -758,6 +760,7 @@ func newTUIModel(llmClient llm.Client, registry tool.Registry, guard permission.
 		registry:          registry,
 		guard:             guard,
 		expander:          expander,
+		hookRunner:        hookRunner,
 		cwd:               cwd,
 		hudModel:          normalizeWidth(modelName),
 		contextLimit:      contextLimit,
@@ -819,6 +822,7 @@ func (m *model) wireLoop() {
 		SubModel:    m.subModel,
 		Model:       m.initialModel,
 	})
+	m.loop.SetHookRunner(m.hookRunner)
 }
 
 // ---------------------------------------------------------------------------
@@ -4574,8 +4578,8 @@ func newSlashRegistry(creator slashcommand.SessionCreator, store slashcommand.Se
 // ---------------------------------------------------------------------------
 
 // runTUI 启动交互式 TUI 模式。依赖由 main() 统一初始化后传入，无需重复创建。
-func runTUI(llmClient llm.Client, registry tool.Registry, guard permission.Guard, expander *reference.Expander, modelName string, theme string, contextLimit int, maxTurns int, toolTimeout time.Duration, toolTimeoutSource string, bypassPerm bool, ctxMgr *session.ContextManager, isResume bool, sessionDir string, globalPath string, projectPath string, agentsMdText string, loc Locale, todoState *todo.TodoState, advisorMode bool, subModel string) {
-	m := newTUIModel(llmClient, registry, guard, expander, modelName, theme, contextLimit, maxTurns, toolTimeout, toolTimeoutSource, loc, todoState)
+func runTUI(llmClient llm.Client, registry tool.Registry, guard permission.Guard, expander *reference.Expander, modelName string, theme string, contextLimit int, maxTurns int, toolTimeout time.Duration, toolTimeoutSource string, bypassPerm bool, ctxMgr *session.ContextManager, isResume bool, sessionDir string, globalPath string, projectPath string, agentsMdText string, loc Locale, todoState *todo.TodoState, advisorMode bool, subModel string, hookRunner *hook.Runner) {
+	m := newTUIModel(llmClient, registry, guard, expander, modelName, theme, contextLimit, maxTurns, toolTimeout, toolTimeoutSource, loc, todoState, hookRunner)
 	m.sessionDir = sessionDir
 	m.agentsMdText = agentsMdText
 	m.advisorMode = advisorMode
