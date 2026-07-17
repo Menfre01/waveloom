@@ -418,11 +418,11 @@ func (t *Shell) ExecuteStreaming(ctx context.Context, p ShellParams, chunkCb fun
 
 	var output []byte
 	if useFileFD {
-		remaining, _ := os.ReadFile(outputPath)
-		output = remaining
+		output, _ = os.ReadFile(outputPath)
 		_ = os.Remove(outputPath)
+	} else {
+		output = outputBuf.Bytes()
 	}
-	output = append(output, outputBuf.Bytes()...)
 
 	result, _ := t.formatResult(execErr, cmdCtx, output, duration, timeout, outputPath, "")
 	if bgLogFile != "" {
