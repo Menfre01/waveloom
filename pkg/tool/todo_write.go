@@ -20,6 +20,10 @@ var todoWriteSchema = json.RawMessage(`{
       "items": {
         "type": "object",
         "properties": {
+          "id": {
+            "type": "string",
+            "description": "Task ID for precise status updates. Omit when creating new tasks — the system assigns an ID automatically. Include the ID returned from a previous todo_write result to update an existing task by ID rather than by content."
+          },
           "content": {
             "type": "string",
             "minLength": 1,
@@ -126,21 +130,20 @@ Single, trivial task in one step — no need to track multiple steps.
 User: Can you add a comment to the calculateTotal function to explain what it does?
 Assistant: *Uses edit_file to add the comment directly*
 
-<reasoning>
-Single straightforward task confined to one location — tracking provides no organizational benefit.
-</reasoning>
-</example>
-
 ## How This Tool Works
 
-content is the immutable key — once a task is created, its content cannot be changed.
-Use the exact same content string to update an existing task.
+**IMPORTANT:** When updating an existing task, always include its 'id' (returned from a previous todo_write result). This is the most reliable way to update — it avoids accidental duplicates caused by content wording differences.
+
+Each task has a stable id assigned automatically by the system on creation. Use the id to update task status precisely — this is the recommended approach and avoids accidental duplicates caused by content mismatches.
+
+content is a fallback key: if you omit the id, the system matches by exact content string. New tasks created without an id will receive one automatically in the result.
 
 Incremental updates: Only include tasks you want to CREATE or UPDATE — NOT the full list.
 Tasks not mentioned remain unchanged (no accidental deletion).
 
-- To create a new task: send a new content string.
-- To update a task's status: send the same content with the new status.
+- To create a new task: send content, status, and activeForm without an id. The system returns the assigned id.
+- To update a task's status: send the id from a previous result with the new status. This is the preferred method — it works even if your content wording differs slightly.
+- To update by content (fallback): send the exact same content string with the new status.
 - To mark progress: set status to "in_progress".
 - To complete: set status to "completed".
 - To remove tasks: mark them "completed". When ALL tasks are completed, the list auto-clears.

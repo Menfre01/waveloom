@@ -152,8 +152,8 @@ func TestTodoState_EmptyNotAllDone(t *testing.T) {
 func TestTodoState_FormatResult(t *testing.T) {
 	result := MergeResult{
 		Items: []TodoItem{
-			{Content: "Task A", Status: "completed", ActiveForm: "Did A"},
-			{Content: "Task B", Status: "in_progress", ActiveForm: "Doing B"},
+			{ID: "1", Content: "Task A", Status: "completed", ActiveForm: "Did A"},
+			{ID: "2", Content: "Task B", Status: "in_progress", ActiveForm: "Doing B"},
 		},
 		Created:   0,
 		Updated:   1,
@@ -164,17 +164,17 @@ func TestTodoState_FormatResult(t *testing.T) {
 	if text == "" {
 		t.Error("FormatResult should not be empty")
 	}
-	if !contains(text, "[completed] Task A") {
+	if !contains(text, "[completed] 1 Task A") {
 		t.Errorf("FormatResult missing Task A: %s", text)
 	}
-	if !contains(text, "[in_progress] Task B") {
+	if !contains(text, "[in_progress] 2 Task B") {
 		t.Errorf("FormatResult missing Task B: %s", text)
 	}
 	if !contains(text, "0 created") {
 		t.Errorf("FormatResult missing created count: %s", text)
 	}
-}
 
+}
 func TestTodoState_StatusSummary(t *testing.T) {
 	s := NewTodoState()
 
@@ -192,11 +192,11 @@ func TestTodoState_StatusSummary(t *testing.T) {
 	if !contains(summary, "Current Todo Status") {
 		t.Error("StatusSummary missing header")
 	}
-	if !contains(summary, "[in_progress] Task A") {
+	if !contains(summary, "[in_progress] 1 Task A") {
 		t.Error("StatusSummary missing task")
 	}
-}
 
+}
 func TestTodoState_Concurrency(t *testing.T) {
 	s := NewTodoState()
 	s.Apply(TodoWriteParams{
@@ -335,7 +335,7 @@ func TestFormatResult_WithDescription(t *testing.T) {
 func TestFormatResult_WithoutDescription(t *testing.T) {
 	result := MergeResult{
 		Items: []TodoItem{
-			{Content: "Task A", Status: "completed", ActiveForm: "Did A"},
+			{ID: "1", Content: "Task A", Status: "completed", ActiveForm: "Did A"},
 		},
 		Created:   1,
 		Updated:   0,
@@ -345,7 +345,7 @@ func TestFormatResult_WithoutDescription(t *testing.T) {
 	if contains(text, " — ") {
 		t.Errorf("FormatResult should not contain ' — ' when no description: %s", text)
 	}
-	if !contains(text, "[completed] Task A") {
+	if !contains(text, "[completed] 1 Task A") {
 		t.Error("FormatResult missing task")
 	}
 }
@@ -397,4 +397,185 @@ func contains(s, substr string) bool {
 		}
 	}
 	return false
+}
+
+func TestTodoState_UpdateByID(t *testing.T) {
+	s := NewTodoState()
+
+	s.Apply(TodoWriteParams{
+		Todos: []TodoItem{
+			{Content: "Task A", Status: "pending", ActiveForm: "Doing A"},
+			{Content: "Task B", Status: "pending", ActiveForm: "Doing B"},
+		},
+	})
+
+	// Update by ID with different content — should match by ID, not content
+	result := s.Apply(TodoWriteParams{
+		Todos: []TodoItem{
+			{ID: "1", Content: "Task A (renamed)", Status: "completed", ActiveForm: "Did A"},
+		},
+	})
+
+	if result.Updated != 1 {
+		t.Errorf("Updated = %d, want 1", result.Updated)
+	}
+	if result.Created != 0 {
+		t.Errorf("Created = %d, want 0 (match by ID)", result.Created)
+	}
+
+	// Verify item 1 was updated with new content preserved (but content is immutable via updateItem)
+	for _, item := range result.Items {
+		if item.ID == "1" && item.Status != "completed" {
+			t.Errorf("item 1 status = %s, want completed", item.Status)
+		}
+	}
+}
+
+func TestTodoState_IDMatchPriority(t *testing.T) {
+	s := NewTodoState()
+
+	s.Apply(TodoWriteParams{
+		Todos: []TodoItem{
+			{Content: "Task A", Status: "pending", ActiveForm: "Doing A"},
+			{Content: "Task B", Status: "pending", ActiveForm: "Doing B"},
+		},
+	})
+
+	// incoming: id=1 but content matches item 2's content → ID match takes priority
+	result := s.Apply(TodoWriteParams{
+		Todos: []TodoItem{
+			{ID: "1", Content: "Task B", Status: "completed", ActiveForm: "Did B via ID1"},
+		},
+	})
+
+	if result.Updated != 1 {
+		t.Errorf("Updated = %d, want 1", result.Updated)
+	}
+
+	// Item 1 (ID="1") should be updated, NOT item 2
+	for _, item := range result.Items {
+		if item.ID == "1" && item.Status != "completed" {
+			t.Errorf("item 1 should be completed by ID match, got status=%s", item.Status)
+		}
+		if item.ID == "2" && item.Status != "pending" {
+			t.Errorf("item 2 should remain pending, got status=%s", item.Status)
+		}
+	}
+}
+
+func TestTodoState_ContentFallback(t *testing.T) {
+	s := NewTodoState()
+
+	s.Apply(TodoWriteParams{
+		Todos: []TodoItem{
+			{Content: "Task A", Status: "pending", ActiveForm: "Doing A"},
+		},
+	})
+
+	// Update without ID, matching by content → content fallback
+	result := s.Apply(TodoWriteParams{
+		Todos: []TodoItem{
+			{Content: "Task A", Status: "completed", ActiveForm: "Did A"},
+		},
+	})
+
+	if result.Updated != 1 {
+		t.Errorf("Updated = %d, want 1 (content fallback)", result.Updated)
+	}
+	if result.Created != 0 {
+		t.Errorf("Created = %d, want 0", result.Created)
+	}
+
+	for _, item := range result.Items {
+		if item.Content == "Task A" && item.Status != "completed" {
+			t.Errorf("Task A should be completed, got %s", item.Status)
+		}
+	}
+}
+
+func TestTodoState_AutoAssignID(t *testing.T) {
+	s := NewTodoState()
+
+	result := s.Apply(TodoWriteParams{
+		Todos: []TodoItem{
+			{Content: "Task A", Status: "pending", ActiveForm: "Doing A"},
+			{Content: "Task B", Status: "in_progress", ActiveForm: "Doing B"},
+			{Content: "Task C", Status: "completed", ActiveForm: "Did C"},
+		},
+	})
+
+	if result.Created != 3 {
+		t.Fatalf("Created = %d, want 3", result.Created)
+	}
+
+	ids := make(map[string]string)
+	for _, item := range result.Items {
+		if item.ID == "" {
+			t.Errorf("item %q has no ID", item.Content)
+		}
+		ids[item.ID] = item.Content
+	}
+
+	if ids["1"] != "Task A" || ids["2"] != "Task B" || ids["3"] != "Task C" {
+		t.Errorf("ID assignment wrong: %v", ids)
+	}
+}
+
+func TestTodoState_BackwardCompatNoID(t *testing.T) {
+	s := NewTodoState()
+
+	// Simulate restoring old data without IDs
+	s.Restore([]TodoItem{
+		{Content: "Task A", Status: "pending", ActiveForm: "Doing A"},
+		{Content: "Task B", Status: "in_progress", ActiveForm: "Doing B"},
+	})
+
+	// Update by content — should match and auto-assign ID
+	result := s.Apply(TodoWriteParams{
+		Todos: []TodoItem{
+			{Content: "Task A", Status: "completed", ActiveForm: "Did A"},
+		},
+	})
+
+	if result.Updated != 1 {
+		t.Errorf("Updated = %d, want 1", result.Updated)
+	}
+
+	// Task A should now have an ID
+	for _, item := range result.Items {
+		if item.Content == "Task A" {
+			if item.ID == "" {
+				t.Error("Task A should have an auto-assigned ID after update")
+			}
+			if item.Status != "completed" {
+				t.Errorf("Task A status = %s, want completed", item.Status)
+			}
+		}
+	}
+}
+
+func TestTodoState_IDPersistenceInSnapshot(t *testing.T) {
+	s := NewTodoState()
+
+	s.Apply(TodoWriteParams{
+		Todos: []TodoItem{
+			{Content: "Task A", Status: "pending", ActiveForm: "Doing A"},
+			{Content: "Task B", Status: "in_progress", ActiveForm: "Doing B"},
+		},
+	})
+
+	snapshot := s.Snapshot()
+	if len(snapshot) != 2 {
+		t.Fatalf("snapshot len = %d, want 2", len(snapshot))
+	}
+
+	for _, item := range snapshot {
+		if item.ID == "" {
+			t.Errorf("snapshot item %q missing ID", item.Content)
+		}
+	}
+
+	if snapshot[0].ID != "1" || snapshot[1].ID != "2" {
+		t.Errorf("snapshot IDs = %s, %s; want 1, 2", snapshot[0].ID, snapshot[1].ID)
+	}
 }

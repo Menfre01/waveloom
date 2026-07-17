@@ -873,3 +873,73 @@ func TestExecuteTodoWrite_ResetsLastChanceFlag(t *testing.T) {
 		t.Error("lastChanceTodoInjected should be false after successful todo_write")
 	}
 }
+
+func TestExecuteTodoWrite_UpdateByIDWithDifferentContent(t *testing.T) {
+	// ID 优先匹配：即使 content 有差异，只要 ID 匹配就应该 UPDATE 而非 CREATE。
+	registry := tool.NewRegistry()
+	registry.Register(tool.Wrap(&tool.TodoWrite{}))
+
+	ts := todo.NewTodoState()
+	loop := New(nil, registry, Config{TodoState: ts})
+
+	ch := make(chan TurnEvent, 4)
+
+	// Call 1: create 2 items — 第二个未完成任务防止 allDone 清空
+	_ = loop.executeTodoWrite(context.Background(), llm.ToolCall{
+		ID:   "call_1",
+		Name: "todo_write",
+		Arguments: `{"todos": [
+			{"content": "Fix the login bug", "status": "in_progress", "activeForm": "Fixing login"},
+			{"content": "Keep this pending", "status": "pending", "activeForm": "Keeping pending"}
+		]}`,
+	}, nil, ch)
+
+	// Drain event
+	ev := <-ch
+	tue, ok := ev.(TodoUpdateEvent)
+	if !ok {
+		t.Fatalf("expected TodoUpdateEvent, got %T", ev)
+	}
+	if len(tue.Items) != 2 {
+		t.Fatalf("expected 2 items, got %d", len(tue.Items))
+	}
+	assignedID := tue.Items[0].ID
+	if assignedID == "" {
+		t.Fatal("expected non-empty ID on created item")
+	}
+
+	// Call 2: update by ID — content slightly different, should still UPDATE
+	result := loop.executeTodoWrite(context.Background(), llm.ToolCall{
+		ID:   "call_2",
+		Name: "todo_write",
+		Arguments: fmt.Sprintf(`{"todos": [
+			{"id": %q, "content": "Fix login bug", "status": "completed", "activeForm": "Fixed login"}
+		]}`, assignedID),
+	}, nil, ch)
+
+	if result == nil || result.Error != nil {
+		t.Fatalf("todo_write failed: %v", result)
+	}
+	if !contains(result.Content, "1 updated") {
+		t.Errorf("expected '1 updated' in result, got: %s", result.Content)
+	}
+	if !contains(result.Content, "0 created") {
+		t.Errorf("expected '0 created' in result, got: %s", result.Content)
+	}
+
+	// Verify: still 2 items (no duplicate), first one completed
+	snapshot := ts.Snapshot()
+	if len(snapshot) != 2 {
+		t.Fatalf("expected 2 items, got %d (no duplicate)", len(snapshot))
+	}
+	if snapshot[0].ID != assignedID {
+		t.Errorf("ID = %s, want %s", snapshot[0].ID, assignedID)
+	}
+	if snapshot[0].Status != "completed" {
+		t.Errorf("status = %s, want completed", snapshot[0].Status)
+	}
+	// Content should be immutable — original content preserved
+	if snapshot[0].Content != "Fix the login bug" {
+		t.Errorf("content = %s, want 'Fix the login bug' (original, immutable)", snapshot[0].Content)
+	}
+}
