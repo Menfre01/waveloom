@@ -17,13 +17,13 @@ import (
 
 	"github.com/Menfre01/waveloom/pkg/compaction"
 	"github.com/Menfre01/waveloom/pkg/hashline"
+	"github.com/Menfre01/waveloom/pkg/hook"
 	"github.com/Menfre01/waveloom/pkg/llm"
 	"github.com/Menfre01/waveloom/pkg/permission"
 	"github.com/Menfre01/waveloom/pkg/todo"
 	"github.com/Menfre01/waveloom/pkg/tool"
 )
 
-// ---------------------------------------------------------------------------
 // Config — 不可变配置
 // ---------------------------------------------------------------------------
 
@@ -219,8 +219,12 @@ type Loop struct {
 	// 但 read_file_hashline → edit_file_hashline 工作流必然跨 turn（先读后编），
 	// per-turn NewStore() 会导致下一 turn 编辑时 TAG 验证失败（"no snapshot for path"）。
 	// 因此改为会话级 Store：Loop 创建时初始化，跨 turn 复用，子代理通过 agentloop.New()
+	// 因此改为会话级 Store：Loop 创建时初始化，跨 turn 复用，子代理通过 agentloop.New()
 	// 获得独立 Store 实现隔离。
 	snapshotStore *hashline.SnapshotStore
+
+	// hookRunner 执行 Claude Code 兼容的 hooks。nil → 跳过 hooks。
+	hookRunner *hook.Runner
 }
 
 // New 创建一个新的 Loop 实例。
@@ -231,6 +235,12 @@ func New(llmClient llm.Client, toolRegistry tool.Registry, config Config) *Loop 
 		config:       config,
 		snapshotStore: hashline.NewStore(),
 	}
+}
+
+// SetHookRunner 设置 hook runner（由调用方在 Loop 创建后注入）。
+// 设置为 nil 则跳过所有 hook 处理。
+func (l *Loop) SetHookRunner(runner *hook.Runner) {
+	l.hookRunner = runner
 }
 
 // SetPlanFile 设置 plan 文件路径（用户快捷键进入 plan 模式时由 TUI 调用）。
@@ -295,6 +305,14 @@ func (l *Loop) Run(ctx context.Context, messages []llm.Message) <-chan TurnEvent
 	ch := make(chan TurnEvent, 32)
 
 	go func() {
+		// goroutine 结束时触发 Stop/Notification hooks。
+		// blocked 返回值在此场景无意义（goroutine 即将退出），仅记录日志。
+		defer func() {
+			if l.hookRunner != nil {
+				_ = l.hookRunner.RunStop(context.Background(), "loop terminated")
+				l.hookRunner.RunNotification("LoopDone", "loop terminated")
+			}
+		}()
 		defer close(ch)
 
 		// panic 防御：捕获 loop 内任何未预期 panic，转为 LoopDone 事件后关闭 channel，
