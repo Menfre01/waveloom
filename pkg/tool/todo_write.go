@@ -61,7 +61,7 @@ func (t *TodoWrite) ConcurrentSafe() bool          { return false }
 func (t *TodoWrite) RequiresUserInteraction() bool { return false }
 
 func (t *TodoWrite) Description() string {
-	return "Task tracker for complex multi-step work. Use proactively to track progress and pending tasks. Make sure at least one task is in_progress at all times. Always provide both content (imperative) and activeForm (present continuous) for each task."
+	return "Task tracker for complex multi-step work. Rules: see system prompt ## Todo List."
 }
 
 // Prompt 返回 todo_write 的完整使用指南（When to Use / NOT / 示例 / 规则），
@@ -78,9 +78,9 @@ Use this tool proactively in these scenarios:
 2. Non-trivial and complex tasks — Tasks that require careful planning or multiple operations
 3. User explicitly requests todo list — When the user directly asks you to use the todo list
 4. User provides multiple tasks — When users provide a list of things to be done (numbered or comma-separated)
-5. After receiving new instructions — Immediately capture user requirements as todos
+5. After receiving new instructions — Immediately capture user requirements as todos. Plan ALL tasks upfront before starting work.
 6. When you start working on a task — Mark it as in_progress BEFORE beginning work. Ideally you should only have one todo as in_progress at a time
-7. After completing a task — Mark it as completed and add any new follow-up tasks discovered during implementation
+7. After completing a task — Mark it as completed
 
 ## When NOT to Use This Tool
 
@@ -90,6 +90,7 @@ Skip using this tool when:
 2. The task is trivial and tracking it provides no organizational benefit
 3. The task can be completed in less than 3 trivial steps
 4. The task is purely conversational or informational
+5. You already have a todo list — do NOT add new items to an existing list. Instead, update status of existing items. New items should only be created during the initial planning phase.
 
 NOTE that you should not use this tool if there is only one trivial task to do. In this case you are better off just doing the task directly.
 
@@ -167,8 +168,7 @@ Tasks not mentioned remain unchanged (no accidental deletion).
 
 3. **Task Completion Requirements**:
    - ONLY mark a task as completed when you have FULLY accomplished it
-   - If you encounter errors, blockers, or cannot finish, keep the task as in_progress
-   - When blocked, create a new task describing what needs to be resolved
+   - If you encounter errors, blockers, or cannot finish, keep the task as in_progress and report the blocker to the user. Do NOT create a new task for the blocker unless it is a genuinely unforeseeable issue that requires independent tracking.
    - Never mark a task as completed if:
      - Tests are failing
      - Implementation is partial

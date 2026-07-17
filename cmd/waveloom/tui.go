@@ -241,8 +241,8 @@ When you spawn a subagent via the ` + "`agent`" + ` tool to work on a todo list 
 ### On subagent failure
 
 If a subagent encounters an unrecoverable error, do NOT leave it stuck at ` + "`in_progress`" + `. Either:
-- Create a new todo item describing the blocker, then mark the failed item as ` + "`completed`" + ` with a note
-- Or revert the item to ` + "`pending`" + ` and add a description explaining what went wrong`
+- Report the blocker to the user and revert the task to ` + "`pending`" + ` with a description explaining what went wrong
+- Or mark the failed item as ` + "`completed`" + ` with a note explaining the failure`
 
 // ---------------------------------------------------------------------------
 // 自定义消息类型
