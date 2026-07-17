@@ -370,7 +370,11 @@ func (s *patchScanner) parseSwapOp(line string, lineNum int) (Op, error) {
 
 	var body []string
 	if hasBody {
-		body = s.readBody()
+		var err error
+		body, err = s.readBody()
+		if err != nil {
+			return Op{}, err
+		}
 	}
 
 	return Op{Kind: OpSWAP, LineStart: start, LineEnd: end, Body: body}, nil
@@ -402,14 +406,20 @@ func (s *patchScanner) parseInsOp(line string, position string, lineNum int) (Op
 	}
 
 	s.pos++ // consume op header
-	body := s.readBody()
+	body, err := s.readBody()
+	if err != nil {
+		return Op{}, err
+	}
 
 	return Op{Kind: OpINS, Position: position, RefLine: n, Body: body}, nil
 }
 
 func (s *patchScanner) parseInsHeadTailOp(line string, position string, lineNum int) (Op, error) {
 	s.pos++ // consume op header
-	body := s.readBody()
+	body, err := s.readBody()
+	if err != nil {
+		return Op{}, err
+	}
 	return Op{Kind: OpINS, Position: position, Body: body}, nil
 }
 
@@ -427,10 +437,33 @@ func (s *patchScanner) parseMvOp(line string, lineNum int) (Op, error) {
 	return Op{Kind: OpMV, DestPath: rest}, nil
 }
 
-// readBody 读取以 + 开头的 body 行，返回去除前缀后的行列表（nil 表示无 body 行）。
+// bodyTerminators 定义 body 块的合法终止行前缀（大小写不敏感）。
+var bodyTerminators = []string{
+	"SWAP ", "DEL ", "INS.PRE ", "INS.POST ", "INS.HEAD", "INS.TAIL",
+	"REM", "MV ",
+}
+
+// isBodyTerminator 判断行是否为 body 块的合法终止符（操作头/段头/结束标记）。
+func isBodyTerminator(line string) bool {
+	upper := strings.ToUpper(strings.TrimSpace(line))
+	for _, prefix := range bodyTerminators {
+		if strings.HasPrefix(upper, prefix) {
+			return true
+		}
+	}
+	// 段头 [PATH#TAG] 或结束标记 *** End Patch
+	if strings.HasPrefix(upper, "[") || strings.HasPrefix(upper, "***") {
+		return true
+	}
+	return false
+}
+
+// readBody 读取以 + 开头的 body 行，返回去除前缀后的行列表和可能的错误。
 // \+ 开头的行会被转义：去掉反斜杠，保留后面的 + 作为字面量内容。
 // 容忍 LLM 在 + 前加空白字符，跳过 body 内部的空行。
-func (s *patchScanner) readBody() []string {
+// 当遇到不以 + 开头的非空行时：若该行不属于合法终止符则返回错误，
+// 提示 body 行必须以 + 开头；否则正常终止。
+func (s *patchScanner) readBody() ([]string, error) {
 	var bodyLines []string
 	for s.pos < len(s.lines) {
 		raw := s.rawLine()
@@ -452,10 +485,17 @@ func (s *patchScanner) readBody() []string {
 			bodyLines = append(bodyLines, content)
 			s.pos++
 		} else {
+			// 不以 + 开头 → 判断是正常终止还是 LLM 遗漏 + 前缀
+			if len(bodyLines) == 0 && !isBodyTerminator(trimmed) {
+				return nil, &ParseError{
+					Line: s.currentLine(),
+					Msg:  fmt.Sprintf("body lines must start with '+', got: %q", trimmed),
+				}
+			}
 			break
 		}
 	}
-	return bodyLines
+	return bodyLines, nil
 }
 
 // parseLineRange 解析 "N.=M" 或 "N" 行号格式。
