@@ -435,6 +435,65 @@ func TestParsePatchSyntaxError(t *testing.T) {
 	}
 }
 
+// TestParsePatchBodyMissingPlus 验证 body 行缺少 + 前缀时返回清晰错误，
+// 而不是静默丢弃内容或报告混淆的 "unknown operation"。
+func TestParsePatchBodyMissingPlus(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   string
+		wantMsg string
+	}{
+		{
+			name:    "SWAP body line missing +",
+			input:   "*** Begin Patch\n[src/main.go#A1B2]\nSWAP 1.=1:\n    fmt.Println(\"hello\")\n*** End Patch",
+			wantMsg: `body lines must start with '+'`,
+		},
+		{
+			name:    "INS.PRE body line missing +",
+			input:   "*** Begin Patch\n[src/main.go#A1B2]\nINS.PRE 3:\n    // comment\n*** End Patch",
+			wantMsg: `body lines must start with '+'`,
+		},
+		{
+			name:    "INS.HEAD body line missing +",
+			input:   "*** Begin Patch\n[src/main.go#A1B2]\nINS.HEAD:\npackage main\n*** End Patch",
+			wantMsg: `body lines must start with '+'`,
+		},
+		{
+			name:    "INS.TAIL body line missing +",
+			input:   "*** Begin Patch\n[src/main.go#A1B2]\nINS.TAIL:\n// EOF\n*** End Patch",
+			wantMsg: `body lines must start with '+'`,
+		},
+		{
+			name:  "body followed by next op still works (no false positive)",
+			input: "*** Begin Patch\n[src/main.go#A1B2]\nSWAP 1.=1:\n+line1\nINS.POST 2:\n+line2\n*** End Patch",
+			// 应该成功解析，无错误
+		},
+		{
+			name:  "SWAP without body (no colon) still works",
+			input: "*** Begin Patch\n[src/main.go#A1B2]\nDEL 1\nINS.HEAD:\n+new line\n*** End Patch",
+			// DEL without body, INS.HEAD with valid body — 应该成功解析
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := ParsePatch(tt.input)
+			if tt.wantMsg != "" {
+				if err == nil {
+					t.Fatalf("expected error containing %q, got nil", tt.wantMsg)
+				}
+				if !strings.Contains(err.Error(), tt.wantMsg) {
+					t.Errorf("expected error containing %q, got: %v", tt.wantMsg, err)
+				}
+			} else {
+				if err != nil {
+					t.Errorf("unexpected error: %v", err)
+				}
+			}
+		})
+	}
+}
+
 // ---------------------------------------------------------------------------
 // 应用测试
 // ---------------------------------------------------------------------------
