@@ -673,6 +673,30 @@ func TestShell_ExecuteStreaming_Basic(t *testing.T) {
 	}
 }
 
+// REGRESSION: ExecuteStreaming 文件 FD 模式下输出重复。
+// 根因：pollOutputFile 通过 emitChunk 将增量内容写入 outputBuf，
+// 命令结束后又 os.ReadFile 读取完整文件，二者拼接导致输出翻倍。
+// 修复：文件 FD 模式直接使用 ReadFile 结果，不再拼接 outputBuf。
+func TestRegression_ExecuteStreaming_NoDuplicateContent(t *testing.T) {
+	skipOnWindows(t)
+	s := &Shell{AllowBg: true}
+	ctx := context.Background()
+	result, err := s.ExecuteStreaming(ctx, ShellParams{
+		Command: "echo hello",
+	}, func(chunk string) {})
+	if err != nil {
+		t.Fatalf("ExecuteStreaming error: %v", err)
+	}
+	if result == nil {
+		t.Fatal("result is nil")
+	}
+	// "hello" 应该只在格式化输出中出现一次（排除缩进空白）
+	count := strings.Count(strings.TrimSpace(result.Content), "hello")
+	if count != 1 {
+		t.Errorf("expected 'hello' to appear once in content, got %d times\nContent:\n%s", count, result.Content)
+	}
+}
+
 func TestShell_ExecuteStreaming_Error(t *testing.T) {
 	s := &Shell{AllowBg: true}
 	ctx := context.Background()
