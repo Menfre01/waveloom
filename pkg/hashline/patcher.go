@@ -475,15 +475,23 @@ func (s *patchScanner) readBody() ([]string, error) {
 			continue
 		}
 
-		if strings.HasPrefix(trimmed, `\+`) {
-			// 转义：\+ 开头 → 字面量 + 开头的内容
-			content := trimmed[1:] // 去掉 \，保留 + 及后续内容
-			bodyLines = append(bodyLines, content)
-			s.pos++
-		} else if strings.HasPrefix(trimmed, "+") {
-			content := trimmed[1:]
-			bodyLines = append(bodyLines, content)
-			s.pos++
+	if strings.HasPrefix(trimmed, `\+`) {
+		// 转义：\+ 开头 → 字面量 + 开头的内容
+		content := trimmed[1:] // 去掉 \，保留 + 及后续内容
+		bodyLines = append(bodyLines, content)
+		s.pos++
+	} else if strings.HasPrefix(trimmed, "+") {
+		content := trimmed[1:]
+		// + 直接后接操作头关键词（如 +SWAP / +DEL）→ LLM 误给操作行加了 +
+		// 仅当 + 后面不是空白时触发：+ SWAP 是合法 body（前导空格），+SWAP 是失误
+		if !strings.HasPrefix(content, " ") && !strings.HasPrefix(content, "\t") && isBodyTerminator(content) {
+			return nil, &ParseError{
+				Line: s.currentLine(),
+				Msg:  fmt.Sprintf("operation lines must NOT start with '+', got: %q", trimmed),
+			}
+		}
+		bodyLines = append(bodyLines, content)
+		s.pos++
 		} else {
 			// 不以 + 开头 → 判断是正常终止还是 LLM 遗漏 + 前缀
 			if len(bodyLines) == 0 && !isBodyTerminator(trimmed) {
