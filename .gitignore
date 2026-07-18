@@ -50,3 +50,4 @@ cmd/benchmark-cache/
 cmd/cache-proxy/
 /benchmark-cache
 /cache-proxy
+**/..jsonl

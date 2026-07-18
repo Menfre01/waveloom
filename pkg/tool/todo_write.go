@@ -61,7 +61,7 @@ func (t *TodoWrite) ConcurrentSafe() bool          { return false }
 func (t *TodoWrite) RequiresUserInteraction() bool { return false }
 
 func (t *TodoWrite) Description() string {
-	return "Task tracker for complex multi-step work. Rules: see system prompt ## Todo List."
+	return "Task tracker for complex multi-step work. Create and manage a structured task list to track progress, organize tasks, and demonstrate thoroughness. Rules: see system prompt ## Todo List."
 }
 
 // Prompt 返回 todo_write 的完整使用指南（When to Use / NOT / 示例 / 规则），
