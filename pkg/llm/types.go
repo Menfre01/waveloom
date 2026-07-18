@@ -27,6 +27,9 @@ type Message struct {
 	ToolCallID       string     `json:"tool_call_id,omitempty"`       // tool 角色时关联的工具调用 ID
 	ToolCalls        []ToolCall `json:"tool_calls,omitempty"`         // assistant 角色时可能包含的工具调用
 	Name             string     `json:"name,omitempty"`               // 可选，工具名（tool 角色时）
+	Model            string     `json:"model,omitempty"`              // assistant: 实际使用的模型名
+	FinishReason     string     `json:"stop_reason,omitempty"`        // assistant: API 返回的 finish_reason
+	Usage            *UsageInfo `json:"usage,omitempty"`              // assistant: token 用量
 }
 
 // ToolCall 表示 LLM 发起的一次工具调用请求。
