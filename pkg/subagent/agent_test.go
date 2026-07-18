@@ -1066,7 +1066,7 @@ func TestFormatSubagentEnvironment_WithOSAndShell(t *testing.T) {
 	ctx = agentloop.WithParentSystemPrompt(ctx, parentSP)
 
 	r := tool.NewRegistry()
-	r.Register(tool.Wrap(&tool.ReadFile{}))
+	r.Register(tool.Wrap(&tool.ReadFileHashline{}))
 	r.Register(tool.Wrap(&tool.Shell{AllowBg: false}))
 
 	got := formatSubagentEnvironment(ctx, r)
