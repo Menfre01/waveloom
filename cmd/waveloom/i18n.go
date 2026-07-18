@@ -436,6 +436,7 @@ var zhCN = Messages{
   --context-limit N       上下文窗口 token 上限，支持 1M / 200k / 1048576 等格式（默认: 1M）
   --bypass-permissions    跳过权限检查（CI/测试）
   --tool-timeout D         单个工具执行超时（Go Duration 格式，如 10m / 600s / 0s，0 禁用，默认 10m）
+  --provider NAME         LLM Provider（kimi / deepseek / openai），覆盖配置文件并查找 profiles 中匹配配置
   --resume ID             恢复指定 session ID 的对话
   --continue              恢复最近一个 session 的对话
 
@@ -445,7 +446,8 @@ var zhCN = Messages{
   --settings PATH            显式指定项目配置文件
 
   llm.api_key              API Key（必填；为空时回退 LLM_API_KEY 环境变量）
-  llm.provider              Provider（openai / deepseek）
+  llm.provider              Provider（kimi / deepseek / openai，默认 deepseek）
+  llm.profiles              多 Provider 配置（以 provider 名为键；当前 provider 的 api_key / model / base_url 覆盖顶层同名字段）
   llm.model                 模型名称
   llm.base_url              API 端点
   llm.timeout               请求超时（如 "600s"）
@@ -710,6 +712,7 @@ Options:
   --context-limit N       Context window token limit, supports 1M / 200k / 1048576 etc. (default: 1M)
   --bypass-permissions    Skip permission checks (CI/testing)
   --tool-timeout D         Single tool execution timeout (Go Duration format, e.g. 10m / 600s / 0s, 0 disables, default 10m)
+  --provider NAME         LLM Provider (kimi / deepseek / openai), overrides config file and looks up matching entry in profiles
   --resume ID             Resume session by ID
   --continue              Resume the most recent session
 
@@ -719,7 +722,8 @@ Configuration (settings.json):
   --settings PATH            Explicitly specify project config file
 
   llm.api_key              API key (required; falls back to LLM_API_KEY env var)
-  llm.provider              Provider (openai / deepseek)
+  llm.provider              Provider (kimi / deepseek / openai, default: deepseek)
+  llm.profiles              Per-provider configs keyed by provider name; active provider's api_key / model / base_url override top-level fields
   llm.model                 Model name
   llm.base_url              API endpoint
   llm.timeout               Request timeout (e.g. "600s")

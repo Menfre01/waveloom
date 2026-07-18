@@ -647,6 +647,7 @@ func TestMergeLLMSettings(t *testing.T) {
 			APIKey:   "override-key",
 			Provider: "deepseek",
 			Model:    "deepseek-v4-flash",
+			BaseURL:  "https://override.example.com",
 		}
 
 		got := MergeLLMSettings(base, override)
@@ -659,10 +660,11 @@ func TestMergeLLMSettings(t *testing.T) {
 		if got.Model != "deepseek-v4-flash" {
 			t.Errorf("Model = %q, want deepseek-v4-flash", got.Model)
 		}
-		// unscaled base fields retained
-		if got.BaseURL != "https://base.example.com" {
-			t.Errorf("BaseURL = %q, want https://base.example.com", got.BaseURL)
+		// Provider 切换：BaseURL 来自 override，不从 base 继承
+		if got.BaseURL != "https://override.example.com" {
+			t.Errorf("BaseURL = %q, want https://override.example.com", got.BaseURL)
 		}
+		// Provider 无关字段：Timeout 从 base 继承
 		if got.Timeout != "60s" {
 			t.Errorf("Timeout = %q, want 60s", got.Timeout)
 		}
@@ -769,8 +771,330 @@ func TestMergeLLMSettings(t *testing.T) {
 			t.Errorf("ExtraParams[key] = %v, want val", got.ExtraParams["key"])
 		}
 	})
+
+	t.Run("provider change drops base extra_params", func(t *testing.T) {
+		base := &LLMSettings{
+			Provider:    "deepseek",
+			ExtraParams: map[string]any{"thinking": map[string]any{"type": "enabled"}},
+		}
+		override := &LLMSettings{
+			Provider:    "kimi",
+			ExtraParams: map[string]any{"reasoning_effort": "max"},
+		}
+
+		got := MergeLLMSettings(base, override)
+		if got.Provider != "kimi" {
+			t.Errorf("Provider = %q, want kimi", got.Provider)
+		}
+		// base 的 ExtraParams（thinking）在 Provider 切换后应被清空
+		if _, exists := got.ExtraParams["thinking"]; exists {
+			t.Error("thinking from base should be dropped when provider changes")
+		}
+		// override 的 ExtraParams 应保留
+		if got.ExtraParams["reasoning_effort"] != "max" {
+			t.Errorf("reasoning_effort = %v, want max", got.ExtraParams["reasoning_effort"])
+		}
+	})
+
+	t.Run("same provider preserves base extra_params", func(t *testing.T) {
+		base := &LLMSettings{
+			Provider:    "deepseek",
+			ExtraParams: map[string]any{"thinking": map[string]any{"type": "enabled"}},
+		}
+		override := &LLMSettings{
+			Model:       "deepseek-v4-flash",
+			ExtraParams: map[string]any{"reasoning_effort": "max"},
+		}
+
+		got := MergeLLMSettings(base, override)
+		// 同 Provider 不切换，base ExtraParams 应保留
+		if _, exists := got.ExtraParams["thinking"]; !exists {
+			t.Error("thinking from base should be preserved when provider unchanged")
+		}
+		// override ExtraParams 合并覆盖
+		if got.ExtraParams["reasoning_effort"] != "max" {
+			t.Errorf("reasoning_effort = %v, want max", got.ExtraParams["reasoning_effort"])
+		}
+	})
+
+	t.Run("profiles merge override covers base", func(t *testing.T) {
+		base := &LLMSettings{
+			Profiles: map[string]*LLMSettings{
+				"deepseek": {Model: "base-ds-model"},
+				"kimi":     {Model: "base-kimi-model"},
+			},
+		}
+		override := &LLMSettings{
+			Profiles: map[string]*LLMSettings{
+				"deepseek": {Model: "override-ds-model"},
+				"openai":   {Model: "override-oai-model"},
+			},
+		}
+
+		got := MergeLLMSettings(base, override)
+		if got.Profiles == nil {
+			t.Fatal("Profiles should not be nil")
+		}
+		// override 覆盖 base 同名
+		if got.Profiles["deepseek"].Model != "override-ds-model" {
+			t.Errorf("deepseek.Model = %q, want override-ds-model", got.Profiles["deepseek"].Model)
+		}
+		// base 独有的保留
+		if got.Profiles["kimi"].Model != "base-kimi-model" {
+			t.Errorf("kimi.Model = %q, want base-kimi-model", got.Profiles["kimi"].Model)
+		}
+		// override 独有的加入
+		if got.Profiles["openai"].Model != "override-oai-model" {
+			t.Errorf("openai.Model = %q, want override-oai-model", got.Profiles["openai"].Model)
+		}
+	})
+
+	t.Run("profiles nil base", func(t *testing.T) {
+		override := &LLMSettings{
+			Profiles: map[string]*LLMSettings{
+				"kimi": {Model: "kimi-k3"},
+			},
+		}
+		got := MergeLLMSettings(nil, override)
+		if got.Profiles["kimi"].Model != "kimi-k3" {
+			t.Errorf("kimi.Model = %q, want kimi-k3", got.Profiles["kimi"].Model)
+		}
+	})
 }
 
+
+func TestResolveProfile(t *testing.T) {
+	t.Run("profiles nil no-op", func(t *testing.T) {
+		s := &LLMSettings{Provider: "kimi", Model: "keep-me"}
+		s.ResolveProfile()
+		if s.Model != "keep-me" {
+			t.Errorf("Model = %q, want keep-me", s.Model)
+		}
+	})
+
+	t.Run("no matching provider no-op", func(t *testing.T) {
+		s := &LLMSettings{
+			Provider: "kimi",
+			Model:    "keep-me",
+			Profiles: map[string]*LLMSettings{
+				"deepseek": {Model: "ds-model"},
+			},
+		}
+		s.ResolveProfile()
+		if s.Model != "keep-me" {
+			t.Errorf("Model = %q, want keep-me (no matching profile)", s.Model)
+		}
+	})
+
+	t.Run("fills empty fields from profile", func(t *testing.T) {
+		s := &LLMSettings{
+			Provider: "kimi",
+			Profiles: map[string]*LLMSettings{
+				"kimi": {Model: "kimi-k3", BaseURL: "https://api.moonshot.cn/v1"},
+			},
+		}
+		s.ResolveProfile()
+		if s.Model != "kimi-k3" {
+			t.Errorf("Model = %q, want kimi-k3", s.Model)
+		}
+		if s.BaseURL != "https://api.moonshot.cn/v1" {
+			t.Errorf("BaseURL = %q", s.BaseURL)
+		}
+	})
+
+	t.Run("profile overrides already-set fields", func(t *testing.T) {
+		s := &LLMSettings{
+			Provider: "kimi",
+			Model:    "stale-model",
+			Profiles: map[string]*LLMSettings{
+				"kimi": {Model: "kimi-k3", SubModel: "kimi-flash"},
+			},
+		}
+		s.ResolveProfile()
+		if s.Model != "kimi-k3" {
+			t.Errorf("Model = %q, want kimi-k3 (profile overrides top-level)", s.Model)
+		}
+		if s.SubModel != "kimi-flash" {
+			t.Errorf("SubModel = %q, want kimi-flash", s.SubModel)
+		}
+	})
+
+	t.Run("empty profile values do not overwrite", func(t *testing.T) {
+		s := &LLMSettings{
+			Provider: "kimi",
+			Model:    "existing-model",
+			Profiles: map[string]*LLMSettings{
+				"kimi": {Model: ""},
+			},
+		}
+		s.ResolveProfile()
+		if s.Model != "existing-model" {
+			t.Errorf("Model = %q, want existing-model (empty profile field should not overwrite)", s.Model)
+		}
+	})
+}
+
+// REGRESSION: 切换 provider 后顶层残留的上一 provider 的 model/base_url/api_key
+// 必须被目标 profile 覆盖。旧实现顶层优先（仅顶层为空才从 profile 填充），
+// 导致携带 kimi 的 base_url 请求 deepseek 端点
+// （https://api.moonshot.cn/v1/v1/chat/completions）返回 404。
+func TestRegression_ProfileOverridesStaleTopLevelOnProviderSwitch(t *testing.T) {
+	t.Run("resolve profile on single settings", func(t *testing.T) {
+		s := &LLMSettings{
+			Provider: "deepseek", // 从 kimi 切换而来，顶层字段残留 kimi 配置
+			APIKey:   "sk-kimi-key",
+			Model:    "kimi-k3",
+			BaseURL:  "https://api.moonshot.cn/v1",
+			Profiles: map[string]*LLMSettings{
+				"kimi": {
+					APIKey:  "sk-kimi-key",
+					Model:   "kimi-k3",
+					BaseURL: "https://api.moonshot.cn/v1",
+				},
+				"deepseek": {
+					APIKey:  "sk-deepseek-key",
+					Model:   "deepseek-v4-pro",
+					BaseURL: "https://api.deepseek.com",
+				},
+			},
+		}
+		s.ResolveProfile()
+		if s.APIKey != "sk-deepseek-key" {
+			t.Errorf("APIKey = %q, want sk-deepseek-key", s.APIKey)
+		}
+		if s.Model != "deepseek-v4-pro" {
+			t.Errorf("Model = %q, want deepseek-v4-pro", s.Model)
+		}
+		if s.BaseURL != "https://api.deepseek.com" {
+			t.Errorf("BaseURL = %q, want https://api.deepseek.com", s.BaseURL)
+		}
+	})
+
+	t.Run("merged client uses profile of switched provider", func(t *testing.T) {
+		dir := t.TempDir()
+		globalPath := filepath.Join(dir, "global.json")
+		projectPath := filepath.Join(dir, "project.json")
+
+		global := `{"llm": {"api_key": "sk-kimi-key", "provider": "kimi", "model": "kimi-k3", "base_url": "https://api.moonshot.cn/v1"}}`
+		project := `{"llm": {"provider": "deepseek", "profiles": {"deepseek": {"api_key": "sk-deepseek-key", "model": "deepseek-v4-pro", "base_url": "https://api.deepseek.com"}}}}`
+		if err := os.WriteFile(globalPath, []byte(global), 0644); err != nil {
+			t.Fatalf("WriteFile global: %v", err)
+		}
+		if err := os.WriteFile(projectPath, []byte(project), 0644); err != nil {
+			t.Fatalf("WriteFile project: %v", err)
+		}
+
+		c, err := NewClientFromMergedSettings(globalPath, projectPath)
+		if err != nil {
+			t.Fatalf("NewClientFromMergedSettings: %v", err)
+		}
+		cl := c.(*client)
+		if cl.config.Provider != ProviderDeepSeek {
+			t.Errorf("Provider = %q, want deepseek", cl.config.Provider)
+		}
+		if cl.config.APIKey != "sk-deepseek-key" {
+			t.Errorf("APIKey = %q, want sk-deepseek-key", cl.config.APIKey)
+		}
+		if cl.config.Model != "deepseek-v4-pro" {
+			t.Errorf("Model = %q, want deepseek-v4-pro", cl.config.Model)
+		}
+		if cl.config.BaseURL != "https://api.deepseek.com" {
+			t.Errorf("BaseURL = %q, want https://api.deepseek.com", cl.config.BaseURL)
+		}
+	})
+}
+
+// REGRESSION: /model 显式切换模型必须同步写入当前 provider 的 profile。
+// 否则重启后 ResolveProfile 用 profile 旧值覆盖顶层，切换在重启后静默回退。
+func TestRegression_SetModelSyncsProfile(t *testing.T) {
+	s := &LLMSettings{
+		Provider: "deepseek",
+		Model:    "deepseek-v4-pro",
+		Profiles: map[string]*LLMSettings{
+			"deepseek": {Model: "deepseek-v4-pro"},
+		},
+	}
+	s.SetModel("deepseek-v4-flash")
+	if s.Model != "deepseek-v4-flash" {
+		t.Errorf("Model = %q, want deepseek-v4-flash", s.Model)
+	}
+	if s.Profiles["deepseek"].Model != "deepseek-v4-flash" {
+		t.Errorf("profile Model = %q, want deepseek-v4-flash", s.Profiles["deepseek"].Model)
+	}
+	// 模拟重启后的解析：显式选择的模型不被 profile 覆盖回退
+	s.ResolveProfile()
+	if s.Model != "deepseek-v4-flash" {
+		t.Errorf("after ResolveProfile Model = %q, want deepseek-v4-flash", s.Model)
+	}
+
+	// 无匹配 profile 时仅设置顶层，不得 panic
+	s2 := &LLMSettings{Provider: "kimi"}
+	s2.SetModel("kimi-k3")
+	if s2.Model != "kimi-k3" {
+		t.Errorf("Model = %q, want kimi-k3", s2.Model)
+	}
+}
+
+// REGRESSION: provider 切换时不继承 base 的 APIKey。
+// 上一 provider 的凭据发往新 provider 既是 401，也是凭据跨域泄露。
+func TestRegression_ProviderSwitchDoesNotInheritAPIKey(t *testing.T) {
+	base := &LLMSettings{Provider: "kimi", APIKey: "sk-kimi-key", Timeout: "600s"}
+	override := &LLMSettings{Provider: "deepseek"}
+	got := MergeLLMSettings(base, override)
+	if got.APIKey != "" {
+		t.Errorf("APIKey = %q, want empty (must not inherit previous provider's key)", got.APIKey)
+	}
+	// Provider 无关字段仍继承
+	if got.Timeout != "600s" {
+		t.Errorf("Timeout = %q, want 600s", got.Timeout)
+	}
+}
+
+// REGRESSION: 旧格式（无 profiles）下顶层字段必须保持可用，不破坏兼容性。
+func TestRegression_OldFormatWithoutProfilesUsesTopLevel(t *testing.T) {
+	s := &LLMSettings{
+		Provider: "deepseek",
+		APIKey:   "sk-old",
+		Model:    "deepseek-old-model",
+		BaseURL:  "https://api.deepseek.com",
+	}
+	s.ResolveProfile()
+	if s.APIKey != "sk-old" {
+		t.Errorf("APIKey = %q, want sk-old", s.APIKey)
+	}
+	if s.Model != "deepseek-old-model" {
+		t.Errorf("Model = %q, want deepseek-old-model", s.Model)
+	}
+	if s.BaseURL != "https://api.deepseek.com" {
+		t.Errorf("BaseURL = %q, want https://api.deepseek.com", s.BaseURL)
+	}
+}
+
+// REGRESSION: 当前 provider 的 profile 只提供部分字段时，其余字段 fallback 到顶层。
+// 确保用户可以在顶层放一个通用 key，profile 只放 model 等差异字段。
+func TestRegression_ProfilePartialFieldsFallbackToTopLevel(t *testing.T) {
+	s := &LLMSettings{
+		Provider: "deepseek",
+		APIKey:   "sk-top",
+		Model:    "deepseek-top",
+		BaseURL:  "https://top.example.com",
+		Profiles: map[string]*LLMSettings{
+			"deepseek": {Model: "deepseek-profile"},
+		},
+	}
+	s.ResolveProfile()
+	// profile 提供的 Model 覆盖顶层
+	if s.Model != "deepseek-profile" {
+		t.Errorf("Model = %q, want deepseek-profile", s.Model)
+	}
+	// profile 未提供的字段保留顶层 fallback
+	if s.APIKey != "sk-top" {
+		t.Errorf("APIKey = %q, want sk-top (should fallback to top-level)", s.APIKey)
+	}
+	if s.BaseURL != "https://top.example.com" {
+		t.Errorf("BaseURL = %q, want https://top.example.com (should fallback to top-level)", s.BaseURL)
+	}
+}
 func TestNewClientFromMergedSettings(t *testing.T) {
 	dir := t.TempDir()
 

@@ -222,11 +222,10 @@ func (m *setupModel) handleStepComplete() {
 			m.state.model = "deepseek-v4-pro"
 			m.state.subModel = "deepseek-v4-flash"
 			m.state.baseURL = "https://api.deepseek.com"
-		default:
-			// 自定义 provider — 模型和 baseURL 由用户自行填写
-			m.state.model = ""
-			m.state.subModel = ""
-			m.state.baseURL = ""
+		case "kimi":
+			m.state.model = "kimi-k3"
+			m.state.subModel = "kimi-k2.7-code-highspeed"
+			m.state.baseURL = "https://api.moonshot.cn/v1"
 		}
 		m.step++
 	case 3:
@@ -256,6 +255,7 @@ func (m *setupModel) handleStepComplete() {
 		if choice == "save" {
 			if err := validateAPIKey(m.state.prov, m.state.apiKey, m.state.baseURL); err != nil {
 				m.state.apiKeyError = fmt.Sprintf(m.state.lc.SetupAPIKeyInvalidFmt, err)
+				m.state.apiKey = "" // 清空旧值，避免密码模式下用户看不到旧值导致重新拼接
 				m.step = 3
 				return
 			}
@@ -319,8 +319,8 @@ func (m *setupModel) buildForm() {
 			Title(fmt.Sprintf(lc.SetupStepProvider, 3, totalSteps)).
 			Options(
 				huh.NewOption("DeepSeek  (Recommended)", "deepseek"),
+				huh.NewOption("Kimi", "kimi"),
 				huh.NewOption("OpenAI", "openai"),
-				huh.NewOption(lc.SetupProviderOther, "other"),
 			).
 			Value(&provVal)
 		m.form = huh.NewForm(huh.NewGroup(sel)).
@@ -359,6 +359,9 @@ func (m *setupModel) buildForm() {
 		case "openai":
 			desc = "gpt-4o (Recommended) / gpt-4o-mini"
 			subDesc = fmt.Sprintf(lc.SetupSubModelDesc, "gpt-4o-mini")
+		case "kimi":
+			desc = "kimi-k3 (Recommended) / kimi-k2.7-code-highspeed"
+			subDesc = fmt.Sprintf(lc.SetupSubModelDesc, "kimi-k2.7-code-highspeed")
 		}
 		modelInp := huh.NewInput().
 			Key("model").
@@ -460,8 +463,22 @@ func renderSummary(s *setupState) string {
 }
 
 // ---------------------------------------------------------------------------
-// saveAndFinish
 // ---------------------------------------------------------------------------
+
+func (m *setupModel) buildExtraParams() map[string]any {
+	switch m.state.prov {
+	case "deepseek":
+		return map[string]any{
+			"thinking":         map[string]any{"type": "enabled"},
+			"reasoning_effort": "max",
+		}
+	case "kimi":
+		return map[string]any{
+			"reasoning_effort": "max",
+		}
+	}
+	return nil
+}
 
 func (m *setupModel) saveAndFinish() {
 	homeDir, err := os.UserHomeDir()
@@ -472,21 +489,26 @@ func (m *setupModel) saveAndFinish() {
 	m.state.configPath = configPath
 	_ = os.MkdirAll(filepath.Dir(configPath), 0o755)
 
-	settings := &llm.LLMSettings{
-		APIKey:   m.state.apiKey,
-		Provider: m.state.prov,
-		Model:    m.state.model,
-		SubModel: m.state.subModel,
-		BaseURL:  m.state.baseURL,
-		Timeout:  "600s",
+	// 加载已有配置（如果存在，保留其他 profile）
+	existing, _ := llm.LoadSettingsIfExists(configPath)
+	if existing == nil {
+		existing = &llm.LLMSettings{Timeout: "600s"}
 	}
-	if m.state.prov == "deepseek" {
-		settings.ExtraParams = map[string]any{
-			"thinking":         map[string]any{"type": "enabled"},
-			"reasoning_effort": "max",
-		}
+	if existing.Profiles == nil {
+		existing.Profiles = make(map[string]*llm.LLMSettings)
 	}
-	_ = writeFullSetup(configPath, settings, m.state.locale, m.state.theme)
+
+	// 写入当前 provider 的 profile
+	existing.Profiles[m.state.prov] = &llm.LLMSettings{
+		APIKey:      m.state.apiKey,
+		Model:       m.state.model,
+		SubModel:    m.state.subModel,
+		BaseURL:     m.state.baseURL,
+		ExtraParams: m.buildExtraParams(),
+	}
+	existing.Provider = m.state.prov
+
+	_ = writeFullSetup(configPath, existing, m.state.locale, m.state.theme)
 }
 
 // ---------------------------------------------------------------------------

@@ -498,10 +498,10 @@ func TestValidateToolNamesEmpty(t *testing.T) {
 }
 
 func TestValidateToolNamesTooLong(t *testing.T) {
-	longName := strings.Repeat("a", 65)
+	longName := strings.Repeat("a", 64)
 	err := validateToolNames([]ToolSpec{{Name: longName}})
 	if err == nil {
-		t.Error("expected error for tool name > 64 chars")
+		t.Error("expected error for tool name > 63 chars")
 	}
 }
 
@@ -936,10 +936,31 @@ func TestNewClientExplicitOpenAIProvider(t *testing.T) {
 // --- ValidateToolNames Edge Cases ---
 
 func TestValidateToolNamesNameAtMaxLength(t *testing.T) {
-	name := strings.Repeat("a", 64)
+	name := strings.Repeat("a", 63)
 	err := validateToolNames([]ToolSpec{{Name: name}})
 	if err != nil {
-		t.Errorf("validateToolNames with 64-char name should pass, got: %v", err)
+		t.Errorf("validateToolNames with 63-char name should pass, got: %v", err)
+	}
+}
+
+func TestValidateToolNamesTooShort(t *testing.T) {
+	err := validateToolNames([]ToolSpec{{Name: "ab"}})
+	if err == nil {
+		t.Error("expected error for tool name < 3 chars")
+	}
+}
+
+func TestValidateToolNamesStartsWithDigit(t *testing.T) {
+	err := validateToolNames([]ToolSpec{{Name: "1tool"}})
+	if err == nil {
+		t.Error("expected error for tool name starting with digit")
+	}
+}
+
+func TestValidateToolNamesStartsWithHyphen(t *testing.T) {
+	err := validateToolNames([]ToolSpec{{Name: "-tool"}})
+	if err == nil {
+		t.Error("expected error for tool name starting with hyphen")
 	}
 }
 
