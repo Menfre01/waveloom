@@ -40,8 +40,8 @@ type LineMapping struct {
 //
 // 使用 LCS 算法找出快照和当前文件的对应行，然后重映射操作行号。
 func RecoverOps(snapshot, current string, ops []Op) *RecoverResult {
-	snapLines := splitLinesStr(snapshot)
-	currLines := splitLinesStr(current)
+	snapLines := stripTrailingBlankLines(splitLinesStr(snapshot))
+	currLines := stripTrailingBlankLines(splitLinesStr(current))
 
 	// 计算 LCS 对齐
 	lcs := computeLCS(snapLines, currLines)
@@ -266,6 +266,7 @@ func computeLCS(a, b []string) []lcsPair {
 }
 
 // computeFastLCS 大文件行哈希快速匹配（降级策略）。
+// 贪心匹配后过滤非单调 currIdx 以保证配对有效性。
 func computeFastLCS(a, b []string) []lcsPair {
 	// 对 b 建立行哈希 → 索引映射
 	hashToIdx := make(map[string][]int)
@@ -273,7 +274,7 @@ func computeFastLCS(a, b []string) []lcsPair {
 		hashToIdx[line] = append(hashToIdx[line], i)
 	}
 
-	// 对 a 的每行在 b 中找匹配
+	// 对 a 的每行在 b 中做贪心首次匹配
 	usedB := make(map[int]bool)
 	var pairs []lcsPair
 	for i, line := range a {
@@ -281,7 +282,6 @@ func computeFastLCS(a, b []string) []lcsPair {
 		if !ok {
 			continue
 		}
-		// 找第一个未使用的匹配
 		for _, j := range indices {
 			if !usedB[j] {
 				pairs = append(pairs, lcsPair{snapIdx: i, currIdx: j})
@@ -290,7 +290,17 @@ func computeFastLCS(a, b []string) []lcsPair {
 			}
 		}
 	}
-	return pairs
+
+	// 过滤非单调 currIdx：pairs 已按 snapIdx 升序，仅保留 currIdx 严格递增的配对
+	filtered := pairs[:0]
+	lastCurr := -1
+	for _, p := range pairs {
+		if p.currIdx > lastCurr {
+			filtered = append(filtered, p)
+			lastCurr = p.currIdx
+		}
+	}
+	return filtered
 }
 
 // buildLineMappings 从 LCS 匹配对构建行号映射。
@@ -353,6 +363,16 @@ func splitLinesStr(s string) []string {
 	lines := strings.Split(s, "\n")
 	// 去除末尾空行
 	if len(lines) > 0 && lines[len(lines)-1] == "" {
+		lines = lines[:len(lines)-1]
+	}
+	return lines
+}
+
+// stripTrailingBlankLines 去除行切片末尾的连续空行，提升 EOF 附近的 LCS 匹配鲁棒性。
+// 快照和当前文件在末尾空白行数量上的差异（如快照无尾空行、当前文件多了一个空行）
+// 可能导致 LCS 将最后的变更行误判为 MapModified 而非 MapShifted。
+func stripTrailingBlankLines(lines []string) []string {
+	for len(lines) > 0 && lines[len(lines)-1] == "" {
 		lines = lines[:len(lines)-1]
 	}
 	return lines

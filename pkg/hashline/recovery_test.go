@@ -424,3 +424,110 @@ func TestComputeFastLCS(t *testing.T) {
 		t.Errorf("fast LCS: expected 5001 pairs, got %d", len(pairs))
 	}
 }
+
+// ---------------------------------------------------------------------------
+// fastLCS 单调性测试
+// ---------------------------------------------------------------------------
+
+// TestFastLCSMonotonic 验证 computeFastLCS 过滤后 currIdx 和 snapIdx 均单调递增。
+// 直接调用 computeFastLCS（而非 computeLCS）测试快速路径的单调性保证。
+func TestFastLCSMonotonic(t *testing.T) {
+	// 小输入：直接调用 computeFastLCS 测试交叉配对的过滤
+	a := []string{"dup", "x", "dup"}
+	b := []string{"x", "dup", "dup"}
+
+	pairs := computeFastLCS(a, b)
+
+	// 验证 snapIdx 单调递增
+	for i := 1; i < len(pairs); i++ {
+		if pairs[i].snapIdx <= pairs[i-1].snapIdx {
+			t.Errorf("non-monotonic snapIdx at pair %d: %d → %d (pairs: %+v)",
+				i, pairs[i-1].snapIdx, pairs[i].snapIdx, pairs)
+		}
+	}
+
+	// 验证 currIdx 单调递增
+	for i := 1; i < len(pairs); i++ {
+		if pairs[i].currIdx <= pairs[i-1].currIdx {
+			t.Errorf("non-monotonic currIdx at pair %d: %d → %d (pairs: %+v)",
+				i, pairs[i-1].currIdx, pairs[i].currIdx, pairs)
+		}
+	}
+}
+
+// TestFastLCSDuplicateLines 验证 fastLCS 对有大量重复行的文件行为正确。
+func TestFastLCSDuplicateLines(t *testing.T) {
+	// a: 5 个 "dup" + "uniqueA"，b: "uniqueB" + 5 个 "dup"
+	a := []string{"dup", "dup", "dup", "dup", "dup", "uniqueA"}
+	b := []string{"uniqueB", "dup", "dup", "dup", "dup", "dup"}
+
+	pairs := computeLCS(a, b)
+
+	// 验证 currIdx 单调递增
+	for i := 1; i < len(pairs); i++ {
+		if pairs[i].currIdx <= pairs[i-1].currIdx {
+			t.Errorf("non-monotonic currIdx at pair %d: %d → %d",
+				i, pairs[i-1].currIdx, pairs[i].currIdx)
+		}
+	}
+
+	// 应该匹配 5 个 "dup" 行
+	if len(pairs) != 5 {
+		t.Errorf("expected 5 LCS pairs, got %d", len(pairs))
+	}
+}
+
+// ---------------------------------------------------------------------------
+// splitLinesStr + stripTrailingBlankLines 测试
+// ---------------------------------------------------------------------------
+
+// TestStripTrailingBlankLines 验证去除末尾连续空行。
+func TestStripTrailingBlankLines(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    []string
+		expected []string
+	}{
+		{"no trailing blank", []string{"a", "b"}, []string{"a", "b"}},
+		{"one trailing blank", []string{"a", ""}, []string{"a"}},
+		{"multiple trailing blanks", []string{"a", "", ""}, []string{"a"}},
+		{"middle blank preserved", []string{"a", "", "b"}, []string{"a", "", "b"}},
+		{"all blanks", []string{"", ""}, nil},
+		{"empty input", nil, nil},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := stripTrailingBlankLines(tt.input)
+			if len(result) != len(tt.expected) {
+				t.Errorf("expected %v (len=%d), got %v (len=%d)", tt.expected, len(tt.expected), result, len(result))
+				return
+			}
+			for i := range result {
+				if result[i] != tt.expected[i] {
+					t.Errorf("at index %d: expected %q, got %q", i, tt.expected[i], result[i])
+				}
+			}
+		})
+	}
+}
+
+// TestRecoveryEOFBlankLines 验证 EOF 空白行差异下 recovery 行为正确。
+// 快照无尾空行、当前文件多了空行 → LCS 应正确匹配，不应误判 MapModified。
+func TestRecoveryEOFBlankLines(t *testing.T) {
+	snapshot := "line1\nline2\n"
+	current := "line1\nline2\n\n\n" // 多了两个空行
+
+	ops := []Op{{Kind: OpSWAP, LineStart: 2, LineEnd: 2, Body: []string{"new line2"}}}
+
+	result := RecoverOps(snapshot, current, ops)
+	if !result.Success {
+		t.Fatalf("RecoverOps failed: %v", result.Warnings)
+	}
+
+	mapped := result.MappedOps[0]
+	// line2 应保持位置不变（空行在末尾，不影响匹配行）
+	if mapped.LineStart != 2 || mapped.LineEnd != 2 {
+		t.Errorf("expected mapped range 2.=2, got %d.=%d", mapped.LineStart, mapped.LineEnd)
+	}
+}

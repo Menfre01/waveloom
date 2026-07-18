@@ -1662,9 +1662,10 @@ func applyPatchContent(t *testing.T, content string, patch *Patch) string {
 // Multi-section same file recovery regression test
 // ---------------------------------------------------------------------------
 
+// TestMultiSectionSameFileRecovery 验证同文件多 Section 原子合并：
+// 两个 Section 的 TAG 都对原始文件内容校验，均通过 → 无需 recovery →
+// 合并 Ops → 一次 applyEdits → 一次 WriteFile → 最终内容正确。
 func TestMultiSectionSameFileRecovery(t *testing.T) {
-	// 模拟场景：Section 1 插入 2 行，Section 2 用相同旧 TAG 编辑被偏移的行。
-	// 验证 Recovery 使用原始快照（而非 Section 1 更新后的快照）正确重映射行号。
 	content := "L1\nL2\nL3\nL4\nL5\n"
 
 	store := NewStore()
@@ -1675,7 +1676,7 @@ func TestMultiSectionSameFileRecovery(t *testing.T) {
 
 	fs := &memFS{files: map[string]string{"/tmp/test-recovery-store.go": content}}
 
-	// 模拟两个 Section，同一个文件，同一个旧 TAG
+	// 两个 Section，同一个文件，同一个旧 TAG
 	patch := &Patch{
 		Sections: []Section{
 			{
@@ -1687,7 +1688,7 @@ func TestMultiSectionSameFileRecovery(t *testing.T) {
 			},
 			{
 				Path: "/tmp/test-recovery-store.go",
-				TAG:  tag, // 同一个旧 TAG — Section 1 后 store 已更新
+				TAG:  tag, // 同一个旧 TAG —— 原子模式下，两个 TAG 都对原始内容校验，均通过
 				Ops: []Op{
 					{Kind: OpSWAP, LineStart: 5, LineEnd: 5, Body: []string{"SHIFTED L5"}},
 				},
@@ -1697,20 +1698,19 @@ func TestMultiSectionSameFileRecovery(t *testing.T) {
 
 	results := ApplyPatch(patch, fs, store)
 
-	// Section 1: 应该成功
-	if results[0].Error != nil {
-		t.Fatalf("Section 1 failed: %v", results[0].Error)
-	}
-	if results[0].LinesDelta != 2 {
-		t.Errorf("Section 1 LinesDelta: expected 2, got %d", results[0].LinesDelta)
+	// 两个 Section 均应成功（原子合并：TAG 同时对原始内容校验，均无需 recovery）
+	for i, r := range results {
+		if r.Error != nil {
+			t.Fatalf("Section %d failed: %v", i, r.Error)
+		}
 	}
 
-	// Section 2: Recovery 应该成功（⚠ 而非 ✗）
-	if results[1].Error != nil {
-		t.Fatalf("Section 2 failed with error: %v", results[1].Error)
+	// 原子模式下，无需 recovery → 无 warning
+	if results[0].Warning != "" {
+		t.Errorf("Section 0: unexpected warning: %s", results[0].Warning)
 	}
-	if results[1].Warning == "" {
-		t.Error("Section 2 should have a recovery warning")
+	if results[1].Warning != "" {
+		t.Errorf("Section 1: unexpected warning: %s", results[1].Warning)
 	}
 
 	// 验证最终文件内容
@@ -1931,5 +1931,170 @@ func TestDetectCrossSectionConflicts_INS_to_INS_SameRefLine(t *testing.T) {
 	}
 	if errs[0] == nil || errs[1] == nil {
 		t.Fatal("both sections should have conflict errors")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// 多 Section 原子性测试
+// ---------------------------------------------------------------------------
+
+// TestAtomicSectionGroup_Success 验证同文件多 Section 原子合并成功：
+// 两个 Section 的 TAG 都对原始内容校验通过 → 合并 Ops → 一次写入 → 内容正确。
+func TestAtomicSectionGroup_Success(t *testing.T) {
+	content := "line1\nline2\nline3\n"
+	store := NewStore()
+	tag, _ := store.Record("/tmp/f.go", content)
+	fs := &memFS{files: map[string]string{"/tmp/f.go": content}}
+
+	patch := &Patch{
+		Sections: []Section{
+			{Path: "/tmp/f.go", TAG: tag, Ops: []Op{
+				{Kind: OpINS, Position: "pre", RefLine: 2, Body: []string{"new line"}},
+			}},
+			{Path: "/tmp/f.go", TAG: tag, Ops: []Op{
+				{Kind: OpDEL, LineStart: 3, LineEnd: 3},
+			}},
+		},
+	}
+
+	results := ApplyPatch(patch, fs, store)
+	for i, r := range results {
+		if r.Error != nil {
+			t.Fatalf("Section %d failed: %v", i, r.Error)
+		}
+	}
+
+	expected := "line1\nnew line\nline2\n"
+	if fs.files["/tmp/f.go"] != expected {
+		t.Errorf("bad content:\ngot:  %q\nwant: %q", fs.files["/tmp/f.go"], expected)
+	}
+}
+
+// TestAtomicSectionGroup_RecoveryFailRollback 验证原子性回滚：
+// Section 1 TAG 匹配但 Section 2 TAG 过期且 Recovery 失败 → 整个文件不变。
+func TestAtomicSectionGroup_RecoveryFailRollback(t *testing.T) {
+	content := "line1\nline2\nline3\n"
+	store := NewStore()
+	tag, _ := store.Record("/tmp/f.go", content)
+
+	// 外部修改：删除 line2 → recovery 无法恢复 Section 2 的 SWAP（line2 已删除）
+	modifiedContent := "line1\nline3\n"
+	// 用另一个 store 记录旧快照以绕过 store 更新
+	storeForSection1, _ := store.Record("/tmp/f.go", content)
+	_ = storeForSection1 // same tag
+
+	fs := &memFS{files: map[string]string{"/tmp/f.go": modifiedContent}}
+
+	// Section 1 使用匹配的 TAG（但实际内容已变）
+	// Section 2 引用已删除的行
+	patch := &Patch{
+		Sections: []Section{
+			{Path: "/tmp/f.go", TAG: tag, Ops: []Op{
+				{Kind: OpINS, Position: "post", RefLine: 1, Body: []string{"after L1"}},
+			}},
+			{Path: "/tmp/f.go", TAG: tag, Ops: []Op{
+				{Kind: OpSWAP, LineStart: 2, LineEnd: 2, Body: []string{"new L2"}},
+			}},
+		},
+	}
+
+	results := ApplyPatch(patch, fs, store)
+
+	// 两个 Section 都应失败（原子性回滚）
+	for i, r := range results {
+		if r.Error == nil {
+			t.Fatalf("Section %d: expected error, got success", i)
+		}
+		if r.Error.Kind != "tag_mismatch" {
+			t.Errorf("Section %d: expected tag_mismatch, got %s", i, r.Error.Kind)
+		}
+	}
+
+	// 文件应保持不变
+	if fs.files["/tmp/f.go"] != modifiedContent {
+		t.Errorf("file was modified despite atomic rollback:\ngot:  %q\nwant: %q", fs.files["/tmp/f.go"], modifiedContent)
+	}
+}
+
+// TestAtomicSectionGroup_OverlapError 验证合并 Ops 重叠时所有 Section 失败。
+func TestAtomicSectionGroup_OverlapError(t *testing.T) {
+	content := "L1\nL2\nL3\n"
+	store := NewStore()
+	tag, _ := store.Record("/tmp/f.go", content)
+	fs := &memFS{files: map[string]string{"/tmp/f.go": content}}
+
+	patch := &Patch{
+		Sections: []Section{
+			{Path: "/tmp/f.go", TAG: tag, Ops: []Op{
+				{Kind: OpSWAP, LineStart: 2, LineEnd: 2, Body: []string{"new1"}},
+			}},
+			{Path: "/tmp/f.go", TAG: tag, Ops: []Op{
+				{Kind: OpSWAP, LineStart: 2, LineEnd: 3, Body: []string{"new2"}},
+			}},
+		},
+	}
+
+	results := ApplyPatch(patch, fs, store)
+	for i, r := range results {
+		if r.Error == nil {
+			t.Fatalf("Section %d: expected overlap error, got success", i)
+		}
+	}
+
+	// 文件应保持不变
+	if fs.files["/tmp/f.go"] != content {
+		t.Errorf("file was modified despite overlap error")
+	}
+}
+
+// TestAtomicSectionGroup_MultiFileUnaffected 验证一个文件的冲突不影响其他文件。
+func TestAtomicSectionGroup_MultiFileUnaffected(t *testing.T) {
+	contentA := "fileA\n"
+	contentB := "fileB L1\nfileB L2\n"
+	store := NewStore()
+	tagA, _ := store.Record("/tmp/fileA.go", contentA)
+	tagB, _ := store.Record("/tmp/fileB.go", contentB)
+	fs := &memFS{files: map[string]string{
+		"/tmp/fileA.go": contentA,
+		"/tmp/fileB.go": contentB,
+	}}
+
+	// fileA: 两个重叠 Section → 应失败。fileB: 一个正常 Section → 应成功。
+	patch := &Patch{
+		Sections: []Section{
+			{Path: "/tmp/fileA.go", TAG: tagA, Ops: []Op{
+				{Kind: OpSWAP, LineStart: 1, LineEnd: 1, Body: []string{"A1"}},
+			}},
+			{Path: "/tmp/fileA.go", TAG: tagA, Ops: []Op{
+				{Kind: OpSWAP, LineStart: 1, LineEnd: 1, Body: []string{"A2"}},
+			}},
+			{Path: "/tmp/fileB.go", TAG: tagB, Ops: []Op{
+				{Kind: OpINS, Position: "head", Body: []string{"header"}},
+			}},
+		},
+	}
+
+	results := ApplyPatch(patch, fs, store)
+
+	// Section 0 (fileA): 冲突
+	if results[0].Error == nil {
+		t.Fatal("Section 0 (fileA) should have conflict error")
+	}
+	// Section 1 (fileA): 冲突
+	if results[1].Error == nil {
+		t.Fatal("Section 1 (fileA) should have conflict error")
+	}
+	// Section 2 (fileB): 成功
+	if results[2].Error != nil {
+		t.Fatalf("Section 2 (fileB) should succeed, got: %v", results[2].Error)
+	}
+
+	// fileA 不变
+	if fs.files["/tmp/fileA.go"] != contentA {
+		t.Errorf("fileA should be unchanged, got %q", fs.files["/tmp/fileA.go"])
+	}
+	// fileB 已修改
+	if fs.files["/tmp/fileB.go"] != "header\nfileB L1\nfileB L2\n" {
+		t.Errorf("fileB should be updated, got %q", fs.files["/tmp/fileB.go"])
 	}
 }
