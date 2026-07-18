@@ -60,7 +60,7 @@ func (a *deepSeekAdapter) buildRequestBody(ctx context.Context, messages []Messa
 	} else {
 		body["model"] = a.model
 	}
-	body["messages"] = messages
+	body["messages"] = stripReasoningWithoutToolCalls(messages)
 	body["stream"] = stream
 
 	if len(tools) > 0 {
@@ -394,4 +394,18 @@ func (a *deepSeekAdapter) ListModels(ctx context.Context, httpClient *http.Clien
 	}
 
 	return result.Data, nil
+}
+
+// stripReasoningWithoutToolCalls 从无 tool_calls 的 assistant 消息中移除 ReasoningContent。
+// DeepSeek 仅要求带 tool_calls 的 assistant 回传 reasoning_content，无 tool_calls 时
+// 回传会增加不必要的 token 消耗。JSONL 中的原始消息不受影响（返回新切片）。
+func stripReasoningWithoutToolCalls(messages []Message) []Message {
+	cleaned := make([]Message, len(messages))
+	for i, m := range messages {
+		cleaned[i] = m
+		if m.Role == RoleAssistant && len(m.ToolCalls) == 0 && m.ReasoningContent != "" {
+			cleaned[i].ReasoningContent = ""
+		}
+	}
+	return cleaned
 }

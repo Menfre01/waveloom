@@ -524,11 +524,23 @@ func (l *Loop) Run(ctx context.Context, messages []llm.Message) <-chan TurnEvent
 				Content:   contentBuf,
 				ToolCalls: toolCalls,
 			}
+			if !emptyResponse {
+				if reasoningBuf != "" || len(toolCalls) > 0 {
+					assistantMsg.ReasoningContent = reasoningBuf
+				}
+			}
+			if lastModel != "" {
+				assistantMsg.Model = lastModel
+			}
 			if len(toolCalls) > 0 {
-				assistantMsg.ReasoningContent = reasoningBuf
+				assistantMsg.FinishReason = "tool_calls"
+			} else {
+				assistantMsg.FinishReason = "stop"
+			}
+			if lastUsage != nil {
+				assistantMsg.Usage = lastUsage
 			}
 			state.Messages = append(state.Messages, assistantMsg)
-
 			// 5.5 空响应警告：以 user 角色注入，让 LLM 意识到自己行为异常。
 			//     对标 buildToolMessages 中的退避警告注入模式（user 消息）。
 			if emptyResponse && reasoningBuf != "" && state.ConsecutiveEmpty <= maxConsecutiveSameError {
