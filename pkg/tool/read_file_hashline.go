@@ -2,6 +2,7 @@ package tool
 
 import (
 	"context"
+	_ "embed"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -11,9 +12,13 @@ import (
 	"github.com/Menfre01/waveloom/pkg/pathutil"
 )
 
+//go:embed read_hashline_prompt.md
+var readHashlinePrompt string
+
 // ---------------------------------------------------------------------------
 // ReadFileHashline — 读取文件内容，返回 hashline 格式（TAG + N:CONTENT）
 // ---------------------------------------------------------------------------
+
 
 type ReadFileHashlineParams struct {
 	FilePath   string `json:"file_path"`   // 与 read_file 一致
@@ -33,20 +38,7 @@ func (t *ReadFileHashline) Description() string {
 }
 
 // Prompt 返回 read 工具使用指南，由 Registry.FormatToolPrompts() 注入 system prompt。
-func (t *ReadFileHashline) Prompt() string {
-	return `## Read File (Hashline)
-
-Use read to get a TAG and line-numbered content for hash-anchored editing.
-Always read a file before editing it — the TAG certifies the file snapshot
-and must match the TAG in the edit patch section header.
-
-- TAG is computed from the COMPLETE file content, even when offset/limit
-  are used to display only a range of lines.
-- Files larger than 10MB are rejected — use shell tools (head/tail/grep/sed/awk)
-  to both read and edit large files.
-- Empty files return a TAG with a warning; INS.HEAD / INS.TAIL work normally.
-`
-}
+func (t *ReadFileHashline) Prompt() string { return readHashlinePrompt }
 
 
 var readFileHashlineSchema = json.RawMessage(`{

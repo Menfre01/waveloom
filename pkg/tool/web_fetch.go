@@ -1,6 +1,7 @@
 package tool
 
 import (
+	_ "embed"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -13,6 +14,9 @@ import (
 	"strings"
 	"time"
 )
+//go:embed web_fetch_prompt.md
+var webFetchPrompt string
+
 
 // ---------------------------------------------------------------------------
 // WebFetch — 获取 Web 内容
@@ -65,15 +69,8 @@ func (t *WebFetch) Description() string {
 }
 
 // Prompt 返回 web_fetch 使用指南和跨工具引用，由 Registry.FormatToolPrompts() 注入 C1。
-func (t *WebFetch) Prompt() string {
-	return `## Web Fetch
-
-Use web_fetch to read full content from a specific URL (docs, API references, package registries).
-For discovering URLs, use web_search first, then web_fetch the best results.
-Only text-based content is supported — binary content will be rejected.
-Use web_search to find text-friendly alternatives for binary resources.
-This tool only makes GET requests — cannot modify remote resources.`
-}
+// Prompt 返回使用指南，由 Registry.FormatToolPrompts() 注入 system prompt。
+func (t *WebFetch) Prompt() string { return webFetchPrompt }
 
 func (t *WebFetch) client() *http.Client {
 	if t.httpClient != nil {

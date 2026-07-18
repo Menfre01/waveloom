@@ -1509,6 +1509,37 @@ func opToSpan(op Op, lines []string, hasTrailingNewline bool) editSpan {
 }
 
 // buildEditHunksFromApplied 使用原始和应用后的 span 构建 diff hunks。
+// hunkContextLines 是每个 hunk 变更区域前后附加的上下文行数。
+const hunkContextLines = 2
+
+// appendContextBefore 从 origLines 中提取 span 之前的上下文行，追加到 lines。
+func appendContextBefore(lines []EditLine, origLines []string, spanStart int) []EditLine {
+	ctxStart := spanStart - hunkContextLines
+	if ctxStart < 0 {
+		ctxStart = 0
+	}
+	for j := ctxStart; j < spanStart && j < len(origLines); j++ {
+		lines = append(lines, EditLine{
+			Kind: LineCtx, Content: origLines[j], OldNum: j + 1,
+		})
+	}
+	return lines
+}
+
+// appendContextAfter 从 origLines 中提取 span 之后的上下文行，追加到 lines。
+func appendContextAfter(lines []EditLine, origLines []string, spanEnd int) []EditLine {
+	ctxEnd := spanEnd + hunkContextLines
+	if ctxEnd > len(origLines) {
+		ctxEnd = len(origLines)
+	}
+	for j := spanEnd; j < ctxEnd; j++ {
+		lines = append(lines, EditLine{
+			Kind: LineCtx, Content: origLines[j], OldNum: j + 1,
+		})
+	}
+	return lines
+}
+
 func buildEditHunksFromApplied(origLines []string, origSpans, appliedSpans []editSpan) []EditHunk {
 	var hunks []EditHunk
 	for i := range origSpans {
@@ -1523,6 +1554,7 @@ func buildEditHunksFromApplied(origLines []string, origSpans, appliedSpans []edi
 				NewStart: offset.start + 1,
 				NewCount: 0,
 			}
+			hunk.Lines = appendContextBefore(hunk.Lines, origLines, orig.start)
 			for j := orig.start; j < orig.end && j < len(origLines); j++ {
 				hunk.Lines = append(hunk.Lines, EditLine{
 					Kind:    LineDel,
@@ -1530,6 +1562,7 @@ func buildEditHunksFromApplied(origLines []string, origSpans, appliedSpans []edi
 					OldNum:  j + 1,
 				})
 			}
+			hunk.Lines = appendContextAfter(hunk.Lines, origLines, orig.end)
 			if len(hunk.Lines) > 0 {
 				hunks = append(hunks, hunk)
 			}
@@ -1542,6 +1575,7 @@ func buildEditHunksFromApplied(origLines []string, origSpans, appliedSpans []edi
 				NewStart: offset.start + 1,
 				NewCount: len(bodyLines),
 			}
+			hunk.Lines = appendContextBefore(hunk.Lines, origLines, orig.start)
 			for j := orig.start; j < orig.end && j < len(origLines); j++ {
 				hunk.Lines = append(hunk.Lines, EditLine{
 					Kind:    LineDel,
@@ -1556,6 +1590,7 @@ func buildEditHunksFromApplied(origLines []string, origSpans, appliedSpans []edi
 					NewNum:  offset.start + 1 + j,
 				})
 			}
+			hunk.Lines = appendContextAfter(hunk.Lines, origLines, orig.end)
 			hunks = append(hunks, hunk)
 
 		case OpINS:
@@ -1566,6 +1601,7 @@ func buildEditHunksFromApplied(origLines []string, origSpans, appliedSpans []edi
 				NewStart: offset.start + 1,
 				NewCount: len(bodyLines),
 			}
+			hunk.Lines = appendContextBefore(hunk.Lines, origLines, orig.start)
 			for j, bl := range bodyLines {
 				hunk.Lines = append(hunk.Lines, EditLine{
 					Kind:    LineAdd,
@@ -1573,6 +1609,7 @@ func buildEditHunksFromApplied(origLines []string, origSpans, appliedSpans []edi
 					NewNum:  offset.start + 1 + j,
 				})
 			}
+			hunk.Lines = appendContextAfter(hunk.Lines, origLines, orig.start)
 			hunks = append(hunks, hunk)
 		}
 	}

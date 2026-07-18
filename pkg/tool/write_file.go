@@ -2,6 +2,7 @@ package tool
 
 import (
 	"context"
+	_ "embed"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -11,6 +12,13 @@ import (
 	"github.com/Menfre01/waveloom/pkg/filehistory"
 	"github.com/Menfre01/waveloom/pkg/pathutil"
 )
+
+//go:embed write_file_prompt.md
+var writeFilePrompt string
+
+// ---------------------------------------------------------------------------
+// WriteFile — 写入/覆写文件
+// ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
 // WriteFile — 写入/覆写文件
@@ -30,11 +38,7 @@ func (t *WriteFile) Description() string {
 }
 
 // Prompt 返回 write_file 使用约束，由 Registry.FormatToolPrompts() 注入 C1 system prompt。
-func (t *WriteFile) Prompt() string {
-	return "## Write File\n\n" +
-		"Use only for new files or complete overwrites; for partial edits use edit. " +
-		"file_path must be a file, not a directory — use ls to explore directories first."
-}
+func (t *WriteFile) Prompt() string { return writeFilePrompt }
 
 var writeFileSchema = json.RawMessage(`{
   "type": "object",

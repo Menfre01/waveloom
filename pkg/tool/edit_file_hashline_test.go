@@ -591,3 +591,363 @@ func TestEditFileHashline_SwapOnMissingFile(t *testing.T) {
 		t.Fatal("expected error: file does not exist on disk")
 	}
 }
+// ---------------------------------------------------------------------------
+// formatLocalDiffExcerpt 单元测试
+// ---------------------------------------------------------------------------
+
+func TestFormatLocalDiffExcerpt_DeleteAndAdd(t *testing.T) {
+	hunks := []hashline.EditHunk{
+		{
+			OldStart: 3,
+			OldCount: 1,
+			NewStart: 3,
+			NewCount: 1,
+			Lines: []hashline.EditLine{
+				{Kind: hashline.LineDel, Content: "old line", OldNum: 3},
+				{Kind: hashline.LineAdd, Content: "new line", NewNum: 3},
+			},
+		},
+	}
+	got := formatLocalDiffExcerpt(hunks, 12)
+	if !strings.Contains(got, "--- edit delta ---") {
+		t.Error("missing header")
+	}
+	if !strings.Contains(got, "-3:old line") {
+		t.Errorf("missing delete line with line number, got:\n%s", got)
+	}
+	if !strings.Contains(got, "+3:new line") {
+		t.Errorf("missing add line with line number, got:\n%s", got)
+	}
+}
+
+func TestFormatLocalDiffExcerpt_ContextLines(t *testing.T) {
+	hunks := []hashline.EditHunk{
+		{
+			OldStart: 3,
+			OldCount: 3,
+			NewStart: 3,
+			NewCount: 3,
+			Lines: []hashline.EditLine{
+				{Kind: hashline.LineCtx, Content: "  unchanged", OldNum: 3, NewNum: 3},
+				{Kind: hashline.LineDel, Content: "old", OldNum: 4},
+				{Kind: hashline.LineAdd, Content: "new", NewNum: 4},
+				{Kind: hashline.LineCtx, Content: "  unchanged", OldNum: 5, NewNum: 5},
+			},
+		},
+	}
+	got := formatLocalDiffExcerpt(hunks, 12)
+	if !strings.Contains(got, " 3:  unchanged") {
+		t.Errorf("missing context line with line number, got:\n%s", got)
+	}
+}
+
+func TestFormatLocalDiffExcerpt_MaxLines(t *testing.T) {
+	hunks := []hashline.EditHunk{
+		{
+			Lines: []hashline.EditLine{
+				{Kind: hashline.LineAdd, Content: "line1", NewNum: 1},
+				{Kind: hashline.LineAdd, Content: "line2", NewNum: 2},
+				{Kind: hashline.LineAdd, Content: "line3", NewNum: 3},
+			},
+		},
+	}
+	got := formatLocalDiffExcerpt(hunks, 2)
+	lines := strings.Split(strings.TrimSpace(got), "\n")
+	// header + 2 lines + truncation = 4 lines total
+	if len(lines) < 3 {
+		t.Errorf("expected at least 3 lines (header + 2 content + truncation), got %d:\n%s", len(lines), got)
+	}
+	if !strings.Contains(got, "...") {
+		t.Error("missing truncation marker")
+	}
+	// line3 should NOT appear
+	if strings.Contains(got, "line3") {
+		t.Error("line3 should be truncated")
+	}
+}
+
+func TestFormatLocalDiffExcerpt_LineHeaderIgnored(t *testing.T) {
+	hunks := []hashline.EditHunk{
+		{
+			Lines: []hashline.EditLine{
+				{Kind: hashline.LineHeader, Content: "@@ -1,3 +1,3 @@", OldNum: 0, NewNum: 0},
+				{Kind: hashline.LineDel, Content: "removed", OldNum: 1},
+				{Kind: hashline.LineAdd, Content: "added", NewNum: 1},
+			},
+		},
+	}
+	got := formatLocalDiffExcerpt(hunks, 12)
+	if !strings.Contains(got, "@@ -1,3 +1,3 @@") {
+		t.Error("LineHeader should be present in output (not silently dropped)")
+	}
+	// LineHeader 不计入 maxLines，所以两行变更都应显示
+	if !strings.Contains(got, "-1:removed") {
+		t.Error("delete line should be present after header")
+	}
+	if !strings.Contains(got, "+1:added") {
+		t.Error("add line should be present after header")
+	}
+}
+
+func TestFormatLocalDiffExcerpt_EmptyHunks(t *testing.T) {
+	got := formatLocalDiffExcerpt(nil, 12)
+	if got != "--- edit delta ---\n" {
+		t.Errorf("expected only header for nil hunks, got:\n%s", got)
+	}
+
+	got = formatLocalDiffExcerpt([]hashline.EditHunk{}, 12)
+	if got != "--- edit delta ---\n" {
+		t.Errorf("expected only header for empty hunks, got:\n%s", got)
+	}
+}
+
+func TestFormatLocalDiffExcerpt_MultipleLinesPerHunk(t *testing.T) {
+	hunks := []hashline.EditHunk{
+		{
+			Lines: []hashline.EditLine{
+				{Kind: hashline.LineDel, Content: "  old1", OldNum: 2},
+				{Kind: hashline.LineAdd, Content: "  new1", NewNum: 2},
+			},
+		},
+		{
+			Lines: []hashline.EditLine{
+				{Kind: hashline.LineDel, Content: "  old2", OldNum: 5},
+				{Kind: hashline.LineAdd, Content: "  new2", NewNum: 5},
+			},
+		},
+	}
+	got := formatLocalDiffExcerpt(hunks, 12)
+	if !strings.Contains(got, "-2:  old1") {
+		t.Errorf("missing first delete, got:\n%s", got)
+	}
+	if !strings.Contains(got, "+5:  new2") {
+		t.Errorf("missing second add, got:\n%s", got)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// formatSectionResults 单元测试
+// ---------------------------------------------------------------------------
+
+func TestFormatSectionResults_Update(t *testing.T) {
+	results := []hashline.SectionResult{
+		{
+			Path: "src/main.go", Op: "update", NewTAG: "A1B2", LinesDelta: 3,
+			DiffHunks: []hashline.EditHunk{
+				{Lines: []hashline.EditLine{
+					{Kind: hashline.LineDel, Content: "old", OldNum: 1},
+					{Kind: hashline.LineAdd, Content: "new", NewNum: 1},
+				}},
+			},
+		},
+	}
+	got := formatSectionResults(results)
+	// TAG must be present for chained edits
+	if !strings.Contains(got, "[src/main.go#A1B2]") {
+		t.Errorf("missing TAG in output, got:\n%s", got)
+	}
+	if !strings.Contains(got, "(+3 lines)") {
+		t.Errorf("missing line delta, got:\n%s", got)
+	}
+	if !strings.Contains(got, "--- edit delta ---") {
+		t.Errorf("missing delta excerpt, got:\n%s", got)
+	}
+}
+
+func TestFormatSectionResults_Delete(t *testing.T) {
+	results := []hashline.SectionResult{
+		{Path: "src/main.go", Op: "delete", OldTAG: "A1B2", NewTAG: "A1B2"},
+	}
+	got := formatSectionResults(results)
+	if !strings.Contains(got, "deleted") {
+		t.Errorf("missing delete confirmation, got:\n%s", got)
+	}
+	if !strings.Contains(got, "#A1B2") {
+		t.Errorf("missing TAG, got:\n%s", got)
+	}
+}
+
+func TestFormatSectionResults_Rename(t *testing.T) {
+	results := []hashline.SectionResult{
+		{Path: "src/main.go", Op: "rename", OldTAG: "A1B2", NewTAG: "C3D4"},
+	}
+	got := formatSectionResults(results)
+	if !strings.Contains(got, "renamed") {
+		t.Errorf("missing rename confirmation, got:\n%s", got)
+	}
+	if !strings.Contains(got, "#C3D4") {
+		t.Errorf("missing new TAG, got:\n%s", got)
+	}
+}
+
+func TestFormatSectionResults_Error(t *testing.T) {
+	results := []hashline.SectionResult{
+		{Path: "src/main.go", Error: &hashline.EditError{Kind: "file_not_found", Message: "file not found: src/main.go"}},
+	}
+	got := formatSectionResults(results)
+	if !strings.Contains(got, "✗") {
+		t.Errorf("missing error marker, got:\n%s", got)
+	}
+	if !strings.Contains(got, "file not found") {
+		t.Errorf("missing error message, got:\n%s", got)
+	}
+}
+
+func TestFormatSectionResults_Warning(t *testing.T) {
+	results := []hashline.SectionResult{
+		{Path: "src/main.go", Op: "update", NewTAG: "A1B2", LinesDelta: 0, Warning: "TAG expired, auto-recovered"},
+	}
+	got := formatSectionResults(results)
+	if !strings.Contains(got, "⚠") {
+		t.Errorf("missing warning marker, got:\n%s", got)
+	}
+	if !strings.Contains(got, "TAG expired, auto-recovered") {
+		t.Errorf("missing warning text, got:\n%s", got)
+	}
+}
+
+func TestFormatSectionResults_MultipleResults(t *testing.T) {
+	results := []hashline.SectionResult{
+		{Path: "src/foo.go", Op: "update", NewTAG: "A1B2", LinesDelta: 1},
+		{Path: "src/bar.go", Op: "delete", OldTAG: "C3D4", NewTAG: "C3D4"},
+	}
+	got := formatSectionResults(results)
+	if !strings.Contains(got, "src/foo.go") || !strings.Contains(got, "src/bar.go") {
+		t.Errorf("missing one or both files, got:\n%s", got)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// formatPostEditContext 单元测试
+// ---------------------------------------------------------------------------
+
+// testFS 是 hashline.FileSystem 的内存实现，用于测试。
+type testFS struct {
+	files map[string]string
+}
+
+func (fs *testFS) ReadFile(path string) (string, error)     { return fs.files[path], nil }
+func (fs *testFS) WriteFile(path string, content string) error { fs.files[path] = content; return nil }
+func (fs *testFS) MkdirAll(path string) error               { return nil }
+func (fs *testFS) Remove(path string) error                 { delete(fs.files, path); return nil }
+func (fs *testFS) ResolvePath(path string) string           { return path }
+
+func TestFormatPostEditContext_Normal(t *testing.T) {
+	fs := &testFS{files: map[string]string{
+		"src/main.go": "line1\nline2\nline3\nline4\nline5\n",
+	}}
+	results := []hashline.SectionResult{
+		{
+			Path: "src/main.go", Op: "update",
+			DiffHunks: []hashline.EditHunk{
+				{NewStart: 2, NewCount: 2, Lines: []hashline.EditLine{
+					{Kind: hashline.LineDel, OldNum: 2},
+					{Kind: hashline.LineAdd, NewNum: 2},
+				}},
+			},
+		},
+	}
+	got := formatPostEditContext(fs, results)
+	if !strings.Contains(got, "--- post-edit context (use TAG above) ---") {
+		t.Errorf("missing separator, got:\n%s", got)
+	}
+	if !strings.Contains(got, "1:line1") {
+		t.Errorf("missing context before change, got:\n%s", got)
+	}
+}
+
+func TestFormatPostEditContext_FileBeginning(t *testing.T) {
+	fs := &testFS{files: map[string]string{
+		"src/main.go": "line1\nline2\nline3\nline4\nline5\n",
+	}}
+	results := []hashline.SectionResult{
+		{
+			Path: "src/main.go", Op: "update",
+			DiffHunks: []hashline.EditHunk{
+				{NewStart: 1, NewCount: 1, Lines: []hashline.EditLine{
+					{Kind: hashline.LineAdd, NewNum: 1},
+				}},
+			},
+		},
+	}
+	got := formatPostEditContext(fs, results)
+	if strings.Contains(got, "lines above omitted") {
+		t.Errorf("unexpected 'above omitted' at file beginning, got:\n%s", got)
+	}
+}
+
+func TestFormatPostEditContext_FileEnd(t *testing.T) {
+	fs := &testFS{files: map[string]string{
+		"src/main.go": "line1\nline2\nline3\n",
+	}}
+	results := []hashline.SectionResult{
+		{
+			Path: "src/main.go", Op: "update",
+			DiffHunks: []hashline.EditHunk{
+				{NewStart: 3, NewCount: 1, Lines: []hashline.EditLine{
+					{Kind: hashline.LineAdd, NewNum: 3},
+				}},
+			},
+		},
+	}
+	got := formatPostEditContext(fs, results)
+	if strings.Contains(got, "lines below omitted") {
+		t.Errorf("unexpected 'below omitted' at file end, got:\n%s", got)
+	}
+}
+
+func TestFormatPostEditContext_LargeEditTruncation(t *testing.T) {
+	var lines []string
+	for i := 0; i < 30; i++ {
+		lines = append(lines, fmt.Sprintf("line%d", i+1))
+	}
+	content := strings.Join(lines, "\n") + "\n"
+	fs := &testFS{files: map[string]string{"src/main.go": content}}
+	results := []hashline.SectionResult{
+		{
+			Path: "src/main.go", Op: "update",
+			DiffHunks: []hashline.EditHunk{
+				{NewStart: 5, NewCount: 25, Lines: []hashline.EditLine{
+					{Kind: hashline.LineAdd, NewNum: 5},
+				}},
+			},
+		},
+	}
+	got := formatPostEditContext(fs, results)
+	if !strings.Contains(got, "lines in edit region omitted") {
+		t.Errorf("missing truncation marker for large edit, got:\n%s", got)
+	}
+}
+
+func TestFormatPostEditContext_SkipError(t *testing.T) {
+	fs := &testFS{files: map[string]string{}}
+	results := []hashline.SectionResult{
+		{Path: "src/main.go", Op: "update", Error: &hashline.EditError{Kind: "tag_mismatch", Message: "TAG mismatch"}},
+	}
+	got := formatPostEditContext(fs, results)
+	if got != "" {
+		t.Errorf("expected empty output for error result, got:\n%s", got)
+	}
+}
+
+func TestFormatPostEditContext_SkipNonUpdate(t *testing.T) {
+	fs := &testFS{files: map[string]string{"src/main.go": "content\n"}}
+	results := []hashline.SectionResult{
+		{Path: "src/main.go", Op: "delete", OldTAG: "A1B2", NewTAG: "A1B2"},
+	}
+	got := formatPostEditContext(fs, results)
+	if got != "" {
+		t.Errorf("expected empty output for delete, got:\n%s", got)
+	}
+}
+
+func TestFormatPostEditContext_SkipEmptyHunks(t *testing.T) {
+	fs := &testFS{files: map[string]string{"src/main.go": "content\n"}}
+	results := []hashline.SectionResult{
+		{Path: "src/main.go", Op: "update", DiffHunks: nil},
+	}
+	got := formatPostEditContext(fs, results)
+	if got != "" {
+		t.Errorf("expected empty for nil hunks, got:\n%s", got)
+	}
+}
