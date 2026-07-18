@@ -688,8 +688,10 @@ func ApplyPatch(patch *Patch, fs FileSystem, store *SnapshotStore) []SectionResu
 	for _, fg := range groupOrder {
 		go func(g *fileGroup) {
 			defer wg.Done()
-			for _, idx := range g.indices {
-				results[idx] = applySection(patch.Sections[idx], fs, store, originalSnapshots)
+			if len(g.indices) == 1 {
+				results[g.indices[0]] = applySection(patch.Sections[g.indices[0]], fs, store, originalSnapshots)
+			} else {
+				applySectionGroupAtomic(results, g.indices, patch.Sections, fs, store, originalSnapshots)
 			}
 		}(fg)
 	}
@@ -751,7 +753,7 @@ func applySection(sec Section, fs FileSystem, store *SnapshotStore, originalSnap
 					result.Error = &EditError{
 						Fatal:   false,
 						Kind:    "tag_mismatch",
-						Message: fmt.Sprintf("TAG mismatch for %q and recovery failed (%s): the file has been modified since last read. Previous sections in this patch may have already been applied — use the post-edit context above to construct a new edit without re-reading. (%v)", sec.Path, reason, verifyErr),
+						Message: fmt.Sprintf("TAG mismatch for %q and recovery failed (%s): the file has been modified since last read. Re-read the file with read_file_hashline and retry. (%v)", sec.Path, reason, verifyErr),
 					}
 					return result
 				}
@@ -838,6 +840,205 @@ func applySection(sec Section, fs FileSystem, store *SnapshotStore, originalSnap
 	result.DiffHunks = hunks
 
 	return result
+}
+
+// applySectionGroupAtomic 对同一文件的多个 Section 执行原子合并：
+// 读取一次 → 所有 TAG 校验 → 合并 Ops → applyEdits 一次 → WriteFile 一次。
+// 全部成功才写盘；任何失败回滚（不写盘）。
+func applySectionGroupAtomic(results []SectionResult, indices []int, sections []Section, fs FileSystem, store *SnapshotStore, originalSnapshots map[string]string) {
+	firstSec := sections[indices[0]]
+	storePath := fs.ResolvePath(firstSec.Path)
+
+	// Step 1: 读取文件一次
+	currentContent, readErr := fs.ReadFile(firstSec.Path)
+	if readErr != nil {
+		for _, idx := range indices {
+			results[idx] = SectionResult{
+				Path:   sections[idx].Path,
+				OldTAG: sections[idx].TAG,
+				Error: &EditError{
+					Fatal:   false,
+					Kind:    "file_not_found",
+					Message: fmt.Sprintf("file not found: %s (use write_file to create it first)", firstSec.Path),
+				},
+			}
+		}
+		return
+	}
+
+	// Step 2: 校验所有 Section 的 TAG，必要时 Recovery
+	type validatedSection struct {
+		idx     int
+		ops     []Op
+		warning string
+	}
+	var validated []validatedSection
+	var allOps []Op
+
+	for _, idx := range indices {
+		sec := sections[idx]
+		mappedOps, warning, err := validateTAGAndRecover(sec, storePath, currentContent, store, originalSnapshots)
+		if err != nil {
+			// 任何 Section 校验/Recovery 失败 → 整个 fileGroup 拒绝，不写盘
+			for _, si := range indices {
+				results[si] = SectionResult{
+					Path:   sections[si].Path,
+					OldTAG: sections[si].TAG,
+					Error: &EditError{
+						Fatal:   false,
+						Kind:    "tag_mismatch",
+						Message: fmt.Sprintf("All %d changes to %q were rejected: %s. The file has not been modified. Re-read with read_file_hashline to get a fresh TAG and retry.", len(indices), firstSec.Path, err.Error()),
+					},
+				}
+			}
+			return
+		}
+		validated = append(validated, validatedSection{idx: idx, ops: mappedOps, warning: warning})
+		allOps = append(allOps, mappedOps...)
+	}
+
+	// 防御：纯 REM/MV 多 Section（detectCrossSectionConflicts 未拦截的全 REM 或全 MV 组）
+	// 合并后无行操作 → 不能进入原子路径，应返回错误而非静默无操作。
+	if len(allOps) == 0 {
+		for _, idx := range indices {
+			results[idx] = SectionResult{
+				Path:   sections[idx].Path,
+				OldTAG: sections[idx].TAG,
+				Error: &EditError{
+					Fatal:   false,
+					Kind:    "invalid_args",
+					Message: fmt.Sprintf("multiple REM/MV sections on the same file %q cannot be combined in one patch. Split them into separate edit calls.", firstSec.Path),
+				},
+			}
+		}
+		return
+	}
+
+	// Step 3: 合并后的 Ops 做重叠检测
+	if err := detectOverlaps(allOps); err != nil {
+		for _, idx := range indices {
+			results[idx] = SectionResult{
+				Path:   sections[idx].Path,
+				OldTAG: sections[idx].TAG,
+				Error: &EditError{
+					Fatal:   false,
+					Kind:    "invalid_args",
+					Message: fmt.Sprintf("%s. The file has not been modified.", err.Error()),
+				},
+			}
+		}
+		return
+	}
+
+	// Step 4: 一次 applyEdits
+	newContent, allHunks, err := applyEdits(currentContent, allOps)
+	if err != nil {
+		for _, idx := range indices {
+			results[idx] = SectionResult{
+				Path:   sections[idx].Path,
+				OldTAG: sections[idx].TAG,
+				Error: &EditError{
+					Fatal:   false,
+					Kind:    "invalid_args",
+					Message: fmt.Sprintf("%s. The file has not been modified.", err.Error()),
+				},
+			}
+		}
+		return
+	}
+
+	// Step 5: 一次写盘
+	if err := fs.WriteFile(firstSec.Path, newContent); err != nil {
+		for _, idx := range indices {
+			results[idx] = SectionResult{
+				Path:   sections[idx].Path,
+				OldTAG: sections[idx].TAG,
+				Error: &EditError{
+					Fatal:   true,
+					Kind:    "permission_denied",
+					Message: fmt.Sprintf("cannot write file: %s: %v", firstSec.Path, err),
+				},
+			}
+		}
+		return
+	}
+
+	// Step 6: 更新 store
+	newTAG := sections[indices[0]].TAG
+	if store != nil {
+		newTAG = store.Update(storePath, newContent)
+	}
+
+	oldLines := countLines(currentContent)
+	newLines := countLines(newContent)
+	totalDelta := newLines - oldLines
+
+	// Step 7: 按 Section 边界拆分 hunks
+	opOffset := 0
+	for _, vs := range validated {
+		sectionHunks := extractHunksForOps(allHunks, opOffset, len(vs.ops))
+		opOffset += len(vs.ops)
+
+		results[vs.idx] = SectionResult{
+			Path:       firstSec.Path,
+			OldTAG:     sections[vs.idx].TAG,
+			NewTAG:     newTAG,
+			Op:         "update",
+			LinesDelta: totalDelta,
+			DiffHunks:  sectionHunks,
+			Warning:    vs.warning,
+		}
+	}
+}
+
+// validateTAGAndRecover 校验 Section 的 TAG 是否匹配当前文件内容。
+// 匹配 → 返回原始 Ops；不匹配 → 尝试 Recovery；Recovery 失败 → 返回错误。
+func validateTAGAndRecover(sec Section, storePath string, currentContent string, store *SnapshotStore, originalSnapshots map[string]string) ([]Op, string, error) {
+	if store == nil {
+		return sec.Ops, "", nil
+	}
+
+	_, verifyErr := store.Verify(storePath, sec.TAG, currentContent)
+	if verifyErr == nil {
+		return sec.Ops, "", nil
+	}
+
+	// TAG 不匹配 → 尝试 Recovery
+	snapContent := ""
+	if orig, ok := originalSnapshots[storePath]; ok {
+		snapContent = orig
+	} else if snap, ok := store.Get(storePath); ok {
+		snapContent = snap.Content
+	}
+
+	if snapContent == "" {
+		return nil, "", fmt.Errorf("TAG mismatch for %q: no snapshot available. Re-read the file with read_file_hashline and retry. (%v)", sec.Path, verifyErr)
+	}
+
+	recovery := RecoverOps(snapContent, currentContent, sec.Ops)
+	if !recovery.Success {
+		reason := "unknown"
+		if len(recovery.Warnings) > 0 {
+			reason = strings.Join(recovery.Warnings, "; ")
+		}
+		return nil, "", fmt.Errorf("TAG mismatch for %q and recovery failed (%s). (%v)", sec.Path, reason, verifyErr)
+	}
+
+	warning := fmt.Sprintf("TAG expired, auto-recovered: %v", verifyErr)
+	return recovery.MappedOps, warning, nil
+}
+
+// extractHunksForOps 从合并后的 hunks 中提取指定范围的 hunk。
+// buildEditHunksFromApplied 为每个 op 生成一个 hunk，hunks 顺序与 ops 一致。
+func extractHunksForOps(allHunks []EditHunk, offset, count int) []EditHunk {
+	if offset >= len(allHunks) {
+		return nil
+	}
+	end := offset + count
+	if end > len(allHunks) {
+		end = len(allHunks)
+	}
+	return allHunks[offset:end]
 }
 
 func applyMV(sec Section, op Op, fs FileSystem, store *SnapshotStore, currentContent string) SectionResult {

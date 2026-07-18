@@ -647,7 +647,11 @@ func (l *Loop) buildToolMessages(
 				}
 			}
 
-			content = fmt.Sprintf("Error [%s]: %s", toolErr.Kind, toolErr.Message)
+			if result.Content != "" {
+				content = fmt.Sprintf("Error [%s]: %s\n\n%s", toolErr.Kind, toolErr.Message, result.Content)
+			} else {
+				content = fmt.Sprintf("Error [%s]: %s", toolErr.Kind, toolErr.Message)
+			}
 		} else if !result.IsError() {
 			anySuccess = true
 		}
