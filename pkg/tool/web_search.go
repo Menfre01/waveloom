@@ -1,6 +1,7 @@
 package tool
 
 import (
+	_ "embed"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -15,6 +16,9 @@ import (
 
 	"golang.org/x/net/html"
 )
+//go:embed web_search_prompt.md
+var webSearchPrompt string
+
 
 // ---------------------------------------------------------------------------
 // WebSearch — 搜索引擎查询
@@ -75,17 +79,8 @@ func (t *WebSearch) Description() string {
 }
 
 // Prompt 返回 web_search 使用指南和跨工具引用，由 Registry.FormatToolPrompts() 注入 C1。
-func (t *WebSearch) Prompt() string {
-	return `## Web Search
-
-Use web_search to find current documentation, API references, solutions, or information beyond your training cutoff.
-After searching, use web_fetch to read the full content of promising URLs.
-For known URLs, skip web_search and use web_fetch directly.
-
-Backends (auto-selected):
-- DuckDuckGo (default, no configuration needed)
-- Brave Search (set BRAVE_API_KEY environment variable for better results)`
-}
+// Prompt 返回使用指南，由 Registry.FormatToolPrompts() 注入 system prompt。
+func (t *WebSearch) Prompt() string { return webSearchPrompt }
 
 func (t *WebSearch) client() *http.Client {
 	if t.httpClient != nil {

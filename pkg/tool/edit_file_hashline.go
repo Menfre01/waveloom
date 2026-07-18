@@ -2,6 +2,7 @@ package tool
 
 import (
 	"context"
+	_ "embed"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -9,6 +10,9 @@ import (
 	"github.com/Menfre01/waveloom/pkg/filehistory"
 	"github.com/Menfre01/waveloom/pkg/hashline"
 )
+
+//go:embed edit_hashline_prompt.md
+var editHashlinePrompt string
 
 // ---------------------------------------------------------------------------
 // EditFileHashline — 基于 hashline 的精确编辑
@@ -31,116 +35,7 @@ func (t *EditFileHashline) Description() string {
 }
 
 // Prompt 返回 hashline 使用指南，由 Registry.FormatToolPrompts() 注入 C1 system prompt。
-func (t *EditFileHashline) Prompt() string {
-	return `## Edit File (Hashline) — Recommended
-
-Use edit to modify existing files. read gives you
-TAGs and line numbers; edit applies changes by referencing them. Never
-reproduce old code — only the TAG, line numbers, and new content.
-
-### Operations
-
-SWAP N.=M:     Replace lines N through M (inclusive) with body lines below
-DEL N.=M       Delete lines N through M. DEL N for single line.
-INS.PRE N:     Insert body lines BEFORE line N
-INS.POST N:    Insert body lines AFTER line N
-INS.HEAD:      Insert body lines at the very start of the file
-INS.TAIL:      Insert body lines at the very end of the file
-REM            Delete the entire file (no body, no line numbers)
-MV DEST        Move/rename the file to DEST
-
-### Body lines
-
-Every body line starts with + followed by the actual content (including leading whitespace).
-+ alone adds a blank line. The body is ONLY the new content — old lines are deleted
-implicitly by the range in SWAP/DEL.
-
-Blank lines between body lines are silently skipped by the parser. To insert
-an intentional blank line, use a standalone + line (no content after the +).
-
-Operation lines (SWAP, DEL, INS.PRE, INS.POST, INS.HEAD, INS.TAIL, REM, MV)
-must NOT start with +. Adding + before an operation line causes it to be
-treated as body content inserted into the file — the operation is silently lost.
-
-Wrong (DEL treated as body text, not as an operation):
-*** Begin Patch
-[src/main.go#A1B2]
-SWAP 2.=2:
-+new line
-+DEL 5             ← +DEL interpreted as literal text in file, not a delete op
-*** End Patch
-
-Correct:
-*** Begin Patch
-[src/main.go#A1B2]
-SWAP 2.=2:
-+new line
-DEL 5               ← no + prefix, recognized as an operation
-*** End Patch
-
-### Line numbers
-
-Line numbers come directly from read output (N:CONTENT format).
-Ranges are INCLUSIVE: SWAP 2.=3: covers lines 2 and 3.
-A range of N.=N: replaces a single line with any number of body lines.
-Note: files without a trailing newline may acquire one after editing — normal.
-
-### Rules
-
-- Use the TAG from your most recent read output.
-  After every edit, the response contains a new TAG — use it for the next edit.
-- Touch only lines that change. For pure additions, use INS.PRE / INS.POST — never
-  widen a SWAP to include unchanged lines.
-- Operations are applied in declaration order. After each operation, the system
-  automatically computes the line offset and adjusts subsequent operations' line
-  numbers accordingly. All line numbers refer to the original file — you do NOT
-  need to manually calculate offsets. This allows editing multiple places in
-  a single edit call.
-- Do NOT create overlapping operations on the same lines (e.g., SWAP 5.=6: and
-  DEL 5 in the same patch; or INS.PRE 4: and INS.POST 4: on the same reference
-  line). Note: INS.PRE N followed by SWAP N (or DEL N) is safe — the system
-  automatically offsets the SWAP/DEL line number after the insertion.
-  Overlapping ops will be rejected with an error — split them into
-  separate edit calls.
-- On tag_mismatch error: the file was modified since your last read — re-read to
-  get a fresh TAG and line numbers before editing again.
-- A patch may contain multiple [PATH#TAG] sections for different files, or
-  multiple sections for the same file — each section independently validates
-  its TAG and applies its operations. If an earlier section modifies a line's
-  content that a later section targets, the later section will fail with a
-  specific reason (e.g. "line N modified in current version"). Earlier sections
-  are already applied to disk; use the post-edit context returned in the result
-  to construct a new edit for the remaining changes without re-reading.
-  Cross-section conflicts only affect the conflicting file — edits to other
-  files in the same patch still execute normally. REM/MV cannot be combined
-  with line-range operations on the same file in one patch; split them.
-*** Begin Patch
-[src/pkg/foo.go#A1B2]       ← first file
-OP1
-+BODY
-
-[src/pkg/bar.go#C3D4]       ← second file
-OP2
-+BODY
-*** End Patch
-
-Example — replace line 2, insert after line 4:
-
-*** Begin Patch
-[src/main.go#A1B2]
-SWAP 2.=2:
-+    fmt.Println("hello, world")
-INS.POST 4:
-+    // cleanup on exit
-+    defer os.Remove(tmpFile)
-*** End Patch
-
-### When NOT to use
-
-- Creating a new file → use write (then read to get a TAG)
-- Reading a file → use read
-- Very simple single-word replacements on short files → use edit with a single SWAP line.`
-}
+func (t *EditFileHashline) Prompt() string { return editHashlinePrompt }
 
 
 var editFileHashlineSchema = json.RawMessage(`{
@@ -259,12 +154,52 @@ func formatSectionResults(results []hashline.SectionResult) string {
 		switch r.Op {
 		case "update":
 			fmt.Fprintf(&b, "[%s#%s] ✓ %s (%+d lines)\n", r.Path, r.NewTAG, r.Op, r.LinesDelta)
+			if len(r.DiffHunks) > 0 {
+				b.WriteString(formatLocalDiffExcerpt(r.DiffHunks, 12))
+			}
 		case "delete":
 			fmt.Fprintf(&b, "[%s#%s] ✓ deleted\n", r.Path, r.OldTAG)
 		case "rename":
 			fmt.Fprintf(&b, "[%s#%s] → %s ✓ renamed\n", r.Path, r.NewTAG, r.Path)
 		default:
 			fmt.Fprintf(&b, "[%s#%s] ✓ %s\n", r.Path, r.NewTAG, r.Op)
+		}
+	}
+	return b.String()
+}
+
+// formatLocalDiffExcerpt 从 DiffHunks 生成精简的变更摘要（含行号），
+// 供 LLM 在不 re-read 整个文件的情况下快速确认变更内容。
+// 行号来自 hunks 的 OldNum/NewNum，与下方 post-edit context 中的行号一致，
+// LLM 可交叉对照确认编辑边界正确。
+func formatLocalDiffExcerpt(hunks []hashline.EditHunk, maxLines int) string {
+	var b strings.Builder
+	b.WriteString("--- edit delta ---\n")
+	written := 0
+	for _, h := range hunks {
+		if written >= maxLines {
+			b.WriteString("...\n")
+			break
+		}
+		for _, l := range h.Lines {
+			if written >= maxLines {
+				b.WriteString("...\n")
+				break
+			}
+			switch l.Kind {
+			case hashline.LineDel:
+				fmt.Fprintf(&b, "-%d:%s\n", l.OldNum, l.Content)
+				written++
+			case hashline.LineAdd:
+				fmt.Fprintf(&b, "+%d:%s\n", l.NewNum, l.Content)
+				written++
+			case hashline.LineCtx:
+				fmt.Fprintf(&b, " %d:%s\n", l.OldNum, l.Content)
+				written++
+			default:
+				// LineHeader 等不计入行数，但也不消耗 maxLines 配额
+				fmt.Fprintf(&b, "%s %s\n", l.Kind, l.Content)
+			}
 		}
 	}
 	return b.String()
@@ -362,7 +297,7 @@ func formatPostEditContext(fs hashline.FileSystem, results []hashline.SectionRes
 			showEnd = totalLines
 		}
 
-		b.WriteByte('\n')
+		b.WriteString("\n--- post-edit context (use TAG above) ---\n")
 
 		// 文件头部省略
 		if showStart > 1 {

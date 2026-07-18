@@ -1,10 +1,13 @@
 package tool
 
 import (
+	_ "embed"
 	"context"
 	"encoding/json"
-	"strings"
 )
+//go:embed exit_plan_mode_prompt.md
+var exitPlanModePrompt string
+
 
 // ---------------------------------------------------------------------------
 // ExitPlanMode — LLM 调用此工具退出规划模式并提交 plan 审批
@@ -30,25 +33,8 @@ func (t *ExitPlanMode) Description() string {
 }
 
 // Prompt 返回 exit_plan_mode 使用指南，由 Registry.FormatToolPrompts() 注入 C1 system prompt。
-func (t *ExitPlanMode) Prompt() string {
-	return strings.TrimSpace(`
-## Exit Plan Mode
-
-### Before Using This Tool
-- Write your plan to the plan file first (use write_file with the plan file path shown in [plan:start #xxxx])
-- Ensure your plan is complete and unambiguous
-- Resolve any open questions with ask_user_question BEFORE calling exit_plan_mode
-
-### How This Tool Works
-- This tool reads the plan from the file you wrote
-- The user will see the plan content and approve or request changes
-- If approved, you return to normal mode and can begin implementation
-- If rejected, you stay in plan mode to revise the plan
-
-Do NOT use ask_user_question to ask "is my plan ready?" or "should I proceed?" — 
-that's exactly what this tool does.
-`)
-}
+// Prompt 返回使用指南，由 Registry.FormatToolPrompts() 注入 system prompt。
+func (t *ExitPlanMode) Prompt() string { return exitPlanModePrompt }
 
 func (t *ExitPlanMode) Schema() json.RawMessage { return exitPlanModeSchema }
 
