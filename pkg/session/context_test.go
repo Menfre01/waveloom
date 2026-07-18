@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/Menfre01/waveloom/pkg/compaction"
+	"github.com/Menfre01/waveloom/pkg/filehistory"
 	"github.com/Menfre01/waveloom/pkg/llm"
 	"github.com/Menfre01/waveloom/pkg/task"
 )
@@ -844,10 +845,14 @@ func TestRewindConversationTo_PersistsForkFiles(t *testing.T) {
 		t.Fatalf("JSON file not found: %s", jsonPath)
 	}
 
-	// JSONL should contain only truncated messages
-	jlMessages, jlErr := loadMessagesFromJSONL(jsonlPath)
+	// JSONL should contain only truncated messages (unified format)
+	entries, jlErr := LoadTranscriptEntries(jsonlPath)
 	if jlErr != nil {
 		t.Fatalf("load JSONL failed: %v", jlErr)
+	}
+	jlMessages := make([]llm.Message, len(entries))
+	for i, e := range entries {
+		jlMessages[i] = e.ToMessage()
 	}
 	if len(jlMessages) != 2 {
 		t.Fatalf("expected 2 messages in JSONL, got %d", len(jlMessages))
@@ -907,5 +912,134 @@ func TestLastUserMessageID(t *testing.T) {
 	}
 	if id1 == id2 {
 		t.Fatal("message IDs should be unique")
+	}
+}
+
+// ── P2 测试：LoadFromFile repair 路径 ──
+
+// TestLoadFromFile_WithRepair 验证 LoadFromFile 在检测到损坏消息时触发修复并重写 JSONL。
+func TestLoadFromFile_WithRepair(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.json")
+
+	// 写一个包含空 role 消息的 session 文件（模拟损坏数据）
+	badMessages := []llm.Message{
+		{Role: llm.RoleSystem, ID: "sys-1", Content: "system"},
+		{Role: llm.RoleUser, ID: "u-1", Content: "hello"},
+		{Role: "", ID: "bad-1", Content: "no role"}, // 损坏消息
+		{Role: llm.RoleAssistant, ID: "a-1", Content: "hi"},
+	}
+
+	if err := SaveSessionToFile(path, badMessages, Stats{}, nil, nil, nil, nil, time.Time{}); err != nil {
+		t.Fatalf("SaveSessionToFile: %v", err)
+	}
+
+	// LoadFromFile — 应修复损坏消息（过滤掉空 role），并重写 JSONL
+	cm := New("system")
+	ok := cm.LoadFromFile(path)
+	if !ok {
+		t.Fatal("LoadFromFile failed")
+	}
+
+	messages := cm.Messages()
+	// 过滤后应只有 3 条有效消息
+	if len(messages) != 3 {
+		t.Fatalf("expected 3 valid messages after repair, got %d: %+v", len(messages), messages)
+	}
+	for _, m := range messages {
+		if m.Role == "" {
+			t.Error("empty role message should have been filtered")
+		}
+	}
+}
+
+// ── Plan mode 持久化测试 ──
+
+// TestPlanState_RoundTrip 验证 SetPlanState / PlanState 的往返。
+func TestPlanState_RoundTrip(t *testing.T) {
+	cm := New("system")
+
+	// 初始状态应为零值
+	active, pf := cm.PlanState()
+	if active || pf != "" {
+		t.Fatalf("initial state: active=%v planFile=%q, want false/\"\"", active, pf)
+	}
+
+	// 设置 plan mode 状态
+	cm.SetPlanState(true, "/tmp/test-plan.md")
+	active, pf = cm.PlanState()
+	if !active || pf != "/tmp/test-plan.md" {
+		t.Fatalf("after set: active=%v planFile=%q, want true /tmp/test-plan.md", active, pf)
+	}
+
+	// 退出 plan mode
+	cm.SetPlanState(false, "")
+	active, pf = cm.PlanState()
+	if active || pf != "" {
+		t.Fatalf("after clear: active=%v planFile=%q, want false/\"\"", active, pf)
+	}
+}
+
+// TestPlanState_PersistsThroughSave 验证 plan mode 状态通过 Save/LoadFromFile 持久化。
+func TestPlanState_PersistsThroughSave(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.json")
+
+	cm := New("system")
+	cm.SetSessionPath(path)
+	cm.PrepareRun("hello")
+	cm.SetPlanState(true, "/tmp/my-plan.md")
+	cm.Save()
+
+	// 重新加载
+	cm2 := New("system")
+	if !cm2.LoadFromFile(path) {
+		t.Fatal("LoadFromFile failed")
+	}
+	active, pf := cm2.PlanState()
+	if !active || pf != "/tmp/my-plan.md" {
+		t.Fatalf("after load: active=%v planFile=%q, want true /tmp/my-plan.md", active, pf)
+	}
+}
+
+// TestFileHistory_PersistsThroughSave 验证 file history 快照通过 Save/LoadFromFile 持久化。
+func TestFileHistory_PersistsThroughSave(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.json")
+
+	cm := New("system")
+	cm.SetSessionPath(path)
+	cm.PrepareRun("hello")
+
+	// 模拟 filehistory 快照
+	fhData := &filehistory.SnapshotData{
+		Snapshots: []filehistory.SnapshotEntry{
+			{MessageID: "msg-1", TrackedFileBackups: map[string]filehistory.BackupEntry{
+				"/tmp/test.go": {BackupFileName: "backup-1", Version: 1},
+			}},
+		},
+		TrackedFiles: []string{"/tmp/test.go"},
+		SnapshotSeq:  5,
+	}
+	cm.SetFileHistory(fhData)
+	cm.Save()
+
+	// 重新加载
+	cm2 := New("system")
+	if !cm2.LoadFromFile(path) {
+		t.Fatal("LoadFromFile failed")
+	}
+	loaded := cm2.FileHistory()
+	if loaded == nil {
+		t.Fatal("FileHistory returned nil after load")
+	}
+	if loaded.SnapshotSeq != 5 {
+		t.Errorf("SnapshotSeq = %d, want 5", loaded.SnapshotSeq)
+	}
+	if len(loaded.Snapshots) != 1 || loaded.Snapshots[0].MessageID != "msg-1" {
+		t.Errorf("Snapshots = %+v", loaded.Snapshots)
+	}
+	if len(loaded.TrackedFiles) != 1 || loaded.TrackedFiles[0] != "/tmp/test.go" {
+		t.Errorf("TrackedFiles = %v", loaded.TrackedFiles)
 	}
 }

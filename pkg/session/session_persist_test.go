@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/Menfre01/waveloom/pkg/compaction"
+	"github.com/Menfre01/waveloom/pkg/filehistory"
 	"github.com/Menfre01/waveloom/pkg/llm"
 	"github.com/Menfre01/waveloom/pkg/task"
 )
@@ -36,11 +37,11 @@ func TestSaveAndLoad_RoundTrip(t *testing.T) {
 		MessageCount:          3,
 	}
 
-	if err := SaveSessionToFile(path, messages, stats, nil, nil, time.Time{}); err != nil {
+	if err := SaveSessionToFile(path, messages, stats, nil, nil, nil, nil, time.Time{}); err != nil {
 		t.Fatalf("SaveSessionToFile: %v", err)
 	}
 
-	loaded, loadedStats, compData, sid, _, _, _, err := LoadSessionFromFile(path)
+	loaded, loadedStats, compData, sid, _, _, _, _, _, err := LoadSessionFromFile(path)
 	if err != nil {
 		t.Fatalf("LoadSessionFromFile: %v", err)
 	}
@@ -85,11 +86,11 @@ func TestSaveAndLoad_RoundTripWithToolCalls(t *testing.T) {
 	}
 	stats := Stats{TotalTurns: 1, TotalPromptTokens: 500, TotalCompletionTokens: 200, MessageCount: 6}
 
-	if err := SaveSessionToFile(path, messages, stats, nil, nil, time.Time{}); err != nil {
+	if err := SaveSessionToFile(path, messages, stats, nil, nil, nil, nil, time.Time{}); err != nil {
 		t.Fatalf("SaveSessionToFile: %v", err)
 	}
 
-	loaded, _, _, _, _, _, _, err := LoadSessionFromFile(path)
+	loaded, _, _, _, _, _, _, _, _, err := LoadSessionFromFile(path)
 	if err != nil {
 		t.Fatalf("LoadSessionFromFile: %v", err)
 	}
@@ -168,11 +169,11 @@ func TestSaveAndLoad_WithCompaction(t *testing.T) {
 		TotalTurns: 5,
 	}
 
-	if err := SaveSessionToFile(path, messages, stats, compData, nil, time.Time{}); err != nil {
+	if err := SaveSessionToFile(path, messages, stats, compData, nil, nil, nil, time.Time{}); err != nil {
 		t.Fatalf("SaveSessionToFile: %v", err)
 	}
 
-	_, loadedStats, loadedComp, _, _, _, _, err := LoadSessionFromFile(path)
+	_, loadedStats, loadedComp, _, _, _, _, _, _, err := LoadSessionFromFile(path)
 	if err != nil {
 		t.Fatalf("LoadSessionFromFile: %v", err)
 	}
@@ -204,23 +205,23 @@ func TestSave_UpdateExisting(t *testing.T) {
 	stats := Stats{TotalTurns: 1, MessageCount: 1}
 
 	// 第一次保存
-	if err := SaveSessionToFile(path, messages, stats, nil, nil, time.Time{}); err != nil {
+	if err := SaveSessionToFile(path, messages, stats, nil, nil, nil, nil, time.Time{}); err != nil {
 		t.Fatalf("first save: %v", err)
 	}
 
 	// 读取 session ID
-	_, _, _, sid1, _, _, _, _ := LoadSessionFromFile(path)
+	_, _, _, sid1, _, _, _, _, _, _ := LoadSessionFromFile(path)
 
 	// 第二次保存（模拟 Append 新的 turn）
 	messages = append(messages, llm.Message{Role: llm.RoleAssistant, Content: "response"})
 	stats.TotalTurns = 2
 	stats.MessageCount = 2
 
-	if err := SaveSessionToFile(path, messages, stats, nil, nil, time.Time{}); err != nil {
+	if err := SaveSessionToFile(path, messages, stats, nil, nil, nil, nil, time.Time{}); err != nil {
 		t.Fatalf("second save: %v", err)
 	}
 
-	loaded, loadedStats, _, sid2, _, _, _, _ := LoadSessionFromFile(path)
+	loaded, loadedStats, _, sid2, _, _, _, _, _, _ := LoadSessionFromFile(path)
 	if len(loaded) != 2 {
 		t.Fatalf("expected 2 messages, got %d", len(loaded))
 	}
@@ -270,7 +271,7 @@ func TestLoadSessionFile_EmptyFile(t *testing.T) {
 }
 
 func TestLoadSessionFromFile_NotFound(t *testing.T) {
-	msgs, stats, comp, sid, tasks, _, _, err := LoadSessionFromFile("/nonexistent/path.json")
+	msgs, stats, comp, sid, tasks, _, _, _, _, err := LoadSessionFromFile("/nonexistent/path.json")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -301,11 +302,11 @@ func TestSessionPersist_WithTasks(t *testing.T) {
 	msgs := []llm.Message{
 		{Role: llm.RoleSystem, Content: "test"},
 	}
-	if err := SaveSessionToFile(path, msgs, Stats{TotalTurns: 1}, nil, nil, time.Time{}); err != nil {
+	if err := SaveSessionToFile(path, msgs, Stats{TotalTurns: 1}, nil, nil, nil, nil, time.Time{}); err != nil {
 		t.Fatalf("SaveSessionToFile: %v", err)
 	}
 
-	loaded, loadedStats, _, _, loadedTasks, _, _, err := LoadSessionFromFile(path)
+	loaded, loadedStats, _, _, loadedTasks, _, _, _, _, err := LoadSessionFromFile(path)
 	if err != nil {
 		t.Fatalf("LoadSessionFromFile: %v", err)
 	}
@@ -544,5 +545,84 @@ func TestVersion_Default(t *testing.T) {
 	BuildVersion = ""
 	if v := version(); v != "" {
 		t.Errorf("expected empty, got %q", v)
+	}
+}
+
+// ── P0 测试：统一 JSONL 加载优先级 ──
+
+// TestLoadSessionFromFile_JSONLPriority 验证 JSONL 优先于 JSON Messages 字段加载。
+func TestLoadSessionFromFile_JSONLPriority(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "session.json")
+
+	// 先写 JSON（含 3 条消息）和一条 JSONL（含 5 条不同的消息）
+	jsonMessages := []llm.Message{
+		{Role: llm.RoleUser, ID: "json-1", Content: "json msg 1"},
+		{Role: llm.RoleAssistant, ID: "json-2", Content: "json msg 2"},
+		{Role: llm.RoleUser, ID: "json-3", Content: "json msg 3"},
+	}
+	if err := SaveSessionToFile(path, jsonMessages, Stats{}, nil, nil, nil, nil, time.Time{}); err != nil {
+		t.Fatalf("SaveSessionToFile: %v", err)
+	}
+
+	// 写统一 JSONL（含 5 条不同的消息）
+	sid := strings.TrimSuffix(filepath.Base(path), ".json")
+	jlPath := TranscriptPath(filepath.Dir(path), sid)
+	jlMessages := []llm.Message{
+		{Role: llm.RoleUser, ID: "jl-1", Content: "jsonl msg 1"},
+		{Role: llm.RoleAssistant, ID: "jl-2", Content: "jsonl msg 2"},
+		{Role: llm.RoleUser, ID: "jl-3", Content: "jsonl msg 3"},
+		{Role: llm.RoleAssistant, ID: "jl-4", Content: "jsonl msg 4"},
+		{Role: llm.RoleUser, ID: "jl-5", Content: "jsonl msg 5"},
+	}
+	entries := MessagesToTranscriptEntries(jlMessages, nil, sid, version(), "/cwd", "")
+	if err := WriteTranscriptEntries(jlPath, entries); err != nil {
+		t.Fatalf("WriteTranscriptEntries: %v", err)
+	}
+
+	loaded, _, _, _, _, _, _, _, _, err := LoadSessionFromFile(path)
+	if err != nil {
+		t.Fatalf("LoadSessionFromFile: %v", err)
+	}
+	if len(loaded) != 5 {
+		t.Fatalf("expected 5 messages from JSONL, got %d", len(loaded))
+	}
+	if loaded[0].Content != "jsonl msg 1" {
+		t.Errorf("first message = %q, want %q", loaded[0].Content, "jsonl msg 1")
+	}
+}
+
+// TestSaveSessionToFile_WithPlanModeAndFileHistory 验证 planMode 和 fileHistory 正确持久化。
+func TestSaveSessionToFile_WithPlanModeAndFileHistory(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "session.json")
+
+	planMode := &sessionPlanMode{Active: true, PlanFile: "/tmp/test-plan.md"}
+	fh := &filehistory.SnapshotData{
+		Snapshots:    []filehistory.SnapshotEntry{},
+		TrackedFiles: []string{"test.go"},
+		SnapshotSeq:  3,
+	}
+
+	messages := []llm.Message{
+		{Role: llm.RoleUser, ID: "m1", Content: "hello"},
+	}
+	if err := SaveSessionToFile(path, messages, Stats{}, nil, nil, planMode, fh, time.Time{}); err != nil {
+		t.Fatalf("SaveSessionToFile: %v", err)
+	}
+
+	_, _, _, _, _, _, loadedPlan, loadedFH, _, err := LoadSessionFromFile(path)
+	if err != nil {
+		t.Fatalf("LoadSessionFromFile: %v", err)
+	}
+	if loadedPlan == nil {
+		t.Fatal("expected planMode to be loaded")
+	}
+	if !loadedPlan.Active || loadedPlan.PlanFile != "/tmp/test-plan.md" {
+		t.Errorf("planMode = %+v, want active=true, planFile=/tmp/test-plan.md", loadedPlan)
+	}
+	if loadedFH == nil {
+		t.Fatal("expected fileHistory to be loaded")
+	}
+	if loadedFH.SnapshotSeq != 3 || len(loadedFH.TrackedFiles) != 1 {
+		t.Errorf("fileHistory seq=%d files=%v, want seq=3 files=[test.go]", loadedFH.SnapshotSeq, loadedFH.TrackedFiles)
 	}
 }
