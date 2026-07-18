@@ -135,7 +135,7 @@ func main() {
 	// 6. 初始化 Tool Registry
 	registry := tool.NewRegistry()
 	subModelValidation := buildValidModels(llmSettings)
-	registerBuiltinTools(registry, skillLoader, llmClient, subModelValidation, llmSettings.Model, llmSettings.SubModel, cwd)
+	agentTool := registerBuiltinTools(registry, skillLoader, llmClient, subModelValidation, llmSettings.Model, llmSettings.SubModel, cwd)
 
 	// 8.5 启动 MCP Manager — 连接配置的 MCP Server，注册工具代理
 	mcpManager := mcp.NewManager(registry)
@@ -293,18 +293,18 @@ func main() {
 	if cfg.OneShot == "" {
 		// 16.5 加载 Hook Runner（RTK 等 Claude Code 兼容 hooks）
 		hookRunner := loadHookRunner()
-		runTUI(llmClient, registry, guard, expander, llmSettings.Model, cfg.Theme, cfg.ContextLimit, cfg.MaxTurns, cfg.ToolTimeout, cfg.ToolTimeoutSource, cfg.BypassPerm, ctxMgr, isResume, sessionDir, globalPath, projectPath, agentsMdText, loc, todoState, advisorMode, subModel, hookRunner)
+		runTUI(llmClient, registry, guard, expander, llmSettings.Model, cfg.Theme, cfg.ContextLimit, cfg.MaxTurns, cfg.ToolTimeout, cfg.ToolTimeoutSource, cfg.BypassPerm, ctxMgr, isResume, sessionDir, globalPath, projectPath, agentsMdText, loc, todoState, advisorMode, subModel, hookRunner, agentTool)
 		return
 	}
 
 	// 16.5 加载 Hook Runner（RTK 等 Claude Code 兼容 hooks）
 	hookRunner := loadHookRunner()
-	runOneShot(cfg, llmClient, registry, guard, expander, cwd, ctxMgr, agentsMdText, loc, todoState, advisorMode, subModel, llmSettings.Model, hookRunner)
+	runOneShot(cfg, llmClient, registry, guard, expander, cwd, ctxMgr, agentsMdText, loc, todoState, advisorMode, subModel, llmSettings.Model, hookRunner, agentTool)
 }
 
 
 // registerBuiltinTools 注册内置工具。
-func registerBuiltinTools(r tool.Registry, skillLoader *skill.Loader, llmClient llm.Client, validModels []string, defaultModel string, subModel string, cwd string) {
+func registerBuiltinTools(r tool.Registry, skillLoader *skill.Loader, llmClient llm.Client, validModels []string, defaultModel string, subModel string, cwd string) *subagent.AgentTool {
 	r.Register(tool.Wrap(&tool.ReadFileHashline{}))
 	r.Register(tool.Wrap(&tool.EditFileHashline{}))
 	r.Register(tool.Wrap(&tool.WriteFile{}))
@@ -339,6 +339,7 @@ func registerBuiltinTools(r tool.Registry, skillLoader *skill.Loader, llmClient 
 
 	// TodoWrite — 结构化任务列表管理
 	r.Register(tool.Wrap(&tool.TodoWrite{}))
+	return at
 }
 
 // resolveSettingsPaths 返回全局和项目配置文件路径。

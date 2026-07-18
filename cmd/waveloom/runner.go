@@ -6,6 +6,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/Menfre01/waveloom/pkg/agentloop"
@@ -14,12 +15,13 @@ import (
 	"github.com/Menfre01/waveloom/pkg/permission"
 	"github.com/Menfre01/waveloom/pkg/reference"
 	"github.com/Menfre01/waveloom/pkg/session"
+	"github.com/Menfre01/waveloom/pkg/subagent"
 	"github.com/Menfre01/waveloom/pkg/todo"
 	"github.com/Menfre01/waveloom/pkg/tool"
 )
 
 // runOneShot 执行单次/管道模式（无 TUI，纯文本输出）。
-func runOneShot(cfg CLIConfig, llmClient llm.Client, registry tool.Registry, guard permission.Guard, expander *reference.Expander, cwd string, cm *session.ContextManager, agentsMdText string, loc Locale, todoState *todo.TodoState, advisorMode bool, subModel string, model string, hookRunner *hook.Runner) {
+func runOneShot(cfg CLIConfig, llmClient llm.Client, registry tool.Registry, guard permission.Guard, expander *reference.Expander, cwd string, cm *session.ContextManager, agentsMdText string, loc Locale, todoState *todo.TodoState, advisorMode bool, subModel string, model string, hookRunner *hook.Runner, agentTool *subagent.AgentTool) {
 	lc := messagesFor(loc)
 	// Context Manager 已管理 system prompt，Loop 无需重复注入
 	initialModel := ""
@@ -47,8 +49,14 @@ func runOneShot(cfg CLIConfig, llmClient llm.Client, registry tool.Registry, gua
 	loop := agentloop.New(llmClient, registry, loopCfg)
 	if hookRunner != nil {
 		loop.SetHookRunner(hookRunner)
+		if sid := cm.SessionID(); sid != "" {
+			hookRunner.SetSessionInfo(sid, session.TranscriptPath(filepath.Dir(cm.SessionPath()), sid))
+		}
 	}
-
+	// AgentTool 不依赖 hookRunner
+	if sid := cm.SessionID(); sid != "" {
+		agentTool.SetSessionInfo(filepath.Dir(cm.SessionPath()), sid, session.BuildVersion)
+	}
 	// 构造用户输入（含管道数据）
 	userInput := cfg.OneShot
 	if isPiped() {

@@ -193,18 +193,6 @@ func TestTrimParas_OverLimit(t *testing.T) {
 	}
 }
 
-func TestTrimParas_TranscriptWrittenSync(t *testing.T) {
-	n := maxParas + 10
-	paras := make([]Paragraph, n)
-	m := &model{
-		paras:            paras,
-		transcriptWritten: n,
-	}
-	m.trimParas()
-	if m.transcriptWritten != maxParas {
-		t.Errorf("expected transcriptWritten=%d, got %d", maxParas, m.transcriptWritten)
-	}
-}
 
 // ---------------------------------------------------------------------------
 // displayWidth

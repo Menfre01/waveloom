@@ -490,7 +490,6 @@ type model struct {
 
 	// Transcript 持久化
 	transcriptPath    string // session_id.jsonl 文件路径
-	transcriptWritten int    // 已写入 transcript 的段落数
 
 	// Bubbletea 组件
 	program     *tea.Program // 在 main 中注入，用于 goroutine → TUI 通信
@@ -1938,7 +1937,11 @@ func (m *model) handleLoopDone(ev agentloop.LoopDone, generation int) {
 			if lastUserMsgID := m.cm.LastUserMessageID(); lastUserMsgID != "" {
 				m.fh.MakeSnapshot(lastUserMsgID, m.fhSessionDir)
 			}
+			m.cm.SetFileHistory(m.fh.ExportSnapshot())
 		}
+
+		// Plan mode 状态持久化（用于 resume 恢复）
+		m.cm.SetPlanState(m.inPlanMode, m.planFile)
 
 		// loop 级增量归零，准备下一个 loop
 		m.loopPrompt = 0
@@ -2208,168 +2211,190 @@ func isTimeoutError(err error) bool {
 // Transcript 持久化
 // ---------------------------------------------------------------------------
 
-// flushTranscript 将新完成的段落写入 transcript JSONL 文件。
-// 应在每次修改 m.paras 后调用。
-func (m *model) flushTranscript() {
-	if m.transcriptPath == "" {
-		return
-	}
-	for i := m.transcriptWritten; i < len(m.paras); i++ {
-		p := &m.paras[i]
-		// 跳过仍在流式中的段落（tool、assistant、thought）
-		if p.State == stateStreaming {
-			continue
-		}
-		line := paragraphToTranscriptLine(p)
-		if err := session.AppendTranscriptLine(m.transcriptPath, line); err != nil {
-			// 静默失败：transcript 是 best-effort 增强，不应影响主流程
-			return
-		}
-		m.transcriptWritten = i + 1
-	}
-}
+// flushTranscript 是 no-op：消息实时通过 session saveToPath 写入统一 JSONL，
+// 不需要独立的 TUI transcript 文件。
+func (m *model) flushTranscript() {}
 
-// paragraphToTranscriptLine 将 TUI Paragraph 转为 transcript 行。
-func paragraphToTranscriptLine(p *Paragraph) session.TranscriptLine {
-	line := session.TranscriptLine{
-		Text:          p.Text,
-		ToolName:      p.ToolName,
-		ToolArgs:      p.ToolArgs,
-		ToolResult:    p.ToolResult,
-		ToolError:     p.ToolError,
-		ToolDurMs:     p.ToolDurMs,
-		ThoughtTokens: p.ThoughtTokens,
-	}
-	// Phase 2: subagent 字段持久化
-	if p.Type == paraSubagent {
-		line.SubagentType = p.SubagentType
-		line.SubagentModel = p.SubagentModel
-		line.SubagentPrompt = p.SubagentPrompt
-		line.SubagentTurns = p.SubagentTurns
-		line.SubagentPromptTok = p.SubagentPromptTok
-		line.SubagentComplTok = p.SubagentComplTok
-		line.SubagentToolCallID = p.SubagentToolCallID
-		if len(p.SubagentEvents) > 0 {
-			data, _ := json.Marshal(p.SubagentEvents)
-			line.SubagentEventsJSON = string(data)
-		}
-	}
-	switch p.NotifKind {
-	case notifWarn:
-		line.NotifKind = "warn"
-	case notifError:
-		line.NotifKind = "error"
-	default:
-		line.NotifKind = "info"
-	}
-	switch p.Type {
-	case paraUser:
-		line.Type = "user"
-	case paraThought:
-		line.Type = "thought"
-	case paraAssistant:
-		line.Type = "assistant"
-	case paraTool:
-		line.Type = "tool"
-	case paraSystem:
-		line.Type = "system"
-	case paraSubagent:
-		line.Type = "subagent"
-	}
-	switch p.State {
-	case stateDone:
-		line.State = "done"
-	case stateCollapsed:
-		line.State = "collapsed"
-	case stateExpanded:
-		line.State = "expanded"
-	case stateError:
-		line.State = "error"
-	}
-	return line
-}
+// transcriptEntryToParagraph 将统一 JSONL 条目转为 TUI Paragraph(s)。
+// assistant 消息可能包含多个 tool_use blocks，每个映射为一个工具段落。
+func transcriptEntryToParagraph(e session.TranscriptEntry, paras *[]Paragraph) {
+	msg := e.ToMessage()
 
-// transcriptLineToParagraph 将 transcript 行还原为 TUI Paragraph。
-func transcriptLineToParagraph(line session.TranscriptLine) Paragraph {
-	p := Paragraph{
-		Text:          line.Text,
-		ToolName:      line.ToolName,
-		ToolArgs:      line.ToolArgs,
-		ToolResult:    line.ToolResult,
-		ToolError:     line.ToolError,
-		ToolDurMs:     line.ToolDurMs,
-		ThoughtTokens: line.ThoughtTokens,
-	}
-	switch line.NotifKind {
-	case "warn":
-		p.NotifKind = notifWarn
-	case "error":
-		p.NotifKind = notifError
-	default:
-		p.NotifKind = notifInfo
-	}
-	switch line.Type {
-	case "user":
-		p.Type = paraUser
-	case "thought":
-		p.Type = paraThought
-	case "assistant":
-		p.Type = paraAssistant
-	case "tool":
-		p.Type = paraTool
-	case "system":
-		p.Type = paraSystem
-	case "subagent":
-		p.Type = paraSubagent
-		// Phase 2: 恢复 subagent 结构化字段
-		p.SubagentType = line.SubagentType
-		p.SubagentModel = line.SubagentModel
-		p.SubagentPrompt = line.SubagentPrompt
-		p.SubagentTurns = line.SubagentTurns
-		p.SubagentPromptTok = line.SubagentPromptTok
-		p.SubagentComplTok = line.SubagentComplTok
-		p.SubagentToolCallID = line.SubagentToolCallID
-		if line.SubagentEventsJSON != "" {
-			var events []subagent.SubagentEvent
-			if err := json.Unmarshal([]byte(line.SubagentEventsJSON), &events); err == nil {
-				p.SubagentEvents = events
+	if msg.ToolCallID != "" {
+		for i := len(*paras) - 1; i >= 0; i-- {
+			p := &(*paras)[i]
+			if p.ToolResult == "" && p.ToolName == msg.Name && (p.Type == paraTool || p.Type == paraSubagent) {
+				p.ToolResult = msg.Content
+				return
 			}
 		}
+		*paras = append(*paras, Paragraph{
+			Type:       paraTool,
+			State:      stateDone,
+			ToolName:   msg.Name,
+			ToolResult: msg.Content,
+		})
+		return
 	}
-	switch line.State {
-	case "done":
-		p.State = stateDone
-	case "collapsed":
-		p.State = stateCollapsed
-	case "expanded":
-		p.State = stateExpanded
-	case "error":
-		p.State = stateError
+
+	switch msg.Role {
+	case llm.RoleUser:
+		if strings.HasPrefix(strings.TrimSpace(msg.Content), "# AGENTS.md") {
+			return
+		}
+		if strings.HasPrefix(strings.TrimSpace(msg.Content), "[plan:start") ||
+			strings.HasPrefix(strings.TrimSpace(msg.Content), "[plan:end") {
+			return
+		}
+		*paras = append(*paras, Paragraph{
+			Type:  paraUser,
+			State: stateDone,
+			Text:  msg.Content,
+		})
+	case llm.RoleAssistant:
+		if msg.ReasoningContent != "" {
+			*paras = append(*paras, Paragraph{
+				Type:          paraThought,
+				State:         stateCollapsed,
+				Text:          msg.ReasoningContent,
+				ThoughtTokens: len([]rune(msg.ReasoningContent)) / 3,
+			})
+		}
+		if msg.Content != "" {
+			*paras = append(*paras, Paragraph{
+				Type:  paraAssistant,
+				State: stateDone,
+				Text:  msg.Content,
+			})
+		}
+		for _, tc := range msg.ToolCalls {
+			if tc.Name == "agent" {
+				*paras = append(*paras, Paragraph{
+					Type:               paraSubagent,
+					State:              stateDone,
+					SubagentToolCallID: tc.ID,
+					ToolName:           tc.Name,
+					ToolArgs:           formatToolArgs(tc.Name, tc.Arguments, ""),
+				})
+			} else {
+				*paras = append(*paras, Paragraph{
+					Type:     paraTool,
+					State:    stateDone,
+					ToolName: tc.Name,
+					ToolArgs: formatToolArgs(tc.Name, tc.Arguments, ""),
+				})
+			}
+		}
+	case llm.RoleSystem:
+		// system 消息不在 TUI 中渲染
 	}
-	return p
 }
 
-// replayTranscript 从 transcript 文件加载最后 N 行并还原为段落。
-// 用于 --resume 时在 viewport 中显示最近的对话历史。
+
+
+// replayTranscript 从统一 JSONL 文件加载最近条目并还原为 viewport 段落。
 func (m *model) replayTranscript() {
 	if m.transcriptPath == "" {
 		return
 	}
-	lines, err := session.LoadTranscriptLines(m.transcriptPath)
-	if err != nil || len(lines) == 0 {
+	entries, err := session.LoadTranscriptEntriesTail(m.transcriptPath)
+	if err != nil || len(entries) == 0 {
 		return
 	}
 
-	m.paras = make([]Paragraph, 0, len(lines))
-	for _, l := range lines {
-		m.paras = append(m.paras, transcriptLineToParagraph(l))
+	m.paras = make([]Paragraph, 0, len(entries)*2)
+	for _, e := range entries {
+		transcriptEntryToParagraph(e, &m.paras)
 	}
-	m.transcriptWritten = len(m.paras)
+
+	m.loadSubagentTranscripts()
 }
 
-// ---------------------------------------------------------------------------
-// 折叠/展开切换
-// ---------------------------------------------------------------------------
+func (m *model) loadSubagentTranscripts() {
+	sid := m.cm.SessionID()
+	if sid == "" {
+		return
+	}
+	subagentsDir := filepath.Join(m.sessionDir, sid, "subagents")
+	entries, err := os.ReadDir(subagentsDir)
+	if err != nil {
+		return
+	}
+	for _, entry := range entries {
+		name := entry.Name()
+		if !strings.HasPrefix(name, "agent-") || !strings.HasSuffix(name, ".jsonl") {
+			continue
+		}
+		agentID := strings.TrimPrefix(strings.TrimSuffix(name, ".jsonl"), "agent-")
+		jlPath := filepath.Join(subagentsDir, name)
+		subEntries, jlErr := session.LoadTranscriptEntries(jlPath)
+		if jlErr != nil || len(subEntries) == 0 {
+			continue
+		}
+		para := m.buildSubagentParagraph(agentID, subEntries)
+		if existing := m.findSubagentPara(agentID); existing != nil {
+			*existing = para
+		} else {
+			m.paras = append(m.paras, para)
+		}
+	}
+}
+
+func (m *model) buildSubagentParagraph(agentID string, entries []session.TranscriptEntry) Paragraph {
+	p := Paragraph{
+		Type:               paraSubagent,
+		State:              stateDone,
+		SubagentToolCallID: agentID,
+	}
+	var subEvents []subagent.SubagentEvent
+	var textBuilder strings.Builder
+	for _, e := range entries {
+		msg := e.ToMessage()
+		switch msg.Role {
+		case llm.RoleAssistant:
+			if msg.Content != "" {
+				textBuilder.WriteString(msg.Content)
+				subEvents = append(subEvents, subagent.SubagentEvent{
+					Kind: subagent.SubagentText, TextDelta: msg.Content,
+				})
+			}
+			for _, tc := range msg.ToolCalls {
+				subEvents = append(subEvents, subagent.SubagentEvent{
+					Kind: subagent.SubagentToolStart,
+					ToolName: tc.Name, ToolArgs: tc.Arguments,
+				})
+			}
+		case llm.RoleTool:
+			subEvents = append(subEvents, subagent.SubagentEvent{
+				Kind: subagent.SubagentToolResult,
+				ToolName: msg.Name, ToolResult: msg.Content,
+			})
+		}
+	}
+	p.Text = textBuilder.String()
+	p.SubagentEvents = subEvents
+	metaPath := filepath.Join(m.sessionDir, m.cm.SessionID(), "subagents", "agent-"+agentID+".meta.json")
+	if meta, metaErr := session.LoadAgentMetadata(metaPath); metaErr == nil && meta != nil {
+		p.SubagentType = meta.AgentType
+		p.SubagentPrompt = meta.Description
+		p.SubagentModel = meta.Model
+		p.SubagentTurns = meta.TotalTurns
+		p.SubagentPromptTok = meta.PromptTokens
+		p.SubagentComplTok = meta.CompletionTokens
+	}
+	return p
+}
+
+// findSubagentPara 返回匹配 agentID 的 paraSubagent 段落指针，未找到返回 nil。
+func (m *model) findSubagentPara(agentID string) *Paragraph {
+	for i := range m.paras {
+		if m.paras[i].Type == paraSubagent && m.paras[i].SubagentToolCallID == agentID {
+			return &m.paras[i]
+		}
+	}
+	return nil
+}
+
 
 // hasStreamingPara 返回当前是否存在流式中的段落（thought / assistant / tool）。
 // 仅检查尾部 3 个段落——流式段落始终在列表末尾，O(1)。
@@ -2400,14 +2425,23 @@ func (m *model) trimParas() {
 			m.exitFocusMode() // cmd 无法传播，仅重置状态
 		}
 	}
+}
 
-	// 同步 transcript 写入指针
-	if m.transcriptWritten > 0 {
-		m.transcriptWritten -= remove
-		if m.transcriptWritten < 0 {
-			m.transcriptWritten = 0
+// hasOpenPlan 检查消息历史中是否包含未闭合的 [plan:start]。
+func hasOpenPlan(messages []llm.Message) bool {
+	depth := 0
+	for _, msg := range messages {
+		if msg.Role != llm.RoleUser {
+			continue
+		}
+		if strings.Contains(msg.Content, "[plan:start") {
+			depth++
+		}
+		if strings.Contains(msg.Content, "[plan:end") {
+			depth--
 		}
 	}
+	return depth > 0
 }
 
 // isExpandable 判断段落是否可通过焦点 Enter 展开/折叠。
@@ -2661,9 +2695,9 @@ func (m *model) exitPlanModeByUser() tea.Cmd {
 	m.inPlanMode = false
 	m.planEnteredByUser = false
 	m.planFile = ""
+	m.cm.SetPlanState(false, "")
 	m.planPairID = ""
 	m.planStartSent = false
-	m.input.Placeholder = m.msg().InputPlaceholder
 	return nil
 }
 
@@ -4041,8 +4075,9 @@ func (m *model) executeRewind(opt rewindOption) tea.Cmd {
 		} else {
 			// 更新 transcript 路径
 			m.transcriptPath = session.TranscriptPath(m.fhSessionDir, newID)
-			m.transcriptWritten = 0
-
+			if m.hookRunner != nil {
+				m.hookRunner.SetSessionInfo(newID, m.transcriptPath)
+			}
 			// 从截断后的消息重建段落列表
 			m.rebuildParasFromMessages()
 
@@ -4086,10 +4121,12 @@ func (m *model) rebuildParasFromMessages() {
 	for _, msg := range msgs {
 		switch msg.Role {
 		case llm.RoleSystem:
-			// system 消息不在 TUI 中渲染（仅作为上下文）
 		case llm.RoleUser:
-			// 跳过 AGENTS.md 注入消息（messages[1]，内容以 "# AGENTS.md" 开头）
-			if strings.HasPrefix(msg.Content, "# AGENTS.md") {
+			if strings.HasPrefix(strings.TrimSpace(msg.Content), "# AGENTS.md") {
+				continue
+			}
+			if strings.HasPrefix(strings.TrimSpace(msg.Content), "[plan:start") ||
+				strings.HasPrefix(strings.TrimSpace(msg.Content), "[plan:end") {
 				continue
 			}
 			m.paras = append(m.paras, Paragraph{
@@ -4098,6 +4135,14 @@ func (m *model) rebuildParasFromMessages() {
 				Text:  msg.Content,
 			})
 		case llm.RoleAssistant:
+			if msg.ReasoningContent != "" {
+				m.paras = append(m.paras, Paragraph{
+					Type:          paraThought,
+					State:         stateCollapsed,
+					Text:          msg.ReasoningContent,
+					ThoughtTokens: len([]rune(msg.ReasoningContent)) / 3,
+				})
+			}
 			if msg.Content != "" {
 				m.paras = append(m.paras, Paragraph{
 					Type:  paraAssistant,
@@ -4105,19 +4150,47 @@ func (m *model) rebuildParasFromMessages() {
 					Text:  msg.Content,
 				})
 			}
+			for _, tc := range msg.ToolCalls {
+				if tc.Name == "agent" {
+					m.paras = append(m.paras, Paragraph{
+						Type:               paraSubagent,
+						State:              stateDone,
+						SubagentToolCallID: tc.ID,
+						ToolName:           tc.Name,
+						ToolArgs:           formatToolArgs(tc.Name, tc.Arguments, ""),
+					})
+				} else {
+					m.paras = append(m.paras, Paragraph{
+						Type:     paraTool,
+						State:    stateDone,
+						ToolName: tc.Name,
+						ToolArgs: formatToolArgs(tc.Name, tc.Arguments, ""),
+					})
+				}
+			}
 		case llm.RoleTool:
-			m.paras = append(m.paras, Paragraph{
-				Type:       paraTool,
-				State:      stateDone,
-				ToolName:   msg.Name,
-				ToolResult: msg.Content,
-			})
+			found := false
+			for i := len(m.paras) - 1; i >= 0; i-- {
+				p := &m.paras[i]
+				if p.ToolResult == "" && p.ToolName == msg.Name && (p.Type == paraTool || p.Type == paraSubagent) {
+					p.ToolResult = msg.Content
+					found = true
+					break
+				}
+			}
+			if !found {
+				m.paras = append(m.paras, Paragraph{
+					Type:       paraTool,
+					State:      stateDone,
+					ToolName:   msg.Name,
+					ToolResult: msg.Content,
+				})
+			}
 		}
 	}
 }
 
-// handleSlashCommand 处理以 / 开头的本地命令。
-// 命令名大小写不敏感，无匹配时显示帮助提示。
+
 func (m *model) handleSlashCommand(input string) tea.Cmd {
 	cmd, args := m.slashRegistry.Match(input)
 	if cmd == nil {
@@ -4171,7 +4244,6 @@ func (m *model) handleSlashCommand(input string) tea.Cmd {
 		switch se.Kind {
 		case slashcommand.SideEffectSessionReset:
 			m.paras = nil
-			m.transcriptWritten = 0
 			m.hudTurns = 0
 			m.hudMessages = 0
 			m.hudCacheHit = 0
@@ -4488,7 +4560,9 @@ func (c *tuiSessionCreator) NewSession() error {
 
 	// 更新 transcript 路径
 	m.transcriptPath = session.TranscriptPath(m.sessionDir, sid)
-	m.transcriptWritten = 0
+	if m.hookRunner != nil {
+		m.hookRunner.SetSessionInfo(sid, m.transcriptPath)
+	}
 
 	// 重置 FileHistory
 	m.fh = filehistory.NewState()
@@ -4578,7 +4652,7 @@ func newSlashRegistry(creator slashcommand.SessionCreator, store slashcommand.Se
 // ---------------------------------------------------------------------------
 
 // runTUI 启动交互式 TUI 模式。依赖由 main() 统一初始化后传入，无需重复创建。
-func runTUI(llmClient llm.Client, registry tool.Registry, guard permission.Guard, expander *reference.Expander, modelName string, theme string, contextLimit int, maxTurns int, toolTimeout time.Duration, toolTimeoutSource string, bypassPerm bool, ctxMgr *session.ContextManager, isResume bool, sessionDir string, globalPath string, projectPath string, agentsMdText string, loc Locale, todoState *todo.TodoState, advisorMode bool, subModel string, hookRunner *hook.Runner) {
+func runTUI(llmClient llm.Client, registry tool.Registry, guard permission.Guard, expander *reference.Expander, modelName string, theme string, contextLimit int, maxTurns int, toolTimeout time.Duration, toolTimeoutSource string, bypassPerm bool, ctxMgr *session.ContextManager, isResume bool, sessionDir string, globalPath string, projectPath string, agentsMdText string, loc Locale, todoState *todo.TodoState, advisorMode bool, subModel string, hookRunner *hook.Runner, agentTool *subagent.AgentTool) {
 	m := newTUIModel(llmClient, registry, guard, expander, modelName, theme, contextLimit, maxTurns, toolTimeout, toolTimeoutSource, loc, todoState, hookRunner)
 	m.sessionDir = sessionDir
 	m.agentsMdText = agentsMdText
@@ -4626,21 +4700,42 @@ func runTUI(llmClient llm.Client, registry tool.Registry, guard permission.Guard
 	if sp := ctxMgr.SessionPath(); sp != "" {
 		sid := ctxMgr.SessionID()
 		m.transcriptPath = session.TranscriptPath(sessionDir, sid)
+		if m.hookRunner != nil {
+			m.hookRunner.SetSessionInfo(sid, m.transcriptPath)
+		}
+		if agentTool != nil {
+			agentTool.SetSessionInfo(sessionDir, sid, session.BuildVersion)
+		}
 	}
 
 	// 初始化 FileHistory（用于 checkpoint/rewind 文件备份）
 	m.fh = filehistory.NewState()
 	m.fhSessionDir = sessionDir
-
-	// Resume：重放 transcript 到 viewport
-	if isResume && m.transcriptPath != "" {
-		m.replayTranscript()
+	if fhData := ctxMgr.FileHistory(); fhData != nil {
+		m.fh.ImportSnapshot(fhData)
 	}
 
-	// 写入 recent.json（TUI 启动时唯一写入点）
+	// Resume：恢复 plan mode 状态
+	if isResume {
+		if active, planFile := ctxMgr.PlanState(); active {
+			m.inPlanMode = true
+			m.planFile = planFile
+			m.input.Placeholder = m.msg().InputPlanModePlaceholder
+		} else if hasOpenPlan(ctxMgr.Messages()) {
+			// plan mode 已退出但上下文中有未闭合的 [plan:start] → 注入 [plan:end]
+			ctxMgr.InjectUserInstructions("[plan:end #resume] Plan mode was exited before session ended.")
+		}
+
+		// 重放 transcript 到 viewport
+		if m.transcriptPath != "" {
+			m.replayTranscript()
+		}
+	}
+
+		// 写入 recent.json（TUI 启动时唯一写入点）
 	if sid := ctxMgr.SessionID(); sid != "" {
 		stats := ctxMgr.Stats()
-		_ = session.UpdateRecentSessions(sessionDir, sid, stats.MessageCount) // 静默失败
+		_ = session.UpdateRecentSessions(sessionDir, sid, stats.MessageCount)
 	}
 
 	p := tea.NewProgram(m)
