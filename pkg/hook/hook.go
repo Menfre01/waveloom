@@ -18,10 +18,15 @@ import "encoding/json"
 type EventType string
 
 const (
-	EventPreToolUse   EventType = "PreToolUse"
-	EventPostToolUse  EventType = "PostToolUse"
-	EventNotification EventType = "Notification"
-	EventStop         EventType = "Stop"
+	EventPreToolUse       EventType = "PreToolUse"
+	EventPostToolUse      EventType = "PostToolUse"
+	EventNotification     EventType = "Notification"
+	EventStop             EventType = "Stop"
+	EventUserPromptSubmit EventType = "UserPromptSubmit"
+	EventSessionStart     EventType = "SessionStart"
+	EventSessionEnd       EventType = "SessionEnd"
+	EventSubagentStop     EventType = "SubagentStop"
+	EventPreCompact       EventType = "PreCompact"
 )
 
 // ── Hook 配置 ──
@@ -39,15 +44,11 @@ type HookItem struct {
 	Command string `json:"command"`           // 脚本路径或 shell 命令
 	Timeout int    `json:"timeout,omitempty"` // 超时毫秒数，默认 30000
 }
-
-// ── 事件上下文 ──
-
-// EventContext 是传递给 hook 脚本的 stdin JSON 结构。
-// 字段对齐 Claude Code PreToolUse/PostToolUse stdin 协议。
 type EventContext struct {
 	SessionID        string          `json:"session_id"`
 	TranscriptPath   string          `json:"transcript_path"`
 	Cwd              string          `json:"cwd"`
+	PermissionMode   string          `json:"permission_mode,omitempty"`
 	HookEventName    string          `json:"hook_event_name"`
 	ToolName         string          `json:"tool_name,omitempty"`
 	ToolUseID        string          `json:"tool_use_id,omitempty"`        // PreToolUse: tool call ID
