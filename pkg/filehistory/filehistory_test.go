@@ -447,3 +447,42 @@ func TestContextFunctions(t *testing.T) {
 		t.Fatalf("expected empty, got %q", got)
 	}
 }
+
+// ── P2 测试：ExportSnapshot / ImportSnapshot 回环 ──
+
+func TestExportImportSnapshot_RoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	state := NewState()
+
+	// 创建测试文件并生成快照
+	file1 := filepath.Join(dir, "a.txt")
+	_ = os.WriteFile(file1, []byte("v1"), 0o644)
+	state.MakeSnapshot("msg-1", dir)
+
+	// 修改文件后生成第二个快照
+	_ = os.WriteFile(file1, []byte("v2"), 0o644)
+	state.MakeSnapshot("msg-2", dir)
+
+	// 导出
+	exported := state.ExportSnapshot()
+	if exported == nil {
+		t.Fatal("ExportSnapshot returned nil")
+	}
+	if exported.SnapshotSeq != state.SnapshotSeq {
+		t.Errorf("SnapshotSeq = %d, want %d", exported.SnapshotSeq, state.SnapshotSeq)
+	}
+
+	// 导入到新实例
+	fresh := NewState()
+	fresh.ImportSnapshot(exported)
+
+	// 验证 snapshots 数量
+	orig := state.GetSnapshots()
+	restored := fresh.GetSnapshots()
+	if len(restored) != len(orig) {
+		t.Fatalf("restored %d snapshots, want %d", len(restored), len(orig))
+	}
+	if fresh.SnapshotSeq != state.SnapshotSeq {
+		t.Errorf("SnapshotSeq = %d after import, want %d", fresh.SnapshotSeq, state.SnapshotSeq)
+	}
+}

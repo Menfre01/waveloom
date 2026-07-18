@@ -55,3 +55,87 @@ func (s *FileHistoryState) GetSnapshots() []FileHistorySnapshot {
 	copy(result, s.Snapshots)
 	return result
 }
+
+// SnapshotData 是 FileHistoryState 的可序列化快照。
+type SnapshotData struct {
+	Snapshots    []SnapshotEntry            `json:"snapshots"`
+	TrackedFiles []string                   `json:"tracked_files"`
+	SnapshotSeq  int                        `json:"snapshot_seq"`
+}
+
+// SnapshotEntry 是单个快照的序列化形式。
+type SnapshotEntry struct {
+	MessageID          string                 `json:"message_id"`
+	TrackedFileBackups map[string]BackupEntry `json:"tracked_file_backups"`
+}
+
+// BackupEntry 是单个文件备份的序列化形式。
+type BackupEntry struct {
+	BackupFileName string `json:"backup_file_name"`
+	Version        int    `json:"version"`
+}
+
+// ExportSnapshot 导出当前状态用于持久化。
+func (s *FileHistoryState) ExportSnapshot() *SnapshotData {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	snapshots := make([]SnapshotEntry, len(s.Snapshots))
+	for i, snap := range s.Snapshots {
+		backups := make(map[string]BackupEntry, len(snap.TrackedFileBackups))
+		for fp, b := range snap.TrackedFileBackups {
+			backups[fp] = BackupEntry{
+				BackupFileName: b.BackupFileName,
+				Version:        b.Version,
+			}
+		}
+		snapshots[i] = SnapshotEntry{
+			MessageID:          snap.MessageID,
+			TrackedFileBackups: backups,
+		}
+	}
+
+	tracked := make([]string, 0, len(s.TrackedFiles))
+	for fp := range s.TrackedFiles {
+		tracked = append(tracked, fp)
+	}
+
+	return &SnapshotData{
+		Snapshots:    snapshots,
+		TrackedFiles: tracked,
+		SnapshotSeq:  s.SnapshotSeq,
+	}
+}
+
+// ImportSnapshot 从持久化数据恢复状态。
+func (s *FileHistoryState) ImportSnapshot(data *SnapshotData) {
+	if data == nil {
+		return
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	snapshots := make([]FileHistorySnapshot, len(data.Snapshots))
+	for i, entry := range data.Snapshots {
+		backups := make(map[string]FileHistoryBackup, len(entry.TrackedFileBackups))
+		for fp, b := range entry.TrackedFileBackups {
+			backups[fp] = FileHistoryBackup{
+				BackupFileName: b.BackupFileName,
+				Version:        b.Version,
+			}
+		}
+		snapshots[i] = FileHistorySnapshot{
+			MessageID:          entry.MessageID,
+			TrackedFileBackups: backups,
+		}
+	}
+
+	s.Snapshots = snapshots
+	s.SnapshotSeq = data.SnapshotSeq
+
+	s.TrackedFiles = make(map[string]bool, len(data.TrackedFiles))
+	for _, fp := range data.TrackedFiles {
+		s.TrackedFiles[fp] = true
+	}
+}

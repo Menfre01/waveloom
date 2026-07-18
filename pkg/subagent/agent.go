@@ -11,6 +11,7 @@ import (
 	"github.com/Menfre01/waveloom/pkg/agentloop"
 	"github.com/Menfre01/waveloom/pkg/llm"
 	"github.com/Menfre01/waveloom/pkg/permission"
+	"github.com/Menfre01/waveloom/pkg/session"
 	"github.com/Menfre01/waveloom/pkg/tool"
 )
 
@@ -43,6 +44,94 @@ type AgentTool struct {
 	DefaultModel    string   // 主模型名，advisor subagent 锁定使用（也用于 TUI suffix 显示）
 	DefaultSubModel string   // Explore 等轻量 agent 的默认模型
 	WorkspaceDir    string   // 工作目录，用于分类器路径检查
+
+	// subagent JSONL 持久化
+	sessionsDir string // session 目录路径
+	sessionID   string // 当前 session ID
+	buildVer    string // 构建版本
+}
+
+func (a *AgentTool) SetSessionInfo(sessionsDir, sessionID, version string) {
+	a.sessionsDir = sessionsDir
+	a.sessionID = sessionID
+	a.buildVer = version
+
+}
+
+// saveSubagentTranscript 将 subagent 事件持久化为 JSONL 文件和 metadata。
+func (a *AgentTool) saveSubagentTranscript(agentID, agentType, description, model string, totalTurns, promptTok, complTok int, events []SubagentEvent) {
+	if a.sessionsDir == "" || a.sessionID == "" {
+		return
+	}
+	metaPath := session.SubagentMetaPath(a.sessionsDir, a.sessionID, agentID)
+	_ = session.SaveAgentMetadata(metaPath, session.AgentMetadata{
+		AgentType:        agentType,
+		Description:      description,
+		Model:            model,
+		TotalTurns:       totalTurns,
+		PromptTokens:     promptTok,
+		CompletionTokens: complTok,
+	})
+
+	// 转换 SubagentEvent → TranscriptEntry（CC 兼容格式，isSidechain:true）
+	messages := subagentEventsToMessages(events)
+	entries := session.MessagesToTranscriptEntries(messages, nil, a.sessionID, a.buildVer, "", "")
+	for i := range entries {
+		entries[i].IsSidechain = true
+	}
+
+	jlPath := session.SubagentTranscriptPath(a.sessionsDir, a.sessionID, agentID)
+	if err := session.WriteTranscriptEntries(jlPath, entries); err != nil {
+		slog.Warn("subagent transcript write failed", "agentID", agentID, "err", err)
+	}
+}
+
+// subagentEventsToMessages 将 SubagentEvent 列表转换为 llm.Message 列表。
+// 连续的文本事件合并为一条 assistant 消息，tool_start+tool_result 配对为 assistant+tool 消息。
+func subagentEventsToMessages(events []SubagentEvent) []llm.Message {
+	if len(events) == 0 {
+		return nil
+	}
+	var messages []llm.Message
+	var textBuf strings.Builder
+	var reasoningBuf strings.Builder
+	flushText := func() {
+		if textBuf.Len() > 0 || reasoningBuf.Len() > 0 {
+			messages = append(messages, llm.Message{
+				Role:             llm.RoleAssistant,
+				Content:          textBuf.String(),
+				ReasoningContent: reasoningBuf.String(),
+			})
+			textBuf.Reset()
+			reasoningBuf.Reset()
+		}
+	}
+
+	for _, ev := range events {
+		switch ev.Kind {
+		case SubagentText:
+			textBuf.WriteString(ev.TextDelta)
+		case SubagentThought:
+			reasoningBuf.WriteString(ev.TextDelta)
+		case SubagentToolStart:
+			flushText()
+			messages = append(messages, llm.Message{
+				Role: llm.RoleAssistant,
+				ToolCalls: []llm.ToolCall{
+					{ID: ev.ToolCallID, Name: ev.ToolName, Arguments: ev.ToolArgs},
+				},
+			})
+		case SubagentToolResult:
+			messages = append(messages, llm.Message{
+				Role:       llm.RoleTool,
+				Content:    ev.ToolResult,
+				ToolCallID: ev.ToolCallID,
+				Name:       ev.ToolName,
+			})
+		}
+	}
+	flushText()
+	return messages
 }
 
 func (a *AgentTool) Name() string              { return "agent" }
@@ -380,6 +469,10 @@ func (a *AgentTool) executeFork(ctx context.Context, p AgentParams) (*tool.ToolR
 	if cb != nil {
 		cb(SubagentEnd{ToolCallID: toolCallID, TotalTurns: totalTurns, PromptTokens: promptTok, CompletionTokens: complTok, CacheHitTokens: cacheHitTok, CacheMissTokens: cacheMissTok, DurationMs: time.Since(startTime).Milliseconds()})
 	}
+	// 持久化 subagent JSONL
+	a.saveSubagentTranscript(toolCallID, agentType, p.Description, model, totalTurns, promptTok, complTok, events)
+
+
 
 	return &tool.ToolResult{
 		Content: fmt.Sprintf("(fork subagent completed, %d turns, %d+%d tokens)\n\n%s%s", totalTurns, promptTok, complTok, lastTurnText, formatFindings(classified)),
@@ -475,6 +568,9 @@ func (a *AgentTool) executeCold(ctx context.Context, p AgentParams) (*tool.ToolR
 	if cb != nil {
 		cb(SubagentEnd{ToolCallID: toolCallID, TotalTurns: totalTurns, PromptTokens: promptTok, CompletionTokens: complTok, CacheHitTokens: cacheHitTok, CacheMissTokens: cacheMissTok, DurationMs: time.Since(startTime).Milliseconds()})
 	}
+	// 持久化 subagent JSONL
+	a.saveSubagentTranscript(toolCallID, p.SubagentType, p.Description, model, totalTurns, promptTok, complTok, events)
+
 
 	return &tool.ToolResult{
 		Content: fmt.Sprintf("(subagent [%s] completed, %d turns, %d+%d tokens)\n\n%s%s", p.SubagentType, totalTurns, promptTok, complTok, lastTurnText, formatFindings(classified)),
