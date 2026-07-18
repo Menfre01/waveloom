@@ -21,6 +21,7 @@ type CLIConfig struct {
 	MaxTurns     int
 	SystemPrompt string
 	Model        string
+	Provider     string // --provider，覆盖配置文件中的 provider（查找 profiles 中匹配项）
 	ContextLimit int    // 解析后的上下文窗口 token 数
 	Theme           string // 主题模式: auto / dark / light
 	Locale          string // 界面语言: zh-CN / en-US / auto（自动检测）
@@ -57,6 +58,7 @@ func parseCLI() CLIConfig {
 	flag.StringVar(&cfg.LogLevel, "log-level", "info", "日志级别 (error/warn/info/debug)")
 	flag.BoolVar(&cfg.BypassPerm, "bypass-permissions", false, "跳过权限检查（CI/测试）")
 	flag.StringVar(&cfg.ToolTimeoutRaw, "tool-timeout", "", "单个工具执行超时（Go Duration 格式，如 10m/600s/0s，0=禁用，默认 10m）")
+	flag.StringVar(&cfg.Provider, "provider", "", "LLM Provider 名称（kimi/deepseek/openai），查找 profiles 中匹配配置")
 
 	setup := flag.Bool("setup", false, "首次设置向导")
 

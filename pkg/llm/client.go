@@ -63,6 +63,8 @@ func NewClient(cfg ClientConfig) (Client, error) {
 	switch cfg.Provider {
 	case ProviderDeepSeek:
 		adapter = newDeepSeekAdapter(cfg)
+	case ProviderKimi:
+		adapter = newKimiAdapter(cfg)
 	case ProviderOpenAI:
 		adapter = newOpenAIAdapter(cfg)
 	case "":
@@ -481,9 +483,22 @@ func validateToolNames(tools []ToolSpec) error {
 	seen := make(map[string]bool, len(tools))
 	for _, t := range tools {
 		cleaned := cleanToolName(t.Name)
-		if cleaned == "" || len(cleaned) > 64 {
+		if cleaned == "" || len(cleaned) > 63 {
 			return &NonRetryableError{
 				Message: fmt.Sprintf("invalid tool name after cleaning: %q (original: %q)", cleaned, t.Name),
+			}
+		}
+		if len(cleaned) < 3 {
+			return &NonRetryableError{
+				Message: fmt.Sprintf("tool name too short after cleaning: %q (original: %q, min 3 chars)", cleaned, t.Name),
+			}
+		}
+		// Kimi requires first char [a-zA-Z_]; this is stricter than DeepSeek but all
+		// Waveloom built-in tools already comply. We apply it globally for consistency.
+		first := cleaned[0]
+		if (first < 'a' || first > 'z') && (first < 'A' || first > 'Z') && first != '_' {
+			return &NonRetryableError{
+				Message: fmt.Sprintf("tool name must start with letter or underscore after cleaning: %q (original: %q)", cleaned, t.Name),
 			}
 		}
 		if seen[cleaned] {

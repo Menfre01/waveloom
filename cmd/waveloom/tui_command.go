@@ -625,7 +625,7 @@ func (m *model) commitModelSwitch(modelID string) {
 
 	wasAdvisorMode := settings.IsAdvisorMode()
 
-	settings.Model = modelID
+	settings.SetModel(modelID)
 	if err := m.settingsStore.SaveLLM(settings); err != nil {
 		slog.Warn("failed to save LLM settings", "err", err)
 	}

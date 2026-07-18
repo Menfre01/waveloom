@@ -160,6 +160,7 @@ type ProviderType string
 const (
 	ProviderOpenAI   ProviderType = "openai"    // 标准 OpenAI 协议，也是默认兜底
 	ProviderDeepSeek ProviderType = "deepseek"
+	ProviderKimi     ProviderType = "kimi"
 	// 后续扩展:
 	// ProviderAnthropic ProviderType = "anthropic"
 	// ProviderOllama    ProviderType = "ollama"

@@ -4390,6 +4390,9 @@ func (m *model) reconfigureLLMClient(newModel string) {
 	if err != nil {
 		return
 	}
+	// 先解析 profile（provider 专属字段覆盖顶层残留），再应用 /model 显式
+	// 指定的模型，保证显式切换的模型优先级最高。
+	settings.ResolveProfile()
 	settings.Model = newModel
 	client, _, err := llm.NewClientFromLLMSettings(settings)
 	if err != nil {

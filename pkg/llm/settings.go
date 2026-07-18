@@ -13,22 +13,55 @@ import (
 // LLMSettings 对应 settings.json 中的顶层 llm 配置块。
 // 所有 LLM Client 的构造参数均通过此结构表达，支持任意嵌套的 extra_params。
 type LLMSettings struct {
-	APIKey      string            `json:"api_key"`      // API Key；为空时回退到 LLM_API_KEY 环境变量
-	Provider    string            `json:"provider"`     // "openai" / "deepseek"，默认 "deepseek"
-	Model       string            `json:"model"`        // 模型名称（主模型）
-	SubModel    string            `json:"sub_model"`    // subagent 默认模型，仅 DeepSeek 下自动填充为空则用 Model
-	Mode        string            `json:"mode"`         // "normal" / "advisor"，默认 "normal"。advisor 仅在 SubModel 非空且不等于 Model 时生效
-	BaseURL     string            `json:"base_url"`     // API 端点，留空使用默认
-	Timeout     string            `json:"timeout"`      // 单次请求超时，Go Duration 格式（如 "600s"），默认 600s
-	Retry       *RetrySettings    `json:"retry"`        // 重试策略，留空使用默认
-	Headers     map[string]string `json:"headers"`      // 自定义 HTTP 请求头
-	ExtraParams map[string]any    `json:"extra_params"` // Provider 特有参数，支持任意嵌套
+	APIKey      string                     `json:"api_key,omitempty"` // API Key；为空时回退到 LLM_API_KEY 环境变量
+	Provider    string                     `json:"provider"`          // "openai" / "deepseek" / "kimi"，默认 "deepseek"
+	Model       string                     `json:"model,omitempty"`        // 模型名称（主模型）
+	SubModel    string                     `json:"sub_model,omitempty"`    // subagent 默认模型
+	Mode        string                     `json:"mode,omitempty"`         // "normal" / "advisor"，默认 "normal"
+	BaseURL     string                     `json:"base_url,omitempty"`     // API 端点，留空使用默认
+	Timeout     string                     `json:"timeout,omitempty"`      // 单次请求超时，Go Duration 格式（如 "600s"），默认 600s
+	Retry       *RetrySettings             `json:"retry,omitempty"`        // 重试策略，留空使用默认
+	Headers     map[string]string          `json:"headers,omitempty"`      // 自定义 HTTP 请求头
+	ExtraParams map[string]any             `json:"extra_params,omitempty"` // Provider 特有参数，支持任意嵌套
+	Profiles    map[string]*LLMSettings    `json:"profiles,omitempty"`     // 多 Provider 配置，以 provider 名为键
 }
 
 // IsAdvisorMode 判断当前是否启用 advisor mode。
 // 条件：mode == "advisor" && SubModel 非空 && SubModel != Model。
 func (s *LLMSettings) IsAdvisorMode() bool {
 	return s.Mode == "advisor" && s.SubModel != "" && s.SubModel != s.Model
+}
+
+// ResolveProfile 用当前 provider 的 profile 字段覆盖顶层字段。
+// profiles 为空或无匹配 provider 时不做任何操作（向下兼容旧配置文件）。
+// Profile 是 provider 专属配置，优先级高于顶层通用字段：切换 provider 后
+// 顶层残留的上一 provider 的 model/base_url/api_key 必须被 profile 覆盖，
+// 否则会携带错误的 base_url/model 请求新 provider（典型表现为 404）。
+// Provider 无关字段（Timeout/Retry/Headers/Mode）不从 profile 读取。
+// 若调用方需要保留显式指定的字段（如 CLI --model），应在 ResolveProfile 之后再赋值。
+func (s *LLMSettings) ResolveProfile() {
+	if s.Profiles == nil {
+		return
+	}
+	p, ok := s.Profiles[s.Provider]
+	if !ok || p == nil {
+		return
+	}
+	if p.APIKey != "" {
+		s.APIKey = p.APIKey
+	}
+	if p.Model != "" {
+		s.Model = p.Model
+	}
+	if p.SubModel != "" {
+		s.SubModel = p.SubModel
+	}
+	if p.BaseURL != "" {
+		s.BaseURL = p.BaseURL
+	}
+	if p.ExtraParams != nil {
+		s.ExtraParams = p.ExtraParams
+	}
 }
 
 // RetrySettings 对应 settings.json 中的 retry 配置块。
@@ -89,6 +122,16 @@ func LoadSettingsIfExists(path string) (*LLMSettings, error) {
 	return sf.LLM, nil
 }
 
+// SetModel 设置主模型，并同步更新当前 provider 的 profile（若存在）。
+// 用于 /model 显式切换模型的场景：保证切换持久化后，下次启动
+// ResolveProfile 时 profile 不会把顶层 Model 覆盖回旧值。
+func (s *LLMSettings) SetModel(name string) {
+	s.Model = name
+	if p, ok := s.Profiles[s.Provider]; ok && p != nil {
+		p.Model = name
+	}
+}
+
 // NewClientFromSettings 从 settings.json 文件构造 Client。
 func NewClientFromSettings(path string) (Client, error) {
 	settings, err := LoadSettings(path)
@@ -96,6 +139,7 @@ func NewClientFromSettings(path string) (Client, error) {
 		return nil, err
 	}
 
+	settings.ResolveProfile()
 	client, _, err := NewClientFromLLMSettings(settings)
 	return client, err
 }
@@ -115,58 +159,99 @@ func MergeLLMSettings(base, override *LLMSettings) *LLMSettings {
 		return base
 	}
 
-	merged := &LLMSettings{
-		APIKey:   base.APIKey,
-		Provider: base.Provider,
-		Model:    base.Model,
-		SubModel: base.SubModel,
-		Mode:     base.Mode,
-		BaseURL:  base.BaseURL,
-		Timeout:  base.Timeout,
-		Retry:    base.Retry,
+	// Provider 切换检测：当项目 Provider 与全局不同时，以项目配置为准，
+	// 仅继承 Provider 无关的字段（Timeout、Retry、Headers）。
+	// 空 Provider 与 NewClient 的默认对齐，按 deepseek 处理，避免误判切换。
+	baseProvider := base.Provider
+	if baseProvider == "" {
+		baseProvider = string(ProviderDeepSeek)
 	}
+	providerChanged := override.Provider != "" && override.Provider != baseProvider
 
-	// 深拷贝 Headers
-	if base.Headers != nil {
-		merged.Headers = make(map[string]string, len(base.Headers))
-		for k, v := range base.Headers {
-			merged.Headers[k] = v
+	var merged *LLMSettings
+	if providerChanged {
+		merged = &LLMSettings{
+			APIKey:      override.APIKey,
+			Provider:    override.Provider,
+			Model:       override.Model,
+			SubModel:    override.SubModel,
+			Mode:        override.Mode,
+			BaseURL:     override.BaseURL,
+			Timeout:     override.Timeout,
+			Retry:       override.Retry,
+			ExtraParams: nil,
+		}
+		// Provider 无关字段：override 为空时继承 base
+		if merged.Timeout == "" {
+			merged.Timeout = base.Timeout
+		}
+		if merged.Mode == "" {
+			merged.Mode = base.Mode
+		}
+		if merged.Retry == nil {
+			merged.Retry = base.Retry
+		}
+		// Headers: base + override 合并（Provider 无关）
+		if base.Headers != nil {
+			merged.Headers = make(map[string]string, len(base.Headers))
+			for k, v := range base.Headers {
+				merged.Headers[k] = v
+			}
+		}
+	} else {
+		merged = &LLMSettings{
+			APIKey:   base.APIKey,
+			Provider: base.Provider,
+			Model:    base.Model,
+			SubModel: base.SubModel,
+			Mode:     base.Mode,
+			BaseURL:  base.BaseURL,
+			Timeout:  base.Timeout,
+			Retry:    base.Retry,
+		}
+		// 深拷贝 Headers
+		if base.Headers != nil {
+			merged.Headers = make(map[string]string, len(base.Headers))
+			for k, v := range base.Headers {
+				merged.Headers[k] = v
+			}
+		}
+		// 深拷贝 ExtraParams（同 Provider 才继承）
+		if base.ExtraParams != nil {
+			merged.ExtraParams = make(map[string]any, len(base.ExtraParams))
+			for k, v := range base.ExtraParams {
+				merged.ExtraParams[k] = v
+			}
 		}
 	}
-
-	// 深拷贝 ExtraParams
-	if base.ExtraParams != nil {
-		merged.ExtraParams = make(map[string]any, len(base.ExtraParams))
-		for k, v := range base.ExtraParams {
-			merged.ExtraParams[k] = v
+	if !providerChanged {
+		// 同 Provider：override 标量字段覆盖 base
+		if override.APIKey != "" {
+			merged.APIKey = override.APIKey
+		}
+		if override.Provider != "" {
+			merged.Provider = override.Provider
+		}
+		if override.Model != "" {
+			merged.Model = override.Model
+		}
+		if override.SubModel != "" {
+			merged.SubModel = override.SubModel
+		}
+		if override.Mode != "" {
+			merged.Mode = override.Mode
+		}
+		if override.BaseURL != "" {
+			merged.BaseURL = override.BaseURL
+		}
+		if override.Timeout != "" {
+			merged.Timeout = override.Timeout
+		}
+		if override.Retry != nil {
+			merged.Retry = override.Retry
 		}
 	}
-
-	// override 字段覆盖
-	if override.APIKey != "" {
-		merged.APIKey = override.APIKey
-	}
-	if override.Provider != "" {
-		merged.Provider = override.Provider
-	}
-	if override.Model != "" {
-		merged.Model = override.Model
-	}
-	if override.SubModel != "" {
-		merged.SubModel = override.SubModel
-	}
-	if override.Mode != "" {
-		merged.Mode = override.Mode
-	}
-	if override.BaseURL != "" {
-		merged.BaseURL = override.BaseURL
-	}
-	if override.Timeout != "" {
-		merged.Timeout = override.Timeout
-	}
-	if override.Retry != nil {
-		merged.Retry = override.Retry
-	}
+	// Headers 合并（Provider 无关，两种路径均执行）
 	if override.Headers != nil {
 		if merged.Headers == nil {
 			merged.Headers = make(map[string]string)
@@ -175,6 +260,7 @@ func MergeLLMSettings(base, override *LLMSettings) *LLMSettings {
 			merged.Headers[k] = v
 		}
 	}
+	// ExtraParams 合并（Provider 无关，两种路径均执行）
 	if override.ExtraParams != nil {
 		if merged.ExtraParams == nil {
 			merged.ExtraParams = make(map[string]any)
@@ -184,7 +270,55 @@ func MergeLLMSettings(base, override *LLMSettings) *LLMSettings {
 		}
 	}
 
+
+	// Profiles 合并：override 覆盖 base 同名 profile，base 独有的保留。
+	// 深拷贝每个 profile，避免调用方修改 merged 时污染 base/override 的原始对象。
+	if base.Profiles != nil || override.Profiles != nil {
+		merged.Profiles = make(map[string]*LLMSettings)
+		for k, v := range base.Profiles {
+			merged.Profiles[k] = copyProfile(v)
+		}
+		for k, v := range override.Profiles {
+			merged.Profiles[k] = copyProfile(v)
+		}
+	}
 	return merged
+}
+
+// copyProfile 深拷贝一个 LLMSettings profile（用于 Profiles 合并）。
+// 复制标量字段，并对 Headers/ExtraParams/Retry 做深拷贝。
+func copyProfile(p *LLMSettings) *LLMSettings {
+	if p == nil {
+		return nil
+	}
+	cp := &LLMSettings{
+		APIKey:      p.APIKey,
+		Provider:    p.Provider,
+		Model:       p.Model,
+		SubModel:    p.SubModel,
+		Mode:        p.Mode,
+		BaseURL:     p.BaseURL,
+		Timeout:     p.Timeout,
+		ExtraParams: nil,
+		Profiles:    nil,
+	}
+	if p.Retry != nil {
+		rp := *p.Retry
+		cp.Retry = &rp
+	}
+	if p.Headers != nil {
+		cp.Headers = make(map[string]string, len(p.Headers))
+		for k, v := range p.Headers {
+			cp.Headers[k] = v
+		}
+	}
+	if p.ExtraParams != nil {
+		cp.ExtraParams = make(map[string]any, len(p.ExtraParams))
+		for k, v := range p.ExtraParams {
+			cp.ExtraParams[k] = v
+		}
+	}
+	return cp
 }
 
 // NewClientFromMergedSettings 合并全局和项目配置文件构造 Client。
@@ -203,12 +337,16 @@ func NewClientFromMergedSettings(globalPath, projectPath string) (Client, error)
 	if merged == nil {
 		return nil, &NonRetryableError{Message: "no valid settings found (neither global nor project config has \"llm\" section)"}
 	}
+	merged.ResolveProfile()
 	client, _, err := NewClientFromLLMSettings(merged)
 	return client, err
 }
 
 // NewClientFromLLMSettings 从 LLMSettings 构造 Client。
 // API Key 优先使用 settings.api_key，为空时回退到 LLM_API_KEY 环境变量。
+// 注意：本函数不调用 ResolveProfile。若 settings 配置了 profiles，
+// 调用方须先调用 ResolveProfile 再传入（需要保留显式指定字段如
+// CLI --model 时，应在 ResolveProfile 之后再赋值）。
 func NewClientFromLLMSettings(settings *LLMSettings) (Client, ClientConfig, error) {
 	if settings == nil {
 		return nil, ClientConfig{}, &NonRetryableError{Message: "settings must not be nil"}

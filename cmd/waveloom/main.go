@@ -86,7 +86,7 @@ func main() {
 	}
 
 	// 4. 加载 LLM Client（合并全局和项目配置，项目字段优先；--model 覆盖配置文件）
-	llmClient, llmClientCfg, llmSettings, err := createLLMClient(globalPath, projectPath, cfg.Model, loc)
+	llmClient, llmClientCfg, llmSettings, err := createLLMClient(globalPath, projectPath, cfg.Model, cfg.Provider, loc)
 	if err != nil {
 		if needsSetup() {
 			runSetup(loc)
@@ -370,13 +370,22 @@ func resolveSettingsPaths(explicit string) (globalPath, projectPath string) {
 // createLLMClient 合并全局和项目配置创建 LLM Client。
 // 项目配置字段覆盖全局。若均无配置则生成默认项目配置。
 // cliModel 为 --model 命令行参数，非空时覆盖配置文件中的模型名。
-func createLLMClient(globalPath, projectPath, cliModel string, loc Locale) (llm.Client, llm.ClientConfig, *llm.LLMSettings, error) {
+// cliProvider 为 --provider 命令行参数，非空时覆盖配置文件中的 provider 并查找 profiles。
+func createLLMClient(globalPath, projectPath, cliModel, cliProvider string, loc Locale) (llm.Client, llm.ClientConfig, *llm.LLMSettings, error) {
 	globalSettings, _ := llm.LoadSettingsIfExists(globalPath)
 	projectSettings, _ := llm.LoadSettingsIfExists(projectPath)
 
 	merged := llm.MergeLLMSettings(globalSettings, projectSettings)
-	if cliModel != "" {
-		merged.Model = cliModel
+	if merged != nil {
+		if cliProvider != "" {
+			merged.Provider = cliProvider
+		}
+		// 先解析 profile（provider 专属字段覆盖顶层残留），再应用 CLI 显式
+		// 指定的模型，保证 --model 优先级高于 profile。
+		merged.ResolveProfile()
+		if cliModel != "" {
+			merged.Model = cliModel
+		}
 	}
 	client, cfg, err := llm.NewClientFromLLMSettings(merged)
 	if err != nil {
