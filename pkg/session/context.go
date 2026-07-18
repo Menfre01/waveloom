@@ -19,8 +19,8 @@ import (
 	"strings"
 	"sync"
 	"time"
-
 	"github.com/Menfre01/waveloom/pkg/compaction"
+	"github.com/Menfre01/waveloom/pkg/filehistory"
 	"github.com/Menfre01/waveloom/pkg/llm"
 	"github.com/Menfre01/waveloom/pkg/task"
 )
@@ -60,6 +60,13 @@ type ContextManager struct {
 
 	// Todo 列表持久化
 	todoItems []json.RawMessage
+
+	// Plan mode 状态（用于 resume 恢复）
+	planModeActive bool
+	planModeFile   string
+
+	// FileHistory 状态（用于 resume 恢复）
+	fhData *filehistory.SnapshotData
 }
 
 // compactorState 是 compactor 内部使用的扩展接口，
@@ -297,6 +304,9 @@ func (cm *ContextManager) Save() {
 	copy(todoItems, cm.todoItems)
 	jsonlWritten := cm.jsonlMessageCount
 	lastCheck := cm.lastBackgroundCheck
+	planActive := cm.planModeActive
+	planFile := cm.planModeFile
+	fhData := cm.fhData
 	cm.mu.RUnlock()
 
 	// 防御：过滤空 role 消息
@@ -313,26 +323,35 @@ func (cm *ContextManager) Save() {
 	}
 
 	if path != "" {
-		_ = SaveSessionToFile(path, messages, stats, &compaction, todoItems, lastCheck)
-		// JSONL 落盘
-		n := len(messages)
-		jlPath := jsonlPathForJSON(path)
-		if forceRewrite || n < jsonlWritten {
-			if err := writeMessagesToJSONL(jlPath, messages); err != nil {
-				slog.Warn("jsonl rewrite failed", "err", err)
-			} else {
-				cm.mu.Lock()
-				cm.jsonlMessageCount = n
-				cm.mu.Unlock()
-			}
-		} else if n > jsonlWritten {
-			if err := appendMessagesToJSONL(jlPath, messages[jsonlWritten:]); err != nil {
-				slog.Warn("jsonl append failed", "err", err)
-			} else {
-				cm.mu.Lock()
-				cm.jsonlMessageCount = n
-				cm.mu.Unlock()
-			}
+		pm := &sessionPlanMode{Active: planActive, PlanFile: planFile}
+		_ = SaveSessionToFile(path, messages, stats, &compaction, todoItems, pm, fhData, lastCheck)
+	}
+	n := len(messages)
+	sid := strings.TrimSuffix(filepath.Base(path), ".json")
+	jlPath := TranscriptPath(filepath.Dir(path), sid)
+	sessionVersion := version()
+	cwd, _ := os.Getwd()
+	if forceRewrite || n < jsonlWritten {
+		entries := MessagesToTranscriptEntries(messages, nil, sid, sessionVersion, cwd, "")
+		if err := WriteTranscriptEntries(jlPath, entries); err != nil {
+			slog.Warn("jsonl rewrite failed", "err", err)
+		} else {
+			cm.mu.Lock()
+			cm.jsonlMessageCount = n
+			cm.mu.Unlock()
+		}
+	} else if n > jsonlWritten {
+		var parentUUID *string
+		if jsonlWritten > 0 {
+			parentUUID = &messages[jsonlWritten-1].ID
+		}
+		entries := MessagesToTranscriptEntries(messages[jsonlWritten:], parentUUID, sid, sessionVersion, cwd, "")
+		if err := AppendTranscriptEntries(jlPath, entries); err != nil {
+			slog.Warn("jsonl append failed", "err", err)
+		} else {
+			cm.mu.Lock()
+			cm.jsonlMessageCount = n
+			cm.mu.Unlock()
 		}
 	}
 }
@@ -350,6 +369,9 @@ func (cm *ContextManager) saveToPath(path string) {
 	copy(todoItems, cm.todoItems)
 	jsonlWritten := cm.jsonlMessageCount
 	lastCheck := cm.lastBackgroundCheck
+	planActive := cm.planModeActive
+	planFile := cm.planModeFile
+	fhData := cm.fhData
 	cm.mu.RUnlock()
 
 	// 防御：过滤空 role 消息（避免非法数据落盘）
@@ -365,16 +387,18 @@ func (cm *ContextManager) saveToPath(path string) {
 		messages = valid
 		forceRewrite = true
 	}
+	// 保存 JSON 元数据（stats / compaction / tasks / todo / plan / filehistory）
+	pm := &sessionPlanMode{Active: planActive, PlanFile: planFile}
+	_ = SaveSessionToFile(path, messages, stats, &compaction, todoItems, pm, fhData, lastCheck)
 
-	// 保存 JSON 元数据（stats / compaction / tasks / todo）
-	_ = SaveSessionToFile(path, messages, stats, &compaction, todoItems, lastCheck)
-
-	// JSONL 落盘
 	n := len(messages)
-	jlPath := jsonlPathForJSON(path)
+	sid := strings.TrimSuffix(filepath.Base(path), ".json")
+	jlPath := TranscriptPath(filepath.Dir(path), sid)
+	sessionVersion := version()
+	cwd, _ := os.Getwd()
 	if forceRewrite || n < jsonlWritten {
-		// 消息被过滤/移除 → 全量重写 JSONL
-		if err := writeMessagesToJSONL(jlPath, messages); err != nil {
+		entries := MessagesToTranscriptEntries(messages, nil, sid, sessionVersion, cwd, "")
+		if err := WriteTranscriptEntries(jlPath, entries); err != nil {
 			slog.Warn("jsonl rewrite failed", "err", err)
 		} else {
 			cm.mu.Lock()
@@ -382,8 +406,12 @@ func (cm *ContextManager) saveToPath(path string) {
 			cm.mu.Unlock()
 		}
 	} else if n > jsonlWritten {
-		// 增量追加新消息
-		if err := appendMessagesToJSONL(jlPath, messages[jsonlWritten:]); err != nil {
+		var parentUUID *string
+		if jsonlWritten > 0 {
+			parentUUID = &messages[jsonlWritten-1].ID
+		}
+		entries := MessagesToTranscriptEntries(messages[jsonlWritten:], parentUUID, sid, sessionVersion, cwd, "")
+		if err := AppendTranscriptEntries(jlPath, entries); err != nil {
 			slog.Warn("jsonl append failed", "err", err)
 		} else {
 			cm.mu.Lock()
@@ -421,7 +449,7 @@ func (cm *ContextManager) compactionData() compaction.CompactionData {
 //
 // 修复详情通过 stderr 输出（静默修复不阻塞恢复流程）。
 func (cm *ContextManager) LoadFromFile(path string) bool {
-	messages, stats, compactionData, _, tasks, todoItems, lastCheck, err := LoadSessionFromFile(path)
+	messages, stats, compactionData, _, tasks, todoItems, planMode, fileHistory, lastCheck, err := LoadSessionFromFile(path)
 	if err != nil || messages == nil {
 		return false
 	}
@@ -445,6 +473,18 @@ func (cm *ContextManager) LoadFromFile(path string) bool {
 		cm.lastBackgroundCheck = time.Now()
 	}
 
+	// 恢复 Plan mode 状态
+	if planMode != nil {
+		cm.planModeActive = planMode.Active
+		cm.planModeFile = planMode.PlanFile
+	}
+
+	// 恢复 FileHistory 状态
+	if fileHistory != nil {
+		cm.fhData = fileHistory
+	}
+
+
 	// 反序列化后完整性校验
 	cleaned, report := llm.ValidateMessages(messages)
 	if len(report) > 0 {
@@ -454,8 +494,11 @@ func (cm *ContextManager) LoadFromFile(path string) bool {
 		messages = cleaned
 
 		// 立即回写清理后的数据，避免下次启动重复报 repair
-		// （如果 sessionPath 在 load 之前已设置则复用；否则用当前 path）
-		_ = writeMessagesToJSONL(jsonlPathForJSON(path), messages)
+		cwd, _ := os.Getwd()
+		sid := strings.TrimSuffix(filepath.Base(path), ".json")
+		jlPath := TranscriptPath(filepath.Dir(path), sid)
+		entries := MessagesToTranscriptEntries(messages, nil, sid, version(), cwd, "")
+		_ = WriteTranscriptEntries(jlPath, entries)
 		// 同时更新 JSON 文件中的 messages 字段
 		if sf, loadErr := loadSessionFile(path); loadErr == nil && sf != nil {
 			sf.Messages = messages
@@ -468,7 +511,6 @@ func (cm *ContextManager) LoadFromFile(path string) bool {
 			}
 		}
 	}
-
 	cm.mu.Lock()
 	defer cm.mu.Unlock()
 	cm.messages = messages
@@ -554,17 +596,20 @@ func (cm *ContextManager) RewindConversationTo(messageIndex int, sessionDir stri
 	cm.instructionsInjected = len(cm.messages) > 1 && cm.messages[1].Role == llm.RoleUser && cm.messages[1].Content != ""
 	cm.stateful().Reset()
 
-	// 写入新 JSONL（消息数据，非 transcript）
-	jsonlPath := filepath.Join(sessionDir, newID+".messages.jsonl")
-	if err := writeMessagesToJSONL(jsonlPath, cm.messages); err != nil {
+	// 写入新 JSONL（统一 transcript 格式，同时兼容 Claude Code hooks）
+	jsonlPath := TranscriptPath(sessionDir, newID)
+	sessionVersion := version()
+	cwd, _ := os.Getwd()
+	entries := MessagesToTranscriptEntries(cm.messages, nil, newID, sessionVersion, cwd, "")
+	if err := WriteTranscriptEntries(jsonlPath, entries); err != nil {
 		return "", "", fmt.Errorf("write fork jsonl: %w", err)
 	}
 	cm.jsonlMessageCount = len(cm.messages)
 
-	// 写入新 JSON 元数据（零值状态）
+	// 写入新 JSON 元数据（零值 plan mode + 空 filehistory）
 	jsonPath := filepath.Join(sessionDir, newID+".json")
 	compData := cm.compactionData()
-	if err := SaveSessionToFile(jsonPath, cm.messages, cm.stats, &compData, nil, time.Time{}); err != nil {
+	if err := SaveSessionToFile(jsonPath, cm.messages, cm.stats, &compData, nil, nil, nil, time.Time{}); err != nil {
 		return "", "", fmt.Errorf("write fork json: %w", err)
 	}
 
@@ -657,4 +702,33 @@ func (cm *ContextManager) TodoItems() []json.RawMessage {
 	cm.mu.RLock()
 	defer cm.mu.RUnlock()
 	return cm.todoItems
+}
+
+// SetPlanState 设置 plan mode 状态（session 保存时序列化）。
+func (cm *ContextManager) SetPlanState(active bool, planFile string) {
+	cm.mu.Lock()
+	defer cm.mu.Unlock()
+	cm.planModeActive = active
+	cm.planModeFile = planFile
+}
+
+// PlanState 返回已持久化的 plan mode 状态（session 恢复时反序列化）。
+func (cm *ContextManager) PlanState() (bool, string) {
+	cm.mu.RLock()
+	defer cm.mu.RUnlock()
+	return cm.planModeActive, cm.planModeFile
+}
+
+// SetFileHistory 设置文件历史快照数据（session 保存时序列化）。
+func (cm *ContextManager) SetFileHistory(data *filehistory.SnapshotData) {
+	cm.mu.Lock()
+	defer cm.mu.Unlock()
+	cm.fhData = data
+}
+
+// FileHistory 返回已持久化的文件历史快照数据（session 恢复时反序列化）。
+func (cm *ContextManager) FileHistory() *filehistory.SnapshotData {
+	cm.mu.RLock()
+	defer cm.mu.RUnlock()
+	return cm.fhData
 }
