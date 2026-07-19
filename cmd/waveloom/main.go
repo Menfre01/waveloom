@@ -209,7 +209,7 @@ func main() {
 		cs.ApplyToConfig(&compactionConfig)
 	}
 
-	// 合并工具超时：优先级 CLI > project settings.json > global settings.json > 默认 10m
+	// 合并工具超时：优先级 CLI > project settings.json > global settings.json > 默认 5m
 	if cfg.ToolTimeout == 0 {
 		if d, ok, _ := agentloop.LoadToolTimeout(projectPath); ok {
 			cfg.ToolTimeout = d

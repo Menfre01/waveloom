@@ -32,7 +32,7 @@ type CLIConfig struct {
 	BypassPerm      bool
 	LogLevel  string // 日志级别: error / warn / info / debug，默认 info
 	SettingsPath string // settings.json 路径
-	ToolTimeoutRaw string // 单个工具执行超时（Go Duration 格式，如 "10m" / "600s"），空 = 默认 10m
+	ToolTimeoutRaw string // 单个工具执行超时（Go Duration 格式，如 "5m" / "600s"），空 = 默认 5m
 	ToolTimeout    time.Duration // 解析后的值
 	ToolTimeoutSource string   // 超时配置来源（CLI / settings.json / 默认），供 TUI 通知使用
 }
@@ -57,7 +57,7 @@ func parseCLI() CLIConfig {
 	flag.BoolVar(&cfg.ContinueSession, "continue", false, "恢复最近一个 session 的对话")
 	flag.StringVar(&cfg.LogLevel, "log-level", "info", "日志级别 (error/warn/info/debug)")
 	flag.BoolVar(&cfg.BypassPerm, "bypass-permissions", false, "跳过权限检查（CI/测试）")
-	flag.StringVar(&cfg.ToolTimeoutRaw, "tool-timeout", "", "单个工具执行超时（Go Duration 格式，如 10m/600s/0s，0=禁用，默认 10m）")
+	flag.StringVar(&cfg.ToolTimeoutRaw, "tool-timeout", "", "单个工具执行超时（Go Duration 格式，如 5m/600s/0s，0=禁用，默认 5m）")
 	flag.StringVar(&cfg.Provider, "provider", "", "LLM Provider 名称（kimi/deepseek/openai），查找 profiles 中匹配配置")
 
 	setup := flag.Bool("setup", false, "首次设置向导")
@@ -86,7 +86,7 @@ func parseCLI() CLIConfig {
 	} else {
 		d, err := time.ParseDuration(cfg.ToolTimeoutRaw)
 		if err != nil {
-			slog.Warn("cannot parse --tool-timeout, falling back to 10m", "value", cfg.ToolTimeoutRaw, "err", err)
+			slog.Warn("cannot parse --tool-timeout, falling back to default", "value", cfg.ToolTimeoutRaw, "err", err)
 			cfg.ToolTimeout = agentloop.DefaultToolTimeout
 			cfg.ToolTimeoutSource = "default"
 		} else {
