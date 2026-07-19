@@ -176,6 +176,17 @@ type Messages struct {
 	SlashHelpDescription       string
 	SlashHelpText              string
 
+	// ── /provider ──
+	ProviderDescription       string
+	ProviderList              string // 含 %s, %s
+	ProviderAvailable         string // 含 %s
+	ProviderUnknown           string // 含 %s
+	ProviderSwitched          string // 含 %s, %s
+	ProviderNoProfiles        string
+	ProviderConfigReadFailed  string // 含 %v
+	ProviderConfigSaveFailed  string // 含 %v
+	ProviderModelNotice       string // 含 %s
+
 	// ── CLI help ──────────────────────────────────────────
 	HelpUsageText string
 
@@ -410,6 +421,17 @@ var zhCN = Messages{
 
   会话结束时 session 自动保存，使用 waveloom --continue 恢复最近会话。
   单次执行：waveloom "解释这段代码"`,
+
+	// ── /provider ──
+	ProviderDescription:       "显示或切换 LLM Provider（kimi / deepseek / openai）",
+	ProviderList:              "当前 Provider: %s（模型: %s）",
+	ProviderAvailable:         "可用 Provider:\n%s",
+	ProviderUnknown:           "未知 Provider: %s。可用: kimi, deepseek, openai",
+	ProviderSwitched:          "Provider 已从 %s 切换到 %s。",
+	ProviderNoProfiles:        "配置文件未设置 provider profiles。请先通过设置向导配置。",
+	ProviderConfigReadFailed:  "读取配置失败: %v",
+	ProviderConfigSaveFailed:  "保存配置失败: %v",
+	ProviderModelNotice:       "当前模型: %s。如有需要请执行 /model 切换。",
 
 	// CLI help
 	HelpUsageText: `Waveloom — Code Agent CLI
@@ -686,6 +708,17 @@ var enUS = Messages{
    Esc (running)   Interrupt current agent execution
 
   Sessions are auto-saved on exit. Use waveloom --continue to resume.`,
+
+	// ── /provider ──
+	ProviderDescription:       "Show or switch LLM Provider (kimi / deepseek / openai)",
+	ProviderList:              "Current Provider: %s (Model: %s)",
+	ProviderAvailable:         "Available Providers:\n%s",
+	ProviderUnknown:           "Unknown Provider: %s. Available: kimi, deepseek, openai",
+	ProviderSwitched:          "Provider switched from %s to %s.",
+	ProviderNoProfiles:        "No provider profiles configured. Please run setup first.",
+	ProviderConfigReadFailed:  "Failed to read config: %v",
+	ProviderConfigSaveFailed:  "Failed to save config: %v",
+	ProviderModelNotice:       "Current model: %s. Use /model to switch if needed.",
 
 	// CLI help
 	HelpUsageText: `Waveloom — Code Agent CLI
