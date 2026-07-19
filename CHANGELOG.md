@@ -1,6 +1,37 @@
 # Changelog
 
 
+
+## [v0.2.0-beta.1] — 2026-07-20
+
+### 新增功能
+- **`/provider` 命令**：运行时动态切换 LLM Provider（deepseek / openai / kimi），自动解析对应 profile 的 API Key、Base URL 和模型配置
+- **Claude Code 兼容 Hook 系统**：支持 PreToolUse / PostToolUse 等 5 种事件类型和 permission_mode 字段，与 `.claude/settings.json` hooks 配置格式兼容
+- **分级超时机制**：agent / subagent / MCP 工具默认超时 30min，普通工具默认 5min，支持 `ToolWithTimeout` 接口自定义
+- **edit 响应智能上下文分层**：小文件（≤200 行）全量展示，大文件分上下文窗口 + 目录索引，降低 re-read 频率
+- **write 工具 TAG 返回**：写入后返回 TAG，可直接链式编辑无需 re-read
+- **`todo_write` 拆分为 `todo_create` / `todo_update`**：引入 ID 优先匹配机制，`content` 模糊回退，消除并发新增与状态丢失
+- **JSONL 统一持久化**：跨轮次 session、plan mode、filehistory、subagent 状态统一为 JSONL 格式
+
+### 修复
+- **Shell 超时死上限消除**：`Shell` 工具实现 `ToolWithTimeout`，不再受全局 `MaxShellTimeoutMs` 限制
+- **Provider 切换 404**：修复 profiles 中配置多 provider 时部分 provider API Key 不生效导致 404
+- **Kimi usage 统计缺失**：修复 Kimi provider 的 token 统计缺失
+- **同文件多 Section 原子写入**：同文件多 patch section 合并在单次写入中应用，避免中间态残留
+- **resume TUI 渲染修复**：恢复会话时段落重建、plan/rewind/subagent 覆盖层渲染异常修复
+- **`reasoning_content` 往返修复**：流式响应中 reasoning_content 跨轮次传递丢失修复，空响应回归防护
+- **`todo_write` 无限新增修复**：阻止无 ID 的 content 匹配导致重复创建 todo
+- **文件 FD 输出翻倍修复**：`ExecuteStreaming` 文件描述符模式输出内容重复
+- **Hashline 错误信息明确化**：操作行误加 `+` 前缀 / body 行缺 `+` 前缀时返回中文错误提示，不再静默丢弃
+
+### 重构
+- **移除旧版 read_file / edit_file**：统一使用 hashline read / edit / write，Prompt 提取为 `go:embed` .md 文件
+- **Edit delta 上下文行展示**：patch 应用后自动展示变更行周围代码，提升 LLM 编辑连续性
+- **工具层错误恢复指引优化**：C2→C1 跨工具引用迁移，错误恢复路径更清晰
+
+---
+
+📝 [Changelog (English)](https://github.com/Menfre01/waveloom/blob/dev/CHANGELOG.en.md)
 ## [v0.1.0-beta.10] — 2026-07-16
 
 ### 新增功能
