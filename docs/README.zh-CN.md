@@ -112,6 +112,9 @@ waveloom
 **Q: 怎么切换模型？**  
 输入 `/model` 选择，或 `waveloom --model deepseek-v4-flash`。
 
+**Q: 怎么切换 Provider？**  
+输入 `/provider` 查看可用 Provider，或 `/provider openai` 切换。Profile 配置在 `settings.json` 的 `llm.profiles` 中。
+
 **Q: API Key 安全吗？**  
 Key 存储在本地 `~/.waveloom/`，直连 DeepSeek / OpenAI，不经过任何第三方服务器。
 

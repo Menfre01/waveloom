@@ -114,6 +114,9 @@ waveloom
 **Q: How do I switch models?**  
 Type `/model` in interactive mode, or `waveloom --model deepseek-v4-flash`.
 
+**Q: How do I switch LLM providers?**  
+Type `/provider` to list available providers, or `/provider openai` to switch. Profiles are configured in `settings.json` under `llm.profiles`.
+
 **Q: Is my API key safe?**  
 Stored locally at `~/.waveloom/`. Keys connect directly to DeepSeek / OpenAI — no third-party relay.
 

@@ -1,6 +1,33 @@
 # Changelog
 
 
+
+## [v0.2.0-beta.1] — 2026-07-20
+
+### Added
+- **`/provider` command**: Dynamically switch LLM Provider (deepseek / openai / kimi) at runtime, auto-resolving per-profile API Key, Base URL, and model configuration
+- **Claude Code-compatible Hook system**: Supports 5 event types including PreToolUse / PostToolUse and permission_mode field, compatible with `.claude/settings.json` hooks configuration
+- **Tiered timeout mechanism**: agent / subagent / MCP tools default to 30min timeout, regular tools default to 5min, with `ToolWithTimeout` interface for customization
+- **edit response smart context layering**: Small files (≤200 lines) shown in full; large files use context windows + directory index to reduce re-read frequency
+- **write tool TAG return**: Written files return a TAG, enabling direct chained edits without re-reading
+- **`todo_write` split into `todo_create` / `todo_update`**: ID-first matching with content fuzzy fallback, eliminating duplicate creation and state loss
+- **Unified JSONL persistence**: Cross-turn session, plan mode, filehistory, and subagent state unified into JSONL format
+
+### Fixed
+- **Shell timeout hard cap removed**: `Shell` tool implements `ToolWithTimeout`, no longer constrained by global `MaxShellTimeoutMs`
+- **Provider switch 404**: Fixed multi-provider profiles where some provider API Keys were not applied, causing 404 errors
+- **Kimi usage stats missing**: Fixed missing token usage statistics for Kimi provider
+- **Multi-section atomic write**: Multiple patch sections for the same file now apply in a single atomic write, eliminating intermediate-state residue
+- **resume TUI rendering fixes**: Fixed paragraph reconstruction, plan/rewind/subagent overlay rendering on session resume
+- **`reasoning_content` roundtrip fix**: Fixed reasoning_content loss across turns in streaming responses, plus empty-response regression guard
+- **`todo_write` infinite creation fix**: Prevented duplicate todo creation from ID-less content matching
+- **File FD output duplication fix**: Fixed doubled output in `ExecuteStreaming` file descriptor mode
+- **Hashline error clarity**: Leading `+` on operation lines and missing `+` on body lines now produce clear error messages instead of silent drops
+
+### Changed
+- **Removed legacy read_file / edit_file**: Unified to hashline read / edit / write; prompts extracted to `go:embed` .md files
+- **Edit delta context display**: Post-apply context lines shown around changes for better LLM editing continuity
+- **Tool error recovery guidance**: C2→C1 cross-tool reference migration for clearer error recovery paths
 ## [v0.1.0-beta.10] — 2026-07-16
 
 ### Added
