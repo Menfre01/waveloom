@@ -4373,6 +4373,9 @@ func (m *model) handleSlashCommand(input string) tea.Cmd {
 				return nil
 			}
 
+
+		case slashcommand.SideEffectProviderSwitched:
+			m.reconfigureLLMClientForProvider(se.Detail)
 		case slashcommand.SideEffectOpenRewind:
 			return m.handleRewindCommand()
 		}
@@ -4410,9 +4413,58 @@ func (m *model) reconfigureLLMClient(newModel string) {
 		m.initialModel = ""
 	}
 
+	m.rebuildSlashRegistry()
+
 	if m.loop != nil {
 		m.wireLoop()
 	}
+}
+
+// handleProviderSwap 处理 Provider 切换。
+// ProviderCommand 写入 settings 后通过 SideEffect 通知 TUI 更新 Client + HUD。
+func (m *model) reconfigureLLMClientForProvider(newProvider string) {
+	settings, err := m.settingsStore.LoadLLM()
+	if err != nil {
+		return
+	}
+	// 先设置 provider，再解析 profile（新 provider 的专属字段覆盖顶层残留）
+	settings.Provider = newProvider
+	settings.ResolveProfile()
+	client, _, err := llm.NewClientFromLLMSettings(settings)
+	if err != nil {
+		return
+	}
+	m.llmClient = client
+
+	// 更新 HUD 显示的模型名
+	if settings.Model != "" {
+		m.hudModel = normalizeWidth(settings.Model)
+	}
+	m.hudThinkingEffort = resolveThinkingEffort(settings)
+
+	// 重新判断 advisor mode 状态
+	m.advisorMode = settings.IsAdvisorMode()
+	m.subModel = settings.SubModel
+	if m.advisorMode {
+		m.initialModel = settings.SubModel
+	} else {
+		m.initialModel = ""
+	}
+
+	m.rebuildSlashRegistry()
+
+	if m.loop != nil {
+		m.wireLoop()
+	}
+}
+
+// rebuildSlashRegistry 用当前的 m.llmClient 重建 slash registry，
+// 确保 ModelLister 持有最新的 llm.Client 引用。
+// 在 /provider 和 /model 切换后调用，使 /model（无参）能获取到新 provider 的模型列表。
+func (m *model) rebuildSlashRegistry() {
+	creator := &tuiSessionCreator{m: m}
+	lister := &tuiModelLister{client: m.llmClient}
+	m.slashRegistry = newSlashRegistry(creator, m.settingsStore, lister, m.hudModel, m.skillLoader, m.registry, m.slashMessages)
 }
 
 // ---------------------------------------------------------------------------
@@ -4618,6 +4670,15 @@ func slashMessagesFrom(lc *Messages) *slashcommand.SlashMessages {
 		HelpDescription:        lc.SlashHelpDescription,
 		HelpText:               lc.SlashHelpText,
 		RewindDescription:      lc.RewindSlashDescription,
+		ProviderDescription:       lc.ProviderDescription,
+		ProviderList:              lc.ProviderList,
+		ProviderAvailable:         lc.ProviderAvailable,
+		ProviderUnknown:           lc.ProviderUnknown,
+		ProviderSwitched:          lc.ProviderSwitched,
+		ProviderNoProfiles:        lc.ProviderNoProfiles,
+		ProviderConfigReadFailed:  lc.ProviderConfigReadFailed,
+		ProviderConfigSaveFailed:  lc.ProviderConfigSaveFailed,
+		ProviderModelNotice:       lc.ProviderModelNotice,
 	}
 }
 
@@ -4629,6 +4690,7 @@ func newSlashRegistry(creator slashcommand.SessionCreator, store slashcommand.Se
 	r.Register(slashcommand.NewLocaleCommand(sm))
 	r.Register(slashcommand.NewHelpCommand(r, sm))
 	r.Register(slashcommand.NewRewindCommand(sm))
+	r.Register(slashcommand.NewProviderCommand(store, sm))
 
 	// 注册 user-invocable skills
 	// skill body 的加载统一走 skill 工具（通过 SkillExecutor 接口）

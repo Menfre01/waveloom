@@ -30,4 +30,15 @@ type SlashMessages struct {
 
 	// ── /rewind ──
 	RewindDescription string
+
+	// ── /provider ──
+	ProviderDescription       string
+	ProviderList              string // 含 %s, %s
+	ProviderAvailable         string // 含 %s
+	ProviderUnknown           string // 含 %s
+	ProviderSwitched          string // 含 %s, %s
+	ProviderNoProfiles        string
+	ProviderConfigReadFailed  string // 含 %v
+	ProviderConfigSaveFailed  string // 含 %v
+	ProviderModelNotice       string // 含 %s
 }
