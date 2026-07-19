@@ -50,6 +50,12 @@ type ToolWithPrompt interface {
 	Prompt() string
 }
 
+// ToolWithTimeout 是可选接口，由需要非默认超时的工具实现。
+// 返回 0 → 使用全局默认值 (DefaultToolTimeout)。
+type ToolWithTimeout interface {
+	ToolTimeout() time.Duration
+}
+
 // ---------------------------------------------------------------------------
 // TypedStreamableTool[P] — 可选的流式工具接口
 // ---------------------------------------------------------------------------
@@ -81,6 +87,7 @@ type ErasedTool struct {
 	schema                  json.RawMessage
 	concurrentSafe          bool
 	requiresUserInteraction bool
+	toolTimeout             time.Duration // 工具自声明超时（0 = 使用全局默认）
 	execute                 func(ctx context.Context, raw json.RawMessage) (*ToolResult, error)
 
 	// streaming 支持（可选，由 Wrap 自动检测 TypedStreamableTool[P]）
@@ -97,6 +104,9 @@ func (e *ErasedTool) RequiresUserInteraction() bool { return e.requiresUserInter
 func (e *ErasedTool) Execute(ctx context.Context, raw json.RawMessage) (*ToolResult, error) {
 	return e.execute(ctx, raw)
 }
+
+// ToolTimeout 返回工具自声明的超时。0 表示使用全局默认。
+func (e *ErasedTool) ToolTimeout() time.Duration { return e.toolTimeout }
 
 // SupportsStreaming 报告该工具是否支持增量输出推送。
 func (e *ErasedTool) SupportsStreaming() bool { return e.supportsStreaming }
@@ -117,6 +127,10 @@ func Wrap[P any](t TypedTool[P]) *ErasedTool {
 	if twp, ok := any(t).(ToolWithPrompt); ok {
 		prompt = twp.Prompt()
 	}
+	var toolTimeout time.Duration
+	if twt, ok := any(t).(ToolWithTimeout); ok {
+		toolTimeout = twt.ToolTimeout()
+	}
 	et := &ErasedTool{
 		name:                    t.Name(),
 		desc:                    t.Description(),
@@ -124,6 +138,7 @@ func Wrap[P any](t TypedTool[P]) *ErasedTool {
 		schema:                  t.Schema(),
 		concurrentSafe:          t.ConcurrentSafe(),
 		requiresUserInteraction: requiresUI,
+		toolTimeout:             toolTimeout,
 		execute: func(ctx context.Context, raw json.RawMessage) (*ToolResult, error) {
 			var p P
 			if err := json.Unmarshal(raw, &p); err != nil {
