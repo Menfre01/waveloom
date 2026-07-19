@@ -86,9 +86,9 @@ type Config struct {
 	SubModel string
 }
 
-// DefaultToolTimeout 是单个工具执行的推荐超时时间（10 分钟）。
-// 覆盖 shell（最长 600s）和 web_fetch 等所有工具类型。
-const DefaultToolTimeout = 10 * time.Minute
+// DefaultToolTimeout 是单个工具执行的推荐超时时间（5 分钟）。
+// 工具可通过 ToolWithTimeout 接口声明更长的超时（如 agent 工具 30 min）。
+const DefaultToolTimeout = 5 * time.Minute
 
 // DefaultConfig 返回带推荐默认值的 Config。
 func DefaultConfig() Config {

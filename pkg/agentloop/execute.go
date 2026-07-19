@@ -36,6 +36,20 @@ import (
 // 错误处理：
 //   - Fatal → 直接返回 TerminalReason
 //   - Recoverable → 作为 tool 消息内容返回给 LLM，由 LLM 根据错误反馈自行修正
+// effectiveTimeout 返回工具的实际超时：
+// 1. 工具自声明 ToolWithTimeout.ToolTimeout() > 0 → 使用工具声明
+// 2. 否则 → 使用 Loop 全局 ToolTimeout（可能为 0 = 无限制）
+func (l *Loop) effectiveTimeout(name string) time.Duration {
+	if t, ok := l.toolRegistry.Get(name); ok {
+		if tt, ok := t.(tool.ToolWithTimeout); ok {
+			if d := tt.ToolTimeout(); d > 0 {
+				return d
+			}
+		}
+	}
+	return l.config.ToolTimeout
+}
+
 func (l *Loop) executeToolCalls(ctx context.Context, calls []llm.ToolCall, state *LoopState, ch chan<- TurnEvent) (msgs []llm.Message, termReason TerminalReason, execErr error) {
 	// Inject EventCallback + ParentMessages into tool execution context.
 	// Sub-tools like AgentTool read these to create nested loops and forward events.
@@ -154,9 +168,10 @@ func (l *Loop) executeToolCalls(ctx context.Context, calls []llm.ToolCall, state
 			}()
 				start := time.Now()
 				execCtx := ctx
-				if l.config.ToolTimeout > 0 {
+				timeout := l.effectiveTimeout(tc.Name)
+				if timeout > 0 {
 					var cancel context.CancelFunc
-					execCtx, cancel = context.WithTimeout(ctx, l.config.ToolTimeout)
+					execCtx, cancel = context.WithTimeout(ctx, timeout)
 					defer cancel()
 				}
 				execCtx = WithToolCallID(execCtx, tc.ID)
@@ -221,9 +236,9 @@ func (l *Loop) executeToolCalls(ctx context.Context, calls []llm.ToolCall, state
 
 			}(tc)
 		}
-		// REGRESSION: wg.Wait() 无超时保护。每个 goroutine 有 ToolTimeout，
-		// 但若工具忽略 context，TUI 会被阻塞长达 10 分钟。加 ctx.Done() +
-		// 5s 宽限期作为双重保险，确保 TUI 永不卡死。
+		// REGRESSION: wg.Wait() 无超时保护。每个 goroutine 有 ToolTimeout
+		// （默认 5 min，工具可自声明更长），但若工具忽略 context，
+		// TUI 会被阻塞。加 ctx.Done() + 5s 宽限期作为双重保险。
 		wgDone := make(chan struct{})
 		go func() {
 			wg.Wait()
@@ -451,9 +466,10 @@ func (l *Loop) executeToolCalls(ctx context.Context, calls []llm.ToolCall, state
 
 		start := time.Now()
 		execCtx := ctx
-		if l.config.ToolTimeout > 0 {
+		timeout := l.effectiveTimeout(tc.Name)
+		if timeout > 0 {
 			var cancel context.CancelFunc
-			execCtx, cancel = context.WithTimeout(ctx, l.config.ToolTimeout)
+			execCtx, cancel = context.WithTimeout(ctx, timeout)
 			defer cancel()
 		}
 		execCtx = WithToolCallID(execCtx, tc.ID)
