@@ -53,8 +53,12 @@ func (p *MCPToolProxy) Schema() json.RawMessage {
 }
 
 // ConcurrentSafe 返回 true，MCP 工具默认可并行调用。
-func (p *MCPToolProxy) ConcurrentSafe() bool {
-	return true
+func (p *MCPToolProxy) ConcurrentSafe() bool { return true }
+
+// ToolTimeout 返回 MCP 工具的推荐超时（由 Client 配置）。
+// MCP 设计工具（如 Pencil）可能需要长达 30 分钟。
+func (p *MCPToolProxy) ToolTimeout() time.Duration {
+	return p.client.toolTimeout
 }
 
 // Execute 将参数转发到 MCP Server，返回执行结果。

@@ -137,6 +137,10 @@ func subagentEventsToMessages(events []SubagentEvent) []llm.Message {
 func (a *AgentTool) Name() string              { return "agent" }
 func (a *AgentTool) ConcurrentSafe() bool      { return true }
 
+// ToolTimeout 返回 agent 工具的推荐超时（30 分钟）。
+// 子 agent 内部有多轮 LLM 调用 + 工具执行，需要比普通工具更充裕的时间。
+func (a *AgentTool) ToolTimeout() time.Duration { return 30 * time.Minute }
+
 // isValidModel 校验模型名称是否在允许列表中。
 // 空字符串视为有效（继承默认）；空列表视为不限制。
 func (a *AgentTool) isValidModel(m string) bool {
