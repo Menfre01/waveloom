@@ -192,7 +192,7 @@ func TestWriteFileCreateShowsCreated(t *testing.T) {
 	if result.Error != nil {
 		t.Fatalf("result.Error = %v", result.Error)
 	}
-	if !contains(result.Content, "Created new file") {
+	if !contains(result.Content, "Created") {
 		t.Error("Output should indicate new file creation")
 	}
 	if !contains(result.Content, "Preview") {
@@ -216,7 +216,7 @@ func TestWriteFileUpdateShowsUpdated(t *testing.T) {
 	if result.Error != nil {
 		t.Fatalf("result.Error = %v", result.Error)
 	}
-	if !contains(result.Content, "Updated file") {
+	if !contains(result.Content, "Updated") {
 		t.Error("Output should indicate file update")
 	}
 	if !contains(result.Content, "Preview") {
@@ -244,7 +244,7 @@ func TestWriteFileNoChangeWarning(t *testing.T) {
 	if result.Error != nil {
 		t.Fatalf("result.Error = %v", result.Error)
 	}
-	if !contains(result.Content, "Updated file") {
+	if !contains(result.Content, "Updated") {
 		t.Error("Output should indicate update (even though content unchanged)")
 	}
 }

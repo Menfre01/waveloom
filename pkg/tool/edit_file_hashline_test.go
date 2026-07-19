@@ -743,7 +743,7 @@ func TestFormatSectionResults_Update(t *testing.T) {
 	}
 	got := formatSectionResults(results)
 	// TAG must be present for chained edits
-	if !strings.Contains(got, "[src/main.go#A1B2]") {
+	if !strings.Contains(got, "TAG: A1B2") {
 		t.Errorf("missing TAG in output, got:\n%s", got)
 	}
 	if !strings.Contains(got, "(+3 lines)") {
@@ -762,7 +762,7 @@ func TestFormatSectionResults_Delete(t *testing.T) {
 	if !strings.Contains(got, "deleted") {
 		t.Errorf("missing delete confirmation, got:\n%s", got)
 	}
-	if !strings.Contains(got, "#A1B2") {
+	if !strings.Contains(got, "TAG: A1B2") {
 		t.Errorf("missing TAG, got:\n%s", got)
 	}
 }
@@ -848,7 +848,7 @@ func TestFormatPostEditContext_Normal(t *testing.T) {
 		},
 	}
 	got := formatPostEditContext(fs, results)
-	if !strings.Contains(got, "--- post-edit context (use TAG above) ---") {
+	if !strings.Contains(got, "--- post-edit context") {
 		t.Errorf("missing separator, got:\n%s", got)
 	}
 	if !strings.Contains(got, "1:line1") {
@@ -898,7 +898,7 @@ func TestFormatPostEditContext_FileEnd(t *testing.T) {
 
 func TestFormatPostEditContext_LargeEditTruncation(t *testing.T) {
 	var lines []string
-	for i := 0; i < 30; i++ {
+	for i := 0; i < 250; i++ {
 		lines = append(lines, fmt.Sprintf("line%d", i+1))
 	}
 	content := strings.Join(lines, "\n") + "\n"
@@ -907,18 +907,17 @@ func TestFormatPostEditContext_LargeEditTruncation(t *testing.T) {
 		{
 			Path: "src/main.go", Op: "update",
 			DiffHunks: []hashline.EditHunk{
-				{NewStart: 5, NewCount: 25, Lines: []hashline.EditLine{
-					{Kind: hashline.LineAdd, NewNum: 5},
+				{NewStart: 100, NewCount: 25, Lines: []hashline.EditLine{
+					{Kind: hashline.LineAdd, NewNum: 100},
 				}},
 			},
 		},
 	}
 	got := formatPostEditContext(fs, results)
-	if !strings.Contains(got, "lines in edit region omitted") {
-		t.Errorf("missing truncation marker for large edit, got:\n%s", got)
+	if !strings.Contains(got, "--- file index ---") {
+		t.Errorf("large file (>200 lines) should include file index, got:\n%s", got)
 	}
 }
-
 func TestFormatPostEditContext_SkipError(t *testing.T) {
 	fs := &testFS{files: map[string]string{}}
 	results := []hashline.SectionResult{

@@ -142,28 +142,36 @@ func (t *EditFileHashline) Execute(ctx context.Context, p EditFileHashlineParams
 
 func formatSectionResults(results []hashline.SectionResult) string {
 	var b strings.Builder
+	var tagLines []string
 	for _, r := range results {
 		if r.Error != nil {
-			fmt.Fprintf(&b, "[%s] ✗ %s\n", r.Path, r.Error.Message)
+			fmt.Fprintf(&b, "✗ %s: %s\n", r.Path, r.Error.Message)
 			continue
 		}
 		if r.Warning != "" {
-			fmt.Fprintf(&b, "[%s#%s] ⚠ %s: %s (%+d lines)\n", r.Path, r.NewTAG, r.Op, r.Warning, r.LinesDelta)
+			fmt.Fprintf(&b, "⚠ %s — TAG: %s — %s: %s (%+d lines)\n", r.Path, r.NewTAG, r.Op, r.Warning, r.LinesDelta)
+			tagLines = append(tagLines, fmt.Sprintf("%s#%s", r.Path, r.NewTAG))
 			continue
 		}
 		switch r.Op {
 		case "update":
-			fmt.Fprintf(&b, "[%s#%s] ✓ %s (%+d lines)\n", r.Path, r.NewTAG, r.Op, r.LinesDelta)
+			fmt.Fprintf(&b, "✓ %s — TAG: %s — (%+d lines)\n", r.Path, r.NewTAG, r.LinesDelta)
+			tagLines = append(tagLines, fmt.Sprintf("%s#%s", r.Path, r.NewTAG))
 			if len(r.DiffHunks) > 0 {
 				b.WriteString(formatLocalDiffExcerpt(r.DiffHunks, 12))
 			}
 		case "delete":
-			fmt.Fprintf(&b, "[%s#%s] ✓ deleted\n", r.Path, r.OldTAG)
+			fmt.Fprintf(&b, "✓ %s deleted (was TAG: %s)\n", r.Path, r.OldTAG)
 		case "rename":
-			fmt.Fprintf(&b, "[%s#%s] → %s ✓ renamed\n", r.Path, r.NewTAG, r.Path)
+			fmt.Fprintf(&b, "✓ %s renamed (TAG: %s)\n", r.Path, r.NewTAG)
+			tagLines = append(tagLines, fmt.Sprintf("%s#%s", r.Path, r.NewTAG))
 		default:
-			fmt.Fprintf(&b, "[%s#%s] ✓ %s\n", r.Path, r.NewTAG, r.Op)
+			fmt.Fprintf(&b, "✓ %s — TAG: %s — %s\n", r.Path, r.NewTAG, r.Op)
+			tagLines = append(tagLines, fmt.Sprintf("%s#%s", r.Path, r.NewTAG))
 		}
+	}
+	if len(tagLines) > 0 {
+		fmt.Fprintf(&b, "\n— Next TAGs: %s\n", strings.Join(tagLines, " | "))
 	}
 	return b.String()
 }
@@ -231,10 +239,13 @@ func convertHunk(h hashline.EditHunk, filePath string) DiffHunk {
 // ---------------------------------------------------------------------------
 
 // editContextLines 编辑后上下文中变更区域前后各显示的行数。
-const editContextLines = 3
+const editContextLines = 5
 
 // maxEditDisplay 编辑区域本身最多显示的行数（超出则截断）。
 const maxEditDisplay = 20
+
+// smallFileThreshold 全量显示的文件行数上限（≤此值时无需 re-read 即可编辑任意位置）。
+const smallFileThreshold = 200
 
 // formatPostEditContext 为每个成功的 update 操作追加编辑后文件上下文。
 // 显示变更区域 ±editContextLines 行的实际内容及行号，
@@ -261,6 +272,16 @@ func formatPostEditContext(fs hashline.FileSystem, results []hashline.SectionRes
 
 		// 确定所有 hunk 覆盖的变更区域
 		firstChanged, lastChanged := totalLines+1, 0
+
+		// 小文件（≤200 行）：全量显示，LLM 可编辑任意位置无需 re-read
+		if totalLines <= smallFileThreshold {
+			b.WriteString("\n--- post-edit context (full file) ---\n")
+			for i, line := range lines {
+				fmt.Fprintf(&b, "%d:%s\n", i+1, line)
+			}
+			fmt.Fprintf(&b, "→ Full file shown (lines 1-%d). Reuse TAG for next edit anywhere.\n", totalLines)
+			continue
+		}
 		for _, h := range r.DiffHunks {
 			if h.NewCount > 0 {
 				start := h.NewStart
@@ -297,7 +318,7 @@ func formatPostEditContext(fs hashline.FileSystem, results []hashline.SectionRes
 			showEnd = totalLines
 		}
 
-		b.WriteString("\n--- post-edit context (use TAG above) ---\n")
+		b.WriteString("\n--- post-edit context ---\n")
 
 		// 文件头部省略
 		if showStart > 1 {
@@ -340,6 +361,28 @@ func formatPostEditContext(fs hashline.FileSystem, results []hashline.SectionRes
 		if showEnd < totalLines {
 			fmt.Fprintf(&b, "... [%d lines below omitted]\n", totalLines-showEnd)
 		}
+
+		// 大文件：附加结构索引，便于导航到 post-edit context 未覆盖的区域
+		b.WriteString(formatFileIndex(lines))
+
+		// 末尾完整性检查：大文件编辑中段时，末尾不可见，追加最后 3 行作为结构哨兵
+		if showEnd < totalLines-2 {
+			b.WriteString("--- tail ---\n")
+			tailStart := totalLines - 3
+			if tailStart < showEnd+1 {
+				tailStart = showEnd + 1
+			}
+			for i := tailStart; i < totalLines; i++ {
+				fmt.Fprintf(&b, "%d:%s\n", i+1, lines[i])
+			}
+		}
+
+		// 显式 re-read 指引：告诉 LLM 上下文覆盖范围，避免其自行判断
+		if truncated {
+			fmt.Fprintf(&b, "→ Context covers lines %d-%d (edit region truncated). Use file index to locate targets outside → re-read first.\n", showStart, showEnd)
+		} else {
+			fmt.Fprintf(&b, "→ Context covers lines %d-%d. Edit within this range → reuse TAG. Outside → re-read first.\n", showStart, showEnd)
+		}
 	}
 
 	return b.String()
@@ -354,4 +397,46 @@ func splitFileLines(content string) []string {
 		lines = lines[:len(lines)-1]
 	}
 	return lines
+}
+// formatFileIndex 为大文件生成结构索引（段落首行），
+// 帮助 LLM 在 post-edit context 未覆盖的区域定位编辑目标行号。
+// 基于段落（连续非空行 = 一个段落）提取首行，上限 30 条；
+// 超过上限则退化为每 25 行取样。
+func formatFileIndex(lines []string) string {
+	const maxEntries = 30
+	type entry struct {
+		line int
+		text string
+	}
+	var entries []entry
+	inParagraph := false
+	for i, line := range lines {
+		isBlank := strings.TrimSpace(line) == ""
+		if !isBlank && !inParagraph {
+			entries = append(entries, entry{line: i + 1, text: line})
+			inParagraph = true
+		} else if isBlank {
+			inParagraph = false
+		}
+	}
+
+	var b strings.Builder
+	if len(entries) <= maxEntries {
+		b.WriteString("--- file index ---\n")
+		for _, e := range entries {
+			fmt.Fprintf(&b, "%d:%s\n", e.line, e.text)
+		}
+	} else {
+		b.WriteString("--- file index (sampled every 25 lines) ---\n")
+		step := 25
+		for i := 0; i < len(lines); i += step {
+			for j := i; j < len(lines) && j < i+step; j++ {
+				if strings.TrimSpace(lines[j]) != "" {
+					fmt.Fprintf(&b, "%d:%s\n", j+1, lines[j])
+					break
+				}
+			}
+		}
+	}
+	return b.String()
 }

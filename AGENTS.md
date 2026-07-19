@@ -58,10 +58,8 @@ specs/           各组件规格书（修改前先阅读；内部文档，不纳
 ### 工具调用原则
 
 - **独立只读操作并行**（read），写操作（edit/write）串行
-- **edit 铁律**：每次编辑后 TAG 必然变化。两次编辑之间必须重新 read 确认当前 TAG 和行号，禁止凭记忆构造 SWAP 范围。TAG 过期 + 行号偏移 = 静默替换错误内容，不会报错。
-- **read 后 edit 黄金法则**：read 返回的 TAG 是文件内容摘要。文件不变 → TAG 不变；文件被修改（包括你刚做的 edit）→ 新 TAG。构造下一个 edit 之前，问自己：我用的 TAG 是最近一次 read 返回的吗？
-- **edit 报 tag_mismatch** → 文件在 read 之后被外部修改（子代理、其他 session）。重新 read 获取新 TAG 和行号，再构造 edit。不要重试同一个 patch。
-- **新建文件用 write**，改已有文件用 edit。write 后必须 read 获取 TAG，后续用 edit。
+- **edit 响应包含新 TAG 和编辑后上下文**，目标行在上下文中时可直接链式编辑；目标行不可见或 tag_mismatch 时先 re-read。
+- **write 返回 TAG**，写入后可直接 edit 无需 re-read。
 - `security_violation` → 致命错误，停止当前路径
 
 ### 代码审查

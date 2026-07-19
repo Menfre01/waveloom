@@ -54,7 +54,14 @@ Note: files without a trailing newline may acquire one after editing — normal.
 
 ### Rules
 
-- Use the TAG from your most recent read output. After every update/rename, the response contains a new TAG — use it for the next edit. After REM/DEL-only operations the TAG is unchanged (the file is gone or unchanged).
+- After each successful edit/rename, the response includes a new TAG plus a post-edit context showing current line numbers around the changed area.
+- Chain edits without re-reading when the target lines are visible in the post-edit context — use the new TAG directly.
+- Re-read the file before editing when: (a) the target lines fall outside the post-edit context, (b) you are editing a file not touched in the previous edit, or (c) a tag_mismatch error occurs.
+
+- Post-edit context structure after a successful edit:
+  • Small files (≤200 lines): the entire file is displayed with current line numbers — you can edit any line directly.
+  • Large files (>200 lines): a ±5-line context window around the edit, followed by a file index (paragraph-first-line navigation anchors) and a tail check (last 3 lines for structural integrity).
+  • Use the file index to locate target line numbers outside the context window, then re-read if needed.
 - Touch only lines that change. For pure additions, use INS.PRE / INS.POST — never
   widen a SWAP to include unchanged lines.
 - Operations are applied in declaration order. After each operation, the system
@@ -110,6 +117,6 @@ Before submitting a patch, verify the edited region is structurally sound:
 
 ### When NOT to use
 
-- Creating a new file → use write (then read to get a TAG)
+- Creating a new file → use write (returns a TAG, no read needed)
 - Reading a file → use read
 - Very simple single-word replacements on short files → use edit with a single SWAP line.
