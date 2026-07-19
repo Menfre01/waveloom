@@ -337,8 +337,9 @@ func registerBuiltinTools(r tool.Registry, skillLoader *skill.Loader, llmClient 
 	}
 	r.Register(tool.Wrap(at))
 
-	// TodoWrite — 结构化任务列表管理
-	r.Register(tool.Wrap(&tool.TodoWrite{}))
+	// TodoCreate / TodoUpdate — 结构化任务列表管理
+	r.Register(tool.Wrap(&tool.TodoCreate{}))
+	r.Register(tool.Wrap(&tool.TodoUpdate{}))
 	return at
 }
 

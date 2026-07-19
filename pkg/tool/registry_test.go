@@ -248,7 +248,7 @@ func TestFormatToolPrompts_Empty(t *testing.T) {
 func TestFormatToolPrompts_Single(t *testing.T) {
 	r := NewRegistry()
 	r.Register(Wrap(&mockTypedTool{
-		name:   "todo_write",
+		name:   "todo_create",
 		desc:   "Task tracker",
 		prompt: "## Todo List\n\nUse this tool...",
 		schema: json.RawMessage(`{}`),

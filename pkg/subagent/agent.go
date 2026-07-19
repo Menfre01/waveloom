@@ -626,11 +626,11 @@ var allAgentDisallowed = map[string]bool{
 	"exit_plan_mode":       true,
 	"ask_user_question":    true,
 	"kill_background_task": true,
-	// todo_write 由父 agent loop 独占管理，子代理 TodoState 为 nil，
+	// todo_create / todo_update 由父 agent loop 独占管理，子代理 TodoState 为 nil，
 	// 其 Prompt 也因工具被禁止而不会注入子代理上下文。
-	"todo_write":           true,
+	"todo_create":          true,
+	"todo_update":          true,
 }
-
 var exploreDisallowed = map[string]bool{
 	"write_file": true,
 	"write":      true,

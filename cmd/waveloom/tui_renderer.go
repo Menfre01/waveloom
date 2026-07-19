@@ -2519,7 +2519,7 @@ func renderTodoItem(t todo.TodoItem, width int, spinnerView string) string {
 
 func renderTodoInProgress(t todo.TodoItem, width int, spinnerView string) string {
 	spinnerPart := styleTodoInProgressSpinner.Render(spinnerView)
-	textPart := styleTodoInProgressText.Render(t.ActiveForm)
+	textPart := styleTodoInProgressText.Render(t.Content)
 	line := spinnerPart + " " + textPart
 	return lipgloss.NewStyle().Width(width).Render(line)
 }
