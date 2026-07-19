@@ -743,7 +743,11 @@ func applySection(sec Section, fs FileSystem, store *SnapshotStore, originalSnap
 			if snapContent != "" {
 				recovery := RecoverOps(snapContent, currentContent, sec.Ops)
 				if recovery.Success {
-					result.Warning = fmt.Sprintf("TAG expired, auto-recovered: %v", verifyErr)
+					warning := fmt.Sprintf("TAG expired, auto-recovered: %v", verifyErr)
+					if recovery.RemapSummary != "" {
+						warning += " (" + recovery.RemapSummary + ")"
+					}
+					result.Warning = warning
 					sec.Ops = recovery.MappedOps
 				} else {
 					reason := "unknown"
@@ -753,7 +757,7 @@ func applySection(sec Section, fs FileSystem, store *SnapshotStore, originalSnap
 					result.Error = &EditError{
 						Fatal:   false,
 						Kind:    "tag_mismatch",
-						Message: fmt.Sprintf("TAG mismatch for %q and recovery failed (%s): the file has been modified since last read. Re-read the file with read_file_hashline and retry. (%v)", sec.Path, reason, verifyErr),
+						Message: fmt.Sprintf("TAG mismatch for %q and recovery failed (%s): the file has been modified since last read. Re-read with read_file_hashline and retry, or rewrite the entire file with write_file. (%v)", sec.Path, reason, verifyErr),
 					}
 					return result
 				}
@@ -761,7 +765,7 @@ func applySection(sec Section, fs FileSystem, store *SnapshotStore, originalSnap
 				result.Error = &EditError{
 					Fatal:   false,
 					Kind:    "tag_mismatch",
-					Message: fmt.Sprintf("TAG mismatch for %q: the file has been modified since last read. Re-read the file with read_file_hashline and retry. (%v)", sec.Path, verifyErr),
+					Message: fmt.Sprintf("TAG mismatch for %q: the file has been modified since last read. Re-read with read_file_hashline and retry, or rewrite the entire file with write_file. (%v)", sec.Path, verifyErr),
 				}
 				return result
 			}
@@ -887,7 +891,7 @@ func applySectionGroupAtomic(results []SectionResult, indices []int, sections []
 					Error: &EditError{
 						Fatal:   false,
 						Kind:    "tag_mismatch",
-						Message: fmt.Sprintf("All %d changes to %q were rejected: %s. The file has not been modified. Re-read with read_file_hashline to get a fresh TAG and retry.", len(indices), firstSec.Path, err.Error()),
+						Message: fmt.Sprintf("All %d changes to %q were rejected: %s. The file has not been modified. Re-read with read_file_hashline to get a fresh TAG and retry, or rewrite the entire file with write_file.", len(indices), firstSec.Path, err.Error()),
 					},
 				}
 			}
@@ -1012,7 +1016,7 @@ func validateTAGAndRecover(sec Section, storePath string, currentContent string,
 	}
 
 	if snapContent == "" {
-		return nil, "", fmt.Errorf("TAG mismatch for %q: no snapshot available. Re-read the file with read_file_hashline and retry. (%v)", sec.Path, verifyErr)
+		return nil, "", fmt.Errorf("TAG mismatch for %q: no snapshot available. Re-read the file with read_file_hashline and retry, or rewrite the entire file with write_file. (%v)", sec.Path, verifyErr)
 	}
 
 	recovery := RecoverOps(snapContent, currentContent, sec.Ops)
@@ -1025,6 +1029,9 @@ func validateTAGAndRecover(sec Section, storePath string, currentContent string,
 	}
 
 	warning := fmt.Sprintf("TAG expired, auto-recovered: %v", verifyErr)
+	if recovery.RemapSummary != "" {
+		warning += " (" + recovery.RemapSummary + ")"
+	}
 	return recovery.MappedOps, warning, nil
 }
 
@@ -1167,7 +1174,8 @@ func applyEdits(content string, ops []Op) (string, []EditHunk, error) {
 	var deltas []posDelta
 	var appliedSpans []editSpan
 
-	originalLines := lines
+	originalLines := make([]string, len(lines))
+	copy(originalLines, lines)
 
 	for _, sp := range origSpans {
 		// 计算当前操作的有效偏移：仅累加 applyPos ≤ 当前 start 的 delta
@@ -1250,7 +1258,7 @@ func applyEdits(content string, ops []Op) (string, []EditHunk, error) {
 		}
 	}
 	result := strings.Join(lines, "\n")
-	hunks := buildEditHunksFromApplied(lines, origSpans, appliedSpans)
+	hunks := buildEditHunksFromApplied(originalLines, origSpans, appliedSpans)
 	return result, hunks, nil
 }
 

@@ -11,9 +11,10 @@ import (
 
 // RecoverResult 表示恢复尝试的结果。
 type RecoverResult struct {
-	Success   bool
-	MappedOps []Op     // 重映射后的操作
-	Warnings  []string // 警告信息
+	Success      bool
+	MappedOps    []Op     // 重映射后的操作
+	Warnings     []string // 警告信息
+	RemapSummary string   // 行号重映射摘要（L5→L8, L12→L15），供 LLM 链式编辑使用
 }
 
 // MapStatus 表示快照行在当前文件中的映射状态。
@@ -65,6 +66,7 @@ func RecoverOps(snapshot, current string, ops []Op) *RecoverResult {
 	}
 
 	result.MappedOps = mappedOps
+	result.RemapSummary = buildRemapSummary(ops, mappedOps)
 	if len(result.Warnings) > 0 {
 		result.Success = false // 有警告 = 部分失败
 	}
@@ -376,4 +378,45 @@ func stripTrailingBlankLines(lines []string) []string {
 		lines = lines[:len(lines)-1]
 	}
 	return lines
+}
+
+// buildRemapSummary 构建行号重映射摘要，格式: "L5→L8, L12→L15"。
+// 仅包含实际发生变更的行号，相同行号不显示。
+func buildRemapSummary(original, mapped []Op) string {
+	var parts []string
+	for i := range original {
+		addrs := collectAddrs(original[i], mapped[i])
+		for _, a := range addrs {
+			if a.old != a.new {
+				parts = append(parts, fmt.Sprintf("L%d→L%d", a.old, a.new))
+			}
+		}
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return strings.Join(parts, ", ")
+}
+
+type addrPair struct{ old, new int }
+
+func collectAddrs(orig, mapped Op) []addrPair {
+	var pairs []addrPair
+	switch orig.Kind {
+	case OpSWAP:
+		pairs = append(pairs, addrPair{orig.LineStart, mapped.LineStart})
+		if orig.LineEnd != orig.LineStart {
+			pairs = append(pairs, addrPair{orig.LineEnd, mapped.LineEnd})
+		}
+	case OpDEL:
+		pairs = append(pairs, addrPair{orig.LineStart, mapped.LineStart})
+		if orig.LineEnd != orig.LineStart {
+			pairs = append(pairs, addrPair{orig.LineEnd, mapped.LineEnd})
+		}
+	case OpINS:
+		if orig.Position != "head" && orig.Position != "tail" {
+			pairs = append(pairs, addrPair{orig.RefLine, mapped.RefLine})
+		}
+	}
+	return pairs
 }
