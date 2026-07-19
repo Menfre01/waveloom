@@ -101,6 +101,13 @@ func (t *Shell) Schema() json.RawMessage {
 
 func (t *Shell) ConcurrentSafe() bool { return false }
 
+// ToolTimeout 声明 Shell 工具的最大超时（10 分钟）。
+// 这样 effectiveTimeout 会使用此值而非 Loop 默认值（5 min），
+// 确保用户传入的 timeout_ms 参数在 (5 min, 10 min] 区间内能正常生效。
+func (t *Shell) ToolTimeout() time.Duration {
+	return time.Duration(MaxShellTimeoutMs) * time.Millisecond
+}
+
 // Description 仅描述 API 契约。行为约束（使用规则、策略）见 Prompt()，
 // 由 Registry.FormatToolPrompts() 注入 C1 system prompt。
 func (t *Shell) Description() string {
