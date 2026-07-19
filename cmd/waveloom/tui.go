@@ -226,17 +226,17 @@ When you spawn a subagent via the ` + "`agent`" + ` tool to work on a todo list 
 
 ### Serial (single subagent)
 
-1. **Before agent call**: ` + "`todo_write`" + ` → set the item to ` + "`in_progress`" + `
+1. **Before agent call**: ` + "`todo_create`" + ` → plan the task, then ` + "`todo_update`" + ` → set the item to ` + "`in_progress`" + `
 2. **Agent call**: spawn the subagent
-3. **After agent returns**: ` + "`todo_write`" + ` → set to ` + "`completed`" + ` on success, or keep ` + "`in_progress`" + ` on error
+3. **After agent returns**: ` + "`todo_update`" + ` → set to ` + "`completed`" + ` on success, or keep ` + "`in_progress`" + ` on error
 
 ### Parallel (multiple subagents)
 
-` + "`todo_write`" + ` and ` + "`agent`" + ` cannot be called in the same turn. For N parallel subagents:
+` + "`todo_update`" + ` and ` + "`agent`" + ` cannot be called in the same turn. For N parallel subagents:
 
-1. **Turn 1**: ` + "`todo_write`" + ` → set ALL N items to ` + "`in_progress`" + `
+1. **Turn 1**: ` + "`todo_update`" + ` → set ALL N items to ` + "`in_progress`" + `
 2. **Turn 2**: ` + "`agent`" + ` × N (parallel, all in one turn)
-3. **Turn 3**: After all subagents complete, ` + "`todo_write`" + ` → batch-update their statuses
+3. **Turn 3**: After all subagents complete, ` + "`todo_update`" + ` → batch-update their statuses
 
 ### On subagent failure
 
@@ -1021,7 +1021,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case agentloop.ToolCallStart:
 		// todo_write 调用不显示在消息流中
-		if msg.ToolCallName == "todo_write" {
+		if msg.ToolCallName == "todo_create" || msg.ToolCallName == "todo_update" {
 			return m, nil
 		}
 		m.handleToolStart(msg)
@@ -1036,7 +1036,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case agentloop.ToolCallResult:
 		// todo_write 结果已在面板渲染，消息流中静默
-		if msg.ToolCallName == "todo_write" {
+		if msg.ToolCallName == "todo_create" || msg.ToolCallName == "todo_update" {
 			return m, nil
 		}
 		m.handleToolResult(msg)

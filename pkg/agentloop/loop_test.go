@@ -94,8 +94,7 @@ func (m *mockLLMClient) SendMessageStream(ctx context.Context, messages []llm.Me
 			Done:         true,
 			FinishReason: finishReason,
 			ToolCalls:    resp.ToolCalls,
-			Usage:        resp.Usage,
-		}
+			Usage:        resp.Usage}
 	}()
 	return ch, nil
 }
@@ -215,8 +214,7 @@ func newSuccessTool(name string, concurrentSafe bool, content string) *mockTool 
 		desc:           "mock tool: " + name,
 		schema:         json.RawMessage(`{"type":"object","properties":{}}`),
 		concurrentSafe: concurrentSafe,
-		result:         &tool.ToolResult{Content: content},
-	}
+		result:         &tool.ToolResult{Content: content}}
 }
 
 // newErrorTool 创建一个返回错误的 mock 工具。
@@ -227,9 +225,7 @@ func newErrorTool(name string, concurrentSafe bool, toolErr *tool.ToolError) *mo
 		schema:         json.RawMessage(`{"type":"object","properties":{}}`),
 		concurrentSafe: concurrentSafe,
 		result: &tool.ToolResult{
-			Error: toolErr,
-		},
-	}
+			Error: toolErr}}
 }
 
 // newTestRegistry 用给定的工具创建测试 Registry。
@@ -246,8 +242,7 @@ func makeToolCall(id, name, args string) llm.ToolCall {
 	return llm.ToolCall{
 		ID:        id,
 		Name:      name,
-		Arguments: args,
-	}
+		Arguments: args}
 }
 
 // toolCallIDs 返回消息中 tool_calls 的 ID 列表，用于测试诊断。
@@ -268,16 +263,14 @@ func makeTextResponse(content string) *llm.Response {
 func makeToolCallResponse(content string, calls ...llm.ToolCall) *llm.Response {
 	return &llm.Response{
 		Content:   content,
-		ToolCalls: calls,
-	}
+		ToolCalls: calls}
 }
 
 func makeToolCallResponseWithUsage(content string, promptTokens int, calls ...llm.ToolCall) *llm.Response {
 	return &llm.Response{
 		Content:   content,
 		ToolCalls: calls,
-		Usage:     &llm.UsageInfo{PromptTokens: promptTokens},
-	}
+		Usage:     &llm.UsageInfo{PromptTokens: promptTokens}}
 }
 
 // ============================================================================
@@ -392,15 +385,12 @@ func (u *mockUserResponder) ApprovePlan(ctx context.Context, plan string) (permi
 func TestRunCompletesImmediately(t *testing.T) {
 	client := &mockLLMClient{
 		responses: []*llm.Response{
-			makeTextResponse("Hello, I can help with that."),
-		},
-	}
+			makeTextResponse("Hello, I can help with that.")}}
 	registry := newTestRegistry()
 	loop := New(client, registry, DefaultConfig())
 
 	finalEv := drainEvents(loop.Run(context.Background(), []llm.Message{
-		{Role: llm.RoleUser, Content: "say hello"},
-	}))
+		{Role: llm.RoleUser, Content: "say hello"}}))
 
 	if finalEv.Err != nil {
 		t.Fatalf("unexpected error: %v", finalEv.Err)
@@ -428,16 +418,13 @@ func TestRunSingleToolCall(t *testing.T) {
 	client := &mockLLMClient{
 		responses: []*llm.Response{
 			makeToolCallResponse("", makeToolCall("tc1", "read_file", `{"file_path":"/tmp/a.txt"}`)),
-			makeTextResponse("File contents: hello"),
-		},
-	}
+			makeTextResponse("File contents: hello")}}
 	readTool := newSuccessTool("read_file", true, "hello")
 	registry := newTestRegistry(readTool)
 	loop := New(client, registry, DefaultConfig())
 
 	finalEv := drainEvents(loop.Run(context.Background(), []llm.Message{
-		{Role: llm.RoleUser, Content: "read /tmp/a.txt"},
-	}))
+		{Role: llm.RoleUser, Content: "read /tmp/a.txt"}}))
 
 	if finalEv.Err != nil {
 		t.Fatalf("unexpected error: %v", finalEv.Err)
@@ -473,17 +460,14 @@ func TestRunMultipleToolCalls(t *testing.T) {
 				makeToolCall("tc2", "read_file", `{"file_path":"/tmp/b.txt"}`),
 				makeToolCall("tc3", "grep", `{"pattern":"func"}`),
 			),
-			makeTextResponse("Found 3 functions"),
-		},
-	}
+			makeTextResponse("Found 3 functions")}}
 	readTool := newSuccessTool("read_file", true, "content-a")
 	grepTool := newSuccessTool("grep", true, "3 matches")
 	registry := newTestRegistry(readTool, grepTool)
 	loop := New(client, registry, DefaultConfig())
 
 	finalEv := drainEvents(loop.Run(context.Background(), []llm.Message{
-		{Role: llm.RoleUser, Content: "find functions"},
-	}))
+		{Role: llm.RoleUser, Content: "find functions"}}))
 
 	if finalEv.Err != nil {
 		t.Fatalf("unexpected error: %v", finalEv.Err)
@@ -502,8 +486,7 @@ func TestRunMultipleToolCalls(t *testing.T) {
 	for i, expected := range []struct{ id, content string }{
 		{"tc1", "content-a"},
 		{"tc2", "content-a"},
-		{"tc3", "3 matches"},
-	} {
+		{"tc3", "3 matches"}} {
 		msg := finalEv.Messages[2+i]
 		if msg.Role != llm.RoleTool {
 			t.Errorf("msg %d: expected tool role, got %s", i, msg.Role)
@@ -522,17 +505,14 @@ func TestRunMultipleTurns(t *testing.T) {
 		responses: []*llm.Response{
 			makeToolCallResponse("", makeToolCall("tc1", "read_file", `{"file_path":"/tmp/a.txt"}`)),
 			makeToolCallResponse("", makeToolCall("tc2", "grep", `{"pattern":"func"}`)),
-			makeTextResponse("Final answer"),
-		},
-	}
+			makeTextResponse("Final answer")}}
 	readTool := newSuccessTool("read_file", true, "hello")
 	grepTool := newSuccessTool("grep", true, "2 matches")
 	registry := newTestRegistry(readTool, grepTool)
 	loop := New(client, registry, DefaultConfig())
 
 	finalEv := drainEvents(loop.Run(context.Background(), []llm.Message{
-		{Role: llm.RoleUser, Content: "analyze code"},
-	}))
+		{Role: llm.RoleUser, Content: "analyze code"}}))
 
 	if finalEv.Err != nil {
 		t.Fatalf("unexpected error: %v", finalEv.Err)
@@ -559,16 +539,13 @@ func TestRunMaxTurns(t *testing.T) {
 		responses: []*llm.Response{
 			makeToolCallResponse("", makeToolCall("tc1", "read_file", `{"file_path":"/tmp/a.txt"}`)),
 			makeToolCallResponse("", makeToolCall("tc2", "read_file", `{"file_path":"/tmp/b.txt"}`)),
-			makeToolCallResponse("", makeToolCall("tc3", "read_file", `{"file_path":"/tmp/c.txt"}`)),
-		},
-	}
+			makeToolCallResponse("", makeToolCall("tc3", "read_file", `{"file_path":"/tmp/c.txt"}`))}}
 	readTool := newSuccessTool("read_file", true, "ok")
 	registry := newTestRegistry(readTool)
-	loop := New(client, registry, Config{MaxTurns: 2, })
+	loop := New(client, registry, Config{MaxTurns: 2})
 
 	finalEv := drainEvents(loop.Run(context.Background(), []llm.Message{
-		{Role: llm.RoleUser, Content: "read files"},
-	}))
+		{Role: llm.RoleUser, Content: "read files"}}))
 
 	if finalEv.Err != nil {
 		t.Fatalf("unexpected error: %v", finalEv.Err)
@@ -585,15 +562,12 @@ func TestRunZeroMaxTurns(t *testing.T) {
 	// MaxTurns=0 表示无限制，LLM 无工具调用时正常完成
 	client := &mockLLMClient{
 		responses: []*llm.Response{
-			makeTextResponse("Here is the answer."),
-		},
-	}
+			makeTextResponse("Here is the answer.")}}
 	registry := newTestRegistry()
-	loop := New(client, registry, Config{MaxTurns: 0, })
+	loop := New(client, registry, Config{MaxTurns: 0})
 
 	finalEv := drainEvents(loop.Run(context.Background(), []llm.Message{
-		{Role: llm.RoleUser, Content: "hello"},
-	}))
+		{Role: llm.RoleUser, Content: "hello"}}))
 
 	if finalEv.Err != nil {
 		t.Fatalf("unexpected error: %v", finalEv.Err)
@@ -612,15 +586,12 @@ func TestRunContextCancelled(t *testing.T) {
 
 	client := &mockLLMClient{
 		responses: []*llm.Response{
-			makeTextResponse("should not be called"),
-		},
-	}
+			makeTextResponse("should not be called")}}
 	registry := newTestRegistry()
 	loop := New(client, registry, DefaultConfig())
 
 	finalEv := drainEvents(loop.Run(ctx, []llm.Message{
-		{Role: llm.RoleUser, Content: "hello"},
-	}))
+		{Role: llm.RoleUser, Content: "hello"}}))
 
 	// Context 取消：Reason 应为 Aborted，Err 非 nil（ctx.Err()）
 	if finalEv.Reason != ReasonAborted {
@@ -631,15 +602,12 @@ func TestRunContextCancelled(t *testing.T) {
 func TestRunModelError(t *testing.T) {
 	client := &mockLLMClient{
 		errors: []error{
-			&llm.NonRetryableError{Message: "unauthorized", StatusCode: 401},
-		},
-	}
+			&llm.NonRetryableError{Message: "unauthorized", StatusCode: 401}}}
 	registry := newTestRegistry()
 	loop := New(client, registry, DefaultConfig())
 
 	finalEv := drainEvents(loop.Run(context.Background(), []llm.Message{
-		{Role: llm.RoleUser, Content: "hello"},
-	}))
+		{Role: llm.RoleUser, Content: "hello"}}))
 
 	if finalEv.Err == nil {
 		t.Fatal("expected error, got nil")
@@ -656,20 +624,16 @@ func TestRunModelError(t *testing.T) {
 func TestRunToolFatalError(t *testing.T) {
 	client := &mockLLMClient{
 		responses: []*llm.Response{
-			makeToolCallResponse("", makeToolCall("tc1", "write_file", `{"file_path":"/tmp/x","content":"data"}`)),
-		},
-	}
+			makeToolCallResponse("", makeToolCall("tc1", "write_file", `{"file_path":"/tmp/x","content":"data"}`))}}
 	fatalTool := newErrorTool("write_file", false, &tool.ToolError{
 		Class:   tool.ErrorClassFatal,
 		Kind:    tool.ErrKindPermissionDenied,
-		Message: "permission denied: /tmp/x",
-	})
+		Message: "permission denied: /tmp/x"})
 	registry := newTestRegistry(fatalTool)
 	loop := New(client, registry, DefaultConfig())
 
 	finalEv := drainEvents(loop.Run(context.Background(), []llm.Message{
-		{Role: llm.RoleUser, Content: "write to /tmp/x"},
-	}))
+		{Role: llm.RoleUser, Content: "write to /tmp/x"}}))
 
 	if finalEv.Err == nil {
 		t.Fatal("expected error, got nil")
@@ -712,20 +676,16 @@ func TestRunRecoverableError(t *testing.T) {
 			// Turn 1: tool call 返回 recoverable 错误
 			makeToolCallResponse("", makeToolCall("tc1", "read_file", `{"file_path":"/tmp/missing.txt"}`)),
 			// Turn 2: LLM 看到错误后修正，返回最终答案
-			makeTextResponse("The file does not exist. Can I help with something else?"),
-		},
-	}
+			makeTextResponse("The file does not exist. Can I help with something else?")}}
 	errorTool := newErrorTool("read_file", true, &tool.ToolError{
 		Class:   tool.ErrorClassRecoverable,
 		Kind:    tool.ErrKindFileNotFound,
-		Message: "file not found: /tmp/missing.txt",
-	})
+		Message: "file not found: /tmp/missing.txt"})
 	registry := newTestRegistry(errorTool)
 	loop := New(client, registry, DefaultConfig())
 
 	finalEv := drainEvents(loop.Run(context.Background(), []llm.Message{
-		{Role: llm.RoleUser, Content: "read /tmp/missing.txt"},
-	}))
+		{Role: llm.RoleUser, Content: "read /tmp/missing.txt"}}))
 
 	if finalEv.Err != nil {
 		t.Fatalf("unexpected error: %v", finalEv.Err)
@@ -752,8 +712,7 @@ func TestRunRecoverableErrorsDoNotTerminate(t *testing.T) {
 	fileNotFoundErr := &tool.ToolError{
 		Class:   tool.ErrorClassRecoverable,
 		Kind:    tool.ErrKindFileNotFound,
-		Message: "file not found: /tmp/x",
-	}
+		Message: "file not found: /tmp/x"}
 
 	client := &mockLLMClient{
 		responses: []*llm.Response{
@@ -761,16 +720,13 @@ func TestRunRecoverableErrorsDoNotTerminate(t *testing.T) {
 			makeToolCallResponse("", makeToolCall("tc1", "read_file", `{"file_path":"/tmp/x"}`)),
 			makeToolCallResponse("", makeToolCall("tc2", "read_file", `{"file_path":"/tmp/x"}`)),
 			// Turn 3: LLM 看到错误后主动停止
-			makeTextResponse("The file does not exist after multiple attempts."),
-		},
-	}
+			makeTextResponse("The file does not exist after multiple attempts.")}}
 	errorTool := newErrorTool("read_file", true, fileNotFoundErr)
 	registry := newTestRegistry(errorTool)
 	loop := New(client, registry, DefaultConfig())
 
 	finalEv := drainEvents(loop.Run(context.Background(), []llm.Message{
-		{Role: llm.RoleUser, Content: "find the file"},
-	}))
+		{Role: llm.RoleUser, Content: "find the file"}}))
 
 	// 不应因同类错误超限而终止，应正常完成
 	if finalEv.Err != nil {
@@ -791,8 +747,7 @@ func TestRunConsecutiveSameErrorsTerminate(t *testing.T) {
 	fileNotFoundErr := &tool.ToolError{
 		Class:   tool.ErrorClassRecoverable,
 		Kind:    tool.ErrKindFileNotFound,
-		Message: "file not found: /tmp/x",
-	}
+		Message: "file not found: /tmp/x"}
 
 	client := &mockLLMClient{
 		responses: []*llm.Response{
@@ -805,16 +760,13 @@ func TestRunConsecutiveSameErrorsTerminate(t *testing.T) {
 			makeToolCallResponse("", makeToolCall("tc7", "read_file", `{"file_path":"/tmp/x"}`)),
 			makeToolCallResponse("", makeToolCall("tc8", "read_file", `{"file_path":"/tmp/x"}`)),
 			// 不应到达这里——第 8 次后 loop 已终止
-			makeTextResponse("unreachable"),
-		},
-	}
+			makeTextResponse("unreachable")}}
 	errorTool := newErrorTool("read_file", true, fileNotFoundErr)
 	registry := newTestRegistry(errorTool)
 	loop := New(client, registry, DefaultConfig())
 
 	finalEv := drainEvents(loop.Run(context.Background(), []llm.Message{
-		{Role: llm.RoleUser, Content: "find the file"},
-	}))
+		{Role: llm.RoleUser, Content: "find the file"}}))
 
 	if finalEv.Err == nil {
 		t.Fatalf("expected error after 8 consecutive same (tool, error) pairs, got nil")
@@ -839,9 +791,7 @@ func TestRunDifferentRecoverableErrors(t *testing.T) {
 			makeToolCallResponse("", makeToolCall("tc3", "grep", `{"pattern":"["}`)),
 			makeToolCallResponse("", makeToolCall("tc4", "grep", `{"pattern":"[["}`)),
 			// 最终完成
-			makeTextResponse("All done"),
-		},
-	}
+			makeTextResponse("All done")}}
 
 	var readCount int32
 	readTool := &mockTool{
@@ -850,17 +800,14 @@ func TestRunDifferentRecoverableErrors(t *testing.T) {
 		schema:         json.RawMessage(`{"type":"object","properties":{}}`),
 		concurrentSafe: true,
 		result:         nil, // 在 Execute 中动态设置
-		execCount:      &readCount,
-	}
+		execCount:      &readCount}
 	// 重写 Execute 来返回 file_not_found
 	// 这里使用 execCount 来在 result 中设置错误
 	readTool.result = &tool.ToolResult{
 		Error: &tool.ToolError{
 			Class:   tool.ErrorClassRecoverable,
 			Kind:    tool.ErrKindFileNotFound,
-			Message: "file not found",
-		},
-	}
+			Message: "file not found"}}
 
 	var grepCount int32
 	grepTool := &mockTool{
@@ -872,18 +819,14 @@ func TestRunDifferentRecoverableErrors(t *testing.T) {
 			Error: &tool.ToolError{
 				Class:   tool.ErrorClassRecoverable,
 				Kind:    tool.ErrKindInvalidArgs,
-				Message: "invalid regex",
-			},
-		},
-		execCount: &grepCount,
-	}
+				Message: "invalid regex"}},
+		execCount: &grepCount}
 
 	registry := newTestRegistry(readTool, grepTool)
 	loop := New(client, registry, Config{})
 
 	finalEv := drainEvents(loop.Run(context.Background(), []llm.Message{
-		{Role: llm.RoleUser, Content: "test"},
-	}))
+		{Role: llm.RoleUser, Content: "test"}}))
 
 	if finalEv.Err != nil {
 		t.Fatalf("unexpected error: %v", finalEv.Err)
@@ -903,8 +846,7 @@ func TestRunBackoffResetBySuccess(t *testing.T) {
 	fileNotFoundErr := &tool.ToolError{
 		Class:   tool.ErrorClassRecoverable,
 		Kind:    tool.ErrKindFileNotFound,
-		Message: "file not found: /tmp/x",
-	}
+		Message: "file not found: /tmp/x"}
 
 	client := &mockLLMClient{
 		responses: []*llm.Response{
@@ -923,9 +865,7 @@ func TestRunBackoffResetBySuccess(t *testing.T) {
 			makeToolCallResponse("", makeToolCall("tc10", "find_file", `{"path":"/tmp/x"}`)),
 			makeToolCallResponse("", makeToolCall("tc11", "find_file", `{"path":"/tmp/x"}`)),
 			// 不应到达
-			makeTextResponse("unreachable"),
-		},
-	}
+			makeTextResponse("unreachable")}}
 
 	registry := newTestRegistry(
 		newErrorTool("find_file", true, fileNotFoundErr),
@@ -934,8 +874,7 @@ func TestRunBackoffResetBySuccess(t *testing.T) {
 	loop := New(client, registry, DefaultConfig())
 
 	finalEv := drainEvents(loop.Run(context.Background(), []llm.Message{
-		{Role: llm.RoleUser, Content: "find the file"},
-	}))
+		{Role: llm.RoleUser, Content: "find the file"}}))
 
 	// 成功重置后的 8 次同类错误触发退避
 	if finalEv.Err == nil {
@@ -955,13 +894,11 @@ func TestRunMixedErrorsSameBatchNoBackoff(t *testing.T) {
 	fileNotFoundErr := &tool.ToolError{
 		Class:   tool.ErrorClassRecoverable,
 		Kind:    tool.ErrKindFileNotFound,
-		Message: "file not found: /tmp/a",
-	}
+		Message: "file not found: /tmp/a"}
 	invalidArgsErr := &tool.ToolError{
 		Class:   tool.ErrorClassRecoverable,
 		Kind:    tool.ErrKindInvalidArgs,
-		Message: "invalid regex",
-	}
+		Message: "invalid regex"}
 
 	client := &mockLLMClient{
 		responses: []*llm.Response{
@@ -981,9 +918,7 @@ func TestRunMixedErrorsSameBatchNoBackoff(t *testing.T) {
 				makeToolCall("tc6", "grep", `{"pattern":"["}`),
 			),
 			// Turn 4: LLM 停止
-			makeTextResponse("Both tools consistently failed with different errors."),
-		},
-	}
+			makeTextResponse("Both tools consistently failed with different errors.")}}
 
 	registry := newTestRegistry(
 		newErrorTool("read_file", true, fileNotFoundErr),
@@ -992,8 +927,7 @@ func TestRunMixedErrorsSameBatchNoBackoff(t *testing.T) {
 	loop := New(client, registry, DefaultConfig())
 
 	finalEv := drainEvents(loop.Run(context.Background(), []llm.Message{
-		{Role: llm.RoleUser, Content: "find the file and search"},
-	}))
+		{Role: llm.RoleUser, Content: "find the file and search"}}))
 
 	// 同轮混合错误不触发退避，loop 应正常完成
 	if finalEv.Err != nil {
@@ -1013,8 +947,7 @@ func TestRegression_SameErrorKindDifferentToolResetsCounter(t *testing.T) {
 	commandFailedErr := &tool.ToolError{
 		Class:   tool.ErrorClassRecoverable,
 		Kind:    tool.ErrKindCommandFailed,
-		Message: "command failed: exit status 127",
-	}
+		Message: "command failed: exit status 127"}
 
 	client := &mockLLMClient{
 		responses: []*llm.Response{
@@ -1034,9 +967,7 @@ func TestRegression_SameErrorKindDifferentToolResetsCounter(t *testing.T) {
 			makeToolCallResponse("", makeToolCall("tc10", "read_file", `{"file_path":"/nonexistent"}`)),
 			makeToolCallResponse("", makeToolCall("tc11", "read_file", `{"file_path":"/nonexistent"}`)),
 			// 不应到达
-			makeTextResponse("unreachable"),
-		},
-	}
+			makeTextResponse("unreachable")}}
 
 	bashTool := newErrorTool("bash", true, commandFailedErr)
 	readTool := newErrorTool("read_file", true, commandFailedErr)
@@ -1044,8 +975,7 @@ func TestRegression_SameErrorKindDifferentToolResetsCounter(t *testing.T) {
 	loop := New(client, registry, DefaultConfig())
 
 	finalEv := drainEvents(loop.Run(context.Background(), []llm.Message{
-		{Role: llm.RoleUser, Content: "run some commands"},
-	}))
+		{Role: llm.RoleUser, Content: "run some commands"}}))
 
 	// Turn 4 切换工具应重置计数，后续 read_file 的 8 次失败才触发退避
 	if finalEv.Err == nil {
@@ -1066,21 +996,17 @@ func TestRunPreservesMessageHistoryOnError(t *testing.T) {
 			// Turn 1: 成功
 			makeToolCallResponse("", makeToolCall("tc1", "read_file", `{"file_path":"/tmp/ok.txt"}`)),
 			// Turn 2: 致命错误
-			makeToolCallResponse("", makeToolCall("tc2", "write_file", `{"file_path":"/etc/x","content":"x"}`)),
-		},
-	}
+			makeToolCallResponse("", makeToolCall("tc2", "write_file", `{"file_path":"/etc/x","content":"x"}`))}}
 	readTool := newSuccessTool("read_file", true, "file content ok")
 	fatalTool := newErrorTool("write_file", false, &tool.ToolError{
 		Class:   tool.ErrorClassFatal,
 		Kind:    tool.ErrKindPermissionDenied,
-		Message: "permission denied: /etc/x",
-	})
+		Message: "permission denied: /etc/x"})
 	registry := newTestRegistry(readTool, fatalTool)
 	loop := New(client, registry, DefaultConfig())
 
 	finalEv := drainEvents(loop.Run(context.Background(), []llm.Message{
-		{Role: llm.RoleUser, Content: "read then write"},
-	}))
+		{Role: llm.RoleUser, Content: "read then write"}}))
 
 	if finalEv.Err == nil {
 		t.Fatal("expected error, got nil")
@@ -1135,21 +1061,17 @@ func TestConcurrentToolsRunInParallel(t *testing.T) {
 			name: "t1", schema: json.RawMessage(`{}`), concurrentSafe: true,
 			result: &tool.ToolResult{Content: "ok1"},
 			startBarrier: &startBarrier, proceedCh: proceedCh,
-			execOrder: &execOrder, orderMu: &orderMu,
-		},
+			execOrder: &execOrder, orderMu: &orderMu},
 		&barrierTool{
 			name: "t2", schema: json.RawMessage(`{}`), concurrentSafe: true,
 			result: &tool.ToolResult{Content: "ok2"},
 			startBarrier: &startBarrier, proceedCh: proceedCh,
-			execOrder: &execOrder, orderMu: &orderMu,
-		},
+			execOrder: &execOrder, orderMu: &orderMu},
 		&barrierTool{
 			name: "t3", schema: json.RawMessage(`{}`), concurrentSafe: true,
 			result: &tool.ToolResult{Content: "ok3"},
 			startBarrier: &startBarrier, proceedCh: proceedCh,
-			execOrder: &execOrder, orderMu: &orderMu,
-		},
-	}
+			execOrder: &execOrder, orderMu: &orderMu}}
 	startBarrier.Add(3)
 
 	registry := newTestRegistry(tools...)
@@ -1157,13 +1079,11 @@ func TestConcurrentToolsRunInParallel(t *testing.T) {
 	calls := []llm.ToolCall{
 		makeToolCall("c1", "t1", `{}`),
 		makeToolCall("c2", "t2", `{}`),
-		makeToolCall("c3", "t3", `{}`),
-	}
+		makeToolCall("c3", "t3", `{}`)}
 
 	loop := New(nil, registry, DefaultConfig())
 	state := &LoopState{
-		Messages: nil,
-	}
+		Messages: nil}
 
 	// 在 goroutine 中执行，因为 executeToolCalls 会阻塞等待所有工具完成
 	type execResult struct {
@@ -1216,8 +1136,7 @@ func TestSerialToolsRunSequentially(t *testing.T) {
 		result:         &tool.ToolResult{Content: "ok1"},
 		execOrder:      &execOrder,
 		orderMu:        &orderMu,
-		execDelay:      10 * time.Millisecond,
-	}
+		execDelay:      10 * time.Millisecond}
 	t2 := &mockTool{
 		name:           "t2",
 		desc:           "serial tool 2",
@@ -1226,8 +1145,7 @@ func TestSerialToolsRunSequentially(t *testing.T) {
 		result:         &tool.ToolResult{Content: "ok2"},
 		execOrder:      &execOrder,
 		orderMu:        &orderMu,
-		execDelay:      10 * time.Millisecond,
-	}
+		execDelay:      10 * time.Millisecond}
 	t3 := &mockTool{
 		name:           "t3",
 		desc:           "serial tool 3",
@@ -1236,8 +1154,7 @@ func TestSerialToolsRunSequentially(t *testing.T) {
 		result:         &tool.ToolResult{Content: "ok3"},
 		execOrder:      &execOrder,
 		orderMu:        &orderMu,
-		execDelay:      10 * time.Millisecond,
-	}
+		execDelay:      10 * time.Millisecond}
 
 	registry := newTestRegistry(t1, t2, t3)
 	loop := New(nil, registry, DefaultConfig())
@@ -1246,8 +1163,7 @@ func TestSerialToolsRunSequentially(t *testing.T) {
 	calls := []llm.ToolCall{
 		makeToolCall("c1", "t1", `{}`),
 		makeToolCall("c2", "t2", `{}`),
-		makeToolCall("c3", "t3", `{}`),
-	}
+		makeToolCall("c3", "t3", `{}`)}
 
 	ch := make(chan TurnEvent, 32)
 	msgs, reason, err := loop.executeToolCalls(context.Background(), calls, state, ch)
@@ -1280,25 +1196,21 @@ func TestMixedConcurrentAndSerialTools(t *testing.T) {
 	c1 := &mockTool{
 		name: "c1", desc: "concurrent 1", schema: json.RawMessage(`{}`),
 		concurrentSafe: true, result: &tool.ToolResult{Content: "c1"},
-		execOrder: &execOrder, orderMu: &orderMu, execDelay: 30 * time.Millisecond,
-	}
+		execOrder: &execOrder, orderMu: &orderMu, execDelay: 30 * time.Millisecond}
 	c2 := &mockTool{
 		name: "c2", desc: "concurrent 2", schema: json.RawMessage(`{}`),
 		concurrentSafe: true, result: &tool.ToolResult{Content: "c2"},
-		execOrder: &execOrder, orderMu: &orderMu, execDelay: 30 * time.Millisecond,
-	}
+		execOrder: &execOrder, orderMu: &orderMu, execDelay: 30 * time.Millisecond}
 
 	// 串行组
 	s1 := &mockTool{
 		name: "s1", desc: "serial 1", schema: json.RawMessage(`{}`),
 		concurrentSafe: false, result: &tool.ToolResult{Content: "s1"},
-		execOrder: &serialOrder, orderMu: &orderMu, execDelay: 10 * time.Millisecond,
-	}
+		execOrder: &serialOrder, orderMu: &orderMu, execDelay: 10 * time.Millisecond}
 	s2 := &mockTool{
 		name: "s2", desc: "serial 2", schema: json.RawMessage(`{}`),
 		concurrentSafe: false, result: &tool.ToolResult{Content: "s2"},
-		execOrder: &serialOrder, orderMu: &orderMu, execDelay: 10 * time.Millisecond,
-	}
+		execOrder: &serialOrder, orderMu: &orderMu, execDelay: 10 * time.Millisecond}
 
 	registry := newTestRegistry(c1, c2, s1, s2)
 	loop := New(nil, registry, DefaultConfig())
@@ -1308,8 +1220,7 @@ func TestMixedConcurrentAndSerialTools(t *testing.T) {
 		makeToolCall("cc1", "c1", `{}`),
 		makeToolCall("cc2", "c2", `{}`),
 		makeToolCall("sc1", "s1", `{}`),
-		makeToolCall("sc2", "s2", `{}`),
-	}
+		makeToolCall("sc2", "s2", `{}`)}
 
 	start := time.Now()
 	ch := make(chan TurnEvent, 32)
@@ -1377,8 +1288,7 @@ func TestNewPreservesExplicitValues(t *testing.T) {
 func TestToLLMToolSpecs(t *testing.T) {
 	specs := []tool.ToolSpec{
 		{Name: "read_file", Description: "Read a file", Parameters: json.RawMessage(`{"type":"object"}`)},
-		{Name: "grep", Description: "Search text", Parameters: json.RawMessage(`{"type":"object"}`)},
-	}
+		{Name: "grep", Description: "Search text", Parameters: json.RawMessage(`{"type":"object"}`)}}
 	result := toLLMToolSpecs(specs)
 	if len(result) != 2 {
 		t.Fatalf("expected 2 specs, got %d", len(result))
@@ -1404,15 +1314,12 @@ func TestRunUnknownTool(t *testing.T) {
 	// assistant 消息的 tool_calls 被清空，循环正常完成（ReasonCompleted），不崩溃。
 	client := &mockLLMClient{
 		responses: []*llm.Response{
-			makeToolCallResponse("", makeToolCall("tc1", "nonexistent_tool", `{}`)),
-		},
-	}
+			makeToolCallResponse("", makeToolCall("tc1", "nonexistent_tool", `{}`))}}
 	registry := newTestRegistry() // 空的 Registry
 	loop := New(client, registry, DefaultConfig())
 
 	finalEv := drainEvents(loop.Run(context.Background(), []llm.Message{
-		{Role: llm.RoleUser, Content: "do something"},
-	}))
+		{Role: llm.RoleUser, Content: "do something"}}))
 
 	if finalEv.Err != nil {
 		t.Fatalf("unexpected error: %v", finalEv.Err)
@@ -1441,16 +1348,13 @@ func TestRunFiltersInvalidToolCalls(t *testing.T) {
 				{ID: "tc3", Name: "nonexistent", Arguments: `{}`},     // 不存在工具 → 剔除
 			}...),
 			// Turn 2: LLM 收到过滤后只剩 tc1 的结果，正常完成
-			makeTextResponse("done"),
-		},
-	}
+			makeTextResponse("done")}}
 	readTool := newSuccessTool("read_file", true, "content here")
 	registry := newTestRegistry(readTool)
 	loop := New(client, registry, DefaultConfig())
 
 	finalEv := drainEvents(loop.Run(context.Background(), []llm.Message{
-		{Role: llm.RoleUser, Content: "read file"},
-	}))
+		{Role: llm.RoleUser, Content: "read file"}}))
 
 	if finalEv.Err != nil {
 		t.Fatalf("unexpected error: %v", finalEv.Err)
@@ -1480,15 +1384,13 @@ func TestConcurrentToolExecutionError(t *testing.T) {
 		desc:           "always fails",
 		schema:         json.RawMessage(`{}`),
 		concurrentSafe: true,
-		execErr:        execErr,
-	}
+		execErr:        execErr}
 	registry := newTestRegistry(errorTool)
 	loop := New(nil, registry, DefaultConfig())
 	state := &LoopState{}
 
 	calls := []llm.ToolCall{
-		makeToolCall("tc1", "failing_tool", `{}`),
-	}
+		makeToolCall("tc1", "failing_tool", `{}`)}
 
 	ch := make(chan TurnEvent, 32)
 	_, reason, err := loop.executeToolCalls(context.Background(), calls, state, ch)
@@ -1509,15 +1411,13 @@ func TestSerialToolExecutionError(t *testing.T) {
 		desc:           "always fails",
 		schema:         json.RawMessage(`{}`),
 		concurrentSafe: false, // 串行
-		execErr:        execErr,
-	}
+		execErr:        execErr}
 	registry := newTestRegistry(errorTool)
 	loop := New(nil, registry, DefaultConfig())
 	state := &LoopState{}
 
 	calls := []llm.ToolCall{
-		makeToolCall("tc1", "serial_failing_tool", `{}`),
-	}
+		makeToolCall("tc1", "serial_failing_tool", `{}`)}
 
 	ch := make(chan TurnEvent, 32)
 	_, reason, err := loop.executeToolCalls(context.Background(), calls, state, ch)
@@ -1534,16 +1434,13 @@ func TestRunSystemPromptInjection(t *testing.T) {
 	// SystemPrompt 配置后，Run 应在 messages 头部注入 system 消息
 	client := &mockLLMClient{
 		responses: []*llm.Response{
-			makeTextResponse("done"),
-		},
-	}
+			makeTextResponse("done")}}
 	registry := newTestRegistry()
-	cfg := Config{SystemPrompt: "You are a helpful assistant.", }
+	cfg := Config{SystemPrompt: "You are a helpful assistant."}
 	loop := New(client, registry, cfg)
 
 	finalEv := drainEvents(loop.Run(context.Background(), []llm.Message{
-		{Role: llm.RoleUser, Content: "hello"},
-	}))
+		{Role: llm.RoleUser, Content: "hello"}}))
 
 	if finalEv.Err != nil {
 		t.Fatalf("unexpected error: %v", finalEv.Err)
@@ -1563,17 +1460,14 @@ func TestRunSystemPromptNotDuplicated(t *testing.T) {
 	// 如果 messages 已包含 system 消息，SystemPrompt 不应重复注入
 	client := &mockLLMClient{
 		responses: []*llm.Response{
-			makeTextResponse("done"),
-		},
-	}
+			makeTextResponse("done")}}
 	registry := newTestRegistry()
-	cfg := Config{SystemPrompt: "Override prompt", }
+	cfg := Config{SystemPrompt: "Override prompt"}
 	loop := New(client, registry, cfg)
 
 	finalEv := drainEvents(loop.Run(context.Background(), []llm.Message{
 		{Role: llm.RoleSystem, Content: "Original prompt"},
-		{Role: llm.RoleUser, Content: "hello"},
-	}))
+		{Role: llm.RoleUser, Content: "hello"}}))
 
 	if finalEv.Err != nil {
 		t.Fatalf("unexpected error: %v", finalEv.Err)
@@ -1597,16 +1491,13 @@ func TestRunSystemPromptEmpty(t *testing.T) {
 	// SystemPrompt 为空时不注入任何 system 消息
 	client := &mockLLMClient{
 		responses: []*llm.Response{
-			makeTextResponse("done"),
-		},
-	}
+			makeTextResponse("done")}}
 	registry := newTestRegistry()
-	cfg := Config{SystemPrompt: "", }
+	cfg := Config{SystemPrompt: ""}
 	loop := New(client, registry, cfg)
 
 	finalEv := drainEvents(loop.Run(context.Background(), []llm.Message{
-		{Role: llm.RoleUser, Content: "hello"},
-	}))
+		{Role: llm.RoleUser, Content: "hello"}}))
 
 	if finalEv.Err != nil {
 		t.Fatalf("unexpected error: %v", finalEv.Err)
@@ -1639,20 +1530,16 @@ func TestRunContextCancelledDuringToolExecution(t *testing.T) {
 		schema:         json.RawMessage(`{}`),
 		concurrentSafe: false,
 		execDelay:      5 * time.Second, // 足够长，确保 ctx 取消时工具仍在执行
-		result:         &tool.ToolResult{Content: "should not reach"},
-	}
+		result:         &tool.ToolResult{Content: "should not reach"}}
 
 	client := &mockLLMClient{
 		responses: []*llm.Response{
-			makeToolCallResponse("", makeToolCall("tc1", "slow_tool", `{}`)),
-		},
-	}
+			makeToolCallResponse("", makeToolCall("tc1", "slow_tool", `{}`))}}
 	registry := newTestRegistry(slowTool)
 	loop := New(client, registry, DefaultConfig())
 
 	finalEv := drainEvents(loop.Run(ctx, []llm.Message{
-		{Role: llm.RoleUser, Content: "run slow tool"},
-	}))
+		{Role: llm.RoleUser, Content: "run slow tool"}}))
 
 	// ctx 取消后，要么串行工具返回 ctx.Err()（registry 级错误 → ReasonToolFatal），
 	// 要么下一轮循环开头检测到 ctx.Err()（→ ReasonAborted）。
@@ -1672,8 +1559,7 @@ func TestConcurrentPartialRecoverableError(t *testing.T) {
 	errTool := newErrorTool("tool_c", true, &tool.ToolError{
 		Class:   tool.ErrorClassRecoverable,
 		Kind:    tool.ErrKindFileNotFound,
-		Message: "file not found: /tmp/missing",
-	})
+		Message: "file not found: /tmp/missing"})
 
 	registry := newTestRegistry(success1, success2, errTool)
 	loop := New(nil, registry, DefaultConfig())
@@ -1682,8 +1568,7 @@ func TestConcurrentPartialRecoverableError(t *testing.T) {
 	calls := []llm.ToolCall{
 		makeToolCall("tc1", "tool_a", `{}`),
 		makeToolCall("tc2", "tool_b", `{}`),
-		makeToolCall("tc3", "tool_c", `{}`),
-	}
+		makeToolCall("tc3", "tool_c", `{}`)}
 
 	ch := make(chan TurnEvent, 32)
 	msgs, reason, err := loop.executeToolCalls(context.Background(), calls, state, ch)
@@ -1723,8 +1608,7 @@ func TestConcurrentPartialFatalError(t *testing.T) {
 	fatalTool := newErrorTool("tool_bad", true, &tool.ToolError{
 		Class:   tool.ErrorClassFatal,
 		Kind:    tool.ErrKindPermissionDenied,
-		Message: "permission denied",
-	})
+		Message: "permission denied"})
 
 	registry := newTestRegistry(successTool, fatalTool)
 	loop := New(nil, registry, DefaultConfig())
@@ -1732,8 +1616,7 @@ func TestConcurrentPartialFatalError(t *testing.T) {
 
 	calls := []llm.ToolCall{
 		makeToolCall("tc1", "tool_ok", `{}`),
-		makeToolCall("tc2", "tool_bad", `{}`),
-	}
+		makeToolCall("tc2", "tool_bad", `{}`)}
 
 	ch := make(chan TurnEvent, 32)
 	_, reason, err := loop.executeToolCalls(context.Background(), calls, state, ch)
@@ -1754,18 +1637,15 @@ func TestRunMessageSequenceInvariant(t *testing.T) {
 		responses: []*llm.Response{
 			makeToolCallResponse("", makeToolCall("tc1", "read_file", `{}`)),
 			makeToolCallResponse("", makeToolCall("tc2", "grep", `{}`)),
-			makeTextResponse("Final answer"),
-		},
-	}
+			makeTextResponse("Final answer")}}
 	readTool := newSuccessTool("read_file", true, "file content")
 	grepTool := newSuccessTool("grep", true, "3 matches")
 	registry := newTestRegistry(readTool, grepTool)
-	cfg := Config{SystemPrompt: "You are a code assistant.", }
+	cfg := Config{SystemPrompt: "You are a code assistant."}
 	loop := New(client, registry, cfg)
 
 	finalEv := drainEvents(loop.Run(context.Background(), []llm.Message{
-		{Role: llm.RoleUser, Content: "analyze"},
-	}))
+		{Role: llm.RoleUser, Content: "analyze"}}))
 
 	if finalEv.Err != nil {
 		t.Fatalf("unexpected error: %v", finalEv.Err)
@@ -1783,8 +1663,7 @@ func TestRunMessageSequenceInvariant(t *testing.T) {
 		llm.RoleSystem, llm.RoleUser,
 		llm.RoleAssistant, llm.RoleTool,
 		llm.RoleAssistant, llm.RoleTool,
-		llm.RoleAssistant,
-	}
+		llm.RoleAssistant}
 
 	if len(finalEv.Messages) != len(expectedRoles) {
 		t.Fatalf("expected %d messages, got %d", len(expectedRoles), len(finalEv.Messages))
@@ -1823,13 +1702,11 @@ func TestSameTurnMultipleRecoverableErrors(t *testing.T) {
 	readErrTool := newErrorTool("read_file", true, &tool.ToolError{
 		Class:   tool.ErrorClassRecoverable,
 		Kind:    tool.ErrKindFileNotFound,
-		Message: "not found",
-	})
+		Message: "not found"})
 	grepErrTool := newErrorTool("grep", true, &tool.ToolError{
 		Class:   tool.ErrorClassRecoverable,
 		Kind:    tool.ErrKindInvalidArgs,
-		Message: "bad regex",
-	})
+		Message: "bad regex"})
 
 	registry := newTestRegistry(readErrTool, grepErrTool)
 	loop := New(nil, registry, DefaultConfig())
@@ -1837,8 +1714,7 @@ func TestSameTurnMultipleRecoverableErrors(t *testing.T) {
 
 	calls := []llm.ToolCall{
 		makeToolCall("tc1", "read_file", `{}`),
-		makeToolCall("tc2", "grep", `{}`),
-	}
+		makeToolCall("tc2", "grep", `{}`)}
 
 	ch := make(chan TurnEvent, 32)
 	msgs, reason, err := loop.executeToolCalls(context.Background(), calls, state, ch)
@@ -1862,8 +1738,7 @@ func TestMixedConcurrentSerialWithRecoverableError(t *testing.T) {
 	serialErrTool := newErrorTool("serial_write", false, &tool.ToolError{
 		Class:   tool.ErrorClassRecoverable,
 		Kind:    tool.ErrKindCommandFailed,
-		Message: "command exited with code 1",
-	})
+		Message: "command exited with code 1"})
 
 	registry := newTestRegistry(concurrentTool, serialErrTool)
 	loop := New(nil, registry, DefaultConfig())
@@ -1871,8 +1746,7 @@ func TestMixedConcurrentSerialWithRecoverableError(t *testing.T) {
 
 	calls := []llm.ToolCall{
 		makeToolCall("tc1", "concurrent_read", `{}`),
-		makeToolCall("tc2", "serial_write", `{}`),
-	}
+		makeToolCall("tc2", "serial_write", `{}`)}
 
 	ch := make(chan TurnEvent, 32)
 	msgs, reason, err := loop.executeToolCalls(context.Background(), calls, state, ch)
@@ -1906,22 +1780,17 @@ func TestLoopReusableAcrossRuns(t *testing.T) {
 	// 同一个 Loop 实例调用两次 Run，状态互不干扰
 	client1 := &mockLLMClient{
 		responses: []*llm.Response{
-			makeTextResponse("first run done"),
-		},
-	}
+			makeTextResponse("first run done")}}
 	client2 := &mockLLMClient{
 		responses: []*llm.Response{
-			makeTextResponse("second run done"),
-		},
-	}
+			makeTextResponse("second run done")}}
 
 	registry := newTestRegistry()
 
 	// 第一次 Run
 	loop := New(client1, registry, DefaultConfig())
 	finalEv1 := drainEvents(loop.Run(context.Background(), []llm.Message{
-		{Role: llm.RoleUser, Content: "first"},
-	}))
+		{Role: llm.RoleUser, Content: "first"}}))
 	if finalEv1.Err != nil {
 		t.Fatalf("first run: unexpected error: %v", finalEv1.Err)
 	}
@@ -1932,8 +1801,7 @@ func TestLoopReusableAcrossRuns(t *testing.T) {
 	// 替换 client 模拟第二次调用
 	loop2 := New(client2, registry, DefaultConfig())
 	finalEv2 := drainEvents(loop2.Run(context.Background(), []llm.Message{
-		{Role: llm.RoleUser, Content: "second"},
-	}))
+		{Role: llm.RoleUser, Content: "second"}}))
 	if finalEv2.Err != nil {
 		t.Fatalf("second run: unexpected error: %v", finalEv2.Err)
 	}
@@ -1961,15 +1829,12 @@ func TestLoopReusableAcrossRuns(t *testing.T) {
 func TestRunDoesNotMutateInputMessages(t *testing.T) {
 	client := &mockLLMClient{
 		responses: []*llm.Response{
-			makeTextResponse("done"),
-		},
-	}
+			makeTextResponse("done")}}
 	registry := newTestRegistry()
 	loop := New(client, registry, DefaultConfig())
 
 	original := []llm.Message{
-		{Role: llm.RoleUser, Content: "hello"},
-	}
+		{Role: llm.RoleUser, Content: "hello"}}
 	// 记录原始切片的长度和容量
 	origLen := len(original)
 	origCap := cap(original)
@@ -2001,15 +1866,13 @@ func TestRunMaxTurnsMessageSequenceComplete(t *testing.T) {
 			makeToolCallResponse("", makeToolCall("tc1", "read_file", `{}`)),
 			makeToolCallResponse("", makeToolCall("tc2", "read_file", `{}`)),
 			makeToolCallResponse("", makeToolCall("tc3", "read_file", `{}`)), // 不会被调用
-		},
-	}
+		}}
 	readTool := newSuccessTool("read_file", true, "ok")
 	registry := newTestRegistry(readTool)
-	loop := New(client, registry, Config{MaxTurns: 2, })
+	loop := New(client, registry, Config{MaxTurns: 2})
 
 	finalEv := drainEvents(loop.Run(context.Background(), []llm.Message{
-		{Role: llm.RoleUser, Content: "read files"},
-	}))
+		{Role: llm.RoleUser, Content: "read files"}}))
 
 	if finalEv.Err != nil {
 		t.Fatalf("unexpected error: %v", finalEv.Err)
@@ -2044,9 +1907,7 @@ func TestRunEmptyMessages(t *testing.T) {
 	// 传空消息列表，LLM Client 应拒绝（返回错误），Loop 应返回 ReasonModelError
 	client := &mockLLMClient{
 		errors: []error{
-			&llm.NonRetryableError{Message: "messages must not be empty"},
-		},
-	}
+			&llm.NonRetryableError{Message: "messages must not be empty"}}}
 	registry := newTestRegistry()
 	loop := New(client, registry, DefaultConfig())
 
@@ -2069,15 +1930,12 @@ func TestRunGuardNilBackwardCompatible(t *testing.T) {
 	client := &mockLLMClient{
 		responses: []*llm.Response{
 			makeToolCallResponse("executing", makeToolCall("c1", "tool_a", `{}`)),
-			makeTextResponse("done"),
-		},
-	}
+			makeTextResponse("done")}}
 	registry := newTestRegistry(newSuccessTool("tool_a", true, "result"))
 	loop := New(client, registry, Config{})
 
 	finalEv := drainEvents(loop.Run(context.Background(), []llm.Message{
-		{Role: llm.RoleUser, Content: "do something"},
-	}))
+		{Role: llm.RoleUser, Content: "do something"}}))
 
 	if finalEv.Err != nil {
 		t.Fatalf("unexpected error: %v", finalEv.Err)
@@ -2092,22 +1950,16 @@ func TestRunGuardAllow(t *testing.T) {
 	client := &mockLLMClient{
 		responses: []*llm.Response{
 			makeToolCallResponse("executing", makeToolCall("c1", "tool_a", `{}`)),
-			makeTextResponse("done"),
-		},
-	}
+			makeTextResponse("done")}}
 	registry := newTestRegistry(newSuccessTool("tool_a", true, "result"))
 	guard := &mockGuard{
 		results: map[string]permission.DecisionResult{
-			"tool_a": {Decision: permission.DecisionAllow, Reason: permission.ReasonDefault},
-		},
-	}
+			"tool_a": {Decision: permission.DecisionAllow, Reason: permission.ReasonDefault}}}
 	loop := New(client, registry, Config{
-		Guard: guard,
-	})
+		Guard: guard})
 
 	finalEv := drainEvents(loop.Run(context.Background(), []llm.Message{
-		{Role: llm.RoleUser, Content: "do something"},
-	}))
+		{Role: llm.RoleUser, Content: "do something"}}))
 
 	if finalEv.Err != nil {
 		t.Fatalf("unexpected error: %v", finalEv.Err)
@@ -2122,22 +1974,16 @@ func TestRunGuardDeny(t *testing.T) {
 	client := &mockLLMClient{
 		responses: []*llm.Response{
 			makeToolCallResponse("executing", makeToolCall("c1", "tool_a", `{}`)),
-			makeTextResponse("I understand."),
-		},
-	}
+			makeTextResponse("I understand.")}}
 	registry := newTestRegistry(newSuccessTool("tool_a", true, "should not be executed"))
 	guard := &mockGuard{
 		results: map[string]permission.DecisionResult{
-			"tool_a": {Decision: permission.DecisionDeny, Reason: permission.ReasonRule, Message: "blocked by rule"},
-		},
-	}
+			"tool_a": {Decision: permission.DecisionDeny, Reason: permission.ReasonRule, Message: "blocked by rule"}}}
 	loop := New(client, registry, Config{
-		Guard: guard,
-	})
+		Guard: guard})
 
 	finalEv := drainEvents(loop.Run(context.Background(), []llm.Message{
-		{Role: llm.RoleUser, Content: "do something"},
-	}))
+		{Role: llm.RoleUser, Content: "do something"}}))
 
 	if finalEv.Err != nil {
 		t.Fatalf("unexpected error: %v", finalEv.Err)
@@ -2162,9 +2008,7 @@ func TestRunGuardAskUserAllows(t *testing.T) {
 	client := &mockLLMClient{
 		responses: []*llm.Response{
 			makeToolCallResponse("executing", makeToolCall("c1", "tool_a", `{}`)),
-			makeTextResponse("done"),
-		},
-	}
+			makeTextResponse("done")}}
 	execCount := int32(0)
 	tool := newSuccessTool("tool_a", true, "result")
 	tool.execCount = &execCount
@@ -2172,23 +2016,17 @@ func TestRunGuardAskUserAllows(t *testing.T) {
 
 	guard := &mockGuard{
 		results: map[string]permission.DecisionResult{
-			"tool_a": {Decision: permission.DecisionAsk, Reason: permission.ReasonDefault, Message: "need confirmation"},
-		},
-	}
+			"tool_a": {Decision: permission.DecisionAsk, Reason: permission.ReasonDefault, Message: "need confirmation"}}}
 	user := &mockUserResponder{
 		choices: map[string]permission.UserChoice{
-			"tool_a": {Decision: permission.DecisionAllow},
-		},
-	}
+			"tool_a": {Decision: permission.DecisionAllow}}}
 	loop := New(client, registry, Config{
 		
 		Guard:           guard,
-		UserResponder:   user,
-	})
+		UserResponder:   user})
 
 	finalEv := drainEvents(loop.Run(context.Background(), []llm.Message{
-		{Role: llm.RoleUser, Content: "do something"},
-	}))
+		{Role: llm.RoleUser, Content: "do something"}}))
 
 	if finalEv.Err != nil {
 		t.Fatalf("unexpected error: %v", finalEv.Err)
@@ -2206,9 +2044,7 @@ func TestRunGuardAskUserDenies(t *testing.T) {
 	client := &mockLLMClient{
 		responses: []*llm.Response{
 			makeToolCallResponse("executing", makeToolCall("c1", "tool_a", `{}`)),
-			makeTextResponse("ok"),
-		},
-	}
+			makeTextResponse("ok")}}
 	execCount := int32(0)
 	tool := newSuccessTool("tool_a", true, "result")
 	tool.execCount = &execCount
@@ -2216,23 +2052,17 @@ func TestRunGuardAskUserDenies(t *testing.T) {
 
 	guard := &mockGuard{
 		results: map[string]permission.DecisionResult{
-			"tool_a": {Decision: permission.DecisionAsk, Reason: permission.ReasonDefault, Message: "need confirmation"},
-		},
-	}
+			"tool_a": {Decision: permission.DecisionAsk, Reason: permission.ReasonDefault, Message: "need confirmation"}}}
 	user := &mockUserResponder{
 		choices: map[string]permission.UserChoice{
-			"tool_a": {Decision: permission.DecisionDeny},
-		},
-	}
+			"tool_a": {Decision: permission.DecisionDeny}}}
 	loop := New(client, registry, Config{
 		
 		Guard:           guard,
-		UserResponder:   user,
-	})
+		UserResponder:   user})
 
 	finalEv := drainEvents(loop.Run(context.Background(), []llm.Message{
-		{Role: llm.RoleUser, Content: "do something"},
-	}))
+		{Role: llm.RoleUser, Content: "do something"}}))
 
 	if finalEv.Err != nil {
 		t.Fatalf("unexpected error: %v", finalEv.Err)
@@ -2252,9 +2082,7 @@ func TestRunGuardAskNoResponder(t *testing.T) {
 	client := &mockLLMClient{
 		responses: []*llm.Response{
 			makeToolCallResponse("executing", makeToolCall("c1", "tool_a", `{}`)),
-			makeTextResponse("ok"),
-		},
-	}
+			makeTextResponse("ok")}}
 	execCount := int32(0)
 	tool := newSuccessTool("tool_a", true, "result")
 	tool.execCount = &execCount
@@ -2262,9 +2090,7 @@ func TestRunGuardAskNoResponder(t *testing.T) {
 
 	guard := &mockGuard{
 		results: map[string]permission.DecisionResult{
-			"tool_a": {Decision: permission.DecisionAsk, Reason: permission.ReasonDefault},
-		},
-	}
+			"tool_a": {Decision: permission.DecisionAsk, Reason: permission.ReasonDefault}}}
 	loop := New(client, registry, Config{
 		
 		Guard:           guard,
@@ -2272,8 +2098,7 @@ func TestRunGuardAskNoResponder(t *testing.T) {
 	})
 
 	finalEv := drainEvents(loop.Run(context.Background(), []llm.Message{
-		{Role: llm.RoleUser, Content: "do something"},
-	}))
+		{Role: llm.RoleUser, Content: "do something"}}))
 
 	if finalEv.Err != nil {
 		t.Fatalf("unexpected error: %v", finalEv.Err)
@@ -2293,30 +2118,22 @@ func TestRunGuardAskRemember(t *testing.T) {
 			makeToolCallResponse("executing",
 				makeToolCall("c1", "tool_a", `{}`),
 			),
-			makeTextResponse("done"),
-		},
-	}
+			makeTextResponse("done")}}
 	registry := newTestRegistry(newSuccessTool("tool_a", true, "result"))
 
 	guard := &mockGuard{
 		results: map[string]permission.DecisionResult{
-			"tool_a": {Decision: permission.DecisionAsk, Reason: permission.ReasonDefault, Message: "need confirmation"},
-		},
-	}
+			"tool_a": {Decision: permission.DecisionAsk, Reason: permission.ReasonDefault, Message: "need confirmation"}}}
 	user := &mockUserResponder{
 		choices: map[string]permission.UserChoice{
-			"tool_a": {Decision: permission.DecisionAllow, RememberScope: permission.ScopeSession},
-		},
-	}
+			"tool_a": {Decision: permission.DecisionAllow, RememberScope: permission.ScopeSession}}}
 	loop := New(client, registry, Config{
 		
 		Guard:           guard,
-		UserResponder:   user,
-	})
+		UserResponder:   user})
 
 	finalEv := drainEvents(loop.Run(context.Background(), []llm.Message{
-		{Role: llm.RoleUser, Content: "do something"},
-	}))
+		{Role: llm.RoleUser, Content: "do something"}}))
 
 	if finalEv.Err != nil {
 		t.Fatalf("unexpected error: %v", finalEv.Err)
@@ -2333,30 +2150,22 @@ func TestRunGuardDenyAndRemember(t *testing.T) {
 			makeToolCallResponse("executing",
 				makeToolCall("c1", "danger_tool", `{}`),
 			),
-			makeTextResponse("ok"),
-		},
-	}
+			makeTextResponse("ok")}}
 	registry := newTestRegistry(newSuccessTool("danger_tool", true, "should not run"))
 
 	guard := &mockGuard{
 		results: map[string]permission.DecisionResult{
-			"danger_tool": {Decision: permission.DecisionAsk, Reason: permission.ReasonDefault, Message: "confirm?"},
-		},
-	}
+			"danger_tool": {Decision: permission.DecisionAsk, Reason: permission.ReasonDefault, Message: "confirm?"}}}
 	user := &mockUserResponder{
 		choices: map[string]permission.UserChoice{
-			"danger_tool": {Decision: permission.DecisionDeny, RememberScope: permission.ScopeSession},
-		},
-	}
+			"danger_tool": {Decision: permission.DecisionDeny, RememberScope: permission.ScopeSession}}}
 	loop := New(client, registry, Config{
 		
 		Guard:           guard,
-		UserResponder:   user,
-	})
+		UserResponder:   user})
 
 	finalEv := drainEvents(loop.Run(context.Background(), []llm.Message{
-		{Role: llm.RoleUser, Content: "do something"},
-	}))
+		{Role: llm.RoleUser, Content: "do something"}}))
 
 	if finalEv.Err != nil {
 		t.Fatalf("unexpected error: %v", finalEv.Err)
@@ -2373,30 +2182,22 @@ func TestRunGuardRememberScopeConfig(t *testing.T) {
 			makeToolCallResponse("executing",
 				makeToolCall("c1", "tool_a", `{}`),
 			),
-			makeTextResponse("done"),
-		},
-	}
+			makeTextResponse("done")}}
 	registry := newTestRegistry(newSuccessTool("tool_a", true, "result"))
 
 	guard := &mockGuard{
 		results: map[string]permission.DecisionResult{
-			"tool_a": {Decision: permission.DecisionAsk, Reason: permission.ReasonDefault, Message: "need confirmation"},
-		},
-	}
+			"tool_a": {Decision: permission.DecisionAsk, Reason: permission.ReasonDefault, Message: "need confirmation"}}}
 	user := &mockUserResponder{
 		choices: map[string]permission.UserChoice{
-			"tool_a": {Decision: permission.DecisionAllow, RememberScope: permission.ScopeConfig},
-		},
-	}
+			"tool_a": {Decision: permission.DecisionAllow, RememberScope: permission.ScopeConfig}}}
 	loop := New(client, registry, Config{
 		
 		Guard:           guard,
-		UserResponder:   user,
-	})
+		UserResponder:   user})
 
 	finalEv := drainEvents(loop.Run(context.Background(), []llm.Message{
-		{Role: llm.RoleUser, Content: "do something"},
-	}))
+		{Role: llm.RoleUser, Content: "do something"}}))
 
 	if finalEv.Err != nil {
 		t.Fatalf("unexpected error: %v", finalEv.Err)
@@ -2419,30 +2220,22 @@ func TestRunGuardAskNoRemember(t *testing.T) {
 			makeToolCallResponse("executing",
 				makeToolCall("c1", "tool_a", `{}`),
 			),
-			makeTextResponse("done"),
-		},
-	}
+			makeTextResponse("done")}}
 	registry := newTestRegistry(newSuccessTool("tool_a", true, "result"))
 
 	guard := &mockGuard{
 		results: map[string]permission.DecisionResult{
-			"tool_a": {Decision: permission.DecisionAsk, Reason: permission.ReasonDefault, Message: "need confirmation"},
-		},
-	}
+			"tool_a": {Decision: permission.DecisionAsk, Reason: permission.ReasonDefault, Message: "need confirmation"}}}
 	user := &mockUserResponder{
 		choices: map[string]permission.UserChoice{
-			"tool_a": {Decision: permission.DecisionAllow, RememberScope: ""},
-		},
-	}
+			"tool_a": {Decision: permission.DecisionAllow, RememberScope: ""}}}
 	loop := New(client, registry, Config{
 		
 		Guard:           guard,
-		UserResponder:   user,
-	})
+		UserResponder:   user})
 
 	finalEv := drainEvents(loop.Run(context.Background(), []llm.Message{
-		{Role: llm.RoleUser, Content: "do something"},
-	}))
+		{Role: llm.RoleUser, Content: "do something"}}))
 
 	if finalEv.Err != nil {
 		t.Fatalf("unexpected error: %v", finalEv.Err)
@@ -2466,9 +2259,7 @@ func TestRunGuardConcurrentToolsPermission(t *testing.T) {
 				makeToolCall("c1", "reader", `{}`),
 				makeToolCall("c2", "danger", `{}`),
 			),
-			makeTextResponse("ok"),
-		},
-	}
+			makeTextResponse("ok")}}
 	execCount := int32(0)
 	reader := newSuccessTool("reader", true, "data")
 	reader.execCount = &execCount
@@ -2480,16 +2271,12 @@ func TestRunGuardConcurrentToolsPermission(t *testing.T) {
 	guard := &mockGuard{
 		results: map[string]permission.DecisionResult{
 			"reader": {Decision: permission.DecisionAllow, Reason: permission.ReasonDefault},
-			"danger": {Decision: permission.DecisionDeny, Reason: permission.ReasonRule, Message: "blocked"},
-		},
-	}
+			"danger": {Decision: permission.DecisionDeny, Reason: permission.ReasonRule, Message: "blocked"}}}
 	loop := New(client, registry, Config{
-		Guard: guard,
-	})
+		Guard: guard})
 
 	finalEv := drainEvents(loop.Run(context.Background(), []llm.Message{
-		{Role: llm.RoleUser, Content: "do something"},
-	}))
+		{Role: llm.RoleUser, Content: "do something"}}))
 
 	if finalEv.Err != nil {
 		t.Fatalf("unexpected error: %v", finalEv.Err)
@@ -2515,9 +2302,7 @@ func TestRunGuardSkipToolPreservesMessageSequence(t *testing.T) {
 				makeToolCall("c1", "safe_tool", `{}`),
 				makeToolCall("c2", "blocked_tool", `{}`),
 			),
-			makeTextResponse("done"),
-		},
-	}
+			makeTextResponse("done")}}
 	registry := newTestRegistry(
 		newSuccessTool("safe_tool", false, "safe result"),
 		newSuccessTool("blocked_tool", false, "should not see"),
@@ -2525,16 +2310,12 @@ func TestRunGuardSkipToolPreservesMessageSequence(t *testing.T) {
 	guard := &mockGuard{
 		results: map[string]permission.DecisionResult{
 			"safe_tool":    {Decision: permission.DecisionAllow, Reason: permission.ReasonDefault},
-			"blocked_tool": {Decision: permission.DecisionDeny, Reason: permission.ReasonRule, Message: "blocked"},
-		},
-	}
+			"blocked_tool": {Decision: permission.DecisionDeny, Reason: permission.ReasonRule, Message: "blocked"}}}
 	loop := New(client, registry, Config{
-		Guard: guard,
-	})
+		Guard: guard})
 
 	finalEv := drainEvents(loop.Run(context.Background(), []llm.Message{
-		{Role: llm.RoleUser, Content: "do something"},
-	}))
+		{Role: llm.RoleUser, Content: "do something"}}))
 
 	if finalEv.Err != nil {
 		t.Fatalf("unexpected error: %v", finalEv.Err)
@@ -2565,8 +2346,7 @@ func TestShouldContinue(t *testing.T) {
 		{"within_limit", 3, 0, true},
 		{"within_limit_2", 3, 2, true},
 		{"at_limit", 3, 3, false},
-		{"exceeded", 3, 5, false},
-	}
+		{"exceeded", 3, 5, false}}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -2594,8 +2374,7 @@ func (m *mockCompactor) Compact(_ context.Context, _ *[]llm.Message, _ int) comp
 		Tier:             m.tick.Tier,
 		TokensSaved:      m.tick.TokensSaved,
 		HardLimitReached: m.tick.HardLimitReached,
-		HardLimitReason:  m.tick.HardLimitReason,
-	}
+		HardLimitReason:  m.tick.HardLimitReason}
 	return m.tick
 }
 
@@ -2615,25 +2394,19 @@ func TestRunWithCompactor_TurnStatsIncludesCompaction(t *testing.T) {
 			HardLimitReached:   false,
 			UsageRatio:         0.65,
 			ContextLimit:       1000000,
-			MessageCount:       3,
-		},
-	}
+			MessageCount:       3}}
 
 	client := &mockLLMClient{
 		responses: []*llm.Response{
 			makeToolCallResponseWithUsage("working", 650000, makeToolCall("c1", "test_tool", `{}`)),
 			{
 				Content: "done",
-				Usage:   &llm.UsageInfo{PromptTokens: 650000},
-			},
-		},
-	}
+				Usage:   &llm.UsageInfo{PromptTokens: 650000}}}}
 
 	loop := New(client, newTestRegistry(newSuccessTool("test_tool", true, "ok")), Config{MaxTurns: 3, Compactor: comp})
 	events := loop.Run(context.Background(), []llm.Message{
 		{Role: llm.RoleSystem, Content: "test"},
-		{Role: llm.RoleUser, Content: "hello"},
-	})
+		{Role: llm.RoleUser, Content: "hello"}})
 
 	var gotCompaction bool
 	for ev := range events {
@@ -2661,25 +2434,19 @@ func TestRunWithCompactor_NoCompaction(t *testing.T) {
 	comp := &mockCompactor{
 		tick: compaction.Tick{
 			Tier:        0,
-			TokensSaved: 0,
-		},
-	}
+			TokensSaved: 0}}
 
 	client := &mockLLMClient{
 		responses: []*llm.Response{
 			makeToolCallResponse("ok", makeToolCall("c1", "test_tool", `{}`)),
 			{
 				Content: "done",
-				Usage:   &llm.UsageInfo{PromptTokens: 300000},
-			},
-		},
-	}
+				Usage:   &llm.UsageInfo{PromptTokens: 300000}}}}
 
 	loop := New(client, newTestRegistry(newSuccessTool("test_tool", true, "ok")), Config{MaxTurns: 3, Compactor: comp})
 	events := loop.Run(context.Background(), []llm.Message{
 		{Role: llm.RoleSystem, Content: "test"},
-		{Role: llm.RoleUser, Content: "hello"},
-	})
+		{Role: llm.RoleUser, Content: "hello"}})
 
 	for ev := range events {
 		if ts, ok := ev.(TurnStats); ok {
@@ -2698,21 +2465,16 @@ func TestRunWithCompactor_HardLimitReached(t *testing.T) {
 		tick: compaction.Tick{
 			HardLimitReached: true,
 			HardLimitReason:  "usage",
-			Tier:             0,
-		},
-	}
+			Tier:             0}}
 
 	client := &mockLLMClient{
 		responses: []*llm.Response{
-			makeToolCallResponseWithUsage("working", 650000, makeToolCall("c1", "test_tool", `{}`)),
-		},
-	}
+			makeToolCallResponseWithUsage("working", 650000, makeToolCall("c1", "test_tool", `{}`))}}
 
 	loop := New(client, newTestRegistry(newSuccessTool("test_tool", true, "ok")), Config{MaxTurns: 5, Compactor: comp})
 	events := loop.Run(context.Background(), []llm.Message{
 		{Role: llm.RoleSystem, Content: "test"},
-		{Role: llm.RoleUser, Content: "hello"},
-	})
+		{Role: llm.RoleUser, Content: "hello"}})
 
 	var loopDone *LoopDone
 	for ev := range events {
@@ -2743,25 +2505,19 @@ func TestRunWithCompactor_Tier3SummaryDone(t *testing.T) {
 			Tier:             3,
 			Tier3SummaryDone: true,
 			TokensSaved:      100000,
-			ContextLimit:     1000000,
-		},
-	}
+			ContextLimit:     1000000}}
 
 	client := &mockLLMClient{
 		responses: []*llm.Response{
 			makeToolCallResponseWithUsage("working", 650000, makeToolCall("c1", "test_tool", `{}`)),
 			{
 				Content: "summarized",
-				Usage:   &llm.UsageInfo{PromptTokens: 960000},
-			},
-		},
-	}
+				Usage:   &llm.UsageInfo{PromptTokens: 960000}}}}
 
 	loop := New(client, newTestRegistry(newSuccessTool("test_tool", true, "ok")), Config{MaxTurns: 3, Compactor: comp})
 	events := loop.Run(context.Background(), []llm.Message{
 		{Role: llm.RoleSystem, Content: "test"},
-		{Role: llm.RoleUser, Content: "hello"},
-	})
+		{Role: llm.RoleUser, Content: "hello"}})
 
 	for ev := range events {
 		if ts, ok := ev.(TurnStats); ok {
@@ -2789,8 +2545,7 @@ func TestRunEmptyResponseConsecutiveAbort(t *testing.T) {
 	loop := New(client, newTestRegistry(), Config{MaxTurns: 0})
 	events := loop.Run(context.Background(), []llm.Message{
 		{Role: llm.RoleSystem, Content: "test"},
-		{Role: llm.RoleUser, Content: "go"},
-	})
+		{Role: llm.RoleUser, Content: "go"}})
 
 	var done *LoopDone
 	for ev := range events {
@@ -2816,15 +2571,13 @@ func TestRunEmptyResponse_RecoversAfterNonEmpty(t *testing.T) {
 			{Content: "", Usage: &llm.UsageInfo{PromptTokens: 100}},           // empty 3
 			makeToolCallResponse("working", makeToolCall("c1", "test_tool", `{}`)), // tool call → 有效
 			{Content: "done", Usage: &llm.UsageInfo{PromptTokens: 100}},       // 完成
-		},
-	}
+		}}
 	client.responses[3].Usage = &llm.UsageInfo{PromptTokens: 100}
 
 	loop := New(client, newTestRegistry(newSuccessTool("test_tool", true, "ok")), Config{MaxTurns: 0})
 	events := loop.Run(context.Background(), []llm.Message{
 		{Role: llm.RoleSystem, Content: "test"},
-		{Role: llm.RoleUser, Content: "go"},
-	})
+		{Role: llm.RoleUser, Content: "go"}})
 
 	var done *LoopDone
 	for ev := range events {
@@ -2851,15 +2604,12 @@ func TestRegression_EmptyResponseNoReasoningPreserved(t *testing.T) {
 			{Content: "", ReasoningContent: "let me think about this...", Usage: &llm.UsageInfo{PromptTokens: 100}},
 			{Content: "", ReasoningContent: "still thinking...", Usage: &llm.UsageInfo{PromptTokens: 100}},
 			{Content: "", ReasoningContent: "one more thought...", Usage: &llm.UsageInfo{PromptTokens: 100}},
-			{Content: "", ReasoningContent: "final reasoning...", Usage: &llm.UsageInfo{PromptTokens: 100}},
-		},
-	}
+			{Content: "", ReasoningContent: "final reasoning...", Usage: &llm.UsageInfo{PromptTokens: 100}}}}
 
 	loop := New(client, newTestRegistry(), Config{MaxTurns: 0})
 	events := loop.Run(context.Background(), []llm.Message{
 		{Role: llm.RoleSystem, Content: "test"},
-		{Role: llm.RoleUser, Content: "go"},
-	})
+		{Role: llm.RoleUser, Content: "go"}})
 
 	var done *LoopDone
 	for ev := range events {
@@ -2895,16 +2645,13 @@ func TestRunStreamError_FallbackSuccess(t *testing.T) {
 	streamErr := fmt.Errorf("connection reset")
 	client := &mockLLMClient{
 		responses: []*llm.Response{
-			{Content: "fallback response", Usage: &llm.UsageInfo{PromptTokens: 500}},
-		},
-		streamErrors: []error{streamErr},
-	}
+			{Content: "fallback response", Usage: &llm.UsageInfo{PromptTokens: 500}}},
+		streamErrors: []error{streamErr}}
 
 	loop := New(client, newTestRegistry(), Config{MaxTurns: 2})
 	events := loop.Run(context.Background(), []llm.Message{
 		{Role: llm.RoleSystem, Content: "test"},
-		{Role: llm.RoleUser, Content: "hello"},
-	})
+		{Role: llm.RoleUser, Content: "hello"}})
 
 	var done *LoopDone
 	for ev := range events {
@@ -2928,14 +2675,12 @@ func TestRunStreamError_FallbackFailure(t *testing.T) {
 	client := &mockLLMClient{
 		responses:    []*llm.Response{nil},
 		errors:       []error{nil, sendMsgErr}, // SendMessageStream ok, SendMessage fails
-		streamErrors: []error{streamErr},
-	}
+		streamErrors: []error{streamErr}}
 
 	loop := New(client, newTestRegistry(), Config{MaxTurns: 2})
 	events := loop.Run(context.Background(), []llm.Message{
 		{Role: llm.RoleSystem, Content: "test"},
-		{Role: llm.RoleUser, Content: "hello"},
-	})
+		{Role: llm.RoleUser, Content: "hello"}})
 
 	var done *LoopDone
 	for ev := range events {
@@ -2959,14 +2704,12 @@ func TestRunStreamError_FallbackFailure(t *testing.T) {
 func TestRunStreamDeadlineExceeded(t *testing.T) {
 	streamErr := context.DeadlineExceeded
 	client := &mockLLMClient{
-		streamErrors: []error{streamErr},
-	}
+		streamErrors: []error{streamErr}}
 
 	loop := New(client, newTestRegistry(), Config{MaxTurns: 2})
 	events := loop.Run(context.Background(), []llm.Message{
 		{Role: llm.RoleSystem, Content: "test"},
-		{Role: llm.RoleUser, Content: "hello"},
-	})
+		{Role: llm.RoleUser, Content: "hello"}})
 
 	var done *LoopDone
 	for ev := range events {
@@ -2997,15 +2740,12 @@ func TestRunToolNilResult(t *testing.T) {
 
 	client := &mockLLMClient{
 		responses: []*llm.Response{
-			makeToolCallResponseWithUsage("working", 500, makeToolCall("c1", "nil_tool", `{}`)),
-		},
-	}
+			makeToolCallResponseWithUsage("working", 500, makeToolCall("c1", "nil_tool", `{}`))}}
 
 	loop := New(client, newTestRegistry(nilTool), Config{MaxTurns: 2})
 	events := loop.Run(context.Background(), []llm.Message{
 		{Role: llm.RoleSystem, Content: "test"},
-		{Role: llm.RoleUser, Content: "go"},
-	})
+		{Role: llm.RoleUser, Content: "go"}})
 
 	var done *LoopDone
 	for ev := range events {
@@ -3068,18 +2808,14 @@ func TestRunToolTimeout_SerialKillsSlowTool(t *testing.T) {
 	// ToolTimeout=100ms，工具 sleep 5s → 应被超时杀死
 	client := &mockLLMClient{
 		responses: []*llm.Response{
-			makeToolCallResponse("", makeToolCall("tc1", "slow", `{}`)),
-		},
-	}
+			makeToolCallResponse("", makeToolCall("tc1", "slow", `{}`))}}
 	slow := &slowTool{name: "slow", sleep: 5 * time.Second}
 	registry := newTestRegistry(slow)
 	loop := New(client, registry, Config{
-		ToolTimeout: 100 * time.Millisecond,
-	})
+		ToolTimeout: 100 * time.Millisecond})
 
 	finalEv := drainEvents(loop.Run(context.Background(), []llm.Message{
-		{Role: llm.RoleUser, Content: "run slow tool"},
-	}))
+		{Role: llm.RoleUser, Content: "run slow tool"}}))
 
 	if finalEv.Err == nil {
 		t.Fatal("expected error from timeout")
@@ -3094,9 +2830,7 @@ func TestRunToolTimeout_Disabled(t *testing.T) {
 	client := &mockLLMClient{
 		responses: []*llm.Response{
 			makeToolCallResponse("", makeToolCall("tc1", "slow", `{}`)),
-			makeTextResponse("finished"),
-		},
-	}
+			makeTextResponse("finished")}}
 	slow := &slowTool{name: "slow", sleep: 10 * time.Millisecond}
 	registry := newTestRegistry(slow)
 	loop := New(client, registry, Config{
@@ -3104,8 +2838,7 @@ func TestRunToolTimeout_Disabled(t *testing.T) {
 	})
 
 	finalEv := drainEvents(loop.Run(context.Background(), []llm.Message{
-		{Role: llm.RoleUser, Content: "run quick tool"},
-	}))
+		{Role: llm.RoleUser, Content: "run quick tool"}}))
 
 	if finalEv.Err != nil {
 		t.Fatalf("unexpected error: %v", finalEv.Err)
@@ -3137,16 +2870,13 @@ func TestRunConcurrentToolPanicRecovery(t *testing.T) {
 	// 并发工具 panic → 被 recover 捕获，转为 Fatal 错误，不崩溃
 	client := &mockLLMClient{
 		responses: []*llm.Response{
-			makeToolCallResponse("", makeToolCall("tc1", "panic_tool", `{}`)),
-		},
-	}
+			makeToolCallResponse("", makeToolCall("tc1", "panic_tool", `{}`))}}
 	panicT := &panickingTool{name: "panic_tool"}
 	registry := newTestRegistry(panicT)
 	loop := New(client, registry, Config{})
 
 	finalEv := drainEvents(loop.Run(context.Background(), []llm.Message{
-		{Role: llm.RoleUser, Content: "trigger panic"},
-	}))
+		{Role: llm.RoleUser, Content: "trigger panic"}}))
 
 	if finalEv.Err == nil {
 		t.Fatal("expected error from panic recovery")
@@ -3165,9 +2895,7 @@ func TestRunMainLoopPanicRecovery(t *testing.T) {
 	// 使用 nil toolRegistry → Execute 会访问 nil map → panic。
 	client := &mockLLMClient{
 		responses: []*llm.Response{
-			makeToolCallResponse("", makeToolCall("tc1", "nonexistent", `{}`)),
-		},
-	}
+			makeToolCallResponse("", makeToolCall("tc1", "nonexistent", `{}`))}}
 	// 注册工具但工具返回 nil——这会触发 nil pointer dereference 吗？
 	// 不，这里用不注册工具来触发过滤后空 tool_calls 路径
 	registry := newTestRegistry()
@@ -3175,8 +2903,7 @@ func TestRunMainLoopPanicRecovery(t *testing.T) {
 
 	// 正常路径：工具不存在被过滤 → 无工具调用 → 完成
 	finalEv := drainEvents(loop.Run(context.Background(), []llm.Message{
-		{Role: llm.RoleUser, Content: "test"},
-	}))
+		{Role: llm.RoleUser, Content: "test"}}))
 
 	// 工具不存在应被过滤，loop 正常完成（ReasonCompleted）
 	if finalEv.Err != nil {
@@ -3220,8 +2947,7 @@ func (m *slowMockLLMClient) SendMessageStream(ctx context.Context, messages []ll
 		}
 		ch <- llm.StreamingEvent{
 			Done:  true,
-			Usage: &llm.UsageInfo{PromptTokens: 100},
-		}
+			Usage: &llm.UsageInfo{PromptTokens: 100}}
 	}()
 	return ch, nil
 }
@@ -3245,8 +2971,7 @@ func TestRunStreamDeltaContextCancellation(t *testing.T) {
 	loop := New(client, registry, Config{})
 
 	ch := loop.Run(ctx, []llm.Message{
-		{Role: llm.RoleUser, Content: "stream"},
-	})
+		{Role: llm.RoleUser, Content: "stream"}})
 
 	// 等待首帧到达，然后取消 ctx
 	go func() {
@@ -3323,8 +3048,7 @@ func TestExecuteToolCalls_UnknownTool(t *testing.T) {
 	l := New(nil, newTestRegistry(), DefaultConfig())
 
 	calls := []llm.ToolCall{
-		makeToolCall("tc1", "nonexistent_tool", `{}`),
-	}
+		makeToolCall("tc1", "nonexistent_tool", `{}`)}
 
 	ch := make(chan TurnEvent, 16)
 	go func() { for range ch {} }()
@@ -3348,25 +3072,19 @@ func TestBuildToolMessages_FatalOverridesBackoff(t *testing.T) {
 
 	calls := []llm.ToolCall{
 		makeToolCall("tc1", "tool_a", `{}`),
-		makeToolCall("tc2", "tool_b", `{}`),
-	}
+		makeToolCall("tc2", "tool_b", `{}`)}
 
 	results := map[string]*tool.ToolResult{
 		"tc1": {
 			Error: &tool.ToolError{
 				Class:   tool.ErrorClassFatal,
 				Kind:    tool.ErrKindPermissionDenied,
-				Message: "fatal error",
-			},
-		},
+				Message: "fatal error"}},
 		"tc2": {
 			Error: &tool.ToolError{
 				Class:   tool.ErrorClassRecoverable,
 				Kind:    tool.ErrKindFileNotFound,
-				Message: "recoverable error",
-			},
-		},
-	}
+				Message: "recoverable error"}}}
 	skip := map[string]bool{}
 
 	_, reason, err := l.buildToolMessages(calls, results, skip)
@@ -3393,15 +3111,13 @@ func TestBuildToolMessages_AdvisorTerminateAt5(t *testing.T) {
 	recoverableErr := &tool.ToolError{
 		Class:   tool.ErrorClassRecoverable,
 		Kind:    tool.ErrKindFileNotFound,
-		Message: "no such file",
-	}
+		Message: "no such file"}
 
 	// 累积到 count=4（不终止）
 	for i := 0; i < 4; i++ {
 		calls := []llm.ToolCall{makeToolCall(fmt.Sprintf("tc%d", i), "read_file", `{}`)}
 		results := map[string]*tool.ToolResult{
-			fmt.Sprintf("tc%d", i): {Error: recoverableErr},
-		}
+			fmt.Sprintf("tc%d", i): {Error: recoverableErr}}
 		_, reason, err := l.buildToolMessages(calls, results, nil)
 		if err != nil {
 			t.Fatalf("round %d: unexpected error at count=%d: %v", i+1, l.consecutiveSameError, err)
@@ -3417,8 +3133,7 @@ func TestBuildToolMessages_AdvisorTerminateAt5(t *testing.T) {
 	// 第 5 轮：应终止
 	calls5 := []llm.ToolCall{makeToolCall("tc5", "read_file", `{}`)}
 	results5 := map[string]*tool.ToolResult{
-		"tc5": {Error: recoverableErr},
-	}
+		"tc5": {Error: recoverableErr}}
 	_, reason, err := l.buildToolMessages(calls5, results5, nil)
 	if err == nil {
 		t.Fatal("round 5: expected fatal error at count 5 in advisor mode")
@@ -3438,15 +3153,13 @@ func TestBuildToolMessages_NormalModeTerminateAt8(t *testing.T) {
 	recoverableErr := &tool.ToolError{
 		Class:   tool.ErrorClassRecoverable,
 		Kind:    tool.ErrKindCommandFailed,
-		Message: "command failed",
-	}
+		Message: "command failed"}
 
 	// 累积到 count=7（不终止）
 	for i := 0; i < 7; i++ {
 		calls := []llm.ToolCall{makeToolCall(fmt.Sprintf("tc%d", i), "bash", `{}`)}
 		results := map[string]*tool.ToolResult{
-			fmt.Sprintf("tc%d", i): {Error: recoverableErr},
-		}
+			fmt.Sprintf("tc%d", i): {Error: recoverableErr}}
 		_, reason, err := l.buildToolMessages(calls, results, nil)
 		if err != nil {
 			t.Fatalf("round %d: unexpected error at count=%d: %v", i+1, l.consecutiveSameError, err)
@@ -3462,8 +3175,7 @@ func TestBuildToolMessages_NormalModeTerminateAt8(t *testing.T) {
 	// 第 8 轮：应终止
 	calls8 := []llm.ToolCall{makeToolCall("tc8", "bash", `{}`)}
 	results8 := map[string]*tool.ToolResult{
-		"tc8": {Error: recoverableErr},
-	}
+		"tc8": {Error: recoverableErr}}
 	_, reason, err := l.buildToolMessages(calls8, results8, nil)
 	if err == nil {
 		t.Fatal("round 8: expected fatal error at count 8 in normal mode")
@@ -3483,8 +3195,7 @@ func TestBuildToolMessages_AdvisorWarningAt3And5(t *testing.T) {
 	recoverableErr := &tool.ToolError{
 		Class:   tool.ErrorClassRecoverable,
 		Kind:    tool.ErrKindCommandFailed,
-		Message: "exit status 1",
-	}
+		Message: "exit status 1"}
 
 	// count=1：不警告
 	calls1 := []llm.ToolCall{makeToolCall("tc1", "bash", `{}`)}
@@ -3561,8 +3272,7 @@ func TestBuildToolMessages_AdvisorResetBySuccess(t *testing.T) {
 	recoverableErr := &tool.ToolError{
 		Class:   tool.ErrorClassRecoverable,
 		Kind:    tool.ErrKindFileNotFound,
-		Message: "no such file",
-	}
+		Message: "no such file"}
 
 	// count=1
 	_, _, _ = l.buildToolMessages(
@@ -3593,8 +3303,7 @@ func TestBuildToolMessages_AdvisorResetByDifferentKind(t *testing.T) {
 	_, _, _ = l.buildToolMessages(
 		[]llm.ToolCall{makeToolCall("tc1", "read_file", `{}`)},
 		map[string]*tool.ToolResult{"tc1": {Error: &tool.ToolError{
-			Class: tool.ErrorClassRecoverable, Kind: tool.ErrKindFileNotFound, Message: "no file",
-		}}},
+			Class: tool.ErrorClassRecoverable, Kind: tool.ErrKindFileNotFound, Message: "no file"}}},
 		nil,
 	)
 	if l.consecutiveSameError != 1 {
@@ -3605,8 +3314,7 @@ func TestBuildToolMessages_AdvisorResetByDifferentKind(t *testing.T) {
 	_, _, _ = l.buildToolMessages(
 		[]llm.ToolCall{makeToolCall("tc2", "bash", `{}`)},
 		map[string]*tool.ToolResult{"tc2": {Error: &tool.ToolError{
-			Class: tool.ErrorClassRecoverable, Kind: tool.ErrKindCommandFailed, Message: "fail",
-		}}},
+			Class: tool.ErrorClassRecoverable, Kind: tool.ErrKindCommandFailed, Message: "fail"}}},
 		nil,
 	)
 	if l.consecutiveSameError != 1 {
@@ -3661,8 +3369,7 @@ func TestCompactionInfoFromTick(t *testing.T) {
 		Tier3SummaryDone: true,
 		HardLimitReached: true,
 		HardLimitReason:  "usage",
-		UsageRatio:       0.85,
-	}
+		UsageRatio:       0.85}
 
 	info := compactionInfoFromTick(tick)
 
@@ -3722,21 +3429,18 @@ func TestExecuteToolCalls_ContextCancelledDuringConcurrent(t *testing.T) {
 			concurrentSafe: true,
 			result:         &tool.ToolResult{Content: "ok"},
 			startBarrier:   &wg,
-			proceedCh:      proceedCh,
-		},
+			proceedCh:      proceedCh},
 		&barrierTool{
 			name:           "tool_b",
 			concurrentSafe: true,
 			result:         &tool.ToolResult{Content: "ok"},
 			startBarrier:   &wg,
-			proceedCh:      proceedCh,
-		},
+			proceedCh:      proceedCh},
 	), DefaultConfig())
 
 	calls := []llm.ToolCall{
 		makeToolCall("tc1", "tool_a", `{}`),
-		makeToolCall("tc2", "tool_b", `{}`),
-	}
+		makeToolCall("tc2", "tool_b", `{}`)}
 
 	ch := make(chan TurnEvent, 16)
 	go func() { for range ch {} }()
@@ -3776,8 +3480,7 @@ func TestExecuteToolCalls_ContextCancelledDuringSerialSend(t *testing.T) {
 	), DefaultConfig())
 
 	calls := []llm.ToolCall{
-		makeToolCall("tc1", "serial_tool", `{}`),
-	}
+		makeToolCall("tc1", "serial_tool", `{}`)}
 
 	ch := make(chan TurnEvent) // 无缓冲 channel — sendEvent 会阻塞
 	// 在 goroutine 中执行，立即取消 ctx
@@ -3797,48 +3500,44 @@ func TestExecuteToolCalls_ContextCancelledDuringSerialSend(t *testing.T) {
 }
 
 
-// TestRegression_StaleTodoOnComplete 验证 LLM 忘记最后一次 todo_write 时，
+// TestRegression_StaleTodoOnComplete 验证 LLM 忘记最后一次 todo_update 时，
 // Loop 在终止前注入最后机会提醒，防止 todo 列表残留。
 func TestRegression_StaleTodoOnComplete(t *testing.T) {
-	// 场景：LLM 完成所有工作后直接给最终答案，忘记调用 todo_write 标记完成。
+	// 场景：LLM 完成所有工作后直接给最终答案，忘记调用 todo_update 标记完成。
 	// 预期：Loop 检测到残留任务，注入提醒并继续一轮，给 LLM 机会更新。
 
 	// 设置 TodoState，含一个 in_progress 任务
 	ts := todo.NewTodoState()
-	ts.Apply(todo.TodoWriteParams{
+	result := ts.Apply(todo.TodoWriteParams{
 		Todos: []todo.TodoItem{
-			{Content: "Fix the bug", Status: "in_progress", ActiveForm: "Fixing the bug"},
-			{Content: "Run tests", Status: "pending", ActiveForm: "Running tests"},
-		},
-	})
+			{Content: "Fix the bug", Status: "in_progress"},
+			{Content: "Run tests", Status: "pending"}}})
+	idBug := result.Items[0].ID
+	idTests := result.Items[1].ID
 
-	// LLM 第一轮：调用 todo_write 标记第一个任务完成
+	// LLM 第一轮：调用 todo_update 标记第一个任务完成
 	// 第二轮：执行 read_file
-	// 第三轮：忘记调用 todo_write，直接给最终答案 → 触发 last-chance 提醒
-	// 第四轮：LLM 响应提醒，调用 todo_write 全部完成
+	// 第三轮：忘记调用 todo_update，直接给最终答案 → 触发 last-chance 提醒
+	// 第四轮：LLM 响应提醒，调用 todo_update 全部完成
 	// 第五轮：最终答案
 	client := &mockLLMClient{
 		responses: []*llm.Response{
-			makeToolCallResponse("", makeToolCall("tc1", "todo_write", `{"todos":[{"content":"Fix the bug","status":"completed","activeForm":"Fixing the bug"},{"content":"Run tests","status":"in_progress","activeForm":"Running tests"}]}`)),
+			makeToolCallResponse("", makeToolCall("tc1", "todo_update", fmt.Sprintf(`{"todos":[{"id":%q,"status":"completed"},{"id":%q,"status":"in_progress"}]}`, idBug, idTests))),
 			makeToolCallResponse("", makeToolCall("tc2", "read_file", `{"file_path":"/tmp/test.go"}`)),
-			// 第三轮：忘记 todo_write，直接给文本 → stale todo 检测 → last-chance 提醒注入 → continue
+			// 第三轮：忘记 todo_update，直接给文本 → stale todo 检测 → last-chance 提醒注入 → continue
 			makeTextResponse("All done! The bug is fixed."),
-			// 第四轮：收到提醒后调用 todo_write 全部完成
-			makeToolCallResponse("", makeToolCall("tc3", "todo_write", `{"todos":[{"content":"Fix the bug","status":"completed","activeForm":"Fixing the bug"},{"content":"Run tests","status":"completed","activeForm":"Running tests"}]}`)),
+			// 第四轮：收到提醒后调用 todo_update 全部完成
+			makeToolCallResponse("", makeToolCall("tc3", "todo_update", fmt.Sprintf(`{"todos":[{"id":%q,"status":"completed"},{"id":%q,"status":"completed"}]}`, idBug, idTests))),
 			// 第五轮：最终答案
-			makeTextResponse("All tasks completed. The bug is fixed and tests pass."),
-		},
-	}
+			makeTextResponse("All tasks completed. The bug is fixed and tests pass.")}}
 
 	readTool := newSuccessTool("read_file", true, "file content")
-	registry := newTestRegistry(readTool, tool.Wrap(&tool.TodoWrite{}))
+	registry := newTestRegistry(readTool, tool.Wrap(&tool.TodoCreate{}), tool.Wrap(&tool.TodoUpdate{}))
 	loop := New(client, registry, Config{
-		TodoState: ts,
-	})
+		TodoState: ts})
 
 	finalEv := drainEvents(loop.Run(context.Background(), []llm.Message{
-		{Role: llm.RoleUser, Content: "fix the bug"},
-	}))
+		{Role: llm.RoleUser, Content: "fix the bug"}}))
 
 	if finalEv.Err != nil {
 		t.Fatalf("unexpected error: %v", finalEv.Err)
@@ -3847,7 +3546,7 @@ func TestRegression_StaleTodoOnComplete(t *testing.T) {
 		t.Errorf("expected ReasonCompleted, got %s", finalEv.Reason)
 	}
 
-	// 验证 TodoState 已清空（最后一次 todo_write 全部 completed → allDone 自动清理）
+	// 验证 TodoState 已清空（最后一次 todo_update 全部 completed → allDone 自动清理）
 	snapshot := ts.Snapshot()
 	if len(snapshot) != 0 {
 		t.Errorf("expected empty todo list after all done, got %d items: %v", len(snapshot), snapshot)
@@ -3855,33 +3554,27 @@ func TestRegression_StaleTodoOnComplete(t *testing.T) {
 }
 
 // TestRegression_StaleTodoOnComplete_NoInfiniteLoop 验证即使 LLM 在最后机会提醒后
-// 仍不调用 todo_write，Loop 也会正常终止，不会无限循环。
+// 仍不调用 todo_update，Loop 也会正常终止，不会无限循环。
 func TestRegression_StaleTodoOnComplete_NoInfiniteLoop(t *testing.T) {
 	ts := todo.NewTodoState()
 	ts.Apply(todo.TodoWriteParams{
 		Todos: []todo.TodoItem{
-			{Content: "Do something", Status: "in_progress", ActiveForm: "Doing something"},
-		},
-	})
+			{Content: "Do something", Status: "in_progress"}}})
 
-	// LLM 持续返回文本响应（无 todo_write），验证不会无限循环
+	// LLM 持续返回文本响应（无 todo_update），验证不会无限循环
 	// 第一轮：文本响应 → 触发 last-chance 提醒（continue）
 	// 第二轮：文本响应 → lastChanceTodoInjected=true，正常完成
 	client := &mockLLMClient{
 		responses: []*llm.Response{
 			makeTextResponse("I'm done with everything."),
-			makeTextResponse("Yes, really done."),
-		},
-	}
+			makeTextResponse("Yes, really done.")}}
 
 	registry := newTestRegistry()
 	loop := New(client, registry, Config{
-		TodoState: ts,
-	})
+		TodoState: ts})
 
 	finalEv := drainEvents(loop.Run(context.Background(), []llm.Message{
-		{Role: llm.RoleUser, Content: "do something"},
-	}))
+		{Role: llm.RoleUser, Content: "do something"}}))
 
 	if finalEv.Err != nil {
 		t.Fatalf("unexpected error: %v", finalEv.Err)

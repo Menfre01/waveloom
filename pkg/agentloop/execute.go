@@ -402,9 +402,9 @@ func (l *Loop) executeToolCalls(ctx context.Context, calls []llm.ToolCall, state
 			}
 		}
 
-		// todo_write 由 Loop 拦截处理（更新 TodoState + 推送事件）
-		if tc.Name == "todo_write" {
-			result := l.executeTodoWrite(ctx, tc, state, ch)
+		// todo_create / todo_update 由 Loop 拦截处理（更新 TodoState + 推送事件）
+		if tc.Name == "todo_create" || tc.Name == "todo_update" {
+			result := l.executeTodoMutate(ctx, tc, state, ch)
 			results[tc.ID] = result
 			durations[tc.ID] = 0
 
@@ -820,12 +820,12 @@ func (l *Loop) checkPermission(ctx context.Context, tc llm.ToolCall, results map
 	return false
 }
 
-// executeTodoWrite 处理 todo_write 工具调用。
+// executeTodoMutate 处理 todo_create / todo_update 工具调用。
 // 解析参数 → 增量合并到 TodoState → 推送 TodoUpdateEvent → 返回格式化结果给 LLM。
-func (l *Loop) executeTodoWrite(ctx context.Context, tc llm.ToolCall, state *LoopState, ch chan<- TurnEvent) *tool.ToolResult {
+func (l *Loop) executeTodoMutate(ctx context.Context, tc llm.ToolCall, state *LoopState, ch chan<- TurnEvent) *tool.ToolResult {
 	if l.config.TodoState == nil {
 		return &tool.ToolResult{
-			Content: "todo_write is not available (TodoState not configured).",
+			Content: "todo_create / todo_update is not available (TodoState not configured).",
 		}
 	}
 
@@ -835,7 +835,7 @@ func (l *Loop) executeTodoWrite(ctx context.Context, tc llm.ToolCall, state *Loo
 			Error: &tool.ToolError{
 				Class:   tool.ErrorClassRecoverable,
 				Kind:    tool.ErrKindInvalidArgs,
-				Message: "todo_write: failed to parse arguments: " + err.Error(),
+				Message: "todo_create / todo_update: failed to parse arguments: " + err.Error(),
 			},
 		}
 	}
@@ -852,17 +852,26 @@ func (l *Loop) executeTodoWrite(ctx context.Context, tc llm.ToolCall, state *Loo
 			Error: &tool.ToolError{
 				Class:   tool.ErrorClassRecoverable,
 				Kind:    "context_cancelled",
-				Message: "todo_write: context cancelled",
+				Message: "todo_create / todo_update: context cancelled",
 			},
 		}
 	}
 
 	msg := todo.FormatResult(result)
 
-	// 检测无状态变更的 no-op 调用：无创建且无更新时追加提示
-	if result.Created == 0 && result.Updated == 0 && len(result.Items) > 0 {
-		msg += "\n⚠️ No status changes detected. Did you forget to update task statuses? " +
-			"Mark completed tasks as 'completed' and start the next task by setting it to 'in_progress'."
+	// UnmatchedIDs feedback: LLM passed IDs that don't exist — specific guidance
+	if len(result.UnmatchedIDs) > 0 {
+		msg += "\n⚠️ Some IDs were not found in the current task list. To update an existing task, use a valid ID from the list above. To create a new task, use todo_create instead."
+	}
+
+	// Soft warning: multiple in_progress
+	if result.InProgressCount > 1 {
+		msg += fmt.Sprintf("\n⚠️ %d tasks are in_progress. Only ONE should be in_progress at a time. Complete the current task before starting a new one.", result.InProgressCount)
+	}
+
+	// 检测无状态变更的 no-op 调用：无创建且无更新时追加提示（仅当也没有 UnmatchedIDs 时）
+	if result.Created == 0 && result.Updated == 0 && len(result.UnmatchedIDs) == 0 && len(result.Items) > 0 {
+		msg += "\n⚠️ No status changes were made — all items are already in the requested state."
 	}
 
 	return &tool.ToolResult{

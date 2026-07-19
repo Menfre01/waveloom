@@ -13,25 +13,23 @@ import (
 )
 
 // ============================================================================
-// executeTodoWrite 单元测试 — 增量合并
+// executeTodoMutate 单元测试 — 增量合并（ID 匹配，无 content fallback）
 // ============================================================================
 
 func TestExecuteTodoWrite_NilTodoState(t *testing.T) {
-	// REGRESSION: executeTodoWrite 在 TodoState == nil 时应返回错误消息，
+	// REGRESSION: executeTodoMutate 在 TodoState == nil 时应返回错误消息，
 	// 不能 panic（nil pointer dereference）。
 	registry := tool.NewRegistry()
-	registry.Register(tool.Wrap(&tool.TodoWrite{}))
+	registry.Register(tool.Wrap(&tool.TodoCreate{})); registry.Register(tool.Wrap(&tool.TodoUpdate{}))
 
 	loop := New(nil, registry, Config{
-		TodoState: nil,
-	})
+		TodoState: nil})
 
 	ch := make(chan TurnEvent, 1)
-	result := loop.executeTodoWrite(context.Background(), llm.ToolCall{
+	result := loop.executeTodoMutate(context.Background(), llm.ToolCall{
 		ID:   "call_1",
-		Name: "todo_write",
-		Arguments: `{"todos": [{"content": "Test", "status": "pending", "activeForm": "Testing"}]}`,
-	}, nil, ch)
+		Name: "todo_create",
+		Arguments: `{"todos": [{"content": "Test", "status": "pending"}]}`}, nil, ch)
 
 	if result == nil {
 		t.Fatal("result is nil")
@@ -39,25 +37,24 @@ func TestExecuteTodoWrite_NilTodoState(t *testing.T) {
 	if result.Error != nil {
 		t.Fatalf("unexpected error: %v", result.Error)
 	}
-	if result.Content != "todo_write is not available (TodoState not configured)." {
+	if result.Content != "todo_create / todo_update is not available (TodoState not configured)." {
 		t.Errorf("unexpected content: %s", result.Content)
 	}
 }
 
 func TestExecuteTodoWrite_InvalidJSON(t *testing.T) {
-	// REGRESSION: executeTodoWrite 在收到非法 JSON 时应返回 Recoverable 错误。
+	// REGRESSION: executeTodoMutate 在收到非法 JSON 时应返回 Recoverable 错误。
 	registry := tool.NewRegistry()
-	registry.Register(tool.Wrap(&tool.TodoWrite{}))
+	registry.Register(tool.Wrap(&tool.TodoCreate{})); registry.Register(tool.Wrap(&tool.TodoUpdate{}))
 
 	ts := todo.NewTodoState()
 	loop := New(nil, registry, Config{TodoState: ts})
 
 	ch := make(chan TurnEvent, 1)
-	result := loop.executeTodoWrite(context.Background(), llm.ToolCall{
+	result := loop.executeTodoMutate(context.Background(), llm.ToolCall{
 		ID:        "call_1",
-		Name:      "todo_write",
-		Arguments: `{invalid json}`,
-	}, nil, ch)
+		Name:      "todo_create",
+		Arguments: `{invalid json}`}, nil, ch)
 
 	if result == nil || result.Error == nil {
 		t.Fatal("expected error for invalid JSON, got nil")
@@ -71,25 +68,24 @@ func TestExecuteTodoWrite_InvalidJSON(t *testing.T) {
 }
 
 func TestExecuteTodoWrite_CreateNew(t *testing.T) {
-	// 首次调用创建新项 — content 无匹配 → CREATE。
+	// 首次调用创建新项 — 无 ID → CREATE。
 	registry := tool.NewRegistry()
-	registry.Register(tool.Wrap(&tool.TodoWrite{}))
+	registry.Register(tool.Wrap(&tool.TodoCreate{})); registry.Register(tool.Wrap(&tool.TodoUpdate{}))
 
 	ts := todo.NewTodoState()
 	loop := New(nil, registry, Config{TodoState: ts})
 
 	ch := make(chan TurnEvent, 2)
-	result := loop.executeTodoWrite(context.Background(), llm.ToolCall{
+	result := loop.executeTodoMutate(context.Background(), llm.ToolCall{
 		ID:   "call_1",
-		Name: "todo_write",
+		Name: "todo_create",
 		Arguments: `{"todos": [
-			{"content": "Task A", "status": "in_progress", "activeForm": "Doing A"},
-			{"content": "Task B", "status": "pending", "activeForm": "Doing B"}
-		]}`,
-	}, nil, ch)
+			{"content": "Task A", "status": "in_progress"},
+			{"content": "Task B", "status": "pending"}
+		]}`}, nil, ch)
 
 	if result == nil || result.Error != nil {
-		t.Fatalf("todo_write failed: %v", result)
+		t.Fatalf("todo_create failed: %v", result)
 	}
 	if !contains(result.Content, "2 created") {
 		t.Errorf("expected '2 created' in result, got: %s", result.Content)
@@ -122,10 +118,10 @@ func TestExecuteTodoWrite_CreateNew(t *testing.T) {
 	}
 }
 
-func TestExecuteTodoWrite_UpdateByContent(t *testing.T) {
-	// content 匹配 → UPDATE，content 不变。
+func TestExecuteTodoWrite_UpdateByID(t *testing.T) {
+	// ID 匹配 → UPDATE。content fallback 已移除，更新必须传 ID。
 	registry := tool.NewRegistry()
-	registry.Register(tool.Wrap(&tool.TodoWrite{}))
+	registry.Register(tool.Wrap(&tool.TodoCreate{})); registry.Register(tool.Wrap(&tool.TodoUpdate{}))
 
 	ts := todo.NewTodoState()
 	loop := New(nil, registry, Config{TodoState: ts})
@@ -133,27 +129,27 @@ func TestExecuteTodoWrite_UpdateByContent(t *testing.T) {
 	ch := make(chan TurnEvent, 4)
 
 	// Call 1: create items
-	_ = loop.executeTodoWrite(context.Background(), llm.ToolCall{
+	_ = loop.executeTodoMutate(context.Background(), llm.ToolCall{
 		ID:   "call_1",
-		Name: "todo_write",
+		Name: "todo_create",
 		Arguments: `{"todos": [
-			{"content": "Task A", "status": "in_progress", "activeForm": "Doing A"},
-			{"content": "Task B", "status": "pending", "activeForm": "Doing B"}
-		]}`,
-	}, nil, ch)
-	<-ch
+			{"content": "Task A", "status": "in_progress"},
+			{"content": "Task B", "status": "pending"}
+		]}`}, nil, ch)
+	ev := <-ch
+	tue := ev.(TodoUpdateEvent)
+	idA, idB := tue.Items[0].ID, tue.Items[1].ID
 
-	// Call 2: update by content — only send the items that changed
-	result := loop.executeTodoWrite(context.Background(), llm.ToolCall{
+	// Call 2: update by ID — only send the items that changed
+	result := loop.executeTodoMutate(context.Background(), llm.ToolCall{
 		ID:   "call_2",
-		Name: "todo_write",
-		Arguments: `{"todos": [
-			{"content": "Task A", "status": "completed", "activeForm": "Did A"}
-		]}`,
-	}, nil, ch)
+		Name: "todo_update",
+		Arguments: fmt.Sprintf(`{"todos": [
+			{"id": %q, "status": "completed"}
+		]}`, idA)}, nil, ch)
 
 	if result == nil || result.Error != nil {
-		t.Fatalf("todo_write failed: %v", result)
+		t.Fatalf("todo_update failed: %v", result)
 	}
 	if !contains(result.Content, "1 updated") {
 		t.Errorf("expected '1 updated' in result, got: %s", result.Content)
@@ -167,11 +163,11 @@ func TestExecuteTodoWrite_UpdateByContent(t *testing.T) {
 	if len(snapshot) != 2 {
 		t.Fatalf("expected 2 items, got %d", len(snapshot))
 	}
-	if snapshot[0].Content != "Task A" || snapshot[0].Status != "completed" {
-		t.Errorf("Task A: content=%s status=%s, want completed", snapshot[0].Content, snapshot[0].Status)
+	if snapshot[0].ID != idA || snapshot[0].Status != "completed" {
+		t.Errorf("Task A: id=%s status=%s, want completed", snapshot[0].ID, snapshot[0].Status)
 	}
-	if snapshot[1].Content != "Task B" || snapshot[1].Status != "pending" {
-		t.Errorf("Task B: content=%s status=%s, want pending (unchanged)", snapshot[1].Content, snapshot[1].Status)
+	if snapshot[1].ID != idB || snapshot[1].Status != "pending" {
+		t.Errorf("Task B: id=%s status=%s, want pending (unchanged)", snapshot[1].ID, snapshot[1].Status)
 	}
 }
 
@@ -180,18 +176,18 @@ func TestExecuteTodoWrite_UnmentionedKept(t *testing.T) {
 	ts := todo.NewTodoState()
 	ts.Apply(todo.TodoWriteParams{
 		Todos: []todo.TodoItem{
-			{Content: "Task A", Status: "in_progress", ActiveForm: "Doing A"},
-			{Content: "Task B", Status: "pending", ActiveForm: "Doing B"},
-			{Content: "Task C", Status: "pending", ActiveForm: "Doing C"},
-		},
-	})
+			{Content: "Task A", Status: "in_progress"},
+			{Content: "Task B", Status: "pending"},
+			{Content: "Task C", Status: "pending"}}})
 
-	// Only update Task A — Tasks B and C should remain
+	// Capture IDs
+	snap := ts.Snapshot()
+	idA := snap[0].ID
+
+	// Only update Task A by ID — Tasks B and C should remain
 	result := ts.Apply(todo.TodoWriteParams{
 		Todos: []todo.TodoItem{
-			{Content: "Task A", Status: "completed", ActiveForm: "Did A"},
-		},
-	})
+			{ID: idA, Status: "completed"}}})
 
 	if result.Updated != 1 {
 		t.Errorf("Updated = %d, want 1", result.Updated)
@@ -223,35 +219,28 @@ func TestExecuteTodoWrite_UnmentionedKept(t *testing.T) {
 	}
 }
 
-func TestExecuteTodoWrite_ContentImmutable(t *testing.T) {
-	// content 创建后不可修改 — 即使 UPDATE 传入不同 status，content 不变。
+func TestExecuteTodoWrite_ContentWithoutIDCreatesNew(t *testing.T) {
+	// content fallback 已移除：发送 content 无 ID → 创建新项，不会 UPDATE。
 	ts := todo.NewTodoState()
 	ts.Apply(todo.TodoWriteParams{
 		Todos: []todo.TodoItem{
-			{Content: "Original", Status: "pending", ActiveForm: "Waiting"},
-		},
-	})
+			{Content: "Original", Status: "pending"}}})
 
-	// Try to "update" with same content — it should UPDATE, not create a duplicate
+	// Send same content without ID — creates a NEW item (content fallback removed)
 	result := ts.Apply(todo.TodoWriteParams{
 		Todos: []todo.TodoItem{
-			{Content: "Original", Status: "in_progress", ActiveForm: "Working"},
-		},
-	})
+			{Content: "Original", Status: "in_progress"}}})
 
-	if result.Updated != 1 {
-		t.Errorf("Updated = %d, want 1", result.Updated)
+	if result.Updated != 0 {
+		t.Errorf("Updated = %d, want 0 (no ID → CREATE, not UPDATE)", result.Updated)
 	}
-	if result.Created != 0 {
-		t.Errorf("Created = %d, want 0 (same content should UPDATE, not CREATE duplicate)", result.Created)
+	if result.Created != 1 {
+		t.Errorf("Created = %d, want 1 (same content without ID creates new item)", result.Created)
 	}
 
 	snapshot := ts.Snapshot()
-	if len(snapshot) != 1 {
-		t.Fatalf("expected 1 item, got %d (content immutable — no duplicates)", len(snapshot))
-	}
-	if snapshot[0].Status != "in_progress" {
-		t.Errorf("status = %s, want in_progress", snapshot[0].Status)
+	if len(snapshot) != 2 {
+		t.Fatalf("expected 2 items, got %d (same content without ID creates new)", len(snapshot))
 	}
 }
 
@@ -261,10 +250,8 @@ func TestExecuteTodoWrite_DuplicateContentInSameCall(t *testing.T) {
 
 	result := ts.Apply(todo.TodoWriteParams{
 		Todos: []todo.TodoItem{
-			{Content: "Task", Status: "pending", ActiveForm: "First"},
-			{Content: "Task", Status: "in_progress", ActiveForm: "Second (should be ignored)"},
-		},
-	})
+			{Content: "Task", Status: "pending"},
+			{Content: "Task", Status: "in_progress"}}})
 
 	if result.Created != 1 {
 		t.Errorf("Created = %d, want 1 (duplicate content should be deduplicated)", result.Created)
@@ -286,7 +273,7 @@ func TestExecuteTodoWrite_DuplicateContentInSameCall(t *testing.T) {
 func TestExecuteTodoWrite_AllDoneClearsState(t *testing.T) {
 	// 全部 completed → allDone 清空列表。
 	registry := tool.NewRegistry()
-	registry.Register(tool.Wrap(&tool.TodoWrite{}))
+	registry.Register(tool.Wrap(&tool.TodoCreate{})); registry.Register(tool.Wrap(&tool.TodoUpdate{}))
 
 	ts := todo.NewTodoState()
 	loop := New(nil, registry, Config{TodoState: ts})
@@ -294,28 +281,28 @@ func TestExecuteTodoWrite_AllDoneClearsState(t *testing.T) {
 	ch := make(chan TurnEvent, 4)
 
 	// Call 1: create 2 items
-	_ = loop.executeTodoWrite(context.Background(), llm.ToolCall{
+	_ = loop.executeTodoMutate(context.Background(), llm.ToolCall{
 		ID:   "call_1",
-		Name: "todo_write",
+		Name: "todo_create",
 		Arguments: `{"todos": [
-			{"content": "Task A", "status": "in_progress", "activeForm": "Doing A"},
-			{"content": "Task B", "status": "pending", "activeForm": "Doing B"}
-		]}`,
-	}, nil, ch)
-	<-ch
+			{"content": "Task A", "status": "in_progress"},
+			{"content": "Task B", "status": "pending"}
+		]}`}, nil, ch)
+	ev := <-ch
+	tue := ev.(TodoUpdateEvent)
+	idA, idB := tue.Items[0].ID, tue.Items[1].ID
 
-	// Call 2: mark both completed — only need to send the items changing status
-	result := loop.executeTodoWrite(context.Background(), llm.ToolCall{
+	// Call 2: mark both completed by ID
+	result := loop.executeTodoMutate(context.Background(), llm.ToolCall{
 		ID:   "call_2",
-		Name: "todo_write",
-		Arguments: `{"todos": [
-			{"content": "Task A", "status": "completed", "activeForm": "Did A"},
-			{"content": "Task B", "status": "completed", "activeForm": "Did B"}
-		]}`,
-	}, nil, ch)
+		Name: "todo_update",
+		Arguments: fmt.Sprintf(`{"todos": [
+			{"id": %q, "status": "completed"},
+			{"id": %q, "status": "completed"}
+		]}`, idA, idB)}, nil, ch)
 
 	if result == nil || result.Error != nil {
-		t.Fatalf("todo_write failed: %v", result)
+		t.Fatalf("todo_update failed: %v", result)
 	}
 	if result.Content != "All todos completed and cleared." {
 		t.Errorf("unexpected result: %s", result.Content)
@@ -328,9 +315,9 @@ func TestExecuteTodoWrite_AllDoneClearsState(t *testing.T) {
 }
 
 func TestExecuteTodoWrite_TwoCallsInSameTurn(t *testing.T) {
-	// REGRESSION: 同一 turn 内连续两次 todo_write，第二次应看到第一次的结果。
+	// REGRESSION: 同一 turn 内连续两次 todo_create / todo_update，第二次应看到第一次的结果。
 	registry := tool.NewRegistry()
-	registry.Register(tool.Wrap(&tool.TodoWrite{}))
+	registry.Register(tool.Wrap(&tool.TodoCreate{})); registry.Register(tool.Wrap(&tool.TodoUpdate{}))
 
 	ts := todo.NewTodoState()
 	loop := New(nil, registry, Config{TodoState: ts})
@@ -338,26 +325,26 @@ func TestExecuteTodoWrite_TwoCallsInSameTurn(t *testing.T) {
 	ch := make(chan TurnEvent, 4)
 
 	// Call 1: create 3 items
-	_ = loop.executeTodoWrite(context.Background(), llm.ToolCall{
+	_ = loop.executeTodoMutate(context.Background(), llm.ToolCall{
 		ID:   "call_1",
-		Name: "todo_write",
+		Name: "todo_create",
 		Arguments: `{"todos": [
-			{"content": "Task A", "status": "in_progress", "activeForm": "Doing A"},
-			{"content": "Task B", "status": "pending", "activeForm": "Doing B"},
-			{"content": "Task C", "status": "pending", "activeForm": "Doing C"}
-		]}`,
-	}, nil, ch)
-	<-ch
+			{"content": "Task A", "status": "in_progress"},
+			{"content": "Task B", "status": "pending"},
+			{"content": "Task C", "status": "pending"}
+		]}`}, nil, ch)
+	ev := <-ch
+	tue := ev.(TodoUpdateEvent)
+	idA, idB, _ := tue.Items[0].ID, tue.Items[1].ID, tue.Items[2].ID
 
-	// Call 2: update Task A to completed, Task B to in_progress
-	result := loop.executeTodoWrite(context.Background(), llm.ToolCall{
+	// Call 2: update Task A to completed, Task B to in_progress by ID
+	result := loop.executeTodoMutate(context.Background(), llm.ToolCall{
 		ID:   "call_2",
-		Name: "todo_write",
-		Arguments: `{"todos": [
-			{"content": "Task A", "status": "completed", "activeForm": "Did A"},
-			{"content": "Task B", "status": "in_progress", "activeForm": "Doing B"}
-		]}`,
-	}, nil, ch)
+		Name: "todo_update",
+		Arguments: fmt.Sprintf(`{"todos": [
+			{"id": %q, "status": "completed"},
+			{"id": %q, "status": "in_progress"}
+		]}`, idA, idB)}, nil, ch)
 
 	if result == nil || result.Error != nil {
 		t.Fatalf("second call failed: %v", result)
@@ -380,7 +367,7 @@ func TestExecuteTodoWrite_TwoCallsInSameTurn(t *testing.T) {
 
 func TestExecuteTodoWrite_ContextCancelled(t *testing.T) {
 	registry := tool.NewRegistry()
-	registry.Register(tool.Wrap(&tool.TodoWrite{}))
+	registry.Register(tool.Wrap(&tool.TodoCreate{})); registry.Register(tool.Wrap(&tool.TodoUpdate{}))
 
 	ts := todo.NewTodoState()
 	loop := New(nil, registry, Config{TodoState: ts})
@@ -389,11 +376,10 @@ func TestExecuteTodoWrite_ContextCancelled(t *testing.T) {
 	cancel()
 
 	ch := make(chan TurnEvent)
-	result := loop.executeTodoWrite(ctx, llm.ToolCall{
+	result := loop.executeTodoMutate(ctx, llm.ToolCall{
 		ID:   "call_1",
-		Name: "todo_write",
-		Arguments: `{"todos": [{"content": "Task", "status": "pending", "activeForm": "Testing"}]}`,
-	}, nil, ch)
+		Name: "todo_update",
+		Arguments: `{"todos": [{"content": "Task", "status": "pending"}]}`}, nil, ch)
 
 	if result == nil || result.Error == nil {
 		t.Fatal("expected error for cancelled context, got nil")
@@ -401,37 +387,36 @@ func TestExecuteTodoWrite_ContextCancelled(t *testing.T) {
 }
 
 func TestExecuteTodoWrite_NoOpDetection(t *testing.T) {
-	// 无创建且无更新时追加 no-op 警告。
+	// 无创建且无更新时追加 no-op 提示。
 	ts := todo.NewTodoState()
 	ts.Apply(todo.TodoWriteParams{
 		Todos: []todo.TodoItem{
-			{Content: "Task A", Status: "in_progress", ActiveForm: "Doing A"},
-		},
-	})
+			{Content: "Task A", Status: "in_progress"}}})
+	// Capture ID
+	idA := ts.Snapshot()[0].ID
 
 	registry := tool.NewRegistry()
-	registry.Register(tool.Wrap(&tool.TodoWrite{}))
+	registry.Register(tool.Wrap(&tool.TodoCreate{})); registry.Register(tool.Wrap(&tool.TodoUpdate{}))
 	loop := New(nil, registry, Config{TodoState: ts})
 
 	ch := make(chan TurnEvent, 2)
 
-	// Send the same item with same status → no-op
-	result := loop.executeTodoWrite(context.Background(), llm.ToolCall{
+	// Send the same item with same status by ID → no-op
+	result := loop.executeTodoMutate(context.Background(), llm.ToolCall{
 		ID:   "call_1",
-		Name: "todo_write",
-		Arguments: `{"todos": [
-			{"content": "Task A", "status": "in_progress", "activeForm": "Doing A"}
-		]}`,
-	}, nil, ch)
+		Name: "todo_update",
+		Arguments: fmt.Sprintf(`{"todos": [
+			{"id": %q, "status": "in_progress"}
+		]}`, idA)}, nil, ch)
 
 	if result == nil || result.Error != nil {
-		t.Fatalf("todo_write failed: %v", result)
+		t.Fatalf("todo_update failed: %v", result)
 	}
 	if !contains(result.Content, "0 created, 0 updated") {
 		t.Errorf("expected '0 created, 0 updated', got: %s", result.Content)
 	}
-	if !contains(result.Content, "No status changes detected") {
-		t.Errorf("expected no-op warning, got: %s", result.Content)
+	if !contains(result.Content, "No status changes were made — all items are already in the requested state") {
+		t.Errorf("expected no-op message, got: %s", result.Content)
 	}
 }
 
@@ -440,17 +425,17 @@ func TestExecuteTodoWrite_MixedCreateAndUpdate(t *testing.T) {
 	ts := todo.NewTodoState()
 	ts.Apply(todo.TodoWriteParams{
 		Todos: []todo.TodoItem{
-			{Content: "Task A", Status: "in_progress", ActiveForm: "Doing A"},
-			{Content: "Task B", Status: "pending", ActiveForm: "Doing B"},
-		},
-	})
+			{Content: "Task A", Status: "in_progress"},
+			{Content: "Task B", Status: "pending"}}})
+	// Capture IDs
+	snap := ts.Snapshot()
+	idA := snap[0].ID
 
 	result := ts.Apply(todo.TodoWriteParams{
 		Todos: []todo.TodoItem{
-			{Content: "Task A", Status: "completed", ActiveForm: "Did A"},        // UPDATE
-			{Content: "Task C", Status: "in_progress", ActiveForm: "Doing C"},     // CREATE
-		},
-	})
+			{ID: idA, Status: "completed"},            // UPDATE by ID
+			{Content: "Task C", Status: "in_progress"}, // CREATE (no ID)
+		}})
 
 	if result.Updated != 1 {
 		t.Errorf("Updated = %d, want 1", result.Updated)
@@ -480,12 +465,16 @@ func TestTodoState_ConcurrencyDataIntegrity(t *testing.T) {
 	todos := make([]todo.TodoItem, 10)
 	for i := 0; i < 10; i++ {
 		todos[i] = todo.TodoItem{
-			Content:    fmt.Sprintf("Base %d", i+1),
-			Status:     "pending",
-			ActiveForm: fmt.Sprintf("b%d", i+1),
+			Content: fmt.Sprintf("Base %d", i+1),
+			Status:  "pending",
 		}
 	}
-	ts.Apply(todo.TodoWriteParams{Todos: todos})
+	result := ts.Apply(todo.TodoWriteParams{Todos: todos})
+	// Capture IDs for subsequent updates
+	ids := make([]string, 10)
+	for i, item := range result.Items {
+		ids[i] = item.ID
+	}
 
 	var wg sync.WaitGroup
 	// 50 readers
@@ -504,7 +493,7 @@ func TestTodoState_ConcurrencyDataIntegrity(t *testing.T) {
 		}()
 	}
 
-	// 10 writers: 标记所有项为 completed
+	// 10 writers: 标记所有项为 completed by ID
 	for i := 0; i < 10; i++ {
 		wg.Add(1)
 		go func() {
@@ -512,10 +501,8 @@ func TestTodoState_ConcurrencyDataIntegrity(t *testing.T) {
 			todos := make([]todo.TodoItem, 10)
 			for j := 0; j < 10; j++ {
 				todos[j] = todo.TodoItem{
-					Content:    fmt.Sprintf("Base %d", j+1),
-					Status:     "completed",
-					ActiveForm: "done",
-				}
+					ID:     ids[j],
+					Status: "completed"}
 			}
 			ts.Apply(todo.TodoWriteParams{Todos: todos})
 		}()
@@ -546,13 +533,13 @@ func TestTodoReminderText_ContainsStalenessCount(t *testing.T) {
 	summary := "## Current Todo Status\n→ Verify status accuracy before taking action.\n[pending] Task A\n"
 	text := todoReminderText(summary, 4)
 
-	if !contains(text, "4 turns since last todo_write") {
+	if !contains(text, "4 turns since last todo_update") {
 		t.Errorf("todoReminderText missing staleness count, got: %s", text)
 	}
 	if contains(text, "Ignore if not applicable") {
 		t.Errorf("todoReminderText should NOT contain escape hatch 'Ignore if not applicable'")
 	}
-	if !contains(text, "todo_write NOW") {
+	if !contains(text, "todo_update NOW") {
 		t.Errorf("todoReminderText should contain urgency signal 'NOW'")
 	}
 }
@@ -561,7 +548,7 @@ func TestTodoReminderText_DifferentStalenessValues(t *testing.T) {
 	summary := "## Current Todo Status\n[pending] Task A\n"
 	for _, n := range []int{2, 5, 10} {
 		text := todoReminderText(summary, n)
-		expected := fmt.Sprintf("%d turns since last todo_write", n)
+		expected := fmt.Sprintf("%d turns since last todo_update", n)
 		if !contains(text, expected) {
 			t.Errorf("staleness=%d: expected %q in text, got: %s", n, expected, text)
 		}
@@ -592,9 +579,7 @@ func TestUpdateTodoCounters_WithActiveTasksIncrements(t *testing.T) {
 	ts := todo.NewTodoState()
 	ts.Apply(todo.TodoWriteParams{
 		Todos: []todo.TodoItem{
-			{Content: "Task A", Status: "in_progress", ActiveForm: "Doing A"},
-		},
-	})
+			{Content: "Task A", Status: "in_progress"}}})
 	loop := New(nil, nil, Config{TodoState: ts})
 	loop.turnsSinceLastTodoWrite = 1
 	loop.turnsSinceLastTodoReminder = 1
@@ -617,9 +602,7 @@ func TestMaybeInjectTodoReminder_BelowThresholdNoInject(t *testing.T) {
 	ts := todo.NewTodoState()
 	ts.Apply(todo.TodoWriteParams{
 		Todos: []todo.TodoItem{
-			{Content: "Task A", Status: "in_progress", ActiveForm: "Doing A"},
-		},
-	})
+			{Content: "Task A", Status: "in_progress"}}})
 	loop := New(nil, nil, Config{TodoState: ts})
 	loop.turnsSinceLastTodoWrite = 1
 	loop.turnsSinceLastTodoReminder = 0
@@ -639,9 +622,7 @@ func TestMaybeInjectTodoReminder_AtThresholdInjects(t *testing.T) {
 	ts := todo.NewTodoState()
 	ts.Apply(todo.TodoWriteParams{
 		Todos: []todo.TodoItem{
-			{Content: "Task A", Status: "in_progress", ActiveForm: "Doing A"},
-		},
-	})
+			{Content: "Task A", Status: "in_progress"}}})
 	loop := New(nil, nil, Config{TodoState: ts})
 	loop.turnsSinceLastTodoWrite = 2
 	loop.turnsSinceLastTodoReminder = 2
@@ -655,7 +636,7 @@ func TestMaybeInjectTodoReminder_AtThresholdInjects(t *testing.T) {
 	if !strings.HasPrefix(state.Messages[0].Content, "## Current Todo Status") {
 		t.Error("injected reminder should start with '## Current Todo Status'")
 	}
-	if !contains(state.Messages[0].Content, "2 turns since last todo_write") {
+	if !contains(state.Messages[0].Content, "2 turns since last todo_update") {
 		t.Error("reminder should contain staleness count")
 	}
 	if loop.turnsSinceLastTodoReminder != 0 {
@@ -670,9 +651,7 @@ func TestMaybeInjectTodoReminder_ReminderIntervalEnforced(t *testing.T) {
 	ts := todo.NewTodoState()
 	ts.Apply(todo.TodoWriteParams{
 		Todos: []todo.TodoItem{
-			{Content: "Task A", Status: "in_progress", ActiveForm: "Doing A"},
-		},
-	})
+			{Content: "Task A", Status: "in_progress"}}})
 	loop := New(nil, nil, Config{TodoState: ts})
 	loop.turnsSinceLastTodoWrite = 3
 	loop.turnsSinceLastTodoReminder = 1
@@ -703,16 +682,13 @@ func TestMaybeInjectTodoReminder_UpdatesExistingSlot(t *testing.T) {
 	ts := todo.NewTodoState()
 	ts.Apply(todo.TodoWriteParams{
 		Todos: []todo.TodoItem{
-			{Content: "Task A", Status: "in_progress", ActiveForm: "Doing A"},
-		},
-	})
+			{Content: "Task A", Status: "in_progress"}}})
 	loop := New(nil, nil, Config{TodoState: ts})
 	loop.turnsSinceLastTodoWrite = 2
 	loop.turnsSinceLastTodoReminder = 2
 
 	state := &LoopState{Messages: []llm.Message{
-		{Role: llm.RoleUser, Content: "## Current Todo Status\n[pending] Old Task\n"},
-	}}
+		{Role: llm.RoleUser, Content: "## Current Todo Status\n[pending] Old Task\n"}}}
 	loop.maybeInjectTodoReminder(state)
 
 	if len(state.Messages) != 2 {
@@ -721,8 +697,8 @@ func TestMaybeInjectTodoReminder_UpdatesExistingSlot(t *testing.T) {
 	if !contains(state.Messages[0].Content, "Old Task") {
 		t.Error("old todo-status should remain unchanged")
 	}
-	if !contains(state.Messages[1].Content, "todo_write NOW") {
-		t.Error("appended reminder should contain 'todo_write NOW'")
+	if !contains(state.Messages[1].Content, "todo_update NOW") {
+		t.Error("appended reminder should contain 'todo_update NOW'")
 	}
 }
 
@@ -744,13 +720,10 @@ func TestInjectTodoStatus_AppendsWhenNoSlot(t *testing.T) {
 	ts := todo.NewTodoState()
 	ts.Apply(todo.TodoWriteParams{
 		Todos: []todo.TodoItem{
-			{Content: "Task A", Status: "in_progress", ActiveForm: "Doing A"},
-		},
-	})
+			{Content: "Task A", Status: "in_progress"}}})
 	loop := New(nil, nil, Config{TodoState: ts})
 	msgs := []llm.Message{
-		{Role: llm.RoleSystem, Content: "system prompt"},
-	}
+		{Role: llm.RoleSystem, Content: "system prompt"}}
 	loop.injectTodoStatus(&msgs)
 
 	if len(msgs) != 2 {
@@ -768,14 +741,11 @@ func TestInjectTodoStatus_UpdatesExistingSlot(t *testing.T) {
 	ts := todo.NewTodoState()
 	ts.Apply(todo.TodoWriteParams{
 		Todos: []todo.TodoItem{
-			{Content: "Task B", Status: "in_progress", ActiveForm: "Doing B"},
-		},
-	})
+			{Content: "Task B", Status: "in_progress"}}})
 	loop := New(nil, nil, Config{TodoState: ts})
 	msgs := []llm.Message{
 		{Role: llm.RoleSystem, Content: "system prompt"},
-		{Role: llm.RoleUser, Content: "## Current Todo Status\n[pending] Task A\n"},
-	}
+		{Role: llm.RoleUser, Content: "## Current Todo Status\n[pending] Task A\n"}}
 	loop.injectTodoStatus(&msgs)
 
 	if len(msgs) != 3 {
@@ -797,29 +767,28 @@ func TestInjectTodoStatus_NoNilTodoState(t *testing.T) {
 }
 
 // ============================================================================
-// todo_write 执行后计数器重置
+// todo_create / todo_update 执行后计数器重置
 // ============================================================================
 
 func TestExecuteTodoWrite_ResetsReminderCounters(t *testing.T) {
 	ts := todo.NewTodoState()
 	registry := tool.NewRegistry()
-	registry.Register(tool.Wrap(&tool.TodoWrite{}))
+	registry.Register(tool.Wrap(&tool.TodoCreate{})); registry.Register(tool.Wrap(&tool.TodoUpdate{}))
 	loop := New(nil, registry, Config{TodoState: ts})
 	loop.turnsSinceLastTodoWrite = 7
 	loop.turnsSinceLastTodoReminder = 5
 	loop.lastChanceTodoInjected = true
 
 	ch := make(chan TurnEvent, 2)
-	result := loop.executeTodoWrite(context.Background(), llm.ToolCall{
+	result := loop.executeTodoMutate(context.Background(), llm.ToolCall{
 		ID:   "call_1",
-		Name: "todo_write",
+		Name: "todo_create",
 		Arguments: `{"todos": [
-			{"content": "Task A", "status": "in_progress", "activeForm": "Doing A"}
-		]}`,
-	}, nil, ch)
+			{"content": "Task A", "status": "in_progress"}
+		]}`}, nil, ch)
 
 	if result == nil || result.Error != nil {
-		t.Fatalf("todo_write failed: %v", result)
+		t.Fatalf("todo_create failed: %v", result)
 	}
 	if loop.turnsSinceLastTodoWrite != 0 {
 		t.Errorf("turnsSinceLastTodoWrite = %d, want 0", loop.turnsSinceLastTodoWrite)
@@ -828,7 +797,7 @@ func TestExecuteTodoWrite_ResetsReminderCounters(t *testing.T) {
 		t.Errorf("turnsSinceLastTodoReminder = %d, want 0", loop.turnsSinceLastTodoReminder)
 	}
 	if loop.lastChanceTodoInjected {
-		t.Error("lastChanceTodoInjected should be false after successful todo_write")
+		t.Error("lastChanceTodoInjected should be false after successful todo_create / todo_update")
 	}
 }
 
@@ -853,31 +822,30 @@ func TestTodoLastChanceText_Format(t *testing.T) {
 func TestExecuteTodoWrite_ResetsLastChanceFlag(t *testing.T) {
 	ts := todo.NewTodoState()
 	registry := tool.NewRegistry()
-	registry.Register(tool.Wrap(&tool.TodoWrite{}))
+	registry.Register(tool.Wrap(&tool.TodoCreate{})); registry.Register(tool.Wrap(&tool.TodoUpdate{}))
 	loop := New(nil, registry, Config{TodoState: ts})
 	loop.lastChanceTodoInjected = true
 
 	ch := make(chan TurnEvent, 2)
-	result := loop.executeTodoWrite(context.Background(), llm.ToolCall{
+	result := loop.executeTodoMutate(context.Background(), llm.ToolCall{
 		ID:   "call_1",
-		Name: "todo_write",
+		Name: "todo_update",
 		Arguments: `{"todos": [
-			{"content": "Task A", "status": "completed", "activeForm": "Did A"}
-		]}`,
-	}, nil, ch)
+			{"content": "Task A", "status": "completed"}
+		]}`}, nil, ch)
 
 	if result == nil || result.Error != nil {
-		t.Fatalf("todo_write failed: %v", result)
+		t.Fatalf("todo_update failed: %v", result)
 	}
 	if loop.lastChanceTodoInjected {
-		t.Error("lastChanceTodoInjected should be false after successful todo_write")
+		t.Error("lastChanceTodoInjected should be false after successful todo_create / todo_update")
 	}
 }
 
 func TestExecuteTodoWrite_UpdateByIDWithDifferentContent(t *testing.T) {
 	// ID 优先匹配：即使 content 有差异，只要 ID 匹配就应该 UPDATE 而非 CREATE。
 	registry := tool.NewRegistry()
-	registry.Register(tool.Wrap(&tool.TodoWrite{}))
+	registry.Register(tool.Wrap(&tool.TodoCreate{})); registry.Register(tool.Wrap(&tool.TodoUpdate{}))
 
 	ts := todo.NewTodoState()
 	loop := New(nil, registry, Config{TodoState: ts})
@@ -885,14 +853,13 @@ func TestExecuteTodoWrite_UpdateByIDWithDifferentContent(t *testing.T) {
 	ch := make(chan TurnEvent, 4)
 
 	// Call 1: create 2 items — 第二个未完成任务防止 allDone 清空
-	_ = loop.executeTodoWrite(context.Background(), llm.ToolCall{
+	_ = loop.executeTodoMutate(context.Background(), llm.ToolCall{
 		ID:   "call_1",
-		Name: "todo_write",
+		Name: "todo_create",
 		Arguments: `{"todos": [
-			{"content": "Fix the login bug", "status": "in_progress", "activeForm": "Fixing login"},
-			{"content": "Keep this pending", "status": "pending", "activeForm": "Keeping pending"}
-		]}`,
-	}, nil, ch)
+			{"content": "Fix the login bug", "status": "in_progress"},
+			{"content": "Keep this pending", "status": "pending"}
+		]}`}, nil, ch)
 
 	// Drain event
 	ev := <-ch
@@ -908,17 +875,16 @@ func TestExecuteTodoWrite_UpdateByIDWithDifferentContent(t *testing.T) {
 		t.Fatal("expected non-empty ID on created item")
 	}
 
-	// Call 2: update by ID — content slightly different, should still UPDATE
-	result := loop.executeTodoWrite(context.Background(), llm.ToolCall{
+	// Call 2: update by ID — should UPDATE (content diff irrelevant when ID matches)
+	result := loop.executeTodoMutate(context.Background(), llm.ToolCall{
 		ID:   "call_2",
-		Name: "todo_write",
+		Name: "todo_update",
 		Arguments: fmt.Sprintf(`{"todos": [
-			{"id": %q, "content": "Fix login bug", "status": "completed", "activeForm": "Fixed login"}
-		]}`, assignedID),
-	}, nil, ch)
+			{"id": %q, "status": "completed"}
+		]}`, assignedID)}, nil, ch)
 
 	if result == nil || result.Error != nil {
-		t.Fatalf("todo_write failed: %v", result)
+		t.Fatalf("todo_update failed: %v", result)
 	}
 	if !contains(result.Content, "1 updated") {
 		t.Errorf("expected '1 updated' in result, got: %s", result.Content)

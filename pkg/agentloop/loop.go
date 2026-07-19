@@ -69,7 +69,7 @@ type Config struct {
 	AgentsMD string
 
 	// TodoState session 级 todo 状态，跨 Loop 持久。
-	// nil → todo_write 工具禁用。
+	// nil → todo_update 工具禁用。
 	TodoState *todo.TodoState
 
 	// Model 覆盖 LLM Client 的默认 model。空 = 使用 Client 默认。
@@ -136,10 +136,10 @@ var warnThresholds = map[int]bool{3: true, 5: true}
 var advisorWarnThresholds = map[int]bool{3: true, 4: true}
 
 // todoReminderInterval 定义 todo 周期性提醒的间隔（assistant turn 数）。
-// 首次提醒在 idleTodoWrite（距上次 todo_write 达到此值）时触发，
+// 首次提醒在 idleTodoWrite（距上次 todo_update 达到此值）时触发，
 // 后续提醒至少间隔 idleTodoReminder 轮。
 const (
-	idleTodoWrite    = 2 // 超过此值无 todo_write → 注入提醒
+	idleTodoWrite    = 2 // 超过此值无 todo_update → 注入提醒
 	idleTodoReminder = 2 // 两次提醒之间的最小间隔
 )
 
@@ -202,14 +202,14 @@ type Loop struct {
 
 	// ── todo 周期性提醒（会话级，跨 Run() 持久化）──
 
-	// turnsSinceLastTodoWrite 记录自上次 todo_write 调用以来的 assistant turn 数。
+	// turnsSinceLastTodoWrite 记录自上次 todo_update 调用以来的 assistant turn 数。
 	turnsSinceLastTodoWrite int
 
 	// turnsSinceLastTodoReminder 记录自上次注入 todo 提醒以来的 assistant turn 数。
 	turnsSinceLastTodoReminder int
 	// lastChanceTodoInjected 在 loop 即将以 ReasonCompleted 终止时，
 	// 若检测到残留的非 completed todo 项，注入一次"最后机会"提醒后置为 true。
-	// todo_write 成功执行时重置为 false。防止 LLM 忘记最后一次 todo 更新导致残留。
+	// todo_update 成功执行时重置为 false。防止 LLM 忘记最后一次 todo 更新导致残留。
 	lastChanceTodoInjected bool
 
 
@@ -616,7 +616,7 @@ func (l *Loop) Run(ctx context.Context, messages []llm.Message) <-chan TurnEvent
 			}
 
 			// 最后机会：终止前检测残留的非 completed todo 项，
-			// 注入提醒并给 LLM 一次额外 turn 调用 todo_write。
+			// 注入提醒并给 LLM 一次额外 turn 调用 todo_update。
 			if l.config.TodoState != nil && !l.lastChanceTodoInjected {
 				snapshot := l.config.TodoState.Snapshot()
 				hasIncomplete := false
@@ -656,7 +656,7 @@ func (l *Loop) Run(ctx context.Context, messages []llm.Message) <-chan TurnEvent
 			state.Messages = append(state.Messages, toolMessages...)
 		}
 
-		// 更新 todo 周期性提醒计数器（检测本轮是否调用了 todo_write）
+		// 更新 todo 周期性提醒计数器（检测本轮是否调用了 todo_update）
 		l.updateTodoCounters(toolCalls)
 
 			if execErr != nil {
@@ -687,7 +687,7 @@ func (l *Loop) Run(ctx context.Context, messages []llm.Message) <-chan TurnEvent
 				tick := l.config.Compactor.Compact(ctx, &state.Messages, lastPromptTokens)
 				compacted = true
 
-				// compaction 可能移除了旧的 todo_write 结果。
+				// compaction 可能移除了旧的 todo_update 结果。
 			// compaction 已经破坏了前缀缓存，此处 Update 不产生额外成本，
 			// 且避免 stale todo-status 消息累积。
 			if l.config.TodoState != nil {
@@ -742,7 +742,7 @@ func (l *Loop) Run(ctx context.Context, messages []llm.Message) <-chan TurnEvent
 			}
 		}
 
-		// 周期性 todo 提醒：距上次 todo_write 超过阈值时注入当前状态快照
+		// 周期性 todo 提醒：距上次 todo_update 超过阈值时注入当前状态快照
 		l.maybeInjectTodoReminder(state)
 		}
 
@@ -815,7 +815,7 @@ func sendEvent(ctx context.Context, ch chan<- TurnEvent, ev TurnEvent) bool {
 func todoLastChanceText(summary string) string {
 	return summary + "\n\n" +
 		"[system] You are about to finish, but your todo list still has incomplete tasks. " +
-		"If all work is actually done, call todo_write to mark them as 'completed' before giving your final answer. " +
+		"If all work is actually done, call todo_update to mark them as 'completed' before giving your final answer. " +
 		"If work remains, continue working. This is your last automatic reminder."
 }
 
@@ -845,7 +845,7 @@ func todoStatusText(summary string) string {
 // todoReminderText 构造 todo 提醒消息文本：状态摘要 + 提醒引导。
 func todoReminderText(summary string, turnsSince int) string {
 	return summary + "\n\n" +
-		fmt.Sprintf("[system] %d turns since last todo_write. Your todo list is stale — call todo_write NOW to update task statuses. Mark completed tasks as 'completed' and set the next pending task to 'in_progress'.", turnsSince)
+		fmt.Sprintf("[system] %d turns since last todo_update. Your todo list is stale — call todo_update NOW to update task statuses. Mark completed tasks as 'completed' and set the next pending task to 'in_progress'.", turnsSince)
 }
 
 // findTodoStatusIndex 返回最后一条 todo-status 消息的索引，-1 表示不存在。
@@ -862,7 +862,7 @@ func findTodoStatusIndex(msgs []llm.Message) int {
 
 // updateTodoCounters 在每轮工具执行后更新 todo 提醒计数器。
 // 当无活跃任务时保持计数器归零（无需提醒）；否则递增。
-// 注意：todo_write 成功执行时计数器已在 executeTodoWrite 内重置，
+// 注意：todo_create / todo_update 成功执行时计数器已在 executeTodoMutate 内重置，
 // 此处仅处理递增逻辑。
 func (l *Loop) updateTodoCounters(toolCalls []llm.ToolCall) {
 	// 无活跃任务时无需提醒，保持计数器归零
@@ -876,7 +876,7 @@ func (l *Loop) updateTodoCounters(toolCalls []llm.ToolCall) {
 	l.turnsSinceLastTodoReminder++
 }
 
-// maybeInjectTodoReminder 在距上次 todo_write 超过 idleTodoWrite 轮后，
+// maybeInjectTodoReminder 在距上次 todo_update 超过 idleTodoWrite 轮后，
 // 向 messages 追加当前 todo 状态快照 + 提醒文字。
 // 使用 Append 策略避免破坏前缀缓存。
 // 两次提醒之间至少间隔 idleTodoReminder 轮。
@@ -894,8 +894,8 @@ func (l *Loop) maybeInjectTodoReminder(state *LoopState) {
 		return
 	}
 
-	// 注入提醒后重置提醒计数器（但保留 todo_write 计数器，
-	// 因为提醒不能替代真正的 todo_write 更新）
+	// 注入提醒后重置提醒计数器（但保留 todo_update 计数器，
+	// 因为提醒不能替代真正的 todo_update 更新）
 	l.turnsSinceLastTodoReminder = 0
 
 	msg := todoReminderText(l.config.TodoState.StatusSummary(), l.turnsSinceLastTodoWrite)
