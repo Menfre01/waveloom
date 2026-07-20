@@ -118,7 +118,7 @@ func RunProbes(ctx context.Context, commands []string) []ProbeResult {
 // 探测结果缓存
 // ---------------------------------------------------------------------------
 
-const probeCacheTTL = 24 * time.Hour
+const probeCacheTTL = 15 * time.Minute
 
 // probeCache 是持久化到 ~/.waveloom/probe-cache.json 的缓存结构。
 type probeCache struct {
