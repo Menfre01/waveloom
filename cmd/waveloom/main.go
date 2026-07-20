@@ -371,8 +371,14 @@ func resolveSettingsPaths(explicit string) (globalPath, projectPath string) {
 // cliModel 为 --model 命令行参数，非空时覆盖配置文件中的模型名。
 // cliProvider 为 --provider 命令行参数，非空时覆盖配置文件中的 provider 并查找 profiles。
 func createLLMClient(globalPath, projectPath, cliModel, cliProvider string, loc Locale) (llm.Client, llm.ClientConfig, *llm.LLMSettings, error) {
-	globalSettings, _ := llm.LoadSettingsIfExists(globalPath)
-	projectSettings, _ := llm.LoadSettingsIfExists(projectPath)
+	globalSettings, err := llm.LoadSettingsIfExists(globalPath)
+	if err != nil {
+		panic(fmt.Sprintf("settings parse error in %s: %v", globalPath, err))
+	}
+	projectSettings, err := llm.LoadSettingsIfExists(projectPath)
+	if err != nil {
+		panic(fmt.Sprintf("settings parse error in %s: %v", projectPath, err))
+	}
 
 	merged := llm.MergeLLMSettings(globalSettings, projectSettings)
 	if merged != nil {
@@ -544,8 +550,14 @@ type fileSettingsProvider struct {
 }
 
 func (p *fileSettingsProvider) LoadLLM() (*llm.LLMSettings, error) {
-	globalSettings, _ := llm.LoadSettingsIfExists(p.globalPath)
-	projectSettings, _ := llm.LoadSettingsIfExists(p.projectPath)
+	globalSettings, err := llm.LoadSettingsIfExists(p.globalPath)
+	if err != nil {
+		panic(fmt.Sprintf("settings parse error in %s: %v", p.globalPath, err))
+	}
+	projectSettings, err := llm.LoadSettingsIfExists(p.projectPath)
+	if err != nil {
+		panic(fmt.Sprintf("settings parse error in %s: %v", p.projectPath, err))
+	}
 	merged := llm.MergeLLMSettings(globalSettings, projectSettings)
 	if merged != nil {
 		merged.ResolveProfile()
