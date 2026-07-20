@@ -4520,6 +4520,23 @@ func (m *model) reconfigureLLMClientForProvider(newProvider string, settings *ll
 		m.initialModel = ""
 	}
 
+
+	// 重置余额状态，避免旧 provider 的余额残留
+	m.hudBalance = ""
+	m.hudBalanceAvail = false
+
+	// 异步查询新 provider 余额
+	if client.SupportsBalance() {
+		program := m.program
+		go func() {
+			if balance, err := client.GetBalance(context.Background()); err == nil && balance != nil {
+				if program != nil {
+					program.Send(agentloop.BalanceUpdate{Balance: balance})
+				}
+			}
+		}()
+	}
+
 	m.rebuildSlashRegistry()
 
 	if m.loop != nil {
