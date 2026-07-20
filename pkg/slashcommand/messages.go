@@ -38,6 +38,7 @@ type SlashMessages struct {
 	ProviderUnknown           string // 含 %s
 	ProviderSwitched          string // 含 %s, %s
 	ProviderNoProfiles        string
+	ProviderNotConfigured     string
 	ProviderConfigReadFailed  string // 含 %v
 	ProviderConfigSaveFailed  string // 含 %v
 	ProviderModelNotice       string // 含 %s

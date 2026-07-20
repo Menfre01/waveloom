@@ -59,9 +59,7 @@ func (s *LLMSettings) ResolveProfile() {
 	if p.BaseURL != "" {
 		s.BaseURL = p.BaseURL
 	}
-	if p.ExtraParams != nil {
-		s.ExtraParams = p.ExtraParams
-	}
+	s.ExtraParams = p.ExtraParams
 }
 
 // RetrySettings 对应 settings.json 中的 retry 配置块。

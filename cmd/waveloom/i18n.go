@@ -85,6 +85,7 @@ type Messages struct {
 	PickerSelectTheme  string
 	PickerSelectModel  string
 	PickerSelectLocale string
+	PickerSelectProvider string
 	PickerThemeAuto    string
 
 	// ── File picker ──────────────────────────────────────
@@ -183,6 +184,7 @@ type Messages struct {
 	ProviderUnknown           string // 含 %s
 	ProviderSwitched          string // 含 %s, %s
 	ProviderNoProfiles        string
+	ProviderNotConfigured     string
 	ProviderConfigReadFailed  string // 含 %v
 	ProviderConfigSaveFailed  string // 含 %v
 	ProviderModelNotice       string // 含 %s
@@ -312,6 +314,7 @@ var zhCN = Messages{
 	PickerSelectTheme:  "▲ 选择主题",
 	PickerSelectModel:  "▲ 选择模型",
 	PickerSelectLocale: "▲ 选择界面语言",
+	PickerSelectProvider: "▲ 选择 Provider",
 	PickerThemeAuto:    "Auto（自动检测终端背景色）",
 	PickerScanning:     "正在扫描文件...",
 	PickerNoResults:    "无匹配文件",
@@ -429,6 +432,7 @@ var zhCN = Messages{
 	ProviderUnknown:           "未知 Provider: %s。可用: kimi, deepseek, openai",
 	ProviderSwitched:          "Provider 已从 %s 切换到 %s。",
 	ProviderNoProfiles:        "配置文件未设置 provider profiles。请先通过设置向导配置。",
+	ProviderNotConfigured:     "(未配置)",
 	ProviderConfigReadFailed:  "读取配置失败: %v",
 	ProviderConfigSaveFailed:  "保存配置失败: %v",
 	ProviderModelNotice:       "当前模型: %s。如有需要请执行 /model 切换。",
@@ -600,6 +604,7 @@ var enUS = Messages{
 	PickerSelectTheme:  "▲ Select Theme",
 	PickerSelectModel:  "▲ Select Model",
 	PickerSelectLocale: "▲ Select Language",
+	PickerSelectProvider: "▲ Select Provider",
 	PickerThemeAuto:    "Auto (detect terminal background)",
 	PickerScanning:     "Scanning files...",
 	PickerNoResults:    "No files found",
@@ -716,6 +721,7 @@ var enUS = Messages{
 	ProviderUnknown:           "Unknown Provider: %s. Available: kimi, deepseek, openai",
 	ProviderSwitched:          "Provider switched from %s to %s.",
 	ProviderNoProfiles:        "No provider profiles configured. Please run setup first.",
+	ProviderNotConfigured:     "(not configured)",
 	ProviderConfigReadFailed:  "Failed to read config: %v",
 	ProviderConfigSaveFailed:  "Failed to save config: %v",
 	ProviderModelNotice:       "Current model: %s. Use /model to switch if needed.",
