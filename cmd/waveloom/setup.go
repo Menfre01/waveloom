@@ -225,7 +225,7 @@ func (m *setupModel) handleStepComplete() {
 		case "kimi":
 			m.state.model = "kimi-k3"
 			m.state.subModel = "kimi-k2.7-code-highspeed"
-			m.state.baseURL = "https://api.moonshot.cn/v1"
+			m.state.baseURL = "https://api.kimi.com/coding/v1"
 		}
 		m.step++
 	case 3:

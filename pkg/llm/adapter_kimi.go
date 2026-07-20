@@ -10,7 +10,7 @@ import (
 )
 
 // kimiAdapter 实现 providerAdapter，使用 Kimi 的 OpenAI 兼容 API。
-// Kimi API 端点已包含 /v1 前缀（https://api.moonshot.cn/v1），
+// Kimi API 端点已包含 /v1 前缀（https://api.kimi.com/coding/v1），
 // 路径拼接方式同 OpenAI adapter。
 type kimiAdapter struct {
 	model          string
@@ -24,7 +24,7 @@ type kimiAdapter struct {
 func newKimiAdapter(cfg ClientConfig) *kimiAdapter {
 	baseURL := cfg.BaseURL
 	if baseURL == "" {
-		baseURL = "https://api.moonshot.cn/v1"
+		baseURL = "https://api.kimi.com/coding/v1"
 	}
 	return &kimiAdapter{
 		model:          cfg.Model,

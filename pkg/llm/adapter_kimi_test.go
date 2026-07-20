@@ -94,8 +94,8 @@ func TestKimiBuildRequestDefaultBaseURL(t *testing.T) {
 		Model:  "kimi-k3",
 	})
 
-	if adapter.BaseURL() != "https://api.moonshot.cn/v1" {
-		t.Errorf("default BaseURL = %q, want https://api.moonshot.cn/v1", adapter.BaseURL())
+	if adapter.BaseURL() != "https://api.kimi.com/coding/v1" {
+		t.Errorf("default BaseURL = %q, want https://api.kimi.com/coding/v1", adapter.BaseURL())
 	}
 }
 
