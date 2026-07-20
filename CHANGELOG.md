@@ -2,6 +2,27 @@
 
 
 
+## [v0.2.0-beta.2] — 2026-07-20
+
+### 新增功能
+- **`/provider` 交互式选择覆盖层**：`/provider` 无参时弹出 ↑↓ 选择 / Enter 切换 / Esc 取消覆盖层，与 `/model` picker 体验一致
+- **Shell 工具超时提升**：默认超时 120s→300s，最大超时 600s→1800s，支持更长时间的构建/测试任务
+- **`shell_prompt` 增加 rg 引导**：系统提示引导模型优先使用 `rg`（ripgrep）搜索代码，与环境探测结果闭环
+
+### 修复
+- **Kimi baseUrl 修正**：默认地址改为 `https://api.kimi.com/coding/v1`
+- **Provider 切换余额残留**：切换 provider 后异步查询新余额，避免显示旧 provider 残留数据
+- **Hook matcher 大小写不敏感**：`Match()` 使用 `strings.EqualFold`，兼容 Claude Code 和 Waveloom 命名惯例
+- **Resume viewport 系统消息泄漏**：移除压缩路径冗余 todo 注入，新增 5 条过滤规则与 live TUI 静默行为对齐
+- **`settings.json` 解析错误静默回退 → 立即 panic**：配置损坏时不再悄悄进入 TUI，直接暴露问题
+
+### 重构
+- **Subagent model 参数收紧为 pro/flash enum**：不再接受实际模型名，新增 `SettingsProvider` + `resolveModel` 动态映射；Explore 锁定 flash，evaluate/verification 锁定 pro；fork 最大轮次 200→50；收紧 subagent 使用场景提示
+- **环境探测缓存 TTL 缩短**：24 小时 → 15 分钟，更快反映工具链变化
+
+---
+
+📝 [Changelog (English)](https://github.com/Menfre01/waveloom/blob/dev/CHANGELOG.en.md)
 ## [v0.2.0-beta.1] — 2026-07-20
 
 ### 新增功能
