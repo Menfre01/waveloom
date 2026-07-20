@@ -2,6 +2,25 @@
 
 
 
+## [v0.2.0-beta.2] — 2026-07-20
+
+### Added
+- **`/provider` interactive picker overlay**: `/provider` without arguments now opens an ↑↓ select / Enter switch / Esc cancel overlay, matching the `/model` picker experience
+- **Shell tool timeout increase**: Default timeout 120s→300s, maximum timeout 600s→1800s, supporting longer build/test tasks
+- **`shell_prompt` rg guidance**: System prompt now guides the model to prefer `rg` (ripgrep) for code search, closing the loop with environment detection
+
+### Fixed
+- **Kimi baseUrl corrected**: Default URL changed to `https://api.kimi.com/coding/v1`
+- **Provider switch balance residue**: After switching providers, async query new balance to avoid displaying stale provider data
+- **Hook matcher case-insensitive**: `Match()` now uses `strings.EqualFold`, compatible with both Claude Code and Waveloom naming conventions
+- **Resume viewport system message leak**: Removed redundant todo injection in compaction path, added 5 filter rules aligned with live TUI silent behavior
+- **`settings.json` parse error silent fallback → immediate panic**: Corrupted config no longer silently enters TUI; errors are surfaced immediately
+
+### Changed
+- **Subagent model parameter tightened to pro/flash enum**: No longer accepts actual model names; added `SettingsProvider` + `resolveModel` dynamic mapping; Explore locked to flash, evaluate/verification locked to pro; fork max turns 200→50; tightened subagent usage guidance
+- **Environment probe cache TTL shortened**: 24 hours → 15 minutes, reflecting toolchain changes faster
+
+---
 ## [v0.2.0-beta.1] — 2026-07-20
 
 ### Added
