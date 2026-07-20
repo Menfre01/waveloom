@@ -4548,8 +4548,14 @@ type tuiSettingsStore struct {
 }
 
 func (s *tuiSettingsStore) LoadLLM() (*llm.LLMSettings, error) {
-	global, _ := llm.LoadSettingsIfExists(s.globalPath)
-	project, _ := llm.LoadSettingsIfExists(s.projectPath)
+	global, err := llm.LoadSettingsIfExists(s.globalPath)
+	if err != nil {
+		panic(fmt.Sprintf("settings parse error in %s: %v", s.globalPath, err))
+	}
+	project, err := llm.LoadSettingsIfExists(s.projectPath)
+	if err != nil {
+		panic(fmt.Sprintf("settings parse error in %s: %v", s.projectPath, err))
+	}
 	return llm.MergeLLMSettings(global, project), nil
 }
 
