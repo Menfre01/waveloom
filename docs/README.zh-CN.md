@@ -64,7 +64,7 @@ waveloom
 ```
 
 > [!IMPORTANT]
-> API Key 直连 DeepSeek / OpenAI，代码不经过第三方。写文件和执行命令前需要你确认。
+> API Key 直连 DeepSeek / Kimi / OpenAI，代码不经过第三方。写文件和执行命令前需要你确认。
 
 ---
 
@@ -77,12 +77,12 @@ waveloom
 | 上下文压缩 | 单调不变式 — `compactionDecisionSet` + 三游标，每条消息只压缩一次 | 每轮独立压缩，无持久性保证 | 前缀字节跨压缩保留，但无逐消息决策追踪 |
 | Plan 模式 | Guard 限制只写 plan 文件，构建工具自动放行 | 仅 plan 文件可写，富交互审批 UI | `planmode.Policy` + bash/MCP 信任门；注入 Marker 字符串；无 plan 文件 |
 | 子代理 | Fork（继承上下文）/ Cold：Evaluate（代码评审）• Explore（只读）• Verification（对抗验证）• Advisor（深度分析） | Fork + Cold + In-process + Coordinator | `task` 工具嵌套 agent，后台任务通过 job manager |
-| 运行时 | Go 单二进制 ~18MB，零依赖 | Node.js | Go 二进制 + Desktop 应用，外部 plugin 宿主 |
+| 运行时 | Go 单二进制 ~20MB，零依赖 | Node.js | Go 二进制 + Desktop 应用，外部 plugin 宿主 |
 | MCP | 完整客户端（配置、传输、工具代理），与内置工具统一注册 | 原生 MCP 支持 | 原生 MCP 支持 |
-| 权限模型 | 8 步决策管线，3 级命令安全分类（RiskNone/RiskLow/RiskHigh） | 8 源规则合并 + LLM 分类器自动审批 | Policy + Approver，9 阶段执行管线，shellsafe readOnly 检测 |
+| 权限模型 | 7 步决策管线，4 级命令安全分类（RiskNone/RiskLow/RiskMedium/RiskHigh） | 8 源规则合并 + LLM 分类器自动审批 | Policy + Approver，9 阶段执行管线，shellsafe readOnly 检测 |
 | TUI 打磨 | 流式推理、rich diff、权限对话框、`@` 模糊选择器、`/` 面板、i18n、主题切换 — 专业级 | 原生 TUI（Ink/React），标杆水平 | 功能完备的 TUI，不同 UX 范式 |
 
-**选 Waveloom 如果**：用 DeepSeek、想要 `.claude/skills/` + `.claude/plugins/` 开箱即用、追求专业终端体验但不想白烧缓存未命中费用。  
+**选 Waveloom 如果**：追求专业终端体验，需要多 Provider 支持（DeepSeek / Kimi / OpenAI），想要 `.claude/skills/` + `.claude/plugins/` 开箱即用，不想白烧缓存未命中费用。  
 **选 Claude Code 如果**：用 Anthropic API、需要 coordinator 模式、重度依赖 Claude 生态。  
 **选 Reasonix 如果**：需要桌面 GUI、QQ Bot 集成、或更大的社区生态。
 
@@ -102,7 +102,7 @@ waveloom
 - **Checkpoint/Rewind 时间旅行** — 回退到任意历史消息，同时恢复所有文件变更。Fork 模式原 session 完整保留，历史永不丢失
 - **Plan 模式** — 先规划后执行的二阶段工作流：探索设计 → 审批 → 编码。`Shift+Tab` 一键进入/退出，Guard 写保护拦截。
 - **Advisor 模式** — 成本优化的双模型路由：flash 处理日常编码，plan mode 和代码审查时自动切换 pro。在 settings 中设置 `"mode": "advisor"` 开启。
-- **13 个内置工具** — `read_file` / `write_file` / `edit_file` / `bash` / `web_fetch` / `web_search` / `ask_user_question` / `enter_plan_mode` / `exit_plan_mode` / `skill` / `agent` / `kill_background_task` / `todo_write`
+- **14 个内置工具** — `read` / `write` / `edit` / `bash` / `web_fetch` / `web_search` / `ask_user_question` / `enter_plan_mode` / `exit_plan_mode` / `skill` / `agent` / `kill_background_task` / `todo_create` / `todo_update`
 - **i18n 多语言** — 完整中英双语界面，`--locale` CLI 参数 / `/locale` 命令，LANG 环境变量自动检测
 
 ---
@@ -113,10 +113,10 @@ waveloom
 输入 `/model` 选择，或 `waveloom --model deepseek-v4-flash`。
 
 **Q: 怎么切换 Provider？**  
-输入 `/provider` 查看可用 Provider，或 `/provider openai` 切换。Profile 配置在 `settings.json` 的 `llm.profiles` 中。
+输入 `/provider` 查看可用 Provider（DeepSeek、Kimi、OpenAI），或 `/provider kimi` 切换。Profile 配置在 `settings.json` 的 `llm.profiles` 中。
 
 **Q: API Key 安全吗？**  
-Key 存储在本地 `~/.waveloom/`，直连 DeepSeek / OpenAI，不经过任何第三方服务器。
+Key 存储在本地 `~/.waveloom/`，直连 DeepSeek / Kimi / OpenAI，不经过任何第三方服务器。
 
 **Q: 怎么切换语言？**  
 输入 `/locale` 切换中英文界面，或 `waveloom --locale en-US`。设置自动保存到 `settings.json`。
@@ -150,6 +150,16 @@ Go 1.25+，`make build` / `make test`。项目结构及贡献指南详见 [`CONT
 基于 [Bubble Tea](https://github.com/charmbracelet/bubbletea)（TUI 框架）、
 [Glamour](https://github.com/charmbracelet/glamour)（Markdown 渲染）、
 [Lip Gloss](https://github.com/charmbracelet/lipgloss)（终端样式）构建 — [Charm](https://charm.sh) 生态项目。
+
+
+## 推荐工具
+
+以下第三方工具非必需，但能显著提升 Waveloom 使用体验：
+
+| 工具 | 说明 |
+|------|------|
+| [ripgrep](https://github.com/BurntSushi/ripgrep) (`rg`) | 高性能递归 grep，比 `grep -r` 快约 10 倍。Waveloom 在代码搜索时优先使用 `rg`。 |
+| [RTK](https://github.com/rtk-ai/rtk) (`rtk`) | Token 优化的 CLI 代理——将常用命令改写为紧凑等价形式，节省 60–90% 输入 token。Waveloom 通过 `~/.claude/hooks/rtk-rewrite.sh` 加载。 |
 
 ---
 

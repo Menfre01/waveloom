@@ -66,7 +66,7 @@ waveloom
 ```
 
 > [!IMPORTANT]
-> API key connects directly to DeepSeek / OpenAI — your code never passes through a third-party server. Every file write and command execution requires your confirmation.
+> API key connects directly to DeepSeek / Kimi / OpenAI — your code never passes through a third-party server. Every file write and command execution requires your confirmation.
 
 ---
 
@@ -79,12 +79,12 @@ waveloom
 | Compaction | Monotonic — `compactionDecisionSet` + triple cursor, each message compacted once | Per-turn independent, no durability guarantee | Prefix bytes preserved across compact, but no per-message decision tracking |
 | Plan mode | Guard restricts writes to plan file only; build tools auto-allowed | Write restricted to plan file only; rich exit UI | `planmode.Policy` with trust gates for bash/MCP; Marker string injected; no plan file |
 | Sub-agents | Fork (inherits context) / Cold: Evaluate (code review) • Explore (read-only) • Verification (adversarial) • Advisor (deep analysis) | Fork + Cold + In-process + Coordinator | `task` tool with nested agent, background via job manager |
-| Runtime | Go binary ~18MB, zero deps | Node.js | Go binary + Desktop app, external plugin host |
+| Runtime | Go binary ~20MB, zero deps | Node.js | Go binary + Desktop app, external plugin host |
 | MCP | Full client (config, transport, tool proxy), registered alongside built-in tools | Native MCP support | Native MCP support |
-| Permission | 8-step pipeline, 3-tier command safety (RiskNone/RiskLow/RiskHigh) | 8-source rule merge + LLM classifier auto-approval | Policy + Approver, 9-stage execute pipeline, shellsafe readOnly detect |
+| Permission | 7-step pipeline, 4-tier command safety (RiskNone/RiskLow/RiskMedium/RiskHigh) | 8-source rule merge + LLM classifier auto-approval | Policy + Approver, 9-stage execute pipeline, shellsafe readOnly detect |
 | TUI polish | Streaming reasoning, rich diff, permission dialogs, `@` fuzzy picker, `/` palette, i18n, theme toggle — premium terminal UX | Native TUI (Ink/React), gold standard | Functional TUI, different UX paradigm |
 
-**Choose Waveloom if**: you use DeepSeek, want `.claude/skills/` + `.claude/plugins/` drop-in, premium terminal UX without the cache miss cost.  
+**Choose Waveloom if**: you want premium terminal UX with multi-provider support (DeepSeek / Kimi / OpenAI), `.claude/skills/` + `.claude/plugins/` drop-in, without the cache miss cost.  
 **Choose Claude Code if**: you use Anthropic, need coordinator mode, deep in the Claude ecosystem.  
 **Choose Reasonix if**: you want a desktop GUI, QQ Bot integration, or a larger community ecosystem.
 
@@ -104,7 +104,7 @@ waveloom
 - **Checkpoint/Rewind** — Rewind to any previous message with full file state restoration. Fork mode preserves original session intact — history never lost.
 - **Plan Mode** — Two-stage workflow: explore & design first, implement after approval. `Shift+Tab` to enter/exit, Guard-enforced write protection.
 - **Advisor Mode** — Price-optimized dual-model routing: flash handles routine coding, pro auto-activates for plan mode and code review. Enable with `"mode": "advisor"` in settings.
-- **13 built-in tools** — `read_file` / `write_file` / `edit_file` / `bash` / `web_fetch` / `web_search` / `ask_user_question` / `enter_plan_mode` / `exit_plan_mode` / `skill` / `agent` / `kill_background_task` / `todo_write`.
+- **14 built-in tools** — `read` / `write` / `edit` / `bash` / `web_fetch` / `web_search` / `ask_user_question` / `enter_plan_mode` / `exit_plan_mode` / `skill` / `agent` / `kill_background_task` / `todo_create` / `todo_update`.
 - **i18n multilingual** — Full zh-CN / en-US bilingual UI. `--locale` CLI flag, `/locale` command, auto-detect from LANG.
 
 ---
@@ -115,10 +115,10 @@ waveloom
 Type `/model` in interactive mode, or `waveloom --model deepseek-v4-flash`.
 
 **Q: How do I switch LLM providers?**  
-Type `/provider` to list available providers, or `/provider openai` to switch. Profiles are configured in `settings.json` under `llm.profiles`.
+Type `/provider` to list available providers (DeepSeek, Kimi, OpenAI), or `/provider kimi` to switch. Profiles are configured in `settings.json` under `llm.profiles`.
 
 **Q: Is my API key safe?**  
-Stored locally at `~/.waveloom/`. Keys connect directly to DeepSeek / OpenAI — no third-party relay.
+Stored locally at `~/.waveloom/`. Keys connect directly to DeepSeek / Kimi / OpenAI — no third-party relay.
 
 **Q: How do I switch languages?**  
 Type `/locale` to toggle between Chinese and English, or `waveloom --locale zh-CN`. The setting persists automatically in `settings.json`.
@@ -152,6 +152,16 @@ Go 1.25+, `make build` / `make test`. See [`CONTRIBUTING.md`](./CONTRIBUTING.md)
 Built with [Bubble Tea](https://github.com/charmbracelet/bubbletea) (TUI framework),
 [Glamour](https://github.com/charmbracelet/glamour) (Markdown rendering),
 and [Lip Gloss](https://github.com/charmbracelet/lipgloss) (terminal styling) — part of the [Charm](https://charm.sh) ecosystem.
+
+
+## Recommended Tools
+
+These third-party tools are not required but significantly improve the Waveloom experience:
+
+| Tool | Description |
+|------|-------------|
+| [ripgrep](https://github.com/BurntSushi/ripgrep) (`rg`) | High-performance recursive grep, ~10x faster than `grep -r`. Waveloom prefers `rg` over `grep` for all code searches when available. |
+| [RTK](https://github.com/rtk-ai/rtk) (`rtk`) | Token-optimized CLI proxy — rewrites common commands to compact equivalents, saving 60–90% input tokens. Waveloom loads it via `~/.claude/hooks/rtk-rewrite.sh`. |
 
 ---
 
