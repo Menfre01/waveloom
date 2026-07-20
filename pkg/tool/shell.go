@@ -62,7 +62,7 @@ var shellSchema = json.RawMessage(`{
     },
     "timeout_ms": {
       "type": "integer",
-      "description": "Timeout in milliseconds (default: 120000, max: 600000)"
+      "description": "Timeout in milliseconds (default: 300000, max: 1800000)"
     },
     "run_in_background": {
       "type": "boolean",
@@ -86,7 +86,7 @@ var shellSchemaNoBackground = json.RawMessage(`{
     },
     "timeout_ms": {
       "type": "integer",
-      "description": "Timeout in milliseconds (default: 120000, max: 600000)"
+      "description": "Timeout in milliseconds (default: 300000, max: 1800000)"
     }
   },
   "required": ["command"]
@@ -101,9 +101,9 @@ func (t *Shell) Schema() json.RawMessage {
 
 func (t *Shell) ConcurrentSafe() bool { return false }
 
-// ToolTimeout 声明 Shell 工具的最大超时（10 分钟）。
+// ToolTimeout 声明 Shell 工具的最大超时（30 分钟）。
 // 这样 effectiveTimeout 会使用此值而非 Loop 默认值（5 min），
-// 确保用户传入的 timeout_ms 参数在 (5 min, 10 min] 区间内能正常生效。
+// 确保用户传入的 timeout_ms 参数在 (5 min, 30 min] 区间内能正常生效。
 func (t *Shell) ToolTimeout() time.Duration {
 	return time.Duration(MaxShellTimeoutMs) * time.Millisecond
 }
@@ -112,7 +112,7 @@ func (t *Shell) ToolTimeout() time.Duration {
 // 由 Registry.FormatToolPrompts() 注入 C1 system prompt。
 func (t *Shell) Description() string {
 	lines := []string{
-		"Execute a shell command in a subprocess. Configurable timeout (default 120s, max 600s), captures stdout and stderr.",
+		"Execute a shell command in a subprocess. Configurable timeout (default 300s, max 1800s), captures stdout and stderr.",
 	}
 	if t.AllowBg {
 		lines = append(lines,
@@ -133,8 +133,8 @@ func (t *Shell) Prompt() string { return shellPrompt }
 // ── 超时常量 ──
 
 const (
-	DefaultShellTimeoutMs = 120000
-	MaxShellTimeoutMs     = 600000
+	DefaultShellTimeoutMs = 300000
+	MaxShellTimeoutMs     = 1800000
 )
 
 // ── shellInterpreter ──
