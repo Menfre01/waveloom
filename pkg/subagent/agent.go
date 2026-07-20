@@ -37,13 +37,18 @@ type AgentParams struct {
 	Model        string `json:"model,omitempty"`          // 可选模型覆盖，空/无效 = 继承主模型
 }
 
+// SettingsProvider 抽象 settings.json 中 LLM 配置的读取。
+type SettingsProvider interface {
+	LoadLLM() (*llm.LLMSettings, error)
+}
+
 // AgentTool 实现 tool.TypedTool[AgentParams]，将任务委派给子 agent 执行。
 type AgentTool struct {
 	LLMClient       llm.Client
-	ValidModels     []string // 可用模型列表，空 = 不限制
-	DefaultModel    string   // 主模型名，advisor subagent 锁定使用（也用于 TUI suffix 显示）
-	DefaultSubModel string   // Explore 等轻量 agent 的默认模型
-	WorkspaceDir    string   // 工作目录，用于分类器路径检查
+	Settings        SettingsProvider
+	DefaultModel    string // 主模型名，advisor subagent 锁定使用（也用于 TUI suffix 显示）
+	DefaultSubModel string // Explore 等轻量 agent 的默认模型
+	WorkspaceDir    string // 工作目录，用于分类器路径检查
 
 	// subagent JSONL 持久化
 	sessionsDir string // session 目录路径
@@ -141,21 +146,27 @@ func (a *AgentTool) ConcurrentSafe() bool      { return true }
 // 子 agent 内部有多轮 LLM 调用 + 工具执行，需要比普通工具更充裕的时间。
 func (a *AgentTool) ToolTimeout() time.Duration { return 30 * time.Minute }
 
-// isValidModel 校验模型名称是否在允许列表中。
-// 空字符串视为有效（继承默认）；空列表视为不限制。
-func (a *AgentTool) isValidModel(m string) bool {
-	if m == "" {
-		return true
-	}
-	if len(a.ValidModels) == 0 {
-		return true
-	}
-	for _, v := range a.ValidModels {
-		if v == m {
-			return true
+// resolveModel 将 pro/flash 枚举映射到 settings 中的实际模型名。
+// "" 或 "pro" → 主模型；"flash" → 子模型；其他 → fallback DefaultModel。
+func (a *AgentTool) resolveModel(m string) string {
+	switch m {
+	case "flash":
+		if a.Settings != nil {
+			if s, err := a.Settings.LoadLLM(); err == nil && s.SubModel != "" {
+				return s.SubModel
+			}
+		}
+		if a.DefaultSubModel != "" {
+			return a.DefaultSubModel
+		}
+	case "pro", "":
+		if a.Settings != nil {
+			if s, err := a.Settings.LoadLLM(); err == nil && s.Model != "" {
+				return s.Model
+			}
 		}
 	}
-	return false
+	return a.DefaultModel
 }
 
 // Description and Schema.subagent_type cross-reference "## Agent Tool" in the
@@ -185,7 +196,8 @@ func (a *AgentTool) Schema() json.RawMessage {
     },
     "model": {
       "type": "string",
-      "description": "Optional model override. Available values are listed in the system prompt under 'Subagent Model Selection'. Omit or leave blank to use the default. Invalid values are ignored."
+      "enum": ["pro", "flash"],
+      "description": "Optional model override. 'pro' = full reasoning (default), 'flash' = faster/cheaper. Omit to use default."
     }
   },
   "required": ["description", "prompt"]
@@ -197,7 +209,7 @@ func (a *AgentTool) Schema() json.RawMessage {
 // ---------------------------------------------------------------------------
 
 const (
-	forkMaxTurns  = 200
+	forkMaxTurns  = 50  // 并行任务极少需要 >10 turns；50 与 cold agent 对齐防成本失控
 	coldMaxTurns  = 50
 	exploreMaxTurns = 25 // 只读搜索任务通常更快完成
 
@@ -409,11 +421,8 @@ func (a *AgentTool) Execute(ctx context.Context, p AgentParams) (*tool.ToolResul
 func (a *AgentTool) executeFork(ctx context.Context, p AgentParams) (*tool.ToolResult, error) {
 	cb := agentloop.EventCallbackFromContext(ctx)
 
-	// 模型安全兜底：无效/空 → 继承主模型
-	model := p.Model
-	if !a.isValidModel(model) {
-		model = ""
-	}
+	// 模型安全兜底：空/"pro"→主模型，"flash"→子模型，其他→主模型
+	model := a.resolveModel(p.Model)
 
 	// 从 context 获取父消息历史；buildForkMessages 会保留最后一条 assistant
 	// 并注入占位 tool_result 以保证缓存友好的 fork 构造。
@@ -493,19 +502,15 @@ func (a *AgentTool) executeCold(ctx context.Context, p AgentParams) (*tool.ToolR
 
 	// 模型锁定：每种子代理类型绑定固定模型，忽略 LLM 传入的 model 参数。
 	// 防止 LLM 误传 model 导致审查/验证质量降级或搜索成本不必要升高。
-	model := p.Model
 	switch p.SubagentType {
 	case "explore":
-		if a.DefaultSubModel != "" {
-			model = a.DefaultSubModel
-		}
+		// Explore 始终锁定 flash 模型（快速搜索，忽略 LLM 传入的 model）
+		p.Model = "flash"
 	case "evaluate", "verification":
-		// 始终锁定主模型：DefaultModel 非空则用，否则清空走 client 默认（即主模型）
-		model = a.DefaultModel
+		// 始终锁定主模型（推理质量优先）
+		p.Model = "pro"
 	}
-	if !a.isValidModel(model) {
-		model = ""
-	}
+	model := a.resolveModel(p.Model)
 
 	sp, extraDisallowed := agentConfig(p.SubagentType)
 	subRegistry := buildColdRegistry(extraDisallowed)

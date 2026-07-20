@@ -134,9 +134,8 @@ func main() {
 
 	// 6. 初始化 Tool Registry
 	registry := tool.NewRegistry()
-	subModelValidation := buildValidModels(llmSettings)
-	agentTool := registerBuiltinTools(registry, skillLoader, llmClient, subModelValidation, llmSettings.Model, llmSettings.SubModel, cwd)
-
+	settingsProvider := &fileSettingsProvider{projectPath: projectPath, globalPath: globalPath}
+	agentTool := registerBuiltinTools(registry, skillLoader, llmClient, llmSettings.Model, llmSettings.SubModel, cwd, settingsProvider)
 	// 8.5 启动 MCP Manager — 连接配置的 MCP Server，注册工具代理
 	mcpManager := mcp.NewManager(registry)
 	mcpManager.Start(context.Background(), mcp.LoadConfigs(cwd, homeDir))
@@ -186,9 +185,8 @@ func main() {
 	}
 
 	// 注入 subagent 模型选择指导（始终注入，agent 工具 schema 引用此项）。
-	// 有 SubModel 时生成完整版（含选择指导），无 SubModel 时简化版（仅告知默认模型）。
-	systemPrompt += buildModelSelectionSection(llmSettings.Model, llmSettings.SubModel)
-
+	// 注入 subagent 模型选择指导（使用 pro/flash 语义，不绑具体模型名）。
+	systemPrompt += buildModelSelectionSection()
 	// 注入 advisor mode 指导（仅 advisor mode 下）
 	if advisorMode {
 		systemPrompt += buildAdvisorModeSection(llmSettings.Model, llmSettings.SubModel)
@@ -304,7 +302,7 @@ func main() {
 
 
 // registerBuiltinTools 注册内置工具。
-func registerBuiltinTools(r tool.Registry, skillLoader *skill.Loader, llmClient llm.Client, validModels []string, defaultModel string, subModel string, cwd string) *subagent.AgentTool {
+func registerBuiltinTools(r tool.Registry, skillLoader *skill.Loader, llmClient llm.Client, defaultModel string, subModel string, cwd string, settings subagent.SettingsProvider) *subagent.AgentTool {
 	r.Register(tool.Wrap(&tool.ReadFileHashline{}))
 	r.Register(tool.Wrap(&tool.EditFileHashline{}))
 	r.Register(tool.Wrap(&tool.WriteFile{}))
@@ -330,7 +328,7 @@ func registerBuiltinTools(r tool.Registry, skillLoader *skill.Loader, llmClient 
 	// Agent — subagent delegation
 	at := &subagent.AgentTool{
 		LLMClient:       llmClient,
-		ValidModels:     validModels,
+		Settings:        settings,
 		DefaultModel:    defaultModel,
 		DefaultSubModel: subModel,
 		WorkspaceDir:    cwd,
@@ -538,48 +536,55 @@ func (a *skillExecutorAdapter) Load(name, args string) (*tool.SkillLoadResult, e
 }
 
 // buildValidModels 从 LLMSettings 构造可用模型列表（用于 AgentTool 参数校验）。
-// 列表包含主模型和子模型（去重），仅在有子模型时启用校验。
-func buildValidModels(s *llm.LLMSettings) []string {
-	if s == nil || s.SubModel == "" {
-		return nil
+
+// fileSettingsProvider 实现 subagent.SettingsProvider，从 project + global settings.json 合并读取。
+type fileSettingsProvider struct {
+	projectPath string
+	globalPath  string
+}
+
+func (p *fileSettingsProvider) LoadLLM() (*llm.LLMSettings, error) {
+	globalSettings, _ := llm.LoadSettingsIfExists(p.globalPath)
+	projectSettings, _ := llm.LoadSettingsIfExists(p.projectPath)
+	merged := llm.MergeLLMSettings(globalSettings, projectSettings)
+	if merged != nil {
+		merged.ResolveProfile()
 	}
-	models := []string{s.Model}
-	if s.SubModel != s.Model {
-		models = append(models, s.SubModel)
-	}
-	return models
+	return merged, nil
 }
 
 // buildModelSelectionSection 构造注入到 system prompt 的模型选择指导。
-// 始终注入（无 SubModel 时生成简化版），确保 agent 工具 schema 中的
-// "See system prompt under 'Subagent Model Selection'" 引用始终有效。
-func buildModelSelectionSection(defaultModel, flashModel string) string {
-	if flashModel == "" {
-		return fmt.Sprintf(`
+// 使用 pro/flash 语义而非实际模型名，确保切换 provider 后 prompt 仍然有效。
+func buildModelSelectionSection() string {
+	return `
 ## Subagent Model Selection
 
-When spawning subagents with the agent tool, you can override the model via the optional
-`+"`model`"+` parameter. Omit or leave blank to use the default model (%s).
-Invalid values are silently ignored — the default is used.
-`, defaultModel)
-	}
-	return fmt.Sprintf(`
-## Subagent Model Selection
+When spawning subagents, you can override the model via the optional
+` + "`model`" + ` parameter:
 
-When spawning subagents with the agent tool, you can override the model via the optional
-`+"`model`"+` parameter.
+  omit / "pro"  → full reasoning capability (default), ~2x higher per-token cost.
+  "flash"       → ~2x cheaper per token, optimized for speed.
 
-  (omit / empty)  → %s — full reasoning capability, higher per-token cost.
-  "%s"             → %s — ~2x cheaper per token, optimized for speed.
+**flash shines on tasks where the answer already exists** — reading, searching, pattern matching, applying a known transformation. It does NOT need to invent, judge, or design.
 
-Choose based on the task:
-- Tasks requiring analysis, judgment, or multi-step planning → prefer %s. Deep reasoning justifies the higher cost.
-- Tasks requiring search, lookup, single-step edits, or pattern matching → prefer %s. For these tasks, %s matches %s in output quality while costing significantly less — no quality trade-off.
+| Task category | Model | Examples |
+|---------------|-------|----------|
+| Implementation (new logic, refactoring) | pro | "Add auth middleware", "Refactor the store layer" |
+| Analysis, judgment, trade-off evaluation | pro | "Is this approach safe?", "Compare A vs B" |
+| Architecture / design decisions | pro | "Design the plugin interface" |
+| Mechanical refactor (rename, extract, move) | flash | "Rename OldName to NewName everywhere" |
+| Search codebase, find usages, trace deps | flash | "Find all callers of HandleRequest" |
+| Boilerplate generation (CRUD, handlers) | flash | "Generate REST handlers for the User model" |
+| Read files and summarize structure | flash | "Summarize the data model in pkg/store/" |
+| Scan test output and categorize failures | flash | "Run tests and group failures by root cause" |
+| Scan changelogs, lint output, logs | flash | "Scan git log for user-facing changes" |
 
-If you pass an unrecognized value, the default is used.
-`, defaultModel, flashModel, flashModel, defaultModel, flashModel, flashModel, defaultModel)
+**Default rule**: if the task requires creating something new or making a judgment call → pro.
+If the task is finding, reading, renaming, or summarizing something that already exists → flash.
+
+Invalid values are silently ignored — the default (pro) is used.
+`
 }
-
 // buildAdvisorModeSection 构造注入到 system prompt 的 advisor mode 指导。
 func buildAdvisorModeSection(subModel, primaryModel string) string {
 	return fmt.Sprintf(`

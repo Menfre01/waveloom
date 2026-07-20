@@ -1,6 +1,7 @@
 package subagent
 
 import (
+	"fmt"
 	"context"
 	"encoding/json"
 	"errors"
@@ -1174,179 +1175,88 @@ func BenchmarkForwardEvents(b *testing.B) {
 	}
 }
 
+
 // ---------------------------------------------------------------------------
-// Model switching tests
+// Model resolution tests (pro/flash enum -> settings-based mapping)
 // ---------------------------------------------------------------------------
 
-func TestIsValidModel_EmptyString(t *testing.T) {
-	a := &AgentTool{ValidModels: []string{"deepseek-v4-pro", "deepseek-v4-flash"}}
-	if !a.isValidModel("") {
-		t.Error("empty model should be valid (inherit default)")
-	}
+type mockSettingsProvider struct {
+	model    string
+	subModel string
+	err      error
 }
 
-func TestIsValidModel_ValidValue(t *testing.T) {
-	a := &AgentTool{ValidModels: []string{"deepseek-v4-pro", "deepseek-v4-flash"}}
-	if !a.isValidModel("deepseek-v4-flash") {
-		t.Error("valid model should be accepted")
+func (m *mockSettingsProvider) LoadLLM() (*llm.LLMSettings, error) {
+	if m.err != nil {
+		return nil, m.err
 	}
-	if !a.isValidModel("deepseek-v4-pro") {
-		t.Error("valid model should be accepted")
-	}
+	return &llm.LLMSettings{Model: m.model, SubModel: m.subModel}, nil
 }
 
-func TestIsValidModel_InvalidValue(t *testing.T) {
-	a := &AgentTool{ValidModels: []string{"deepseek-v4-pro", "deepseek-v4-flash"}}
-	if a.isValidModel("garbage-model") {
-		t.Error("invalid model should be rejected")
-	}
-}
-
-func TestIsValidModel_EmptyList(t *testing.T) {
-	a := &AgentTool{ValidModels: nil}
-	if !a.isValidModel("anything") {
-		t.Error("empty ValidModels should accept any model (no restriction)")
-	}
-}
-
-func TestIsValidModel_EmptySlice(t *testing.T) {
-	a := &AgentTool{ValidModels: []string{}}
-	if !a.isValidModel("anything") {
-		t.Error("empty ValidModels slice should accept any model")
-	}
-}
-
-// REGRESSION: invalid model in AgentParams → sanitized to empty before sub-loop creation.
-func TestAgentTool_ExecuteFork_InvalidModelFallsBack(t *testing.T) {
-	ctx := context.Background()
-	msgs := []llm.Message{
-		{Role: llm.RoleSystem, Content: "sys"},
-		{Role: llm.RoleUser, Content: "hello"},
-	}
-	ctx = agentloop.WithParentMessages(ctx, msgs)
-
+func TestResolveModel_Pro(t *testing.T) {
 	a := &AgentTool{
-		LLMClient:   &stubLLM{},
-		ValidModels: []string{"deepseek-v4-pro", "deepseek-v4-flash"},
+		Settings:     &mockSettingsProvider{model: "gpt-4o", subModel: "gpt-4o-mini"},
+		DefaultModel: "gpt-4o",
 	}
-	result, err := a.Execute(ctx, AgentParams{
-		Description: "fork-test",
-		Prompt:      "do something",
-		Model:       "garbage", // invalid → should be cleared
-	})
-	if err != nil {
-		t.Fatalf("Execute() error: %v", err)
-	}
-	if !strings.Contains(result.Content, "fork subagent completed") {
-		t.Errorf("fork should succeed with invalid model sanitized: %s", result.Content)
+	if got := a.resolveModel("pro"); got != "gpt-4o" {
+		t.Errorf("resolveModel('pro') = %q, want 'gpt-4o'", got)
 	}
 }
 
-// REGRESSION: valid model in AgentParams → passed through to sub-loop.
-func TestAgentTool_ExecuteCold_ValidModel(t *testing.T) {
-	ctx := context.Background()
+func TestResolveModel_Flash(t *testing.T) {
 	a := &AgentTool{
-		LLMClient:   &stubLLM{},
-		ValidModels: []string{"deepseek-v4-pro", "deepseek-v4-flash"},
+		Settings:     &mockSettingsProvider{model: "gpt-4o", subModel: "gpt-4o-mini"},
+		DefaultModel: "gpt-4o",
 	}
-	result, err := a.Execute(ctx, AgentParams{
-		SubagentType: "Explore",
-		Description:  "search",
-		Prompt:       "find it",
-		Model:        "deepseek-v4-flash",
-	})
-	if err != nil {
-		t.Fatalf("Execute() error: %v", err)
-	}
-	if !strings.Contains(result.Content, "explore") {
-		t.Errorf("result should succeed with valid model: %s", result.Content)
+	if got := a.resolveModel("flash"); got != "gpt-4o-mini" {
+		t.Errorf("resolveModel('flash') = %q, want 'gpt-4o-mini'", got)
 	}
 }
 
-// REGRESSION: SubagentStart carries Model field.
-func TestSubagentStart_ModelField(t *testing.T) {
-	ev := SubagentStart{
-		AgentType: "Explore",
-		Model:     "deepseek-v4-flash",
-	}
-	if ev.Model != "deepseek-v4-flash" {
-		t.Errorf("SubagentStart.Model = %q, want %q", ev.Model, "deepseek-v4-flash")
-	}
-	// Model should be empty by default (zero value)
-	ev2 := SubagentStart{}
-	if ev2.Model != "" {
-		t.Errorf("SubagentStart.Model zero value = %q, want empty", ev2.Model)
-	}
-}
-
-// REGRESSION: Explore auto-model — when SubagentType is "Explore" and no model
-// is specified, executeCold must automatically select DefaultSubModel (Phase 2).
-func TestAgentTool_ExecuteCold_ExploreAutoModel(t *testing.T) {
-	ctx := context.Background()
+func TestResolveModel_Empty(t *testing.T) {
 	a := &AgentTool{
-		LLMClient:       &stubLLM{},
-		ValidModels:     []string{"deepseek-v4-pro", "deepseek-v4-flash"},
-		DefaultSubModel: "deepseek-v4-flash",
+		Settings:     &mockSettingsProvider{model: "gpt-4o", subModel: "gpt-4o-mini"},
+		DefaultModel: "gpt-4o",
 	}
-
-	var capturedModel string
-	cb := func(ev agentloop.TurnEvent) {
-		if start, ok := ev.(SubagentStart); ok {
-			capturedModel = start.Model
-		}
-	}
-	ctx = agentloop.WithEventCallback(ctx, cb)
-	ctx = agentloop.WithToolCallID(ctx, "call-explore-auto")
-
-	result, err := a.Execute(ctx, AgentParams{
-		SubagentType: "Explore",
-		Description:  "auto model test",
-		Prompt:       "find it",
-	})
-	if err != nil {
-		t.Fatalf("Execute() error: %v", err)
-	}
-	if !strings.Contains(result.Content, "explore") {
-		t.Errorf("result should succeed: %s", result.Content)
-	}
-	if capturedModel != "deepseek-v4-flash" {
-		t.Errorf("SubagentStart.Model = %q, want %q (Explore auto flash)", capturedModel, "deepseek-v4-flash")
+	if got := a.resolveModel(""); got != "gpt-4o" {
+		t.Errorf("resolveModel('') = %q, want 'gpt-4o' (pro default)", got)
 	}
 }
 
-// REGRESSION: Explore auto-model — empty DefaultSubModel means no auto-selection.
-func TestAgentTool_ExecuteCold_ExploreAutoModel_EmptyDefault(t *testing.T) {
-	ctx := context.Background()
+func TestResolveModel_Unknown(t *testing.T) {
 	a := &AgentTool{
-		LLMClient:       &stubLLM{},
-		ValidModels:     []string{"deepseek-v4-pro"},
-		DefaultSubModel: "",
+		Settings:     &mockSettingsProvider{model: "gpt-4o", subModel: "gpt-4o-mini"},
+		DefaultModel: "gpt-4o",
 	}
-
-	var capturedModel string
-	cb := func(ev agentloop.TurnEvent) {
-		if start, ok := ev.(SubagentStart); ok {
-			capturedModel = start.Model
-		}
-	}
-	ctx = agentloop.WithEventCallback(ctx, cb)
-	ctx = agentloop.WithToolCallID(ctx, "call-explore-no-sub")
-
-	result, err := a.Execute(ctx, AgentParams{
-		SubagentType: "Explore",
-		Description:  "no sub model",
-		Prompt:       "find it",
-	})
-	if err != nil {
-		t.Fatalf("Execute() error: %v", err)
-	}
-	if !strings.Contains(result.Content, "explore") {
-		t.Errorf("result should succeed: %s", result.Content)
-	}
-	if capturedModel != "" {
-		t.Errorf("SubagentStart.Model = %q, want empty (no DefaultSubModel configured)", capturedModel)
+	if got := a.resolveModel("garbage"); got != "gpt-4o" {
+		t.Errorf("resolveModel(unknown) = %q, want 'gpt-4o' (fallback)", got)
 	}
 }
+
+func TestResolveModel_NilSettings(t *testing.T) {
+	a := &AgentTool{
+		Settings:        nil,
+		DefaultModel:    "fallback-pro",
+		DefaultSubModel: "fallback-flash",
+	}
+	if got := a.resolveModel("pro"); got != "fallback-pro" {
+		t.Errorf("resolveModel('pro') with nil settings = %q, want 'fallback-pro'", got)
+	}
+	if got := a.resolveModel("flash"); got != "fallback-flash" {
+		t.Errorf("resolveModel('flash') with nil settings = %q, want 'fallback-flash'", got)
+	}
+}
+
+func TestResolveModel_SettingsError(t *testing.T) {
+	a := &AgentTool{
+		Settings:     &mockSettingsProvider{err: fmt.Errorf("disk error")},
+		DefaultModel: "fallback-pro",
+	}
+	if got := a.resolveModel("pro"); got != "fallback-pro" {
+		t.Errorf("resolveModel('pro') on error = %q, want 'fallback-pro'", got)
+	}
+}
+
 
 // ---------------------------------------------------------------------------
 // Advisor mode tests
@@ -1467,7 +1377,7 @@ func TestAdvisorMode_AdvisorSubagent_UsesPrimaryModel(t *testing.T) {
 	a := &AgentTool{
 		LLMClient:       &stubLLM{},
 		DefaultModel:    "deepseek-v4-pro",
-		DefaultSubModel: "deepseek-v4-flash",
+		DefaultSubModel: "flash",
 	}
 
 	result, err := a.Execute(ctx, AgentParams{
