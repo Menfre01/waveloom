@@ -17,12 +17,60 @@
         "extra_params": {
             "thinking": {"type": "enabled"},
             "reasoning_effort": "max"
+        },
+        "profiles": {
+            "kimi": {
+                "api_key": "sk-your-kimi-key",
+                "model": "kimi-k2",
+                "base_url": "https://api.moonshot.cn/v1"
+            },
+            "openai": {
+                "api_key": "sk-your-openai-key",
+                "model": "gpt-5",
+                "base_url": "https://api.openai.com/v1"
+            }
         }
     },
     "permissions": {
         "allow": ["read_file", "search_file", "grep", "ls"],
         "deny": ["shell(rm -rf /*)"],
         "ask": ["write_file", "edit_file"]
+    },
+    "hooks": {
+        "PreToolUse": [
+            {
+                "matcher": "Bash",
+                "hooks": [
+                    {
+                        "type": "command",
+                        "command": "~/.claude/hooks/rtk-rewrite.sh",
+                        "timeout": 5000
+                    }
+                ]
+            }
+        ],
+        "PostToolUse": [
+            {
+                "matcher": "",
+                "hooks": [
+                    {
+                        "type": "command",
+                        "command": "curl -s -X POST 'http://localhost:8080/log' -d @-"
+                    }
+                ]
+            }
+        ],
+        "Notification": [
+            {
+                "matcher": "",
+                "hooks": [
+                    {
+                        "type": "command",
+                        "command": "notify-slack.sh"
+                    }
+                ]
+            }
+        ]
     },
     "session": {
         "dir": ".waveloom/sessions"
@@ -43,5 +91,8 @@
     },
     "web_search": {
         "brave_api_key": ""
-    }
+    },
+    "theme": "auto",
+    "locale": "auto",
+    "plans_directory": "~/.waveloom/plans"
 }

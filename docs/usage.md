@@ -41,10 +41,12 @@ waveloom
 | `Tab` | 聚焦下一个可交互段落（thought / tool 输出） |
 | `Shift+Tab` | 聚焦上一个可交互段落；无焦点时进入/退出 Plan 模式 |
 | `Enter` | 展开/折叠当前聚焦的段落 |
-| `Ctrl+G` | 切换主题（dark / light / auto） |
+| `Ctrl+G` | 切换主题（auto / dark / light / darkcolorblind / lightcolorblind） |
+| `Ctrl+V` | 粘贴剪贴板内容 |
+| `?` | 显示快捷键帮助 |
 | `Ctrl+C` | 退出 |
 | `Shift + 鼠标拖动` | 选中终端中的文本 |
-
+| `鼠标滚轮` | 每次滚动 3 行 |
 **底部状态栏**显示：当前模型、上下文用量（进度条）、缓存命中率、Loop 轮数、余额。
 
 ## 单次执行
@@ -81,10 +83,11 @@ waveloom --resume <session-id>  # 恢复指定会话
 |------|------|------|
 | `/new` | `/clear` | 创建全新 session |
 | `/model` | — | 显示或切换模型，可输入模型名快速过滤 |
-| `/theme` | — | 选择主题（Auto / Dark / Light） |
+| `/theme` | — | 选择主题（auto / dark / light / darkcolorblind / lightcolorblind） |
 | `/locale` | `/lang` | 切换语言（zh-CN / en-US） |
+| `/provider` | — | 查看或切换 LLM Provider（DeepSeek / Kimi / OpenAI） |
+| `/rewind` | — | 回退到历史消息（恢复文件状态） |
 | `/help` | — | 显示所有可用命令 |
-
 `.claude/skills/` 中 `user-invocable: true` 的 Skill 也会自动注册为 `/` 命令，命令名即 Skill 名。此外，已安装的 Claude Code 插件中的 skills/commands 会自动发现并加载（通过 `~/.claude/plugins/installed_plugins.json` + `enabledPlugins` 配置）。
 
 ## Plan 模式

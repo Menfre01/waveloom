@@ -41,10 +41,12 @@ The prefix character at the beginning of each line tells you **who is speaking**
 | `Tab` | Focus next interactive paragraph (thought / tool output) |
 | `Shift+Tab` | Focus previous interactive paragraph; when idle, enter/exit Plan Mode |
 | `Enter` | Expand/collapse the currently focused paragraph |
-| `Ctrl+G` | Toggle theme (dark / light / auto) |
+| `Ctrl+G` | Toggle theme (auto / dark / light / darkcolorblind / lightcolorblind) |
+| `Ctrl+V` | Paste from clipboard |
+| `?` | Show keyboard shortcut help |
 | `Ctrl+C` | Quit |
 | `Shift + mouse drag` | Select text in terminal |
-
+| `Mouse wheel` | Scroll 3 lines per tick |
 The **footer status bar** shows: current model, context usage (progress bar), cache hit rate, loop count, balance.
 
 ## One-shot
@@ -81,10 +83,11 @@ Type `/` in the input to open the command palette with fuzzy search.
 |---------|-------|-------------|
 | `/new` | `/clear` | Create a new session |
 | `/model` | — | Show or switch model, type to filter |
-| `/theme` | — | Select theme (Auto / Dark / Light) |
+| `/theme` | — | Select theme (auto / dark / light / darkcolorblind / lightcolorblind) |
 | `/locale` | `/lang` | Switch language (zh-CN / en-US) |
+| `/provider` | — | View or switch LLM provider (DeepSeek / Kimi / OpenAI) |
+| `/rewind` | — | Rewind to a previous message (restores file state) |
 | `/help` | — | Show all available commands |
-
 Skills with `user-invocable: true` in `.claude/skills/` are automatically registered as `/` commands using the skill name. Additionally, skills/commands from installed Claude Code plugins are auto-discovered (via `~/.claude/plugins/installed_plugins.json` + `enabledPlugins` config).
 
 ## Plan Mode
