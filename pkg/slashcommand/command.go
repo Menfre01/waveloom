@@ -71,6 +71,7 @@ const (
 	SideEffectInvokeSkill     SideEffectKind = "invoke_skill"     // TUI: 注入 skill body → doTurn
 	SideEffectOpenRewind      SideEffectKind = "open_rewind"      // TUI: 打开 rewind 消息选择覆盖层
 	SideEffectProviderSwitched SideEffectKind = "provider_switched"
+	SideEffectOpenProviderPicker SideEffectKind = "open_provider_picker" // TUI: 打开 provider 选择覆盖层
 )
 
 // SideEffect 描述命令执行后需要 TUI 执行的副作用。

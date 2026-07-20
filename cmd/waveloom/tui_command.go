@@ -653,3 +653,135 @@ func (m *model) closeModelPicker() {
 	m.overlay = overlayNone
 	m.input.Focus()
 }
+
+// ---------------------------------------------------------------------------
+// 覆盖层 — Provider 选择器
+// ---------------------------------------------------------------------------
+
+// providerPickerItemData 从 slash command 传回的 provider 选项。
+type providerPickerItemData struct {
+	Name    string `json:"name"`
+	Model   string `json:"model"`
+	BaseURL string `json:"base_url"`
+	Current bool   `json:"current"`
+}
+
+// providerPickerItem 是 provider 选择器列表项。
+type providerPickerItem struct {
+	data providerPickerItemData
+}
+
+func (i providerPickerItem) Title() string {
+	name := i.data.Name
+	if i.data.Model != "" || i.data.BaseURL != "" {
+		parts := make([]string, 0, 2)
+		if i.data.Model != "" {
+			parts = append(parts, i.data.Model)
+		}
+		if i.data.BaseURL != "" {
+			parts = append(parts, i.data.BaseURL)
+		}
+		name += "  " + strings.Join(parts, " @ ")
+	}
+	return name
+}
+func (i providerPickerItem) Description() string { return "" }
+func (i providerPickerItem) FilterValue() string { return i.data.Name }
+
+// buildProviderPickerList 从 providerPickerItems 构建 provider 选择列表。
+func (m *model) buildProviderPickerList() {
+	items := make([]list.Item, len(m.providerPickerItems))
+	selectedIdx := 0
+	for i, pi := range m.providerPickerItems {
+		items[i] = providerPickerItem{data: pi}
+		if pi.Current {
+			selectedIdx = i
+		}
+	}
+
+	height := len(items)
+	if height > 5 {
+		height = 5
+	}
+	if height < 1 {
+		height = 1
+	}
+
+	delegate := list.NewDefaultDelegate()
+	delegate.ShowDescription = false
+	delegate.SetSpacing(0)
+	delegate.Styles = listItemStyles()
+	m.providerPickerDelegate = &delegate
+
+	l := list.New(items, delegate, 0, height)
+	l.SetShowTitle(false)
+	l.SetShowPagination(false)
+	l.SetShowStatusBar(false)
+	l.SetShowFilter(false)
+	l.SetShowHelp(false)
+	l.KeyMap.Quit = key.NewBinding()
+	l.KeyMap.ForceQuit = key.NewBinding()
+	if selectedIdx < height {
+		l.Select(selectedIdx)
+	}
+	m.providerPickerList = l
+}
+
+// handleProviderPickerKey 处理 provider 选择器中的按键。
+func (m *model) handleProviderPickerKey(msg tea.KeyPressMsg) (bool, tea.Cmd) {
+	keyStr := msg.String()
+	switch keyStr {
+	case "up", "down":
+		var cmd tea.Cmd
+		m.providerPickerList, cmd = m.providerPickerList.Update(msg)
+		return true, cmd
+	case "enter":
+		idx := m.providerPickerList.Index()
+		if idx >= 0 && idx < len(m.providerPickerItems) {
+			m.commitProviderSwitch(m.providerPickerItems[idx].Name)
+		}
+		m.closeProviderPicker()
+		return true, nil
+	case "esc":
+		m.closeProviderPicker()
+		return true, nil
+	}
+	return false, nil
+}
+
+// commitProviderSwitch 确认 provider 切换：写 settings + 热替换 LLM Client。
+func (m *model) commitProviderSwitch(name string) {
+	settings, err := m.settingsStore.LoadLLM()
+	if err != nil {
+		slog.Warn("failed to load LLM settings for provider switch", "err", err)
+		return
+	}
+
+	oldProvider := settings.Provider
+	settings.Provider = name
+	settings.ResolveProfile()
+	if err := m.settingsStore.SaveLLM(settings); err != nil {
+		slog.Warn("failed to save LLM settings", "err", err)
+	}
+
+	m.reconfigureLLMClientForProvider(name, settings)
+
+	lc := m.msg()
+	text := fmt.Sprintf(lc.ProviderSwitched, oldProvider, name)
+	if settings.Model != "" {
+		text += "\n" + fmt.Sprintf(lc.ProviderModelNotice, settings.Model)
+	}
+	m.paras = append(m.paras, Paragraph{
+		Type:      paraSystem,
+		State:     stateDone,
+		Text:      text,
+		NotifKind: notifInfo,
+	})
+	m.trimParas()
+	m.flushTranscript()
+}
+
+func (m *model) closeProviderPicker() {
+	m.overlay = overlayNone
+	m.input.Focus()
+}

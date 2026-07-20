@@ -2,9 +2,9 @@ package slashcommand
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"sort"
-	"strings"
 
 	"github.com/Menfre01/waveloom/pkg/llm"
 )
@@ -42,6 +42,14 @@ func (c *ProviderCommand) Execute(ctx context.Context, args string) (*Result, er
 	return c.executeWithArgs(args)
 }
 
+// providerInfo 是 provider 选择器的选项数据。
+type providerInfo struct {
+	Name    string `json:"name"`
+	Model   string `json:"model"`
+	BaseURL string `json:"base_url"`
+	Current bool   `json:"current"`
+}
+
 func (c *ProviderCommand) executeNoArgs() (*Result, error) {
 	settings, err := c.store.LoadLLM()
 	if err != nil {
@@ -50,7 +58,7 @@ func (c *ProviderCommand) executeNoArgs() (*Result, error) {
 		}, nil
 	}
 
-	// 收集已配置的 provider 名（profiles 的 key + 已知内置类型）
+	// 收集已配置的 provider 名（profiles 的 key + 当前 provider）
 	seen := make(map[string]bool)
 	for name := range settings.Profiles {
 		if name != "" {
@@ -73,25 +81,28 @@ func (c *ProviderCommand) executeNoArgs() (*Result, error) {
 	sort.Strings(providers)
 
 	current := settings.Provider
-	var lines []string
-	for _, p := range providers {
-		marker := " "
-		if p == current {
-			marker = "*"
+	infos := make([]providerInfo, 0, len(providers))
+	for _, name := range providers {
+		info := providerInfo{Name: name, Current: name == current}
+		if p := settings.Profiles[name]; p != nil {
+			info.Model = p.Model
+			info.BaseURL = p.BaseURL
 		}
-		lines = append(lines, fmt.Sprintf("  %s %s", marker, p))
+		infos = append(infos, info)
 	}
 
-	modelHint := ""
-	if settings.Model != "" {
-		modelHint = settings.Model
-	} else if p, ok := settings.Profiles[current]; ok && p != nil && p.Model != "" {
-		modelHint = p.Model
+	data, err := json.Marshal(infos)
+	if err != nil {
+		return &Result{
+			Text: fmt.Sprintf(c.messages.ProviderConfigReadFailed, err),
+		}, nil
 	}
-	text := fmt.Sprintf(c.messages.ProviderList, current, modelHint)
-	text += "\n\n" + fmt.Sprintf(c.messages.ProviderAvailable, strings.Join(lines, "\n"))
 
-	return &Result{Text: text}, nil
+	return &Result{
+		SideEffects: []SideEffect{
+			{Kind: SideEffectOpenProviderPicker, Detail: string(data)},
+		},
+	}, nil
 }
 
 func (c *ProviderCommand) executeWithArgs(name string) (*Result, error) {

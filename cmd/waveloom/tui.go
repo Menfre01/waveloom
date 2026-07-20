@@ -431,6 +431,11 @@ type model struct {
 	localeList     list.Model
 	localeDelegate *list.DefaultDelegate
 
+	// Provider 选择器覆盖层
+	providerPickerList     list.Model
+	providerPickerDelegate *list.DefaultDelegate
+	providerPickerItems    []providerPickerItemData
+
 	// 文件选择器
 	pickerVisible         bool
 	pickerFilter          string
@@ -1309,6 +1314,10 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		var cmd tea.Cmd
 		m.localeList, cmd = m.localeList.Update(msg)
 		cmds = append(cmds, cmd)
+	case overlayProviderPicker:
+		var cmd tea.Cmd
+		m.providerPickerList, cmd = m.providerPickerList.Update(msg)
+		cmds = append(cmds, cmd)
 	}
 
 	// 文件选择器：过滤同步 + 激活/关闭检测
@@ -1453,6 +1462,13 @@ func (m *model) handleKeyPress(msg tea.KeyPressMsg) (bool, tea.Cmd) {
 	// =====================================================================
 	if m.overlay == overlayLocalePicker {
 		return m.handleLocalePickerKey(msg)
+	}
+
+	// =====================================================================
+	// 3e. Provider 选择器活跃时路由
+	// =====================================================================
+	if m.overlay == overlayProviderPicker {
+		return m.handleProviderPickerKey(msg)
 	}
 
 	// =====================================================================
@@ -2998,6 +3014,8 @@ func (m *model) View() tea.View {
 		overlayContent = m.renderModelPickerOverlay(contentWidth)
 	case overlayLocalePicker:
 		overlayContent = m.renderLocalePickerOverlay(contentWidth)
+	case overlayProviderPicker:
+		overlayContent = m.renderProviderPickerOverlay(contentWidth)
 	case overlayPlanEnter:
 		overlayContent = m.renderPlanEnterOverlay(contentWidth)
 	case overlayPlanExit:
@@ -3803,6 +3821,12 @@ func (m *model) syncThemeComponents() {
 		m.modelPickerList.SetDelegate(m.modelPickerDelegate)
 	}
 
+	// 同步 providerPickerList delegate 样式
+	if m.providerPickerDelegate != nil {
+		m.providerPickerDelegate.Styles = listItemStyles()
+		m.providerPickerList.SetDelegate(m.providerPickerDelegate)
+	}
+
 	// 同步 pickerList delegate 样式（若已构建）
 	if m.pickerDelegate != nil {
 		m.pickerDelegate.Styles = listItemStyles()
@@ -4289,6 +4313,15 @@ func (m *model) handleSlashCommand(input string) tea.Cmd {
 				m.input.Blur()
 			}
 
+		case slashcommand.SideEffectOpenProviderPicker:
+			var infos []providerPickerItemData
+			if err := json.Unmarshal([]byte(se.Detail), &infos); err == nil {
+				m.closePickable()
+				m.providerPickerItems = infos
+				m.buildProviderPickerList()
+				m.overlay = overlayProviderPicker
+				m.input.Blur()
+			}
 		case slashcommand.SideEffectModelSwitched:
 			m.hudModel = normalizeWidth(se.Detail)
 			m.reconfigureLLMClient(se.Detail)
@@ -4375,7 +4408,7 @@ func (m *model) handleSlashCommand(input string) tea.Cmd {
 
 
 		case slashcommand.SideEffectProviderSwitched:
-			m.reconfigureLLMClientForProvider(se.Detail)
+			m.reconfigureLLMClientForProvider(se.Detail, nil)
 		case slashcommand.SideEffectOpenRewind:
 			return m.handleRewindCommand()
 		}
@@ -4420,18 +4453,23 @@ func (m *model) reconfigureLLMClient(newModel string) {
 	}
 }
 
-// handleProviderSwap 处理 Provider 切换。
-// ProviderCommand 写入 settings 后通过 SideEffect 通知 TUI 更新 Client + HUD。
-func (m *model) reconfigureLLMClientForProvider(newProvider string) {
-	settings, err := m.settingsStore.LoadLLM()
-	if err != nil {
-		return
+// reconfigureLLMClientForProvider 在 provider 切换后热替换 LLM Client。
+// 若 settings 非 nil，直接使用（避免重复磁盘 IO）；若为 nil，从磁盘加载。
+func (m *model) reconfigureLLMClientForProvider(newProvider string, settings *llm.LLMSettings) {
+	if settings == nil {
+		var err error
+		settings, err = m.settingsStore.LoadLLM()
+		if err != nil {
+			slog.Warn("failed to load LLM settings for provider switch", "err", err)
+			return
+		}
 	}
 	// 先设置 provider，再解析 profile（新 provider 的专属字段覆盖顶层残留）
 	settings.Provider = newProvider
 	settings.ResolveProfile()
 	client, _, err := llm.NewClientFromLLMSettings(settings)
 	if err != nil {
+		slog.Warn("failed to create LLM client for new provider", "err", err)
 		return
 	}
 	m.llmClient = client
@@ -4676,6 +4714,7 @@ func slashMessagesFrom(lc *Messages) *slashcommand.SlashMessages {
 		ProviderUnknown:           lc.ProviderUnknown,
 		ProviderSwitched:          lc.ProviderSwitched,
 		ProviderNoProfiles:        lc.ProviderNoProfiles,
+		ProviderNotConfigured:     lc.ProviderNotConfigured,
 		ProviderConfigReadFailed:  lc.ProviderConfigReadFailed,
 		ProviderConfigSaveFailed:  lc.ProviderConfigSaveFailed,
 		ProviderModelNotice:       lc.ProviderModelNotice,

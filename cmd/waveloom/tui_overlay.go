@@ -29,6 +29,7 @@ const (
 	overlayHelp                          // ? 快捷键帮助
 	overlayRewindSelect                  // rewind 消息选择
 	overlayRewindConfirm                 // rewind 确认
+	overlayProviderPicker                // /provider 无参触发：provider 选择列表
 )
 
 // renderOverlayBox 渲染覆盖层的外框。
@@ -303,6 +304,42 @@ func (m *model) renderLocalePickerOverlay(boxWidth int) string {
 	contentLines = append(contentLines, "")
 
 	hint := renderOverlayHint(&m.help, innerWidth, localePickerKeyBindings(m.msg()))
+	contentLines = append(contentLines, hint)
+
+	return renderOverlayBox(boxWidth, m.overlayAnimFrame, strings.Join(contentLines, "\n"))
+}
+
+// ---------------------------------------------------------------------------
+// Provider 选择器覆盖层渲染
+// ---------------------------------------------------------------------------
+
+// providerPickerKeyBindings provider 选择器快捷键。
+func providerPickerKeyBindings(lc *Messages) []key.Binding {
+	return []key.Binding{
+		key.NewBinding(key.WithKeys("↑/↓"), key.WithHelp("↑/↓", lc.KeyNav)),
+		key.NewBinding(key.WithKeys("enter"), key.WithHelp("Enter", lc.KeyConfirm)),
+		key.NewBinding(key.WithKeys("esc"), key.WithHelp("Esc", lc.KeyCancel)),
+	}
+}
+
+func (m *model) renderProviderPickerOverlay(boxWidth int) string {
+	innerWidth := boxWidth - 2 - 4
+	height := len(m.providerPickerItems)
+	if height > 5 {
+		height = 5
+	}
+	if height < 1 {
+		height = 1
+	}
+	m.providerPickerList.SetSize(innerWidth, height)
+
+	title := styleOverlayTitle.Width(innerWidth).Render(m.msg().PickerSelectProvider)
+	contentLines := []string{title, ""}
+
+	contentLines = append(contentLines, styleOverlayBody.Width(innerWidth).Render(m.providerPickerList.View()))
+	contentLines = append(contentLines, "")
+
+	hint := renderOverlayHint(&m.help, innerWidth, providerPickerKeyBindings(m.msg()))
 	contentLines = append(contentLines, hint)
 
 	return renderOverlayBox(boxWidth, m.overlayAnimFrame, strings.Join(contentLines, "\n"))
