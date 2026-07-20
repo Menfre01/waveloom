@@ -12,7 +12,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"strings"
 	"time"
 
 	"github.com/Menfre01/waveloom/pkg/compaction"
@@ -687,21 +686,6 @@ func (l *Loop) Run(ctx context.Context, messages []llm.Message) <-chan TurnEvent
 				tick := l.config.Compactor.Compact(ctx, &state.Messages, lastPromptTokens)
 				compacted = true
 
-				// compaction 可能移除了旧的 todo_update 结果。
-			// compaction 已经破坏了前缀缓存，此处 Update 不产生额外成本，
-			// 且避免 stale todo-status 消息累积。
-			if l.config.TodoState != nil {
-				if summary := l.config.TodoState.StatusSummary(); summary != "" {
-					if idx := findTodoStatusIndex(state.Messages); idx >= 0 {
-						state.Messages[idx].Content = todoStatusText(summary)
-					} else {
-						state.Messages = append(state.Messages, llm.Message{
-							Role:    llm.RoleUser,
-							Content: todoStatusText(summary),
-						})
-					}
-				}
-			}
 
 				// 推送合并后的 TurnStats（含压缩字段）
 				if lastUsage != nil {
@@ -848,17 +832,6 @@ func todoReminderText(summary string, turnsSince int) string {
 		fmt.Sprintf("[system] %d turns since last todo_update. Your todo list is stale — call todo_update NOW to update task statuses. Mark completed tasks as 'completed' and set the next pending task to 'in_progress'.", turnsSince)
 }
 
-// findTodoStatusIndex 返回最后一条 todo-status 消息的索引，-1 表示不存在。
-// todo-status 消息以 "## Current Todo Status" 开头，RoleUser 角色。
-// 仅用于 compaction 后刷新路径——compaction 已破坏缓存，Update 不产生额外成本。
-func findTodoStatusIndex(msgs []llm.Message) int {
-	for i := len(msgs) - 1; i >= 0; i-- {
-		if msgs[i].Role == llm.RoleUser && strings.HasPrefix(strings.TrimSpace(msgs[i].Content), "## Current Todo Status") {
-			return i
-		}
-	}
-	return -1
-}
 
 // updateTodoCounters 在每轮工具执行后更新 todo 提醒计数器。
 // 当无活跃任务时保持计数器归零（无需提醒）；否则递增。

@@ -2238,6 +2238,9 @@ func transcriptEntryToParagraph(e session.TranscriptEntry, paras *[]Paragraph) {
 	msg := e.ToMessage()
 
 	if msg.ToolCallID != "" {
+		if msg.Name == "todo_create" || msg.Name == "todo_update" {
+			return
+		}
 		for i := len(*paras) - 1; i >= 0; i-- {
 			p := &(*paras)[i]
 			if p.ToolResult == "" && p.ToolName == msg.Name && (p.Type == paraTool || p.Type == paraSubagent) {
@@ -2256,6 +2259,15 @@ func transcriptEntryToParagraph(e session.TranscriptEntry, paras *[]Paragraph) {
 
 	switch msg.Role {
 	case llm.RoleUser:
+		if strings.HasPrefix(strings.TrimSpace(msg.Content), "[system]") {
+			return
+		}
+		if strings.HasPrefix(strings.TrimSpace(msg.Content), "<background-") {
+			return
+		}
+		if strings.HasPrefix(strings.TrimSpace(msg.Content), "## Current Todo Status") {
+			return
+		}
 		if strings.HasPrefix(strings.TrimSpace(msg.Content), "# AGENTS.md") {
 			return
 		}
@@ -2285,6 +2297,9 @@ func transcriptEntryToParagraph(e session.TranscriptEntry, paras *[]Paragraph) {
 			})
 		}
 		for _, tc := range msg.ToolCalls {
+			if tc.Name == "todo_create" || tc.Name == "todo_update" {
+				continue
+			}
 			if tc.Name == "agent" {
 				*paras = append(*paras, Paragraph{
 					Type:               paraSubagent,
@@ -4147,6 +4162,15 @@ func (m *model) rebuildParasFromMessages() {
 		switch msg.Role {
 		case llm.RoleSystem:
 		case llm.RoleUser:
+			if strings.HasPrefix(strings.TrimSpace(msg.Content), "[system]") {
+				continue
+			}
+			if strings.HasPrefix(strings.TrimSpace(msg.Content), "<background-") {
+				continue
+			}
+			if strings.HasPrefix(strings.TrimSpace(msg.Content), "## Current Todo Status") {
+				continue
+			}
 			if strings.HasPrefix(strings.TrimSpace(msg.Content), "# AGENTS.md") {
 				continue
 			}
@@ -4176,6 +4200,9 @@ func (m *model) rebuildParasFromMessages() {
 				})
 			}
 			for _, tc := range msg.ToolCalls {
+			if tc.Name == "todo_create" || tc.Name == "todo_update" {
+				continue
+			}
 				if tc.Name == "agent" {
 					m.paras = append(m.paras, Paragraph{
 						Type:               paraSubagent,
@@ -4194,6 +4221,9 @@ func (m *model) rebuildParasFromMessages() {
 				}
 			}
 		case llm.RoleTool:
+			if msg.Name == "todo_create" || msg.Name == "todo_update" {
+				continue
+			}
 			found := false
 			for i := len(m.paras) - 1; i >= 0; i-- {
 				p := &m.paras[i]
