@@ -1,10 +1,13 @@
 # Changelog
 
+## [v0.2.0-beta.3] — 2026-07-21
+
+### Fixed
+- **Skill/built-in command name collision causes panic on startup**: When a user has a skill or plugin command named identically to a built-in command (e.g. `help`), `newSlashRegistry` registers built-in commands first then iterates over skills, causing `Register` to panic on duplicate name. Added `HasCommand` collision detection — conflicting skills are skipped while built-in commands are preserved.
 
 
 ## [v0.2.0-beta.2] — 2026-07-20
 
-### Added
 - **`/provider` interactive picker overlay**: `/provider` without arguments now opens an ↑↓ select / Enter switch / Esc cancel overlay, matching the `/model` picker experience
 - **Shell tool timeout increase**: Default timeout 120s→300s, maximum timeout 600s→1800s, supporting longer build/test tasks
 - **`shell_prompt` rg guidance**: System prompt now guides the model to prefer `rg` (ripgrep) for code search, closing the loop with environment detection

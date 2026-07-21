@@ -1,10 +1,16 @@
 # Changelog
 
+## [v0.2.0-beta.3] — 2026-07-21
 
+### 修复
+- **Skill 与内置命令同名导致 panic**：当用户本地存在与内置命令同名的 skill（如 `~/.claude/commands/help.md` 或插件中的 `help` 命令）时，`newSlashRegistry` 先注册 `/help` 再遍历 skill 注册导致 `Register` panic；新增 `HasCommand` 冲突检测，同名 skill 跳过而不覆盖内置命令
+
+---
+
+📝 [Changelog (English)](https://github.com/Menfre01/waveloom/blob/dev/CHANGELOG.en.md)
 
 ## [v0.2.0-beta.2] — 2026-07-20
 
-### 新增功能
 - **`/provider` 交互式选择覆盖层**：`/provider` 无参时弹出 ↑↓ 选择 / Enter 切换 / Esc 取消覆盖层，与 `/model` picker 体验一致
 - **Shell 工具超时提升**：默认超时 120s→300s，最大超时 600s→1800s，支持更长时间的构建/测试任务
 - **`shell_prompt` 增加 rg 引导**：系统提示引导模型优先使用 `rg`（ripgrep）搜索代码，与环境探测结果闭环
