@@ -46,6 +46,12 @@ func (r *Registry) Register(cmd Command) {
 	}
 }
 
+// HasCommand 返回 name 是否已被注册（大小写不敏感）。
+func (r *Registry) HasCommand(name string) bool {
+	_, exists := r.commands[strings.ToLower(name)]
+	return exists
+}
+
 // Match 根据用户输入返回匹配的命令和参数。
 // 输入以 "/" 开头，Match 先去掉 "/" 前缀，再按首个空格分割命令名和参数。
 // 命令名大小写不敏感。无匹配时返回 nil, ""。
