@@ -138,3 +138,69 @@ func TestRegistryDuplicateAliasPanics(t *testing.T) {
 	r.Register(&stubCommand{name: "new", description: "New session", aliases: []string{"clear"}})
 	r.Register(&stubCommand{name: "reset", description: "Reset", aliases: []string{"clear"}})
 }
+
+// TestRegistryHasCommand verifies HasCommand returns correct existence check.
+func TestRegistryHasCommand(t *testing.T) {
+	r := NewRegistry()
+	r.Register(&stubCommand{name: "help", description: "Show help"})
+
+	if !r.HasCommand("help") {
+		t.Error("HasCommand(\"help\") = false, want true")
+	}
+	if !r.HasCommand("HELP") {
+		t.Error("HasCommand(\"HELP\") = false, want true (case-insensitive)")
+	}
+	if r.HasCommand("unknown") {
+		t.Error("HasCommand(\"unknown\") = true, want false")
+	}
+}
+
+// TestRegistryNoPanicWhenSkillCollisionChecked demonstrates the expected pattern:
+// callers should use HasCommand before Register to avoid panic on skill/built-in collision.
+// REGRESSION: 用户环境存在一个名为 "help" 的 skill/plugin command，
+// newSlashRegistry 先注册内置 /help 再遍历 skill 注册，导致 Register panic。
+// 修复：注册前用 HasCommand 检测冲突，跳过同名 skill。
+func TestRegistryNoPanicWhenSkillCollisionChecked(t *testing.T) {
+	r := NewRegistry()
+	// 注册内置命令（模拟 newSlashRegistry 中的操作）
+	r.Register(&stubCommand{name: "help", description: "Show help"})
+	r.Register(&stubCommand{name: "new", description: "New session"})
+	r.Register(&stubCommand{name: "model", description: "Switch model"})
+
+	// 模拟 skill 注册：先检查 HasCommand，冲突时跳过
+	skillNames := []string{"help", "my-skill", "new", "another-skill", "model"}
+	registered := 0
+	skipped := 0
+	for _, name := range skillNames {
+		if r.HasCommand(name) {
+			skipped++
+			continue
+		}
+		r.Register(&stubCommand{name: name, description: "skill: " + name})
+		registered++
+	}
+
+	if skipped != 3 {
+		t.Errorf("skipped = %d, want 3 (help, new, model)", skipped)
+	}
+	if registered != 2 {
+		t.Errorf("registered = %d, want 2 (my-skill, another-skill)", registered)
+	}
+
+	// 验证各命令都在注册表中
+	if !r.HasCommand("help") {
+		t.Error("built-in help should still be registered")
+	}
+	if !r.HasCommand("my-skill") {
+		t.Error("my-skill should be registered")
+	}
+	if !r.HasCommand("another-skill") {
+		t.Error("another-skill should be registered")
+	}
+
+	// 验证总数：5 个内置 + 2 个 skill = 7
+	infos := r.List()
+	if len(infos) != 5 {
+		t.Fatalf("len(List()) = %d, want 5 (builtins + non-colliding skills)", len(infos))
+	}
+}

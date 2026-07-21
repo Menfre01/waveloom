@@ -4792,6 +4792,10 @@ func newSlashRegistry(creator slashcommand.SessionCreator, store slashcommand.Se
 		executor := &tuiSkillExecutor{registry: registry}
 		for _, info := range skills {
 			if info.UserInvocable {
+				// 跳过与内置命令同名的 skill（避免 Register panic）
+				if r.HasCommand(info.Name) {
+					continue
+				}
 				r.Register(slashcommand.NewSkillCommand(slashcommand.SkillDescriptor{
 					Name:        info.Name,
 					Description: info.Description,

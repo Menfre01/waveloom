@@ -14,10 +14,11 @@ import (
 	"charm.land/lipgloss/v2"
 
 	"github.com/Menfre01/waveloom/pkg/agentloop"
-	"github.com/Menfre01/waveloom/pkg/session"
 	"github.com/Menfre01/waveloom/pkg/llm"
+	"github.com/Menfre01/waveloom/pkg/session"
+	"github.com/Menfre01/waveloom/pkg/skill"
+	"github.com/Menfre01/waveloom/pkg/slashcommand"
 )
-
 // newTestCM 创建一个用于测试的 ContextManager（无 hard limit）。
 func newTestCM() *session.ContextManager {
 	return session.New("system")
@@ -1035,5 +1036,143 @@ func writeSettings(t *testing.T, path, content string) {
 	t.Helper()
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatalf("write settings: %v", err)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// newSlashRegistry — skill 命名冲突检测
+// ---------------------------------------------------------------------------
+
+// stubSessionCreator 实现 slashcommand.SessionCreator。
+type stubSessionCreator struct{}
+
+func (s *stubSessionCreator) NewSession() error { return nil }
+
+// stubSettingsStore 实现 slashcommand.SettingsStore。
+type stubSettingsStore struct {
+	llm *llm.LLMSettings
+}
+
+func (s *stubSettingsStore) LoadLLM() (*llm.LLMSettings, error) { return s.llm, nil }
+func (s *stubSettingsStore) SaveLLM(*llm.LLMSettings) error      { return nil }
+
+// stubModelLister 实现 slashcommand.ModelLister。
+type stubModelLister struct{}
+
+func (s *stubModelLister) ListModels(context.Context) ([]llm.ModelInfo, error) {
+	return nil, nil
+}
+
+// emptySlashMessages 返回全空文案的 SlashMessages，仅用于注册（不执行命令时无副作用）。
+func emptySlashMessages() *slashcommand.SlashMessages {
+	return &slashcommand.SlashMessages{}
+}
+
+// TestNewSlashRegistry_NoPanicOnSkillNameCollision 验证 newSlashRegistry 在 skill 名
+// 与内置命令名冲突时不会 panic，并且内置命令优先保留。
+// REGRESSION: 用户 ~/.claude/skills/help/SKILL.md 或 ~/.claude/commands/help.md
+// 导致 newSlashRegistry 先注册 /help 内置命令后再注册同名 skill 时 Register panic。
+func TestNewSlashRegistry_NoPanicOnSkillNameCollision(t *testing.T) {
+	// ── 构造包含 "help" skill 的临时 skill 目录 ──
+	tmpDir := t.TempDir()
+	skillsDir := filepath.Join(tmpDir, ".claude", "skills", "help")
+	if err := os.MkdirAll(skillsDir, 0o755); err != nil {
+		t.Fatalf("mkdir skills/help: %v", err)
+	}
+	skillMD := `---
+name: help
+description: 自定义帮助命令
+---
+
+# 自定义帮助
+这是来自 skill 的帮助内容。
+`
+	if err := os.WriteFile(filepath.Join(skillsDir, "SKILL.md"), []byte(skillMD), 0o644); err != nil {
+		t.Fatalf("write SKILL.md: %v", err)
+	}
+
+	// 再添加一个不冲突的 skill，确保正常注册路径也工作
+	mySkillDir := filepath.Join(tmpDir, ".claude", "skills", "my-skill")
+	if err := os.MkdirAll(mySkillDir, 0o755); err != nil {
+		t.Fatalf("mkdir skills/my-skill: %v", err)
+	}
+	mySkillMD := `---
+name: my-skill
+description: 一个不冲突的 skill
+---
+
+# My Skill
+这是一个不冲突的 skill。
+`
+	if err := os.WriteFile(filepath.Join(mySkillDir, "SKILL.md"), []byte(mySkillMD), 0o644); err != nil {
+		t.Fatalf("write my-skill SKILL.md: %v", err)
+	}
+
+	// ── 构造 skill.Loader ──
+	cwd, _ := os.Getwd()
+	loader := skill.NewLoader(cwd, tmpDir, "test-session", "medium", nil)
+
+	// ── 调用 newSlashRegistry（模拟 runTUI 中的调用） ──
+	creator := &stubSessionCreator{}
+	store := &stubSettingsStore{}
+	lister := &stubModelLister{}
+	sm := emptySlashMessages()
+
+	// 不应 panic
+	r := newSlashRegistry(creator, store, lister, "test-model", loader, nil, sm)
+
+	// ── 验证内置 /help 仍然存在（未被 skill 覆盖） ──
+	cmd, _ := r.Match("/help")
+	if cmd == nil {
+		t.Fatal("Match(\"/help\") returned nil, built-in help command should be preserved")
+	}
+	if cmd.Name() != "help" {
+		t.Errorf("Match(\"/help\") name = %q, want \"help\"", cmd.Name())
+	}
+	// 内置 help 的 Description 来自 Messages，非 skill description
+	if cmd.Description() == "自定义帮助命令" {
+		t.Error("help command description matches skill, want built-in description (skill should be skipped)")
+	}
+
+	// ── 验证冲突的 skill "help" 未被注册（List 中只有一个 help） ──
+	infos := r.List()
+	helpCount := 0
+	mySkillFound := false
+	for _, info := range infos {
+		if info.Name == "help" {
+			helpCount++
+		}
+		if info.Name == "my-skill" {
+			mySkillFound = true
+		}
+	}
+	if helpCount != 1 {
+		t.Errorf("help appears %d times in List(), want exactly 1 (built-in only)", helpCount)
+	}
+	if !mySkillFound {
+		t.Error("my-skill not found in List(), non-conflicting skill should be registered")
+	}
+
+	// ── 验证 /my-skill 可匹配 ──
+	if cmd, _ := r.Match("/my-skill"); cmd == nil {
+		t.Error("Match(\"/my-skill\") returned nil, want skill command")
+	}
+}
+
+// TestNewSlashRegistry_NoSkillLoader returns a valid registry when skillLoader is nil.
+func TestNewSlashRegistry_NoSkillLoader(t *testing.T) {
+	creator := &stubSessionCreator{}
+	store := &stubSettingsStore{}
+	lister := &stubModelLister{}
+	sm := emptySlashMessages()
+
+	r := newSlashRegistry(creator, store, lister, "test-model", nil, nil, sm)
+
+	// 内置命令应全部存在
+	expected := []string{"help", "new", "model", "theme", "locale", "rewind", "provider"}
+	for _, name := range expected {
+		if cmd, _ := r.Match("/" + name); cmd == nil {
+			t.Errorf("Match(\"/%s\") returned nil, built-in command should exist", name)
+		}
 	}
 }
