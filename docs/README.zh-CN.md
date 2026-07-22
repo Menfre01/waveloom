@@ -79,9 +79,9 @@ waveloom
 | 子代理 | Fork（继承上下文）/ Cold：Evaluate（代码评审）• Explore（只读）• Verification（对抗验证）• Advisor（深度分析） | Fork + Cold + In-process + Coordinator | `task` 工具嵌套 agent，后台任务通过 job manager |
 | 运行时 | Go 单二进制 ~20MB，零依赖 | Node.js | Go 二进制 + Desktop 应用，外部 plugin 宿主 |
 | MCP | 完整客户端（配置、传输、工具代理），与内置工具统一注册 | 原生 MCP 支持 | 原生 MCP 支持 |
-| 权限模型 | 7 步决策管线，4 级命令安全分类（RiskNone/RiskLow/RiskMedium/RiskHigh） | 8 源规则合并 + LLM 分类器自动审批 | Policy + Approver，9 阶段执行管线，shellsafe readOnly 检测 |
-| TUI 打磨 | 流式推理、rich diff、权限对话框、`@` 模糊选择器、`/` 面板、i18n、主题切换 — 专业级 | 原生 TUI（Ink/React），标杆水平 | 功能完备的 TUI，不同 UX 范式 |
-
+| 权限模型 | 7 步决策管线,5 层工具输出安全(Unicode 清洗 → 注入扫描 → 边界标记 → 风险分级 → 安全截断),4 级命令安全分类(RiskNone/RiskLow/RiskMedium/RiskHigh) | 8 源规则合并 + LLM 分类器自动审批 | Policy + Approver,9 阶段执行管线,shellsafe readOnly 检测 |
+| Hook | PreToolUse / PostToolUse / Notification / Stop / SubagentStop,permission_mode 字段,runtime fail-open | 原生 hooks:PreToolUse, PostToolUse 等 | — |
+| TUI 打磨 | 流式推理、rich diff、权限对话框、`@` 模糊选择器、`/` 面板、i18n、主题切换 — 专业级 | 原生 TUI(Ink/React),标杆水平 | 功能完备的 TUI,不同 UX 范式 |
 **选 Waveloom 如果**：追求专业终端体验，需要多 Provider 支持（DeepSeek / Kimi / OpenAI），想要 `.claude/skills/` + `.claude/plugins/` 开箱即用，不想白烧缓存未命中费用。  
 **选 Claude Code 如果**：用 Anthropic API、需要 coordinator 模式、重度依赖 Claude 生态。  
 **选 Reasonix 如果**：需要桌面 GUI、QQ Bot 集成、或更大的社区生态。
@@ -97,14 +97,14 @@ waveloom
 ## 功能亮点
 
 - **前缀缓存深度优化** — System Prompt 固定，消息只在末尾追加，四级水位线压缩后字节永不变化，最大公共前缀持续命中
-- **权限安全模型** — 三级决策（allow / deny / ask），规则引擎支持模式匹配，写操作和命令执行需要你确认
-- **会话持久恢复** — 关闭终端几天后 `waveloom --continue` 回来，Agent 记得所有上下文接着工作
-- **Checkpoint/Rewind 时间旅行** — 回退到任意历史消息，同时恢复所有文件变更。Fork 模式原 session 完整保留，历史永不丢失
-- **Plan 模式** — 先规划后执行的二阶段工作流：探索设计 → 审批 → 编码。`Shift+Tab` 一键进入/退出，Guard 写保护拦截。
-- **Advisor 模式** — 成本优化的双模型路由：flash 处理日常编码，plan mode 和代码审查时自动切换 pro。在 settings 中设置 `"mode": "advisor"` 开启。
+- **权限安全模型** — 三级决策(allow / deny / ask),规则引擎支持模式匹配,底层 5 层工具输出安全管线(Unicode 清洗 → 注入扫描 → 边界标记 → 风险分级 → 安全截断)。写操作和命令执行需要你确认。
+- **Hook 系统** — PreToolUse / PostToolUse / Notification / Stop / SubagentStop 五种事件,支持 permission_mode 字段。Runtime fail-open,永不阻塞工具执行。通过 `settings.json` 配置。
+- **会话持久恢复** — 关闭终端几天后 `waveloom --continue` 回来,Agent 记得所有上下文接着工作
+- **Checkpoint/Rewind 时间旅行** — 回退到任意历史消息,同时恢复所有文件变更。Fork 模式原 session 完整保留,历史永不丢失
+- **Plan 模式** — 先规划后执行的二阶段工作流:探索设计 → 审批 → 编码。`Shift+Tab` 一键进入/退出,Guard 写保护拦截。
+- **Advisor 模式** — 成本优化的双模型路由:flash 处理日常编码,plan mode 和代码审查时自动切换 pro。在 settings 中设置 `"mode": "advisor"` 开启。
 - **14 个内置工具** — `read` / `write` / `edit` / `bash` / `web_fetch` / `web_search` / `ask_user_question` / `enter_plan_mode` / `exit_plan_mode` / `skill` / `agent` / `kill_background_task` / `todo_create` / `todo_update`
-- **i18n 多语言** — 完整中英双语界面，`--locale` CLI 参数 / `/locale` 命令，LANG 环境变量自动检测
-
+- **i18n 多语言** — 完整中英双语界面,`--locale` CLI 参数 / `/locale` 命令,LANG 环境变量自动检测
 ---
 
 ## 常见问题
@@ -112,8 +112,8 @@ waveloom
 **Q: 怎么切换模型？**  
 输入 `/model` 选择，或 `waveloom --model deepseek-v4-flash`。
 
-**Q: 怎么切换 Provider？**  
-输入 `/provider` 查看可用 Provider（DeepSeek、Kimi、OpenAI），或 `/provider kimi` 切换。Profile 配置在 `settings.json` 的 `llm.profiles` 中。
+**Q: 怎么切换 Provider?**  
+输入 `/provider` 弹出交互式 Provider 选择器(↑↓ 选择 / Enter 确认 / Esc 取消),或 `/provider kimi` 直接切换。Profile 配置在 `settings.json` 的 `llm.profiles` 中。
 
 **Q: API Key 安全吗？**  
 Key 存储在本地 `~/.waveloom/`，直连 DeepSeek / Kimi / OpenAI，不经过任何第三方服务器。

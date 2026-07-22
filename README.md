@@ -81,7 +81,8 @@ waveloom
 | Sub-agents | Fork (inherits context) / Cold: Evaluate (code review) • Explore (read-only) • Verification (adversarial) • Advisor (deep analysis) | Fork + Cold + In-process + Coordinator | `task` tool with nested agent, background via job manager |
 | Runtime | Go binary ~20MB, zero deps | Node.js | Go binary + Desktop app, external plugin host |
 | MCP | Full client (config, transport, tool proxy), registered alongside built-in tools | Native MCP support | Native MCP support |
-| Permission | 7-step pipeline, 4-tier command safety (RiskNone/RiskLow/RiskMedium/RiskHigh) | 8-source rule merge + LLM classifier auto-approval | Policy + Approver, 9-stage execute pipeline, shellsafe readOnly detect |
+| Permission | 7-step pipeline, 5-layer tool output security (Unicode cleaning → injection scan → boundary markers → risk grading → safe truncation), 4-tier command safety (RiskNone/RiskLow/RiskMedium/RiskHigh) | 8-source rule merge + LLM classifier auto-approval | Policy + Approver, 9-stage execute pipeline, shellsafe readOnly detect |
+| Hook | PreToolUse / PostToolUse / Notification / Stop / SubagentStop, permission_mode field, runtime fail-open | Native hooks: PreToolUse, PostToolUse, etc. | — |
 | TUI polish | Streaming reasoning, rich diff, permission dialogs, `@` fuzzy picker, `/` palette, i18n, theme toggle — premium terminal UX | Native TUI (Ink/React), gold standard | Functional TUI, different UX paradigm |
 
 **Choose Waveloom if**: you want premium terminal UX with multi-provider support (DeepSeek / Kimi / OpenAI), `.claude/skills/` + `.claude/plugins/` drop-in, without the cache miss cost.  
@@ -99,7 +100,8 @@ waveloom
 ## Highlights
 
 - **Prefix cache optimized** — Fixed System Prompt, append-only message history, four-tier watermark compaction. Maximum common prefix stays cache-hot across turns.
-- **Permission safety** — Three-tier decisions (allow / deny / ask) with pattern-matching rule engine. Every write operation requires your confirmation.
+- **Permission safety** — Three-tier decisions (allow / deny / ask) with pattern-matching rule engine, backed by a 5-layer tool output security pipeline (Unicode cleaning → injection scan → boundary markers → risk grading → safe truncation). Every write operation requires your confirmation.
+- **Hook system** — PreToolUse / PostToolUse / Notification / Stop / SubagentStop hooks with permission_mode field. Runtime fail-open — hooks never block tool execution. Configured via `settings.json`.
 - **Session persistence** — Close the terminal, come back days later with `waveloom --continue`. The agent remembers all prior context.
 - **Checkpoint/Rewind** — Rewind to any previous message with full file state restoration. Fork mode preserves original session intact — history never lost.
 - **Plan Mode** — Two-stage workflow: explore & design first, implement after approval. `Shift+Tab` to enter/exit, Guard-enforced write protection.
@@ -115,7 +117,7 @@ waveloom
 Type `/model` in interactive mode, or `waveloom --model deepseek-v4-flash`.
 
 **Q: How do I switch LLM providers?**  
-Type `/provider` to list available providers (DeepSeek, Kimi, OpenAI), or `/provider kimi` to switch. Profiles are configured in `settings.json` under `llm.profiles`.
+Type `/provider` to open the interactive provider picker (overlay with ↑↓ select / Enter confirm / Esc cancel), or `/provider kimi` to switch directly. Profiles are configured in `settings.json` under `llm.profiles`.
 
 **Q: Is my API key safe?**  
 Stored locally at `~/.waveloom/`. Keys connect directly to DeepSeek / Kimi / OpenAI — no third-party relay.
