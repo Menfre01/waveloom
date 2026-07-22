@@ -300,7 +300,7 @@ func TestSanitizeToolOutput_RealWorld_PathObfuscation(t *testing.T) {
 }
 
 // ============================================================================
-// Cf 格式字符专项测试（对标 Claude Code \p{Cf} 主防御）
+// Cf 格式字符专项测试
 // ============================================================================
 
 func TestSanitizeToolOutput_Cf_SoftHyphen(t *testing.T) {
@@ -501,7 +501,7 @@ func TestSanitizeToolOutput_NFKC_Kelvin(t *testing.T) {
 }
 
 // ============================================================================
-// 控制字符测试（对标 Claude Code CONTROL_CHAR_RE）
+// 控制字符测试
 // ============================================================================
 
 func TestSanitizeToolOutput_Control_NullByte(t *testing.T) {
@@ -590,7 +590,7 @@ func TestSanitizeToolOutput_Control_RealWorld_CommandSmuggling(t *testing.T) {
 }
 
 // ============================================================================
-// Unicode 空白测试（对标 Claude Code UNICODE_WS_RE）
+// Unicode 空白测试
 // ============================================================================
 
 func TestSanitizeToolOutput_UnicodeWS_NBSP(t *testing.T) {
@@ -605,7 +605,7 @@ func TestSanitizeToolOutput_UnicodeWS_NBSP(t *testing.T) {
 }
 
 func TestSanitizeToolOutput_UnicodeWS_FullRange(t *testing.T) {
-	// 覆盖 Claude Code UNICODE_WS_RE 中所有 Unicode 空白字符。
+	// 覆盖所有 Unicode 空白字符。
 	// NFKC 会将大部分 Unicode 空白正規化为 ASCII 空格（更安全），
 	// 仅 Ogham (U+1680)、Line Separator (U+2028)、Paragraph Separator (U+2029)
 	// 不被 NFKC 处理，依赖显式规则移除。

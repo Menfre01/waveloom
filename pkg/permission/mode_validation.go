@@ -1,4 +1,4 @@
-// Package permission — 模式感知权限（对标 Claude Code modeValidation.ts）
+// Package permission — 模式感知权限（
 package permission
 
 import "github.com/Menfre01/waveloom/pkg/bash"
@@ -49,9 +49,9 @@ type ModeDecision struct {
 // CheckPermissionMode 根据当前模式和命令返回模式感知的权限决策。
 //
 // 返回：
-//   - DecisionAllow: 当前模式允许自动批准
-//   - DecisionAsk: 需要用户确认
-//   - DecisionNone: 当前模式不适用（交给常规权限检查）
+// - DecisionAllow: 当前模式允许自动批准
+// - DecisionAsk: 需要用户确认
+// - DecisionNone: 当前模式不适用（交给常规权限检查）
 func CheckPermissionMode(cmd string, mode PermissionMode) ModeDecision {
 	switch mode {
 	case ModeBypass, ModeDontAsk:

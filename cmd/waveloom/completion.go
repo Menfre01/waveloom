@@ -40,7 +40,7 @@ _waveloom() {
             return 0
             ;;
         --model)
-            opts="deepseek-v4-pro deepseek-v4-flash gpt-4o claude-3-5-sonnet"
+            opts="deepseek-v4-pro deepseek-v4-flash gpt-4o"
             COMPREPLY=( $(compgen -W "$opts" -- "$cur") )
             return 0
             ;;
@@ -83,7 +83,7 @@ _waveloom() {
 
     local -a flags
     flags=(
-        '--model[指定模型名]:model:(deepseek-v4-pro deepseek-v4-flash gpt-4o claude-3-5-sonnet)'
+        '--model[指定模型名]:model:(deepseek-v4-pro deepseek-v4-flash gpt-4o)'
         '--provider[LLM Provider]:provider:(kimi deepseek openai)'
         '--system-prompt[自定义系统提示词]:prompt'
         '--max-turns[最大轮数，0不限制]:turns'
@@ -133,7 +133,7 @@ complete -c waveloom -n __fish_use_subcommand -a mcp -d "MCP Server 管理"
 complete -c waveloom -n __fish_use_subcommand -a completion -d "输出 shell 补全脚本"
 
 # Flags
-complete -c waveloom -l model -d "指定模型名" -a "deepseek-v4-pro deepseek-v4-flash gpt-4o claude-3-5-sonnet"
+complete -c waveloom -l model -d "指定模型名" -a "deepseek-v4-pro deepseek-v4-flash gpt-4o"
 complete -c waveloom -l provider -d "LLM Provider" -a "kimi deepseek openai"
 complete -c waveloom -l system-prompt -d "自定义系统提示词" -r
 complete -c waveloom -l max-turns -d "最大轮数，0不限制" -r

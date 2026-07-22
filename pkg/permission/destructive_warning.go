@@ -1,4 +1,4 @@
-// Package permission — 破坏性命令警告（对标 Claude Code destructiveCommandWarning.ts）
+// Package permission — 破坏性命令警告（
 //
 // 提供信息性警告显示，不改变权限逻辑或自动批准行为。
 package permission
@@ -62,8 +62,7 @@ var destructivePatterns = []DestructivePattern{
 // GetDestructiveWarning — 获取破坏性命令警告
 // ============================================================================
 
-// GetDestructiveWarning 检查命令是否匹配已知的破坏性模式，
-// 返回人类可读的警告字符串，或空字符串（无警告）。
+// GetDestructiveWarning 检查命令是否匹配已知的破坏性模式，// 返回人类可读的警告字符串，或空字符串（无警告）。
 func GetDestructiveWarning(cmd string) string {
 	for _, dp := range destructivePatterns {
 		if dp.Pattern.MatchString(cmd) {

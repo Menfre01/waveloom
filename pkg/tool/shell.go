@@ -103,14 +103,12 @@ func (t *Shell) Schema() json.RawMessage {
 func (t *Shell) ConcurrentSafe() bool { return false }
 
 // ToolTimeout 声明 Shell 工具的最大超时（30 分钟）。
-// 这样 effectiveTimeout 会使用此值而非 Loop 默认值（5 min），
-// 确保用户传入的 timeout_ms 参数在 (5 min, 30 min] 区间内能正常生效。
+// 这样 effectiveTimeout 会使用此值而非 Loop 默认值（5 min），// 确保用户传入的 timeout_ms 参数在 (5 min, 30 min] 区间内能正常生效。
 func (t *Shell) ToolTimeout() time.Duration {
 	return time.Duration(MaxShellTimeoutMs) * time.Millisecond
 }
 
-// Description 仅描述 API 契约。行为约束（使用规则、策略）见 Prompt()，
-// 由 Registry.FormatToolPrompts() 注入 C1 system prompt。
+// Description 仅描述 API 契约。行为约束（使用规则、策略）见 Prompt()，// 由 Registry.FormatToolPrompts() 注入 C1 system prompt。
 func (t *Shell) Description() string {
 	lines := []string{
 		"Execute a shell command in a subprocess. Configurable timeout (default 300s, max 1800s), captures stdout and stderr.",
@@ -281,8 +279,7 @@ func (t *Shell) Execute(ctx context.Context, p ShellParams) (*ToolResult, error)
 func (t *Shell) SupportsStreaming() bool { return true }
 
 // ExecuteStreaming 执行 shell 命令并将增量输出通过 chunkCb 实时推送。
-// 使用文件 polling 替代管道读取：每 500ms 读取输出文件的新增内容，
-// 逐行 push ToolCallStream 到 TUI。后台命令同样支持。
+// 使用文件 polling 替代管道读取：每 500ms 读取输出文件的新增内容，// 逐行 push ToolCallStream 到 TUI。后台命令同样支持。
 func (t *Shell) ExecuteStreaming(ctx context.Context, p ShellParams, chunkCb func(string)) (*ToolResult, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -526,8 +523,7 @@ func readPipesStreaming(cmd *exec.Cmd, cmdCtx context.Context, done <-chan error
 }
 
 // setupCommand 构造并配置 exec.Cmd，返回 prepared 命令、context、cancel、超时值
-// 以及输出文件句柄。所有 shell 命令的 stdout/stderr 合并写入同一个 O_APPEND 文件，
-// 消除管道 SIGPIPE 问题，并自然支持后台进程跨 turn 存活。
+// 以及输出文件句柄。所有 shell 命令的 stdout/stderr 合并写入同一个 O_APPEND 文件，// 消除管道 SIGPIPE 问题，并自然支持后台进程跨 turn 存活。
 // Execute 和 ExecuteStreaming 共享此前置逻辑。
 func (t *Shell) setupCommand(ctx context.Context, p *ShellParams) (*exec.Cmd, context.Context, context.CancelFunc, time.Duration, *os.File, string) {
 	timeoutMs := p.TimeoutMs
@@ -763,13 +759,13 @@ func truncateOutput(output string, maxLines int) string {
 // classifyShellError 基于退出码和 stderr 输出确定错误 Kind。
 //
 // 规则（按优先级）：
-//  1. 退出码 127 → command_not_found（Unix shell 命令不存在）
-//  2. 退出码 126 → command_permission_denied（命令不可执行）
-//  3. stderr 匹配 "permission denied" / "operation not permitted" / "access is denied" → command_permission_denied
-//  4. stderr 匹配 "no such file" / "not found" / "cannot access" / "cannot find" → file_not_found
-//  5. Windows cmd: 退出码 1 + "not recognized" → command_not_found
-//  6. 退出码 2 → invalid_args（语法/参数错误）
-//  7. 其他 → command_failed（通用命令失败）
+// 1. 退出码 127 → command_not_found（Unix shell 命令不存在）
+// 2. 退出码 126 → command_permission_denied（命令不可执行）
+// 3. stderr 匹配 "permission denied" / "operation not permitted" / "access is denied" → command_permission_denied
+// 4. stderr 匹配 "no such file" / "not found" / "cannot access" / "cannot find" → file_not_found
+// 5. Windows cmd: 退出码 1 + "not recognized" → command_not_found
+// 6. 退出码 2 → invalid_args（语法/参数错误）
+// 7. 其他 → command_failed（通用命令失败）
 //
 // 不同 Kind 在 agentloop 中各自独立计数，避免不同类型错误相互累积触发 retry_limit。
 func classifyShellError(exitCode int, fallbackOutput string) string {
@@ -844,9 +840,9 @@ func formatDuration(d time.Duration) string {
 //
 // 文件 fd 输出消除了 SIGPIPE 风险，因此不再需要对命令进行 subshell 重定向改写。
 // 取代策略：
-//   - run_in_background=true → 立即后台（返回 isBackground=true）
-//   - 单行命令以 & 结尾 → 剥离 & 后后台执行（返回 isBackground=true）
-//   - 多行命令含 & → 前台执行（bash 等待前景部分），仅标记 log 提示
+// - run_in_background=true → 立即后台（返回 isBackground=true）
+// - 单行命令以 & 结尾 → 剥离 & 后后台执行（返回 isBackground=true）
+// - 多行命令含 & → 前台执行（bash 等待前景部分），仅标记 log 提示
 //
 // 返回值：bgLogFile（多行时的提示日志路径），isBackground（是否走后台路径）。
 func prepareBackgroundCommand(p *ShellParams) (bgLogFile string, isBackground bool) {
@@ -873,7 +869,7 @@ func prepareBackgroundCommand(p *ShellParams) (bgLogFile string, isBackground bo
 	return "", false
 }
 // interpretShellExitCode 解释命令退出码的语义。
-// 对标 Claude Code commandSemantics.ts。
+// 
 // 返回空字符串表示退出码是真正的错误。
 func interpretShellExitCode(cmd string, exitCode int) string {
 	base := extractBaseCmd(cmd)

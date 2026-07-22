@@ -283,12 +283,12 @@ func (r *Runner) executeHook(ctx context.Context, item HookItem, eventCtx *Event
 		if stderr.Len() > 0 {
 			slog.Warn("hook stderr", "command", item.Command, "stderr", stderr.String())
 		}
-		// exit code 1 按 Claude Code 协议表示"无改写需求"，透传
+		// exit code 1 表示"无改写需求"，透传
 		if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 1 {
 			slog.Debug("hook returned exit code 1 (no rewrite needed)", "command", item.Command)
 			return nil, nil
 		}
-		// exit code 2 按 Claude Code 协议表示"阻止执行"
+		// exit code 2 表示"阻止执行"
 		if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 2 {
 			slog.Warn("hook blocked execution (exit code 2)", "command", item.Command, "stderr", stderr.String())
 			return &HookOutput{
@@ -323,8 +323,7 @@ func (r *Runner) executeHook(ctx context.Context, item HookItem, eventCtx *Event
 }
 
 // isShellCommand 判断命令是否需要 shell 解释。
-// 多词命令或包含 shell 特殊字符（管道、重定向、引号、变量等）返回 true，
-// 单词路径或可执行文件名返回 false 以直执行避免嵌套 bash -c。
+// 多词命令或包含 shell 特殊字符（管道、重定向、引号、变量等）返回 true，// 单词路径或可执行文件名返回 false 以直执行避免嵌套 bash -c。
 func isShellCommand(cmd string) bool {
 	// 多词命令需要 shell 解析（如 "exit 1", "echo hello"）
 	if strings.ContainsRune(cmd, ' ') {

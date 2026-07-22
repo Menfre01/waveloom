@@ -1,7 +1,6 @@
 // Package bash 基于 mvdan.cc/sh 的 AST 提供 shell 命令分析能力。
 //
-// 对标 Claude Code bashSecurity.ts，实现 23 个安全检测器，
-// 覆盖命令结构提取、parser differential 攻击检测和通用安全审查。
+// 实现 23 个安全检测器,覆盖命令结构提取、parser differential 攻击检测和通用安全审查。
 package bash
 
 import (
@@ -30,7 +29,7 @@ type SecurityReport struct {
 }
 
 // SecurityContext 为各检测器提供预计算的命令视图。
-// 对标 Claude Code bashSecurity.ts 的 ValidationContext。
+// SecurityContext 为各检测器提供预计算的命令视图。
 type SecurityContext struct {
 	OriginalCommand string
 	BaseCommand     string
@@ -50,7 +49,7 @@ type quoteExtraction struct {
 	keepQuote string // 保留引号定界符
 }
 
-// extractQuotedContent 对标 Claude Code extractQuotedContent。
+// extractQuotedContent 返回三种不同的引号剥离视图。
 // 返回三种不同的引号剥离视图。
 func extractQuotedContent(cmd string) quoteExtraction {
 	var wDQ, full, keepQ strings.Builder
@@ -133,7 +132,7 @@ func buildSecurityContext(raw string, ci *CommandInfo) SecurityContext {
 // ============================================================================
 
 // Audit 对 shell 命令执行完整安全审查。
-// 对标 Claude Code bashSecurity.ts 的 validators 链。
+// 安全检测器链,按严重性从高到低排列。
 func Audit(raw string) (*SecurityReport, error) {
 	ci, err := Parse(raw)
 	if err != nil {
@@ -232,7 +231,7 @@ func hasUnescapedChar(s string, ch byte) bool {
 }
 
 // stripSafeRedirections 剥离安全的 I/O 重定向（如 2>&1, >/dev/null）。
-// 对标 Claude Code stripSafeRedirections。
+// stripSafeRedirections 剥离安全重定向操作符。
 
 // ============================================================================
 // 检测器 1: checkEmpty — 空命令
@@ -297,7 +296,7 @@ var reIncompleteOp = regexp.MustCompile(`^\s*(&&|\|\||;|>>?|<)`)
 // ============================================================================
 
 // checkBackslashOperators 检测反斜杠转义的 shell 操作符。
-// 对标 Claude Code hasBackslashEscapedOperator + hasActualOperatorNodes。
+// 检测反斜杠转义操作符和实际操作符节点。
 //
 // AST 预检：如果 mvdan/sh 解析确认命令中不存在真正的操作符节点
 //（如 find -exec {} \; 中的 \; 只是 word 参数），跳过逐字符扫描，
@@ -713,7 +712,7 @@ var (
 // 检测器 9: checkDangerousPatterns — 危险模式（命令替换等）
 // ============================================================================
 
-// commandSubstPatterns 对标 Claude Code 的命令替换模式列表。
+// commandSubstPatterns 命令替换模式列表。
 var commandSubstPatterns = []struct {
 	pattern *regexp.Regexp
 	message string
@@ -959,7 +958,7 @@ func checkUnicodeWhitespace(ctx SecurityContext) SecurityCheck {
 	return SecurityCheck{Name: "unicode_whitespace", Passed: true, IsParse: true}
 }
 
-// unicodeWS 对标 Claude Code 的 UNICODE_WS_RE。
+// unicodeWS 匹配 Unicode 空白字符。
 var unicodeWS = map[rune]bool{
 	'\u00A0': true, // NO-BREAK SPACE
 	'\u1680': true, // OGHAM SPACE MARK
@@ -1196,7 +1195,7 @@ func checkGitCommit(ctx SecurityContext) SecurityCheck {
 	}
 
 	// 手动扫描 -m "message" 或 -m 'message'
-	// 对标 Claude Code reGitCommitMsg 但无反向引用
+// reGitCommitMsg 匹配 git commit message 引用。
 	quote, msgContent, remainder := extractGitCommitMsg(raw)
 	if quote == 0 {
 		return SecurityCheck{Name: "git_commit", Passed: true}
@@ -1351,7 +1350,7 @@ func hasUnquotedRedirect(s string) bool {
 // 检测器 22: checkZshDangerousCommands — Zsh 危险命令
 // ============================================================================
 
-// zshDangerousCommands 对标 Claude Code ZSH_DANGEROUS_COMMANDS。
+// zshDangerousCommands Zsh 特有危险命令集合。
 var zshDangerousCommands = map[string]bool{
 	"zmodload":  true,
 	"emulate":   true,
@@ -1597,7 +1596,7 @@ var (
 
 // ============================================================================
 // IsBashSecurityCheckForMisparsing 判断 SecurityCheck 是否为 parser differential 类型。
-// 对标 Claude Code isBashSecurityCheckForMisparsing。
+// 检测是否需要进行误解析安全检查。
 // ============================================================================
 
 // IsMisparsingCheck 检查 SecurityCheck 是否为解析器差异检测。

@@ -1,7 +1,6 @@
 // Package bash 基于 mvdan.cc/sh 的 AST 提供 shell 命令分析能力。
 //
-// 对标 Claude Code bashSecurity.ts 的 tree-sitter 路径，
-// 实现命令结构提取和 parser differential 攻击检测。
+// 基于 AST 实现命令结构提取和 parser differential 攻击检测。
 package bash
 
 import (

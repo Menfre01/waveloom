@@ -1,4 +1,4 @@
-// Package plugin 发现并加载 Claude Code 已安装插件中的 skills/commands。
+// Package plugin 发现并加载 已安装插件中的 skills/commands。
 //
 // 只读已有插件，不处理安装/卸载/更新。
 // 跳过 agents/hooks/MCP/LSP 等 Waveloom 不支持的组件。

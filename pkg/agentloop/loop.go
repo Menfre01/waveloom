@@ -1,10 +1,10 @@
 // Package agentloop 实现 Waveloom Code Agent 的 Think-Act-Observe 循环。
 //
 // Loop 是连接 LLM Client 和 Tool System 的编排器，在每个 turn 中：
-//  1. 组装上下文，调用 LLM（Think）
-//  2. 解析响应，执行工具（Act）
-//  3. 收集结果，更新状态（Observe）
-//  4. 判断是否继续或终止
+// 1. 组装上下文，调用 LLM（Think）
+// 2. 解析响应，执行工具（Act）
+// 3. 收集结果，更新状态（Observe）
+// 4. 判断是否继续或终止
 package agentloop
 
 import (
@@ -51,8 +51,7 @@ type Config struct {
 
 	// ToolTimeout 单个工具执行的最大时长。
 	// 0 → 无超时限制（向后兼容）。
-	// 设为正值时，每个工具执行会在独立的超时 context 中运行，
-	// 防止工具因未正确处理 ctx 取消而永久阻塞 loop。
+	// 设为正值时，每个工具执行会在独立的超时 context 中运行，	// 防止工具因未正确处理 ctx 取消而永久阻塞 loop。
 	ToolTimeout time.Duration
 
 	// PlanFile plan 文件路径（首次进入 plan 时自动生成 slug 文件名）。
@@ -106,8 +105,7 @@ type LoopState struct {
 	TurnCount int
 
 	// ConsecutiveEmpty 记录连续收到空响应的次数。
-	// 当 LLM 连续返回无 content 且无 tool_calls 的推理专用响应时递增，
-	// 达到上限后循环终止以防止死循环。
+	// 当 LLM 连续返回无 content 且无 tool_calls 的推理专用响应时递增，	// 达到上限后循环终止以防止死循环。
 	ConsecutiveEmpty int
 
 	// AnyToolSucceeded 标记本轮是否有任何工具成功执行。
@@ -117,8 +115,7 @@ type LoopState struct {
 
 // maxConsecutiveSameError 是同类 (工具 + 错误) 连续失败的容忍上限。
 // 达到后 loop 强制终止，避免 LLM 陷入无限重试探测。
-// 阈值设为 8 轮：其中第 3、第 5 轮会注入提醒消息引导 LLM 改变策略，
-// 8 轮后仍未改变则判定为死循环强制终止。
+// 阈值设为 8 轮：其中第 3、第 5 轮会注入提醒消息引导 LLM 改变策略，// 8 轮后仍未改变则判定为死循环强制终止。
 const maxConsecutiveSameError = 8
 
 // maxAdvisorConsecutiveSameError 是 advisor mode 下的容忍上限。
@@ -135,8 +132,7 @@ var warnThresholds = map[int]bool{3: true, 5: true}
 var advisorWarnThresholds = map[int]bool{3: true, 4: true}
 
 // todoReminderInterval 定义 todo 周期性提醒的间隔（assistant turn 数）。
-// 首次提醒在 idleTodoWrite（距上次 todo_update 达到此值）时触发，
-// 后续提醒至少间隔 idleTodoReminder 轮。
+// 首次提醒在 idleTodoWrite（距上次 todo_update 达到此值）时触发，// 后续提醒至少间隔 idleTodoReminder 轮。
 const (
 	idleTodoWrite    = 2 // 超过此值无 todo_update → 注入提醒
 	idleTodoReminder = 2 // 两次提醒之间的最小间隔
@@ -206,8 +202,7 @@ type Loop struct {
 
 	// turnsSinceLastTodoReminder 记录自上次注入 todo 提醒以来的 assistant turn 数。
 	turnsSinceLastTodoReminder int
-	// lastChanceTodoInjected 在 loop 即将以 ReasonCompleted 终止时，
-	// 若检测到残留的非 completed todo 项，注入一次"最后机会"提醒后置为 true。
+	// lastChanceTodoInjected 在 loop 即将以 ReasonCompleted 终止时，	// 若检测到残留的非 completed todo 项，注入一次"最后机会"提醒后置为 true。
 	// todo_update 成功执行时重置为 false。防止 LLM 忘记最后一次 todo 更新导致残留。
 	lastChanceTodoInjected bool
 
@@ -215,14 +210,13 @@ type Loop struct {
 	// ── hashline 快照存储（会话级，跨 turn 持久化）──
 	//
 	// SPEC-DRIFT: 规范 §3.2 要求 per-turn 生命周期（turn 结束清空）。
-	// 但 read_file_hashline → edit_file_hashline 工作流必然跨 turn（先读后编），
-	// per-turn NewStore() 会导致下一 turn 编辑时 TAG 验证失败（"no snapshot for path"）。
+	// 但 read_file_hashline → edit_file_hashline 工作流必然跨 turn（先读后编），	// per-turn NewStore() 会导致下一 turn 编辑时 TAG 验证失败（"no snapshot for path"）。
 	// 因此改为会话级 Store：Loop 创建时初始化，跨 turn 复用，子代理通过 agentloop.New()
 	// 因此改为会话级 Store：Loop 创建时初始化，跨 turn 复用，子代理通过 agentloop.New()
 	// 获得独立 Store 实现隔离。
 	snapshotStore *hashline.SnapshotStore
 
-	// hookRunner 执行 Claude Code 兼容的 hooks。nil → 跳过 hooks。
+	// hookRunner 执行 hooks。nil → 跳过 hooks。
 	hookRunner *hook.Runner
 }
 
@@ -294,12 +288,12 @@ func (l *Loop) ResetPlanMode() {
 // channel 在 loop 终止后关闭，最后一个事件为 PhaseDone。
 //
 // 不变量：
-//  1. 消息顺序：System → User → Assistant → Tool → Assistant → ... 严格遵守
-//  2. Turn 计数：每次调用 LLM 后 +1，表示已完成的轮次数（无论工具执行结果如何）
-//  3. 终止互斥：每个 Run 有且仅有一个 PhaseDone 事件
-//  4. 错误不丢上下文：即使因错误终止，PhaseDone.Messages 仍包含已执行的操作历史
-//  5. Context 优先：每次迭代开始先检查 ctx.Err()
-//  6. 并发安全：ConcurrentSafe 工具并行执行，非安全工具串行执行
+// 1. 消息顺序：System → User → Assistant → Tool → Assistant → ... 严格遵守
+// 2. Turn 计数：每次调用 LLM 后 +1，表示已完成的轮次数（无论工具执行结果如何）
+// 3. 终止互斥：每个 Run 有且仅有一个 PhaseDone 事件
+// 4. 错误不丢上下文：即使因错误终止，PhaseDone.Messages 仍包含已执行的操作历史
+// 5. Context 优先：每次迭代开始先检查 ctx.Err()
+// 6. 并发安全：ConcurrentSafe 工具并行执行，非安全工具串行执行
 func (l *Loop) Run(ctx context.Context, messages []llm.Message) <-chan TurnEvent {
 	ch := make(chan TurnEvent, 32)
 
@@ -314,8 +308,7 @@ func (l *Loop) Run(ctx context.Context, messages []llm.Message) <-chan TurnEvent
 		}()
 		defer close(ch)
 
-		// panic 防御：捕获 loop 内任何未预期 panic，转为 LoopDone 事件后关闭 channel，
-		// 确保消费者（TUI/runner）不会因 channel 关闭而无 LoopDone 导致永久等待。
+		// panic 防御：捕获 loop 内任何未预期 panic，转为 LoopDone 事件后关闭 channel，		// 确保消费者（TUI/runner）不会因 channel 关闭而无 LoopDone 导致永久等待。
 		var state *LoopState
 		defer func() {
 			if r := recover(); r != nil {
@@ -506,7 +499,7 @@ func (l *Loop) Run(ctx context.Context, messages []llm.Message) <-chan TurnEvent
 				toolCalls = valid
 			}
 			// 4. 防御：LLM 返回空响应（无 content 无 tool_calls）。
-			//    注入最小占位内容避免后续 API 400，累加连续空响应计数器。
+			// 注入最小占位内容避免后续 API 400，累加连续空响应计数器。
 			emptyResponse := contentBuf == "" && len(toolCalls) == 0
 			if emptyResponse {
 				contentBuf = "(empty response)"
@@ -516,8 +509,8 @@ func (l *Loop) Run(ctx context.Context, messages []llm.Message) <-chan TurnEvent
 			}
 
 			// 5. 追加 assistant 消息。
-			//    reasoning_content 仅在 tool_calls 场景保留（跨轮延续 DeepSeek 协议要求）。
-			//    空响应时注入的占位消息不含 reasoning_content，使模型从干净上下文重新推理。
+			// reasoning_content 仅在 tool_calls 场景保留（跨轮延续 DeepSeek 协议要求）。
+			// 空响应时注入的占位消息不含 reasoning_content，使模型从干净上下文重新推理。
 			assistantMsg := llm.Message{
 				Role:      llm.RoleAssistant,
 				Content:   contentBuf,
@@ -541,7 +534,7 @@ func (l *Loop) Run(ctx context.Context, messages []llm.Message) <-chan TurnEvent
 			}
 			state.Messages = append(state.Messages, assistantMsg)
 			// 5.5 空响应警告：以 user 角色注入，让 LLM 意识到自己行为异常。
-			//     对标 buildToolMessages 中的退避警告注入模式（user 消息）。
+			// 对标 buildToolMessages 中的退避警告注入模式（user 消息）。
 			if emptyResponse && reasoningBuf != "" && state.ConsecutiveEmpty <= maxConsecutiveSameError {
 				warnMsg := llm.Message{
 					Role: llm.RoleUser,
@@ -614,8 +607,7 @@ func (l *Loop) Run(ctx context.Context, messages []llm.Message) <-chan TurnEvent
 				}
 			}
 
-			// 最后机会：终止前检测残留的非 completed todo 项，
-			// 注入提醒并给 LLM 一次额外 turn 调用 todo_update。
+			// 最后机会：终止前检测残留的非 completed todo 项，			// 注入提醒并给 LLM 一次额外 turn 调用 todo_update。
 			if l.config.TodoState != nil && !l.lastChanceTodoInjected {
 				snapshot := l.config.TodoState.Snapshot()
 				hasIncomplete := false
@@ -661,8 +653,7 @@ func (l *Loop) Run(ctx context.Context, messages []llm.Message) <-chan TurnEvent
 			if execErr != nil {
 				l.verbose("  ← ERROR: %v\n", execErr)
 
-				// 若无 tool 消息（执行前已中断），清除 assistant 的 tool_calls 并注入占位内容，
-				// 避免空 content + 空 tool_calls 导致后续 API 400。
+				// 若无 tool 消息（执行前已中断），清除 assistant 的 tool_calls 并注入占位内容，				// 避免空 content + 空 tool_calls 导致后续 API 400。
 				if len(toolMessages) == 0 {
 					lastIdx := len(state.Messages) - 1
 					state.Messages[lastIdx].ToolCalls = nil
@@ -753,8 +744,7 @@ func (l *Loop) shouldContinue(state *LoopState) bool {
 // toLLMToolSpecs 将 tool.ToolSpec 切片转换为 llm.ToolSpec 切片。
 //
 // tool.ToolSpec.Parameters 是 json.RawMessage，赋给 llm.ToolSpec.Parameters
-// (interface{}) 是安全的 — json.RawMessage 实现了 json.Marshaler，
-// 在 LLM adapter 序列化时输出原始 JSON Schema 字节。
+// (interface{}) 是安全的 — json.RawMessage 实现了 json.Marshaler，// 在 LLM adapter 序列化时输出原始 JSON Schema 字节。
 func toLLMToolSpecs(specs []tool.ToolSpec) []llm.ToolSpec {
 	result := make([]llm.ToolSpec, len(specs))
 	for i, s := range specs {
@@ -820,8 +810,7 @@ func (l *Loop) injectTodoStatus(msgs *[]llm.Message) {
 	})
 }
 
-// todoStatusText 构造 todo 状态消息文本。当前仅返回状态快照本身，
-// 不再追加操作规则（规则已在 system prompt + FormatResult 双重覆盖）。
+// todoStatusText 构造 todo 状态消息文本。当前仅返回状态快照本身，// 不再追加操作规则（规则已在 system prompt + FormatResult 双重覆盖）。
 func todoStatusText(summary string) string {
 	return summary
 }
@@ -835,8 +824,7 @@ func todoReminderText(summary string, turnsSince int) string {
 
 // updateTodoCounters 在每轮工具执行后更新 todo 提醒计数器。
 // 当无活跃任务时保持计数器归零（无需提醒）；否则递增。
-// 注意：todo_create / todo_update 成功执行时计数器已在 executeTodoMutate 内重置，
-// 此处仅处理递增逻辑。
+// 注意：todo_create / todo_update 成功执行时计数器已在 executeTodoMutate 内重置，// 此处仅处理递增逻辑。
 func (l *Loop) updateTodoCounters(toolCalls []llm.ToolCall) {
 	// 无活跃任务时无需提醒，保持计数器归零
 	if l.config.TodoState != nil && len(l.config.TodoState.Snapshot()) == 0 {
@@ -849,8 +837,7 @@ func (l *Loop) updateTodoCounters(toolCalls []llm.ToolCall) {
 	l.turnsSinceLastTodoReminder++
 }
 
-// maybeInjectTodoReminder 在距上次 todo_update 超过 idleTodoWrite 轮后，
-// 向 messages 追加当前 todo 状态快照 + 提醒文字。
+// maybeInjectTodoReminder 在距上次 todo_update 超过 idleTodoWrite 轮后，// 向 messages 追加当前 todo 状态快照 + 提醒文字。
 // 使用 Append 策略避免破坏前缀缓存。
 // 两次提醒之间至少间隔 idleTodoReminder 轮。
 func (l *Loop) maybeInjectTodoReminder(state *LoopState) {
@@ -867,8 +854,7 @@ func (l *Loop) maybeInjectTodoReminder(state *LoopState) {
 		return
 	}
 
-	// 注入提醒后重置提醒计数器（但保留 todo_update 计数器，
-	// 因为提醒不能替代真正的 todo_update 更新）
+	// 注入提醒后重置提醒计数器（但保留 todo_update 计数器，	// 因为提醒不能替代真正的 todo_update 更新）
 	l.turnsSinceLastTodoReminder = 0
 
 	msg := todoReminderText(l.config.TodoState.StatusSummary(), l.turnsSinceLastTodoWrite)

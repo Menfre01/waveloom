@@ -1,24 +1,23 @@
 // Package main 是 Waveloom Code Agent TUI 模块，使用 charmbracelet/bubbles v2 组件
-// 直接连接 pkg/session/ContextManager + agentloop.Loop + permission.Guard，
-// 提供完整的 prompt 输入、流式 thought/text 渲染、7 种工具调用展示、权限确认交互。
+// 直接连接 pkg/session/ContextManager + agentloop.Loop + permission.Guard，// 提供完整的 prompt 输入、流式 thought/text 渲染、7 种工具调用展示、权限确认交互。
 //
 // 运行方式:
 //
-//	go run ./cmd/waveloom          (TUI 模式)
+//	go run ./cmd/waveloom (TUI 模式)
 //	go run ./cmd/waveloom "prompt" (单次执行)
 //
 // 快捷键:
 //
-//	Enter    发送消息
-//	Esc      中断正在运行的 agent loop
-//	Esc Esc  清空输入框（空闲态双击）
-//	↑/↓      浏览输入历史（空闲态）；滚动消息历史（无历史导航时）
-//	PgUp/PgDn  滚动消息历史
-//	Ctrl+E / End  跳到底部
-//	Tab / Shift+Tab  聚焦可交互段落（thought、shell/web_fetch 输出）
-//	Enter    展开/折叠当前聚焦的段落
-//	Ctrl+G   切换主题
-//	Ctrl+C   退出
+//	Enter 发送消息
+//	Esc 中断正在运行的 agent loop
+//	Esc Esc 清空输入框（空闲态双击）
+//	↑/↓ 浏览输入历史（空闲态）；滚动消息历史（无历史导航时）
+//	PgUp/PgDn 滚动消息历史
+//	Ctrl+E / End 跳到底部
+//	Tab / Shift+Tab 聚焦可交互段落（thought、shell/web_fetch 输出）
+//	Enter 展开/折叠当前聚焦的段落
+//	Ctrl+G 切换主题
+//	Ctrl+C 退出
 package main
 
 import (
@@ -263,17 +262,16 @@ If a subagent encounters an unrecoverable error, do NOT leave it stuck at ` + "`
 const maxParas = 200
 
 // maxToolResultBytes 是单个工具结果的最大存储字节数。
-// 超出部分截断，展开时被截断内容不可见，
-// 但完整结果已通过 agent loop 传递给 LLM，不影响上下文。
+// 超出部分截断，展开时被截断内容不可见，// 但完整结果已通过 agent loop 传递给 LLM，不影响上下文。
 const maxToolResultBytes = 100 * 1024 // 100 KB
 
 // buildSystemPrompt 构造完整的系统提示词。
 // CWD 在会话期间固定，不存在 cd 工具。
 //
 // 输出格式解析依赖（修改需同步）：
-//   - pkg/subagent/agent.go:formatSubagentEnvironment — 解析 "## Workspace" 和
-//     "## Environment" 节提取 OS/Shell/CWD 给冷启动子 agent
-//   - 对应的轮询测试：pkg/subagent/agent_test.go:TestFormatSubagentEnvironment_*
+// - pkg/subagent/agent.go:formatSubagentEnvironment — 解析 "## Workspace" 和
+// "## Environment" 节提取 OS/Shell/CWD 给冷启动子 agent
+// - 对应的轮询测试：pkg/subagent/agent_test.go:TestFormatSubagentEnvironment_*
 func buildSystemPrompt(cwd string, loc Locale) string {
 	prompt := defaultSystemPrompt
 	// 根据 locale 替换 Personality 中的语言指令
@@ -320,8 +318,7 @@ type keyMap struct {
 	Help        key.Binding
 }
 
-// permKeyBindings / questionSingleKeyBindings 等已移至 tui_overlay.go，
-// 作为接受 *Messages 的函数实现，支持国际化。
+// permKeyBindings / questionSingleKeyBindings 等已移至 tui_overlay.go，// 作为接受 *Messages 的函数实现，支持国际化。
 
 var defaultKeys = keyMap{
 	Enter:       key.NewBinding(key.WithKeys("enter"), key.WithHelp("⏎", "Send message")),
@@ -739,7 +736,7 @@ func newTUIModel(llmClient llm.Client, registry tool.Registry, guard permission.
 	spTodo.Spinner = spinner.Dot
 	spTodo.Style = lipgloss.NewStyle().Foreground(darkPalette.AccentGold) // 初始值，initTheme 同步
 
-	// 初始化 ctx 进度条（bubbles progress 组件，全块字符 █  提供清晰的逐格填充）
+	// 初始化 ctx 进度条（bubbles progress 组件，全块字符 █ 提供清晰的逐格填充）
 	// 宽度在 renderCtxBarCompact() 中每次设置（20 列，每列 5%）。
 	cp := progress.New(
 		progress.WithFillCharacters('█', '░'),
@@ -1376,11 +1373,11 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // handled=false 表示 key 未被消费，调用方应传给 input / viewport。
 //
 // 路由优先级：
-//  1. 全局快捷键（所有状态/覆盖层下生效）：Quit, ToggleTheme, JumpBottom, PageUp/Down
-//  2. 文件选择器活跃 → handlePickerKey
-//  3. 命令选择器活跃 → handleCommandPickerKey
-//  4. 权限面板活跃 → permList 导航 + handlePermKey / handleThemePickerKey / handleModelPickerKey
-//  5. 正常模式快捷键
+// 1. 全局快捷键（所有状态/覆盖层下生效）：Quit, ToggleTheme, JumpBottom, PageUp/Down
+// 2. 文件选择器活跃 → handlePickerKey
+// 3. 命令选择器活跃 → handleCommandPickerKey
+// 4. 权限面板活跃 → permList 导航 + handlePermKey / handleThemePickerKey / handleModelPickerKey
+// 5. 正常模式快捷键
 func (m *model) handleKeyPress(msg tea.KeyPressMsg) (bool, tea.Cmd) {
 	// =====================================================================
 	// 1. 全局快捷键（所有状态/覆盖层下生效，行为高度统一）
@@ -1492,8 +1489,7 @@ func (m *model) handleKeyPress(msg tea.KeyPressMsg) (bool, tea.Cmd) {
 			m.inPlanMode = true
 			m.planEnteredByUser = false
 			m.input.Placeholder = m.msg().InputPlanModePlaceholder
-			// plan 文件路径和配对 ID 由 Loop 的 executeEnterPlanMode 生成，
-			// [plan:start] 由 Loop 注入消息历史，TUI 不重复管理。
+			// plan 文件路径和配对 ID 由 Loop 的 executeEnterPlanMode 生成，			// [plan:start] 由 Loop 注入消息历史，TUI 不重复管理。
 			if m.planEnterReply != nil {
 				m.planEnterReply <- true
 				m.planEnterReply = nil
@@ -2116,8 +2112,7 @@ func (m *model) handleSubagentEvent(ev subagent.SubagentEvent) {
 			// Phase 2: 追加到结构化事件列表（Text/Thought 合并到前一个同类型事件，避免膨胀）
 			switch ev.Kind {
 			case subagent.SubagentText, subagent.SubagentThought:
-				// 合并到前一个同类型事件：LLM 流式输出产生大量 TextDelta，
-				// 逐一存储会导致展开态渲染时事件数量爆炸。
+				// 合并到前一个同类型事件：LLM 流式输出产生大量 TextDelta，				// 逐一存储会导致展开态渲染时事件数量爆炸。
 				n := len(p.SubagentEvents)
 				if n > 0 && p.SubagentEvents[n-1].Kind == ev.Kind {
 					p.SubagentEvents[n-1].TextDelta += ev.TextDelta
@@ -2237,8 +2232,7 @@ func isTimeoutError(err error) bool {
 // Transcript 持久化
 // ---------------------------------------------------------------------------
 
-// flushTranscript 是 no-op：消息实时通过 session saveToPath 写入统一 JSONL，
-// 不需要独立的 TUI transcript 文件。
+// flushTranscript 是 no-op：消息实时通过 session saveToPath 写入统一 JSONL，// 不需要独立的 TUI transcript 文件。
 func (m *model) flushTranscript() {}
 
 // transcriptEntryToParagraph 将统一 JSONL 条目转为 TUI Paragraph(s)。
@@ -2493,8 +2487,7 @@ func isExpandable(p *Paragraph, contentWidth int) bool {
 		if p.State != stateCollapsed && p.State != stateExpanded {
 			return false
 		}
-		// 计算折叠预览是否真的需要展开：折叠态仅展示前 2 行，
-		// 若全部内容换行后 ≤ 2 行则无需展开，直接跳过。
+		// 计算折叠预览是否真的需要展开：折叠态仅展示前 2 行，		// 若全部内容换行后 ≤ 2 行则无需展开，直接跳过。
 		if p.State == stateCollapsed {
 			return countWrappedLines(p.Text, contentWidth-2) > 2
 		}
@@ -2571,8 +2564,7 @@ func (m *model) enterFocusMode() {
 // exitFocusMode 退出段落焦点模式：输入框恢复焦点、placeholder 恢复默认。
 // 返回 Focus 的 tea.Cmd（光标闪烁），调用方应将其合并到 Update 返回值中。
 func (m *model) exitFocusMode() tea.Cmd {
-	// Prompt 在 New() 中默认设为 "> "，零值 Model 为空字符串，
-	// 借此区分测试中未初始化的 input，避免 virtualCursor.Blink 空指针。
+	// Prompt 在 New() 中默认设为 "> "，零值 Model 为空字符串，	// 借此区分测试中未初始化的 input，避免 virtualCursor.Blink 空指针。
 	if m.input.Prompt != "" {
 		cmd := m.input.Focus()
 		m.input.Placeholder = m.msg().InputPlaceholder
@@ -2805,8 +2797,7 @@ func (m *model) doTurn(userInput string) tea.Cmd {
 	if m.cancelRun != nil {
 		m.cancelRun()
 		m.cancelRun = nil
-		// 旧 loop 的 TurnStats 可能已累加到 loop 级计数器，
-		// 其 LoopDone 将以 isStale 到达（不会归零），需显式清理。
+		// 旧 loop 的 TurnStats 可能已累加到 loop 级计数器，		// 其 LoopDone 将以 isStale 到达（不会归零），需显式清理。
 		m.loopPrompt = 0
 		m.loopCompl = 0
 		m.loopCacheHit = 0
@@ -2825,8 +2816,7 @@ func (m *model) doTurn(userInput string) tea.Cmd {
 	}
 	m.cancelRun = cancel
 
-	// 3. 返回一个 tea.Cmd：在 goroutine 中消费 loop.Run() channel，
-	//    通过 p.Send 实时推送事件到 TUI Update。
+	// 3. 返回一个 tea.Cmd：在 goroutine 中消费 loop.Run() channel，	// 通过 p.Send 实时推送事件到 TUI Update。
 	// 注意：goroutine 仅 defer cancel() 自己的 ctx，不管理 m.cancelRun。
 	// m.cancelRun 的生命周期由 doTurn（创建）和 handleLoopDone（清除）控制。
 	gen := m.runGeneration // 闭包捕获当前代数，LoopDone 时带回比对
@@ -3084,9 +3074,8 @@ func (m *model) View() tea.View {
 	// 先渲染输入框，获取实际高度（textarea 可能多行）
 	separator := m.renderInputSeparator(contentWidth)
 	rawView := m.input.View()
-	// 将第一行开头的缩进空格替换为 › 前缀（area prompt 统一用缩进空格，
-	// 但视觉上希望第一行显示 ›，后续行保持缩进对齐）。
-	// 替换策略：查找第一个不由 ANSI 序列开头的 "  " 位置。
+	// 将第一行开头的缩进空格替换为 › 前缀（area prompt 统一用缩进空格，	// 但视觉上希望第一行显示 ›，后续行保持缩进对齐）。
+	// 替换策略：查找第一个不由 ANSI 序列开头的 " " 位置。
 	if idx := findFirstPromptPos(rawView); idx >= 0 {
 		rawView = rawView[:idx] + "› " + rawView[idx+2:]
 	}
@@ -3243,7 +3232,7 @@ func (m *model) View() tea.View {
 	} else if m.overlay == overlayQuestion && m.questionFormIsOther {
 		// Other 自定义输入：光标定位在 overlay box 内
 		// 布局：styleApp top(1) + header + 空行 + body(contentWidth) + overlay box
-		//   overlay box 内部：borderTop(0), padTop(1), title(2), 空行(3), otherInput(4)
+		// overlay box 内部：borderTop(0), padTop(1), title(2), 空行(3), otherInput(4)
 		if cur := m.otherInput.Cursor(); cur != nil {
 			pos := m.otherInput.Position()
 			value := m.otherInput.Value()
@@ -3603,8 +3592,7 @@ func (r *tuiUserResponder) AskUser(ctx context.Context, toolName string, input j
 		argsSummary = string(input)
 	}
 
-	// 默认 reason 不展示（如 "tool 'shell' requires confirmation"），
-	// 仅安全检查或规则命中时展示具体原因。
+	// 默认 reason 不展示（如 "tool 'shell' requires confirmation"），	// 仅安全检查或规则命中时展示具体原因。
 	reasonMsg := ""
 	if result.Reason != permission.ReasonDefault {
 		reasonMsg = result.Message
@@ -3699,8 +3687,7 @@ func (r *tuiUserResponder) ApprovePlan(ctx context.Context, plan string) (permis
 // ---------------------------------------------------------------------------
 
 // autoIsDark 返回 auto 模式下当前是否应使用深色主题。
-// 优先使用 Bubble Tea BackgroundColorMsg 的检测结果（更可靠），
-// 未收到时回退到 lipgloss.HasDarkBackground 的初始检测结果。
+// 优先使用 Bubble Tea BackgroundColorMsg 的检测结果（更可靠），// 未收到时回退到 lipgloss.HasDarkBackground 的初始检测结果。
 func (m *model) autoIsDark() bool {
 	if m.hasTeaBackground {
 		return m.autoDarkFromTea
@@ -4553,8 +4540,7 @@ func (m *model) reconfigureLLMClientForProvider(newProvider string, settings *ll
 	}
 }
 
-// rebuildSlashRegistry 用当前的 m.llmClient 重建 slash registry，
-// 确保 ModelLister 持有最新的 llm.Client 引用。
+// rebuildSlashRegistry 用当前的 m.llmClient 重建 slash registry，// 确保 ModelLister 持有最新的 llm.Client 引用。
 // 在 /provider 和 /model 切换后调用，使 /model（无参）能获取到新 provider 的模型列表。
 func (m *model) rebuildSlashRegistry() {
 	creator := &tuiSessionCreator{m: m}

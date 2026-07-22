@@ -26,8 +26,7 @@ func (d *DangerousCommandPattern) Matches(command string) bool {
 	// AND 关系：所有 Keywords 必须出现
 	for i, kw := range d.Keywords {
 		if i == 0 && d.FirstTokenOnly {
-			// 首 keyword 需匹配任一子命令的首 token（精确或 prefix），
-			// 而非全命令的首 token。拆链后逐段检查，防止 "echo && shutdown" 漏检。
+			// 首 keyword 需匹配任一子命令的首 token（精确或 prefix），			// 而非全命令的首 token。拆链后逐段检查，防止 "echo && shutdown" 漏检。
 			if !anyFirstTokenMatches(command, kw) {
 				return false
 			}
@@ -88,8 +87,7 @@ func anyFirstTokenMatches(command, kw string) bool {
 }
 
 // firstTokenMatches 检查首 token 是否等于 keyword，或以 keyword. 开头
-// （匹配子命令变体如 mkfs.ext4）。注意：不匹配 kw-（如 scp-wrapper），
-// iptables-* 子命令由独立的 DangerousPatterns 覆盖。
+// （匹配子命令变体如 mkfs.ext4）。注意：不匹配 kw-（如 scp-wrapper），// iptables-* 子命令由独立的 DangerousPatterns 覆盖。
 func firstTokenMatches(firstToken, kw string) bool {
 	if firstToken == kw {
 		return true
@@ -189,8 +187,7 @@ var DangerousPatterns = []DangerousCommandPattern{
 	// ── Shell 内建危险 ──
 	{Keywords: []string{"eval"}, Label: "eval (arbitrary code execution)", FirstTokenOnly: true},
 	{Keywords: []string{"sudo"}, Label: "sudo (privilege escalation)", FirstTokenOnly: true},
-	// source /dev/stdin 等：用单 keyword 强制 source + /dev/ 邻接，
-	// 避免 "claude-source/ 2>/dev/null" 误中（空格归一化后 source 在路径中，/dev/ 在重定向中）。
+	// source /dev/stdin 等:用单 keyword 强制 source + /dev/ 邻接,避免路径中含 source 的目录名误中(空格归一化后 source 在路径中,/dev/ 在重定向中)。
 	{Keywords: []string{"source /dev/"}, Label: "source from /dev/stdin"},
 	{Keywords: []string{". /dev/"}, Label: ". (source) from /dev/stdin"},
 	{Keywords: []string{"exec"}, Label: "exec (replace shell process)", FirstTokenOnly: true},
@@ -240,8 +237,8 @@ var DangerousPatterns = []DangerousCommandPattern{
 // 即使参数变化（如 ls -la / ls -R），命令本身始终安全。
 //
 // 被排除的候选及原因：
-//   - env / printenv: 暴露环境变量中的 API 密钥等敏感信息
-//   - less / more: 交互式 TTY 工具，非 TTY 环境下行为异常且无实用价值
+// - env / printenv: 暴露环境变量中的 API 密钥等敏感信息
+// - less / more: 交互式 TTY 工具，非 TTY 环境下行为异常且无实用价值
 var trulySafeCommands = map[string]bool{
 	// 文件查看（纯读取）
 	"ls":   true,
@@ -280,8 +277,7 @@ var trulySafeCommands = map[string]bool{
 }
 
 // commandsWithDangerousArgs 是 trulySafeCommands 中某些参数组合有危险的命令。
-// 这些命令仍需要走危险模式检查（如 find -exec rm / find -delete），
-// 不能在 safe-command 快速路径中直接放行。
+// 这些命令仍需要走危险模式检查（如 find -exec rm / find -delete），// 不能在 safe-command 快速路径中直接放行。
 var commandsWithDangerousArgs = map[string]bool{
 	"find": true,
 }
@@ -326,8 +322,7 @@ type CommandCheckResult struct {
 // CommandSafetyCheck 检查命令的安全性，返回风险等级。
 // 入参 command 会先做 cd 前缀归一化，确保提取的 first token 是实际命令而非 cd。
 //
-// 对于 && / ; / || / 换行 连接的命令链，每个子命令独立评估，
-// 取最高风险等级作为整体结果——防止 "ls && rm -rf /" 仅凭首命令 "ls" 误判为安全。
+// 对于 && / ; / || / 换行 连接的命令链，每个子命令独立评估，// 取最高风险等级作为整体结果——防止 "ls && rm -rf /" 仅凭首命令 "ls" 误判为安全。
 func CommandSafetyCheck(command string) CommandCheckResult {
 	command = strings.TrimSpace(command)
 	if command == "" {
@@ -340,8 +335,7 @@ func CommandSafetyCheck(command string) CommandCheckResult {
 		command = normalized
 	}
 
-	// 0.5 水平空格归一化：collapse 连续空格/tab 为单空格（保留换行），
-	// 防止多余空白导致邻接 keyword（如 "source /dev/"）漏检。
+	// 0.5 水平空格归一化：collapse 连续空格/tab 为单空格（保留换行），	// 防止多余空白导致邻接 keyword（如 "source /dev/"）漏检。
 	// 注意：不能 collapse 换行——会破坏 heredoc 边界，导致 heredoc 体内
 	// 的 | sh / | bash 等内容被误判为 shell 管道。
 	command = collapseHorizontalWhitespace(command)
@@ -350,21 +344,20 @@ func CommandSafetyCheck(command string) CommandCheckResult {
 	// 被误判为 shell 管道。仅保留 heredoc 起始标记，剔除 body 和结束标记。
 	command = stripHeredocs(command)
 
-	// 1. 单条安全命令快速路径：首 token 在 trulySafeCommands、无危险参数、非链命令，
-	//    直接返回 RiskNone，避免危险模式误伤参数中的关键词（如 echo "reboot"）。
-	//    find 等虽有危险子命令，仍走完整流程（如 find -exec rm）。
+	// 1. 单条安全命令快速路径：首 token 在 trulySafeCommands、无危险参数、非链命令，	// 直接返回 RiskNone，避免危险模式误伤参数中的关键词（如 echo "reboot"）。
+	// find 等虽有危险子命令，仍走完整流程（如 find -exec rm）。
 	firstToken := extractFirstToken(command)
 	if trulySafeCommands[firstToken] && !commandsWithDangerousArgs[firstToken] && splitCommandChain(command) == nil {
 		return CommandCheckResult{Level: RiskNone, Message: "safe read-only command: " + firstToken}
 	}
 
 	// 2. 危险模式匹配（最高优先级，先于已知安全命令检查）
-	//    即使首命令在安全列表中，危险模式仍可能命中（如 git + find -exec rm 的组合等）
+	// 即使首命令在安全列表中，危险模式仍可能命中（如 git + find -exec rm 的组合等）
 	//
-	//    引号防护：AND 全量匹配后（dp.Matches），额外检查至少一个「非首 keyword」
-	//    出现在引号外。避免 commit message、grep 搜索模式等引号内参数值误伤。
-	//    首 keyword（通常是命令名）即使自然在引号外，flags/paths 等后续 keywords
-	//    全部在引号内时也不拦截——因为它们只是参数值里的文字，非真实命令。
+	// 引号防护：AND 全量匹配后（dp.Matches），额外检查至少一个「非首 keyword」
+	// 出现在引号外。避免 commit message、grep 搜索模式等引号内参数值误伤。
+	// 首 keyword（通常是命令名）即使自然在引号外，flags/paths 等后续 keywords
+	// 全部在引号内时也不拦截——因为它们只是参数值里的文字，非真实命令。
 	unquoted := extractUnquotedContent(command)
 	for _, dp := range DangerousPatterns {
 		if dp.Matches(command) && hasNonFirstKeywordOutsideQuotes(dp.Keywords, unquoted) {
@@ -508,8 +501,7 @@ func stripHeredocs(command string) string {
 	return command
 }
 
-// collapseHorizontalWhitespace 将连续的水平空白符（空格、tab）折叠为单个空格，
-// 保留换行符不动。这样既修复了 "source  /dev/" 漏检问题，又不会破坏 heredoc 边界。
+// collapseHorizontalWhitespace 将连续的水平空白符（空格、tab）折叠为单个空格，// 保留换行符不动。这样既修复了 "source /dev/" 漏检问题，又不会破坏 heredoc 边界。
 func collapseHorizontalWhitespace(s string) string {
 	var b strings.Builder
 	b.Grow(len(s))

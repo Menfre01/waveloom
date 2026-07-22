@@ -10,26 +10,24 @@ import (
 
 // SanitizeToolOutput 从工具输出中移除可用于 prompt injection 的隐藏 Unicode 字符。
 //
-// 三步清洗管线（对标 Claude Code partiallySanitizeUnicode）：
+// 三步清洗管线:
 //
-//  1. NFKC 正规化 — 折叠兼容性等價字符（如 ﬁ→fi、K→K），
-//     防止攻击者利用 Unicode 同形异义绕过关键词检测。
-//  2. 主防御：Unicode 类别检测 — 移除 Cf（格式字符）、Co（私有使用区，含 TAG 字符）、
-//     Cs（孤立代理）。对标 Claude Code \p{Cf}\p{Co}\p{Cs}（Method 1）。
-//  3. 辅助防御：显式区间 — 控制字符、Unicode 空白、非字符，对标 Method 2。
+// 1. NFKC 正规化 — 折叠兼容性等價字符（如 ﬁ→fi、K→K），// 防止攻击者利用 Unicode 同形异义绕过关键词检测。
+// 2. 主防御：Unicode 类别检测 — 移除 Cf（格式字符）、Co（私有使用区，含 TAG 字符）、
+// Cs(孤立代理)。
+// 3. 辅助防御:显式区间 — 控制字符、Unicode 空白、非字符。
 //
 // 关键覆盖：
-//   - SOFT HYPHEN (U+00AD)         — Cf，不可见，破坏 token 边界
-//   - TAG 字符 (U+E0001, U+E0020+) — Co，HackerOne #3086545 的原始攻击向量
-//   - WORD JOINER (U+2060)         — Cf，零宽，影响 tokenization
-//   - 全部 16 个平面的 PUA          — Co，自定义字体的走私通道
-//   - 孤立代理 (U+D800-U+DFFF)      — Cs，不应出现在合法 UTF-8 中
+// - SOFT HYPHEN (U+00AD) — Cf，不可见，破坏 token 边界
+// - TAG 字符 (U+E0001, U+E0020+) — Co，HackerOne #3086545 的原始攻击向量
+// - WORD JOINER (U+2060) — Cf，零宽，影响 tokenization
+// - 全部 16 个平面的 PUA — Co，自定义字体的走私通道
+// - 孤立代理 (U+D800-U+DFFF) — Cs，不应出现在合法 UTF-8 中
 //
 // 返回值：清洗后的字符串。
 // 当无字符被移除时直接返回原字符串（避免不必要的内存分配）。
 func SanitizeToolOutput(s string) string {
 	// Step 1: NFKC 正规化 — 处理兼容性等价字符。
-	// 对标 Claude Code current.normalize('NFKC')。
 	s = norm.NFKC.String(s)
 
 	// Step 2: 扫描危险字符。快速路径 — 无危险字符时直接返回。
@@ -53,19 +51,16 @@ func SanitizeToolOutput(s string) string {
 //
 // 双层防御：
 //
-//	Primary:   unicode.Cf / unicode.Co / unicode.Cs → 对标 Claude Code \p{Cf}\p{Co}\p{Cs}
-//	Secondary: 显式区间 → 控制字符、Unicode 空白、非字符
+//	Primary:   unicode.Cf / unicode.Co / unicode.Cs
 func isDangerousUnicode(r rune) bool {
-	// ── Primary: Unicode 类别检测（对标 Claude Code \p{Cf}\p{Co}\p{Cs}）──
-	//
+	// ── Primary: Unicode 类别检测 ──
 	// Cf = 格式字符：SOFT HYPHEN, ZWJ, ZWNJ, ZWSP, LRM, RLM, BOM,
-	//      WORD JOINER, invisible operators, directional formatting, TAG chars,
-	//      variation selectors, Arabic format marks, etc.
+	// WORD JOINER, invisible operators, directional formatting, TAG chars,
+	// variation selectors, Arabic format marks, etc.
 	// Co = 私有使用区：BMP PUA (U+E000-U+F8FF) + Supplementary PUA planes 15-16。
-	//      TAG 字符 (U+E0001, U+E0020-U+E007F) 也属于此类别 —
-	//      这是 HackerOne #3086545 中 ASCII smuggling 的载体。
-	// Cs = 代理对：U+D800-U+DFFF。合法 UTF-8 不应包含孤立代理，
-	//      但防御纵深要求移除它们。
+	// TAG 字符 (U+E0001, U+E0020-U+E007F) 也属于此类别 —
+	// 这是 HackerOne #3086545 中 ASCII smuggling 的载体。
+	// Cs = 代理对：U+D800-U+DFFF。合法 UTF-8 不应包含孤立代理，	// 但防御纵深要求移除它们。
 	if unicode.Is(unicode.Cf, r) || unicode.Is(unicode.Co, r) || unicode.Is(unicode.Cs, r) {
 		return true
 	}
@@ -105,10 +100,8 @@ func isDangerousUnicode(r rune) bool {
 }
 
 // SanitizeJSON 递归清洗 JSON 字符串中的所有键和值。
-// 对标 Claude Code recursivelySanitizeUnicode。
 //
-// 攻击者可在 JSON 的 key 中嵌入隐藏 Unicode 字符，
-// 纯字符串清洗（SanitizeToolOutput）不处理 key。
+// 攻击者可在 JSON 的 key 中嵌入隐藏 Unicode 字符，// 纯字符串清洗（SanitizeToolOutput）不处理 key。
 // 此函数先对原始字符串做整体清洗，再解析为 map 后递归清洗 key。
 func SanitizeJSON(raw string) string {
 	raw = SanitizeToolOutput(raw)

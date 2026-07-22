@@ -1,7 +1,6 @@
-// Package permission — sed 只读表达式检测（对标 Claude Code sedValidation.ts / sedEditParser.ts）
+// Package permission — sed 只读表达式检测（ / sedEditParser.ts）
 //
-// 解析 sed 表达式判断命令是否为纯只读操作（无 -i/--in-place 标志且仅使用只读命令），
-// 使只读 sed 能被 Plan Mode 自动批准，并被 pathValidation 降级为 read 操作类型。
+// 解析 sed 表达式判断命令是否为纯只读操作（无 -i/--in-place 标志且仅使用只读命令），// 使只读 sed 能被 Plan Mode 自动批准，并被 pathValidation 降级为 read 操作类型。
 package permission
 
 import (

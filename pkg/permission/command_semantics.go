@@ -1,12 +1,12 @@
 package permission
 
 import "strings"
-// Package permission — 命令退出码语义解释（对标 Claude Code commandSemantics.ts）
+// Package permission — 命令退出码语义解释（
 //
 // 许多命令使用退出码传达非错误信息。例如：
-//   - grep 返回 1 表示无匹配（非错误）
-//   - diff 返回 1 表示文件有差异（非错误）
-//   - test/[ 返回 1 表示条件为假（非错误）
+// - grep 返回 1 表示无匹配（非错误）
+// - diff 返回 1 表示文件有差异（非错误）
+// - test/[ 返回 1 表示条件为假（非错误）
 
 // ============================================================================
 // CommandSemantic — 命令语义解释器
@@ -147,10 +147,10 @@ func testMessage(exitCode int) string {
 // InterpretExitCode 根据命令语义解释退出码。
 //
 // 参数：
-//   - command: 完整命令字符串
-//   - exitCode: 命令退出码
-//   - stdout: 标准输出（可选）
-//   - stderr: 标准错误（可选）
+// - command: 完整命令字符串
+// - exitCode: 命令退出码
+// - stdout: 标准输出（可选）
+// - stderr: 标准错误（可选）
 //
 // 返回语义解释结果。
 func InterpretExitCode(command string, exitCode int, stdout, stderr string) SemanticResult {

@@ -532,7 +532,7 @@ func TestLoadConfigs_MergeAndPriority(t *testing.T) {
 	homeDir := t.TempDir()
 	projectDir := t.TempDir()
 
-	// Claude Code user scope (lowest)
+	// User-level config (lowest priority)
 	claudeContent := `{"mcpServers":{"shared":{"type":"http","url":"http://claude-user"}}}`
 	_ = os.WriteFile(filepath.Join(homeDir, ".claude.json"), []byte(claudeContent), 0644)
 

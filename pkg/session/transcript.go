@@ -14,13 +14,13 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// TranscriptEntry — unified Claude Code compatible JSONL entry
+// TranscriptEntry — unified compatible JSONL entry
 // ---------------------------------------------------------------------------
 
 // maxTranscriptEntries 是 resume 时回放到 viewport 的最大条目数。
 const maxTranscriptEntries = 500
 
-// TranscriptEntry 是统一 JSONL 文件中一行的结构，兼容 Claude Code 格式。
+// TranscriptEntry 是统一 JSONL 文件中一行的结构，。
 // 同时替代旧的 TranscriptLine（TUI viewport）和裸 llm.Message（resume）。
 type TranscriptEntry struct {
 	ParentUUID     *string         `json:"parentUuid,omitempty"`
@@ -186,7 +186,7 @@ func (e TranscriptEntry) ToMessage() llm.Message {
 			msg.ReasoningContent = block.Thinking
 		}
 	}
-	// tool_result 消息 → role 应为 tool（Claude Code 将其序列化为 user，反序列化时还原）
+	// tool_result 消息 → role 应为 tool（将其序列化为 user，反序列化时还原）
 	if hasToolResult {
 		msg.Role = llm.RoleTool
 	}

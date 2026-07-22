@@ -1,4 +1,4 @@
-// Package permission — 只读命令 flag 白名单（对标 Claude Code readOnlyValidation.ts）
+// Package permission — 只读命令 flag 白名单（
 //
 // 为 Plan Mode 自动批准提供安全基础：只有使用白名单中安全 flag 的命令才能被自动批准。
 // 任何不在白名单中的 flag / 组合都要求用户确认。
@@ -40,7 +40,7 @@ type CommandConfig struct {
 // COMMAND_ALLOWLIST
 // ============================================================================
 
-// COMMAND_ALLOWLIST 对标 Claude Code 的只读命令 flag 白名单。
+// COMMAND_ALLOWLIST flag 白名单。
 // 所有列入的 flag 仅允许读取操作，不得写入文件、执行代码或发起网络请求。
 var COMMAND_ALLOWLIST = map[string]CommandConfig{
 	// ── grep ──

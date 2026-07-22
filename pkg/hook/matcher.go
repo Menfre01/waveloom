@@ -2,11 +2,11 @@ package hook
 
 import "strings"
 
-// 规则（对齐 Claude Code matcher 语法，精确匹配不区分大小写以兼容不同命名惯例）：
-//   - 空字符串：匹配所有
-//   - 精确名称：大小写不敏感匹配（如 "Bash" 匹配 "bash"）
-//   - 前缀通配：以 * 结尾时匹配前缀（如 "Read*"）
-//   - 多模式：| 分隔，匹配任一
+// 规则（matcher 语法，精确匹配不区分大小写以兼容不同命名惯例）：
+// - 空字符串：匹配所有
+// - 精确名称：大小写不敏感匹配（如 "Bash" 匹配 "bash"）
+// - 前缀通配：以 * 结尾时匹配前缀（如 "Read*"）
+// - 多模式：| 分隔，匹配任一
 // Match 检查 toolName 是否匹配 matcher 模式。
 //
 func Match(matcher, toolName string) bool {

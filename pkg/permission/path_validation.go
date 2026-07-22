@@ -1,11 +1,11 @@
-// Package permission — 路径验证（对标 Claude Code pathValidation.ts）
+// Package permission — 路径验证（
 //
 // 提供：
-//   - PATH_EXTRACTORS: 30+ 命令的路径提取器（per-command 参数解析）
-//   - -- end-of-options 处理
-//   - 复合命令 cd 检测
-//   - 安全包装器剥离（timeout/nice/nohup/env）
-//   - 危险删除路径检查
+// - PATH_EXTRACTORS: 30+ 命令的路径提取器（per-command 参数解析）
+// - -- end-of-options 处理
+// - 复合命令 cd 检测
+// - 安全包装器剥离（timeout/nice/nohup/env）
+// - 危险删除路径检查
 package permission
 
 import (
@@ -102,7 +102,7 @@ func IsSupportedPathCommand(cmd string) bool {
 // PathExtractor 从命令参数中提取路径列表。
 type PathExtractor func(args []string) []string
 
-// PATH_EXTRACTORS 对标 Claude Code 的 per-command 路径提取器。
+// PATH_EXTRACTORS per-command 路径提取器。
 var PATH_EXTRACTORS = map[PathCommand]PathExtractor{
 	CmdCD:      extractCD,
 	CmdLS:      extractSimple,

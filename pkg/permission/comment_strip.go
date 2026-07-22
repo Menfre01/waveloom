@@ -1,4 +1,4 @@
-// Package permission — 注释行剥离（对标 Claude Code stripCommentLines）
+// Package permission — 注释行剥离（
 package permission
 
 import "strings"

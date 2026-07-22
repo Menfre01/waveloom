@@ -1,13 +1,12 @@
-// Package hook 实现 Claude Code 兼容的 Hooks 系统。
+// Package hook 实现 Hooks 系统。
 //
 // 支持的事件类型（一期）：
-//   - PreToolUse：工具执行前改写参数
-//   - PostToolUse：工具执行后改写结果
-//   - Notification：异步事件通知
-//   - Stop：loop 终止通知
+// - PreToolUse：工具执行前改写参数
+// - PostToolUse：工具执行后改写结果
+// - Notification：异步事件通知
+// - Stop：loop 终止通知
 //
-// 配置格式 100% 兼容 Claude Code settings.json 的 hooks 字段，
-// 现有 hook 脚本无需修改即可在 Waveloom 中使用。
+// 配置格式兼容 settings.json 的 hooks 字段。现有 hook 脚本无需修改即可在 Waveloom 中使用。
 package hook
 
 import "encoding/json"
@@ -32,7 +31,7 @@ const (
 // ── Hook 配置 ──
 
 // HookConfig 是单个 hook 条目的配置。
-// 对齐 Claude Code settings.json 中 hooks 字段的单个条目。
+// settings.json 中 hooks 字段的单个条目。
 type HookConfig struct {
 	Matcher string     `json:"matcher,omitempty"` // 匹配器（空=全部）
 	Hooks   []HookItem `json:"hooks"`
@@ -131,8 +130,7 @@ func LoadFromSettings(raw []byte) (map[EventType][]HookConfig, error) {
 }
 
 // MergeConfigs 合并多个 hooks 配置源（后出现的覆盖先出现的）。
-// 注意：同事件类型采用整体替换语义（非 append），
-// 即 .waveloom/settings.json 中的 PreToolUse 配置会完全替换 .claude/settings.json 中的 PreToolUse 配置。
+// 注意：同事件类型采用整体替换语义（非 append），// 即 .waveloom/settings.json 中的 PreToolUse 配置会完全替换 .claude/settings.json 中的 PreToolUse 配置。
 // 如需在多个配置源中追加 hook，请在同一个文件中列出所有 hook 条目。
 func MergeConfigs(sources ...map[EventType][]HookConfig) map[EventType][]HookConfig {
 	result := make(map[EventType][]HookConfig)

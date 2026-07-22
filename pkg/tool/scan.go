@@ -7,14 +7,14 @@ import (
 
 // ScanToolOutput 扫描工具输出中的 prompt injection 模式，返回标记文本。
 //
-// 对标 Claude Code PostToolUse Hook 社区规则（prompt-injection-defender）。
+// Hook 社区规则（prompt-injection-defender）。
 // 不作阻断——仅将命中的 WARNING 注入工具结果，改变 LLM 从"执行指令"到"警惕审查"的行为模式。
 //
 // 检测类别（优先级从高到低）：
-//  1. 指令覆盖   — "ignore previous instructions", "new system prompt:"
-//  2. 角色扮演   — "you are DAN", "pretend you are"
-//  3. 伪造上下文 — {"role":"system"}, "[system]", fake authority
-//  4. 编码混淆   — hex escapes \xNN, base64 payloads
+// 1. 指令覆盖 — "ignore previous instructions", "new system prompt:"
+// 2. 角色扮演 — "you are DAN", "pretend you are"
+// 3. 伪造上下文 — {"role":"system"}, "[system]", fake authority
+// 4. 编码混淆 — hex escapes \xNN, base64 payloads
 //
 // 返回：空字符串表示未命中，否则返回 WARNING 标记文本。
 func ScanToolOutput(content string) string {

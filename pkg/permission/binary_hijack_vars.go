@@ -1,7 +1,6 @@
-// Package permission — BINARY_HIJACK_VARS 环境变量剥离（对标 Claude Code bashPermissions.ts）
+// Package permission — BINARY_HIJACK_VARS 环境变量剥离（
 //
-// 在权限规则匹配前剥离可用于劫持二进制行为的环境变量，
-// 防止通过 LD_PRELOAD / DYLD_INSERT_LIBRARIES 等绕过命令白名单。
+// 在权限规则匹配前剥离可用于劫持二进制行为的环境变量，// 防止通过 LD_PRELOAD / DYLD_INSERT_LIBRARIES 等绕过命令白名单。
 package permission
 
 import (
@@ -12,7 +11,7 @@ import (
 // BINARY_HIJACK_VARS — 可劫持二进制行为的危险环境变量
 // ============================================================================
 
-// binaryHijackVars 是对标 Claude Code BINARY_HIJACK_VARS 的危险环境变量集合。
+// binaryHijackVars 是 的危险环境变量集合。
 // 这些变量可在命令执行前注入共享库或修改运行时行为，用于绕过权限白名单。
 //
 // 攻击示例:
@@ -96,7 +95,7 @@ var binaryHijackVars = map[string]bool{
 // StripBinaryHijackVars 从命令字符串中剥离危险的 BINARY_HIJACK_VARS 赋值。
 //
 // "LD_PRELOAD=/tmp/evil.so FOO=bar git status" → "FOO=bar git status"
-// 对标 Claude Code stripAllLeadingEnvVars。
+// 
 func StripBinaryHijackVars(cmd string) string {
 	if !strings.Contains(cmd, "=") {
 		return cmd

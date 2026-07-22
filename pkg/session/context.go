@@ -1,11 +1,10 @@
-// Package session 提供跨 Agent Loop 调用的消息历史累积，
-// 使 DeepSeek 前缀缓存系统能够跨轮次命中。
+// Package session 提供跨 Agent Loop 调用的消息历史累积，// 使 DeepSeek 前缀缓存系统能够跨轮次命中。
 //
 // 核心机制:
-//   - PrepareRun 追加 user 消息并返回完整历史副本
-//   - CompleteRun 用 Loop 完成后的完整消息替换内部状态
-//   - System Prompt 固定为 messages[0]，确保它是最长公共前缀的起点
-//   - 四级水位线上下文压缩（Tier 0/1/2/3）在 CompleteRun 中自动执行
+// - PrepareRun 追加 user 消息并返回完整历史副本
+// - CompleteRun 用 Loop 完成后的完整消息替换内部状态
+// - System Prompt 固定为 messages[0]，确保它是最长公共前缀的起点
+// - 四级水位线上下文压缩（Tier 0/1/2/3）在 CompleteRun 中自动执行
 package session
 
 import (
@@ -45,8 +44,7 @@ type ContextManager struct {
 	stats       Stats
 	sessionPath string // session 落盘路径（空表示不落盘）
 
-	// jsonlMessageCount 记录已写入 JSONL 的消息数，
-	// 用于增量追加（避免重复写入已持久化的消息）。
+	// jsonlMessageCount 记录已写入 JSONL 的消息数，	// 用于增量追加（避免重复写入已持久化的消息）。
 	jsonlMessageCount int
 
 	// 四级水位线上下文压缩（委托给 Compactor）
@@ -69,8 +67,7 @@ type ContextManager struct {
 	fhData *filehistory.SnapshotData
 }
 
-// compactorState 是 compactor 内部使用的扩展接口，
-// 提供 Snapshot/Restore/Reset 等持久化方法。
+// compactorState 是 compactor 内部使用的扩展接口，// 提供 Snapshot/Restore/Reset 等持久化方法。
 // TieredCompactor 同时满足 Compactor 和此接口。
 type compactorState interface {
 	compaction.Compactor
@@ -114,8 +111,7 @@ func (cm *ContextManager) Compactor() compaction.Compactor {
 
 // PrepareRun 追加一条 user 消息到历史，返回完整消息切片供 Loop 使用。
 //
-// 在追加用户输入前检查已完成的后台任务并注入通知，
-// 确保 agent 能感知上一 turn 启动的后台命令的执行结果。
+// 在追加用户输入前检查已完成的后台任务并注入通知，// 确保 agent 能感知上一 turn 启动的后台命令的执行结果。
 //
 // 返回的切片是内部状态的副本——Loop 对返回值的 append/modify 不影响
 // ContextManager 的内部状态。只有通过 CompleteRun 才能更新内部状态。
@@ -157,8 +153,7 @@ func mustReadRandom(b []byte) {
 
 // newMessageID 生成 8 字节随机十六进制消息标识符。
 // 格式：16 个十六进制字符，如 "a1b2c3d4e5f6a7b8"。
-// 足以为每个消息提供唯一标识（64 位随机空间，冲突概率可忽略），
-// 比 UUID v4 更紧凑，在 JSONL 序列化中节省空间。
+// 足以为每个消息提供唯一标识（64 位随机空间，冲突概率可忽略），// 比 UUID v4 更紧凑，在 JSONL 序列化中节省空间。
 func newMessageID() string {
 	b := make([]byte, 8)
 	mustReadRandom(b)
@@ -167,8 +162,8 @@ func newMessageID() string {
 
 // checkBackgroundTasksLocked 检查后台任务状态，返回应注入的通知文本。
 // 每轮报告两类信息：
-//   1. 新完成/失败的任务（仅当有状态变更时）
-//   2. 仍在运行的任务（让 LLM 知道有哪些待处理的后台工作）
+// 1. 新完成/失败的任务（仅当有状态变更时）
+// 2. 仍在运行的任务（让 LLM 知道有哪些待处理的后台工作）
 // 调用方必须持有 cm.mu 写锁。
 func (cm *ContextManager) checkBackgroundTasksLocked() string {
 	completed := task.DefaultRegistry.CompletedSince(cm.lastBackgroundCheck)
@@ -215,11 +210,9 @@ type CompleteResult struct {
 	HardLimitReason  string           // 触发原因："usage" 或 "tier3_failures"
 }
 
-// CompleteRun 用 Loop 完成后的完整消息历史替换内部状态，
-// 并累加本轮 token 统计。如果设置了 sessionPath 则自动落盘。
+// CompleteRun 用 Loop 完成后的完整消息历史替换内部状态，// 并累加本轮 token 统计。如果设置了 sessionPath 则自动落盘。
 //
-// promptTokens 为跨轮累加值（用于 TotalPromptTokens 统计），
-// contextTokens 为末轮 API 返回的 prompt_tokens（用于上下文利用率计算）。
+// promptTokens 为跨轮累加值（用于 TotalPromptTokens 统计），// contextTokens 为末轮 API 返回的 prompt_tokens（用于上下文利用率计算）。
 // model 为实际使用的模型名，reason 为终止原因，durationMs 为本轮耗时。
 // 典型用法：在 LoopDone 事件中调用，传入 ev.Messages、TurnStats 累积值和 LoopDone 元数据。
 // 返回 CompleteResult 供上层更新 HUD/日志。
@@ -231,9 +224,7 @@ func (cm *ContextManager) CompleteRun(messages []llm.Message, promptTokens, cont
 	// 验证和存储消息（压缩已在 Loop 内完成）
 	validated, repairReport := llm.ValidateMessages(messages)
 	if len(repairReport) > 0 {
-		// 本轮产出了无效消息 → 打印修复日志并重置 JSONL 计数，
-		// 强制下次 saveToPath 全量重写 JSONL（而非增量追加），
-		// 避免已写入但被丢弃的消息残留在 JSONL 中。
+		// 本轮产出了无效消息 → 打印修复日志并重置 JSONL 计数，		// 强制下次 saveToPath 全量重写 JSONL（而非增量追加），		// 避免已写入但被丢弃的消息残留在 JSONL 中。
 		for _, entry := range repairReport {
 			slog.Warn("turn repair", "index", entry.Index, "role", entry.Role, "action", entry.Action, "detail", entry.Detail)
 		}
@@ -356,8 +347,7 @@ func (cm *ContextManager) Save() {
 	}
 }
 
-// saveToPath 内部方法：用当前状态覆盖写入指定 JSON 文件，
-// 并将新增消息追加写入 JSONL 文件。
+// saveToPath 内部方法：用当前状态覆盖写入指定 JSON 文件，// 并将新增消息追加写入 JSONL 文件。
 // 若消息列表因 compaction/ValidateMessages 缩短或过滤了无效消息，则全量重写 JSONL。
 func (cm *ContextManager) saveToPath(path string) {
 	cm.mu.RLock()
@@ -442,10 +432,10 @@ func (cm *ContextManager) compactionData() compaction.CompactionData {
 // 同时恢复压缩决策表和摘要链。
 //
 // 反序列化后执行完整性校验（llm.ValidateMessages），自动修复：
-//   - 非法 Role 的消息
-//   - 空 assistant 消息（无 content 且无 tool_calls）
-//   - 残缺 ToolCall（缺少 ID/Name）
-//   - 孤儿 tool_calls / tool 消息配对异常
+// - 非法 Role 的消息
+// - 空 assistant 消息（无 content 且无 tool_calls）
+// - 残缺 ToolCall（缺少 ID/Name）
+// - 孤儿 tool_calls / tool 消息配对异常
 //
 // 修复详情通过 stderr 输出（静默修复不阻塞恢复流程）。
 func (cm *ContextManager) LoadFromFile(path string) bool {
@@ -573,8 +563,7 @@ func (cm *ContextManager) Reset() {
 
 // RewindConversationTo 截断消息历史到指定索引（不含），用于 rewind 功能。
 // messageIndex 是保留的最后一条消息的索引+1（即 messages = messages[:messageIndex]）。
-// 截断后生成新的 conversationID，重置 stats/compaction/todo 状态，
-// 并将截断后的消息写入新的 JSONL 文件。
+// 截断后生成新的 conversationID，重置 stats/compaction/todo 状态，// 并将截断后的消息写入新的 JSONL 文件。
 // 返回新的 conversationID 和新 JSONL 文件路径。
 func (cm *ContextManager) RewindConversationTo(messageIndex int, sessionDir string) (string, string, error) {
 	cm.mu.Lock()
@@ -596,7 +585,7 @@ func (cm *ContextManager) RewindConversationTo(messageIndex int, sessionDir stri
 	cm.instructionsInjected = len(cm.messages) > 1 && cm.messages[1].Role == llm.RoleUser && cm.messages[1].Content != ""
 	cm.stateful().Reset()
 
-	// 写入新 JSONL（统一 transcript 格式，同时兼容 Claude Code hooks）
+	// 写入新 JSONL（统一 transcript 格式，同时）
 	jsonlPath := TranscriptPath(sessionDir, newID)
 	sessionVersion := version()
 	cwd, _ := os.Getwd()

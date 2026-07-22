@@ -22,20 +22,20 @@ import (
 // executeToolCalls 按并发安全性分区执行工具调用。
 //
 // 执行流程：
-//  1. 按 ConcurrentSafe() 分区：并发安全组 + 串行组
-//  2. 并发组：逐工具推送 ToolCallStart → 权限检查 → 放行则收集；被拒则立即推送 ToolCallResult{Denied:true}
-//  3. 并行执行放行的并发工具，完成后推送 ToolCallResult
-//  4. 串行组：逐工具推送 ToolCallStart → 权限检查 → 被拒立即推送 ToolCallResult{Denied:true}；放行则执行并推送 ToolCallResult
-//  5. 按原始 ToolCall 顺序构造 tool 消息
+// 1. 按 ConcurrentSafe() 分区：并发安全组 + 串行组
+// 2. 并发组：逐工具推送 ToolCallStart → 权限检查 → 放行则收集；被拒则立即推送 ToolCallResult{Denied:true}
+// 3. 并行执行放行的并发工具，完成后推送 ToolCallResult
+// 4. 串行组：逐工具推送 ToolCallStart → 权限检查 → 被拒立即推送 ToolCallResult{Denied:true}；放行则执行并推送 ToolCallResult
+// 5. 按原始 ToolCall 顺序构造 tool 消息
 //
 // 权限检查：
-//   - allow → 正常执行
-//   - deny → 构造拒绝消息，作为 Recoverable error 返回给 LLM
-//   - ask → 调用 UserResponder，allow 则执行，deny 则拒绝
+// - allow → 正常执行
+// - deny → 构造拒绝消息，作为 Recoverable error 返回给 LLM
+// - ask → 调用 UserResponder，allow 则执行，deny 则拒绝
 //
 // 错误处理：
-//   - Fatal → 直接返回 TerminalReason
-//   - Recoverable → 作为 tool 消息内容返回给 LLM，由 LLM 根据错误反馈自行修正
+// - Fatal → 直接返回 TerminalReason
+// - Recoverable → 作为 tool 消息内容返回给 LLM，由 LLM 根据错误反馈自行修正
 // effectiveTimeout 返回工具的实际超时：
 // 1. 工具自声明 ToolWithTimeout.ToolTimeout() > 0 → 使用工具声明
 // 2. 否则 → 使用 Loop 全局 ToolTimeout（可能为 0 = 无限制）
@@ -91,8 +91,7 @@ func (l *Loop) executeToolCalls(ctx context.Context, calls []llm.ToolCall, state
 	durations := make(map[string]time.Duration, len(calls))
 	skip := make(map[string]bool, len(calls))
 
-	// defer: 确保所有 tool call 都有对应的 tool 消息，
-	// 即使中途因 context 取消或执行错误提前返回，也不破坏消息配对完整性。
+	// defer: 确保所有 tool call 都有对应的 tool 消息，	// 即使中途因 context 取消或执行错误提前返回，也不破坏消息配对完整性。
 	defer func() {
 		if msgs == nil {
 			msgs, _, _ = l.buildToolMessages(calls, results, skip)
@@ -237,8 +236,7 @@ func (l *Loop) executeToolCalls(ctx context.Context, calls []llm.ToolCall, state
 			}(tc)
 		}
 		// REGRESSION: wg.Wait() 无超时保护。每个 goroutine 有 ToolTimeout
-		// （默认 5 min，工具可自声明更长），但若工具忽略 context，
-		// TUI 会被阻塞。加 ctx.Done() + 5s 宽限期作为双重保险。
+		// （默认 5 min，工具可自声明更长），但若工具忽略 context，		// TUI 会被阻塞。加 ctx.Done() + 5s 宽限期作为双重保险。
 		wgDone := make(chan struct{})
 		go func() {
 			wg.Wait()
@@ -252,8 +250,7 @@ func (l *Loop) executeToolCalls(ctx context.Context, calls []llm.ToolCall, state
 			select {
 			case <-wgDone:
 			case <-time.After(5 * time.Second):
-				// 工具未在宽限期内退出。异步等待避免 goroutine 泄漏，
-				// 继续处理已收集的结果。
+				// 工具未在宽限期内退出。异步等待避免 goroutine 泄漏，				// 继续处理已收集的结果。
 				slog.Warn("tool timeout grace expired, proceeding with collected results")
 				go func() { <-wgDone }()
 			}
@@ -334,8 +331,7 @@ func (l *Loop) executeToolCalls(ctx context.Context, calls []llm.ToolCall, state
 			return nil, ReasonAborted, ctx.Err()
 		}
 
-		// 工具需要用户交互时（如 ask_user_question）：跳过权限检查 + 普通执行，
-		// 改为通过 UserResponder 进行阻塞式交互
+		// 工具需要用户交互时（如 ask_user_question）：跳过权限检查 + 普通执行，		// 改为通过 UserResponder 进行阻塞式交互
 		if t, ok := l.toolRegistry.Get(tc.Name); ok {
 			if uit, ok := t.(tool.UserInteractionTool); ok && uit.RequiresUserInteraction() {
 				// plan 模式工具由 Loop 层面的特殊处理完成
@@ -601,11 +597,10 @@ func (l *Loop) executeToolCalls(ctx context.Context, calls []llm.ToolCall, state
 // buildToolMessages 基于执行结果构造 tool 消息，并进行错误分类检查。
 //
 // 所有 tool call 都会生成对应的 tool 消息，即使：
-//   - 结果不存在（执行被中断）→ 生成占位错误消息
-//   - 存在 Fatal 错误 → 仍为后续 call 生成消息，保证配对完整
+// - 结果不存在（执行被中断）→ 生成占位错误消息
+// - 存在 Fatal 错误 → 仍为后续 call 生成消息，保证配对完整
 //
-// Recoverable 错误始终包装为 "Error [kind]: message" 返回给 LLM，
-// LLM 可以根据错误反馈自行修正，无需 loop 层面限制重试次数。
+// Recoverable 错误始终包装为 "Error [kind]: message" 返回给 LLM，// LLM 可以根据错误反馈自行修正，无需 loop 层面限制重试次数。
 //
 // 返回: tool 消息切片, 终止原因（如有 Fatal 错误）, error（如有 Fatal 错误）
 func (l *Loop) buildToolMessages(
@@ -678,8 +673,7 @@ func (l *Loop) buildToolMessages(
 		content = tool.SanitizeToolOutput(content)
 
 		// Layer 2: 模式扫描 — 检测 prompt injection 攻击模式
-		// 对标 Claude Code PostToolUse Hook。命中时注入 WARNING 标记到输出中，
-		// 改变 LLM 从"执行指令"到"警惕审查"的行为模式。
+		// Hook。命中时注入 WARNING 标记到输出中，		// 改变 LLM 从"执行指令"到"警惕审查"的行为模式。
 		if warning := tool.ScanToolOutput(content); warning != "" {
 			content = warning + "\n" + content
 		}
@@ -733,12 +727,11 @@ func (l *Loop) buildToolMessages(
 			l.consecutiveSameError = 1
 		}
 
-		// 警告注入：连续失败达到阈值时，向 messages 末尾注入 system 提示，
-		// 引导 LLM 意识到重复错误并改变策略。
+		// 警告注入：连续失败达到阈值时，向 messages 末尾注入 system 提示，		// 引导 LLM 意识到重复错误并改变策略。
 		//
-		// 正常模式阶梯：     count=3 警告 → count=5 警告 → count=8 终止
+		// 正常模式阶梯： count=3 警告 → count=5 警告 → count=8 终止
 		// Advisor mode 阶梯：count=3 警告 → count=4 警告 → count=5 终止
-		//                     (count=1 正常调用，count=2 试错不警告)
+		// (count=1 正常调用，count=2 试错不警告)
 		thresholds := warnThresholds
 		effectiveMax := maxConsecutiveSameError
 		if l.config.AdvisorMode {
@@ -1233,8 +1226,7 @@ Plan saved to: %s
 }
 
 // mustReadRandom 包装 crypto/rand.Read，失败时 panic。
-// crypto/rand.Read 仅当系统熵池枯竭时才会失败，此时进程已处于退化状态，
-// 继续使用全零 ID 会导致数据损坏，因此 fail-fast 是更安全的选择。
+// crypto/rand.Read 仅当系统熵池枯竭时才会失败，此时进程已处于退化状态，// 继续使用全零 ID 会导致数据损坏，因此 fail-fast 是更安全的选择。
 func mustReadRandom(b []byte) {
 	if _, err := rand.Read(b); err != nil {
 		panic(fmt.Sprintf("crypto/rand.Read failed: %v", err))
@@ -1320,16 +1312,14 @@ var nouns = []string{
 
 
 // safeSend 向 channel 安全发送，channel 已关闭时静默丢弃（不 panic）。
-// REGRESSION: 工具 goroutine 可能在 resultsCh 关闭后仍尝试发送（工具忽略 context 取消），
-// 导致 panic-in-recover 的 double-panic 使进程崩溃。
+// REGRESSION: 工具 goroutine 可能在 resultsCh 关闭后仍尝试发送（工具忽略 context 取消），// 导致 panic-in-recover 的 double-panic 使进程崩溃。
 func safeSend[T any](ch chan<- T, v T) {
 	defer func() { _ = recover() }()
 	ch <- v
 }
 
 // isHighRiskTool 判断工具是否为高风险外部数据源。
-// 这些工具的输出来源于不受信任的外部环境（互联网、任意 shell 命令），
-// 需要叠加 ⚠️ EXTERNAL UNTRUSTED SOURCE 标记。
+// 这些工具的输出来源于不受信任的外部环境（互联网、任意 shell 命令），// 需要叠加 ⚠️ EXTERNAL UNTRUSTED SOURCE 标记。
 func isHighRiskTool(name string) bool {
 	switch name {
 	case "bash", "bash_subagent", "web_fetch", "web_search":

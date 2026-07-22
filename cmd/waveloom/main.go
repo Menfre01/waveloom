@@ -174,8 +174,7 @@ func main() {
 		systemPrompt = buildSystemPrompt(cwd, loc)
 	}
 
-	// 注入环境探测结果：让 LLM 在首次交互前就知道系统可用工具链，
-	// 避免因命令缺失陷入探测死循环。
+	// 注入环境探测结果：让 LLM 在首次交互前就知道系统可用工具链，	// 避免因命令缺失陷入探测死循环。
 	// globalPath 和 projectPath 用于加载用户配置的工具路径覆盖。
 	systemPrompt += formatEnvironmentSection(probeResults, cwd, globalPath, projectPath)
 
@@ -289,13 +288,13 @@ func main() {
 
 	// 16. 分支：无 prompt → 交互式 TUI，有 prompt → 单次执行
 	if cfg.OneShot == "" {
-		// 16.5 加载 Hook Runner（RTK 等 Claude Code 兼容 hooks）
+		// 16.5 加载 Hook Runner（RTK 等 hooks）
 		hookRunner := loadHookRunner()
 		runTUI(llmClient, registry, guard, expander, llmSettings.Model, cfg.Theme, cfg.ContextLimit, cfg.MaxTurns, cfg.ToolTimeout, cfg.ToolTimeoutSource, cfg.BypassPerm, ctxMgr, isResume, sessionDir, globalPath, projectPath, agentsMdText, loc, todoState, advisorMode, subModel, hookRunner, agentTool)
 		return
 	}
 
-	// 16.5 加载 Hook Runner（RTK 等 Claude Code 兼容 hooks）
+	// 16.5 加载 Hook Runner（RTK 等 hooks）
 	hookRunner := loadHookRunner()
 	runOneShot(cfg, llmClient, registry, guard, expander, cwd, ctxMgr, agentsMdText, loc, todoState, advisorMode, subModel, llmSettings.Model, hookRunner, agentTool)
 }
@@ -428,8 +427,7 @@ func createGuard(globalPath, projectPath string) permission.Guard {
 	return permission.NewGuard(opts...)
 }
 
-// formatEnvironmentSection 探测系统环境（编译器、运行时、构建工具），
-// 返回格式化的 ## Environment 节追加到 System Prompt。
+// formatEnvironmentSection 探测系统环境（编译器、运行时、构建工具），// 返回格式化的 ## Environment 节追加到 System Prompt。
 // globalPath 和 projectPath 用于加载用户配置的工具路径覆盖（environment.tools）。
 func formatEnvironmentSection(results []environment.ProbeResult, cwd, globalPath, projectPath string) string {
 	overrides := make(map[string]string)
@@ -524,8 +522,7 @@ func resolveLocaleWithSettings(cliLocale, projectPath, globalPath string) Locale
 	return DetectLocale()
 }
 
-// skillExecutorAdapter 将 skill.Loader 适配为 tool.SkillExecutor 接口，
-// 消除 tool 包对 skill 包的编译期依赖。
+// skillExecutorAdapter 将 skill.Loader 适配为 tool.SkillExecutor 接口，// 消除 tool 包对 skill 包的编译期依赖。
 type skillExecutorAdapter struct {
 	loader *skill.Loader
 }
@@ -698,19 +695,19 @@ func loadHookRunner() *hook.Runner {
 
 // hookSettingsPaths 返回需要检查 hooks 配置的文件路径（按优先级从低到高）。
 // 优先级：~/.claude → .claude → .claude/local → ~/.waveloom → .waveloom
-// Waveloom 自有配置优先级高于 Claude Code 兼容配置。
+// Waveloom 自有配置优先级高于 外部兼容配置。
 func hookSettingsPaths() []string {
 	homeDir, _ := os.UserHomeDir()
 	var paths []string
 
-	// Claude Code 兼容：用户全局 → 项目 → 本地
+	// 兼容：用户全局 → 项目 → 本地
 	if homeDir != "" {
 		paths = append(paths, filepath.Join(homeDir, ".claude", "settings.json"))
 	}
 	paths = append(paths, filepath.Join(".claude", "settings.json"))
 	paths = append(paths, filepath.Join(".claude", "settings.local.json"))
 
-	// Waveloom 自有配置：优先级高于 Claude Code（后覆盖前）
+	// Waveloom 自有配置：优先级高于 （后覆盖前）
 	if homeDir != "" {
 		paths = append(paths, filepath.Join(homeDir, ".waveloom", "settings.json"))
 	}
