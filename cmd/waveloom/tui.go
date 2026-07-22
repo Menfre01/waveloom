@@ -2751,9 +2751,25 @@ func (m *model) doTurn(userInput string) tea.Cmd {
 	// 前置更新：Loop 计数器 +1，HUD 显示"正要开始第 N 轮"
 	m.hudTurns++
 
+	// 若已有运行中的 loop,先取消并清除上一轮 PrepareRun 残留的 user 消息。
+	// 必须在 PrepareRun 之前执行,否则 cm.messages 中会出现两条连续 user 消息,
+	// 导致 LLM 在新 loop 中看到未完成的旧 prompt 并重新执行。
+	if m.cancelRun != nil {
+		m.cancelRun()
+		m.cancelRun = nil
+		// 旧 loop 的 TurnStats 可能已累加到 loop 级计数器,
+		// 其 LoopDone 将以 isStale 到达(不会归零),需显式清理。
+		m.loopPrompt = 0
+		m.loopCompl = 0
+		m.loopCacheHit = 0
+		m.loopCacheMiss = 0
+		m.loopReasoning = 0
+		// 撤销上一次 PrepareRun 追加的 user 消息,确保历史中只有本次输入。
+		m.cm.RemoveLastUserMessage()
+	}
+
 	// 1. PrepareRun — 使用展开后的输入
 	messagesSnapshot, messageID := m.cm.PrepareRun(expanded)
-
 	// 1.4 上轮用户快捷键退出 plan 模式 → 注入 [plan:end] 通知 LLM
 	if m.planExitPending {
 		endMsg := llm.Message{
@@ -2765,8 +2781,8 @@ func (m *model) doTurn(userInput string) tea.Cmd {
 		m.planExitPendingPairID = ""
 	}
 
-	// 1.5 如果当前处于 plan 模式（用户快捷键进入），注入 [plan:start] 消息并配置 Loop
-	// 仅在首次进入时注入，后续轮次不重复注入（避免产生多个 [plan:start] 孤对）
+	// 1.5 如果当前处于 plan 模式(用户快捷键进入),注入 [plan:start] 消息并配置 Loop
+	// 仅在首次进入时注入,后续轮次不重复注入(避免产生多个 [plan:start] 孤对)
 	if m.inPlanMode && m.planFile != "" && !m.planStartSent {
 		m.loop.SetPlanFile(m.planFile)
 		pairID, startMsg := m.loop.SetPlanMode(m.planFile)
@@ -2776,7 +2792,7 @@ func (m *model) doTurn(userInput string) tea.Cmd {
 		messagesSnapshot = append(messagesSnapshot, startMsg)
 	}
 
-	// ctx bar 保持上轮压缩后值，待 TurnStats 用 API PromptTokens 更新
+	// ctx bar 保持上轮压缩后值,待 TurnStats 用 API PromptTokens 更新
 
 	// 2. 追加 user 段落
 	m.paras = append(m.paras, Paragraph{
@@ -2793,19 +2809,6 @@ func (m *model) doTurn(userInput string) tea.Cmd {
 	m.turnStartTime = time.Now()
 	m.scrollToBottom() // 用户输入新消息 → 滚动到底部
 
-	// 若已有运行中的 loop，先取消（用户中断后立即发新任务）。
-	if m.cancelRun != nil {
-		m.cancelRun()
-		m.cancelRun = nil
-		// 旧 loop 的 TurnStats 可能已累加到 loop 级计数器，		// 其 LoopDone 将以 isStale 到达（不会归零），需显式清理。
-		m.loopPrompt = 0
-		m.loopCompl = 0
-		m.loopCacheHit = 0
-		m.loopCacheMiss = 0
-		m.loopReasoning = 0
-	}
-
-	// 创建可取消的 context（在 goroutine 外创建，避免 race）
 	ctx, cancel := context.WithCancel(context.Background())
 	ctx = agentloop.WithMessageID(ctx, messageID)
 	// 注入 FileHistory 用于工具执行前的文件备份

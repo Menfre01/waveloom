@@ -144,6 +144,19 @@ func (cm *ContextManager) PrepareRun(userInput string) ([]llm.Message, string) {
 	return snapshot, messageID
 }
 
+// RemoveLastUserMessage 移除 cm.messages 尾部连续 user 消息(含后台通知)。
+// 用于 doTurn 中断路径:取消旧 loop 后,撤销上一次 PrepareRun 追加的 user 消息,
+// 避免两条连续 user 消息进入下一次 PrepareRun 的快照。
+func (cm *ContextManager) RemoveLastUserMessage() {
+	cm.mu.Lock()
+	defer cm.mu.Unlock()
+
+	// 从尾部向前移除所有连续 user 消息(含 PrepareRun 注入的后台通知)
+	for len(cm.messages) > 0 && cm.messages[len(cm.messages)-1].Role == llm.RoleUser {
+		cm.messages = cm.messages[:len(cm.messages)-1]
+	}
+}
+
 // mustReadRandom 包装 crypto/rand.Read，失败时 panic。
 func mustReadRandom(b []byte) {
 	if _, err := rand.Read(b); err != nil {

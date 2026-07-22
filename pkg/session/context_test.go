@@ -1043,3 +1043,52 @@ func TestFileHistory_PersistsThroughSave(t *testing.T) {
 		t.Errorf("TrackedFiles = %v", loaded.TrackedFiles)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// RemoveLastUserMessage
+// ---------------------------------------------------------------------------
+
+func TestRemoveLastUserMessage_RemovesTrailingUser(t *testing.T) {
+	cm := New("system")
+	_, _ = cm.PrepareRun("first prompt")
+	_, _ = cm.PrepareRun("second prompt")
+
+	msgs := cm.Messages()
+	if len(msgs) != 3 {
+		t.Fatalf("expected 3 messages, got %d", len(msgs))
+	}
+
+	cm.RemoveLastUserMessage()
+
+	msgs = cm.Messages()
+	// 尾部所有连续 user 消息均被移除,只剩 system
+	if len(msgs) != 1 {
+		t.Fatalf("expected 1 message (system only) after remove, got %d", len(msgs))
+	}
+	if msgs[0].Role != llm.RoleSystem {
+		t.Fatalf("expected system message, got %s", msgs[0].Role)
+	}
+}
+
+func TestRemoveLastUserMessage_NoUserMessages(t *testing.T) {
+	cm := New("system")
+	cm.RemoveLastUserMessage()
+
+	msgs := cm.Messages()
+	if len(msgs) != 1 {
+		t.Fatalf("expected 1 message, got %d", len(msgs))
+	}
+}
+
+func TestRemoveLastUserMessage_Idempotent(t *testing.T) {
+	cm := New("system")
+	_, _ = cm.PrepareRun("hello")
+
+	cm.RemoveLastUserMessage()
+	cm.RemoveLastUserMessage()
+
+	msgs := cm.Messages()
+	if len(msgs) != 1 {
+		t.Fatalf("expected 1 message, got %d", len(msgs))
+	}
+}
