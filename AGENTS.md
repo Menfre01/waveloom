@@ -53,6 +53,7 @@ specs/           各组件规格书（修改前先阅读；内部文档，不纳
 |------|------|
 | 修改前 | shell('find . -name "*.go"') / shell('grep -rn "pattern" .') 定位 → read 确认行号和 TAG |
 | 修改后 | 构建验证 → make build 编译 → make test（涉及 pkg/ 时） |
+| 涉及 bin/ 更新 | `make build` 仅更新 `./bin/waveloom` 二进制，agent 进程运行的是旧版本；修改 `pkg/` 或 `cmd/` 后提醒用户重启 TUI 以生效 |
 | 重构前 | shell('grep -rn ...') → read → 评估影响范围 |
 
 ### 工具调用原则

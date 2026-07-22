@@ -1410,13 +1410,12 @@ func TestApplyRemOnNonExistent(t *testing.T) {
 // Previously splitBody returned nil for empty body, causing the blank line to be silently dropped.
 func TestRegressionInsertEmptyBodyLine(t *testing.T) {
 	// Parse a patch with INS.POST containing a single empty body line
-	patchText := `*** Begin Patch
-[/tmp/test-emptybody.go#ABCD]
-INS.POST 1:
-+
-INS.TAIL:
-+// end
-*** End Patch`
+	fs := NewMemoryFS()
+	_ = fs.WriteFile("/tmp/test-emptybody.go", "line1\nline2\n")
+	store := NewStore()
+	tag := store.Update("/tmp/test-emptybody.go", "line1\nline2\n")
+
+	patchText := fmt.Sprintf("*** Begin Patch\n[/tmp/test-emptybody.go#%s]\nINS.POST 1:\n+\nINS.TAIL:\n+// end\n*** End Patch", tag)
 	patch, err := ParsePatch(patchText)
 	if err != nil {
 		t.Fatalf("parse error: %v", err)
@@ -1445,29 +1444,25 @@ INS.TAIL:
 	}
 
 	// Apply to a simple file and verify blank line is inserted
-	fs := NewMemoryFS()
-	_ = fs.WriteFile("/tmp/test-emptybody.go", "line1\nline2\n")
-	store := NewStore()
-	store.Update("/tmp/test-emptybody.go", "line1\nline2\n")
 	results := ApplyPatch(patch, fs, store)
 	if len(results) != 1 || results[0].Error != nil {
+		t.Fatalf("apply error: %+v", results)
+	}
 	expected := "line1\n\nline2\n// end\n"
 	actual, _ := fs.ReadFile("/tmp/test-emptybody.go")
 	if actual != expected {
 		t.Errorf("expected %q, got %q", expected, actual)
 	}
-	}
 }
 
 // TestBodyEscapeBackslashPlus verifies that \+ in body lines is treated as literal + content.
 func TestBodyEscapeBackslashPlus(t *testing.T) {
-	patchText := `*** Begin Patch
-[/tmp/escape.go#ABCD]
-INS.HEAD:
-\+// this line starts with a literal +
-\+
-\+line
-*** End Patch`
+	fs := NewMemoryFS()
+	_ = fs.WriteFile("/tmp/escape.go", "package main\n")
+	store := NewStore()
+	tag := store.Update("/tmp/escape.go", "package main\n")
+
+	patchText := fmt.Sprintf("*** Begin Patch\n[/tmp/escape.go#%s]\nINS.HEAD:\n\\+// this line starts with a literal +\n\\+\n\\+line\n*** End Patch", tag)
 	patch, err := ParsePatch(patchText)
 	if err != nil {
 		t.Fatalf("parse error: %v", err)
@@ -1488,10 +1483,6 @@ INS.HEAD:
 	}
 
 	// Verify applied result
-	fs := NewMemoryFS()
-	_ = fs.WriteFile("/tmp/escape.go", "package main\n")
-	store := NewStore()
-	store.Update("/tmp/escape.go", "package main\n")
 	results := ApplyPatch(patch, fs, store)
 	if len(results) != 1 || results[0].Error != nil {
 		t.Fatalf("apply error: %+v", results)

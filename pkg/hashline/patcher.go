@@ -650,7 +650,7 @@ func ApplyPatch(patch *Patch, fs FileSystem, store *SnapshotStore) []SectionResu
 		for _, sec := range patch.Sections {
 			storePath := fs.ResolvePath(sec.Path)
 			if _, exists := originalSnapshots[storePath]; !exists {
-				if snap, ok := store.Get(storePath); ok {
+				if snap, ok := store.Get(storePath); ok && snap.TAG == sec.TAG {
 					originalSnapshots[storePath] = snap.Content
 				}
 			}
@@ -737,7 +737,7 @@ func applySection(sec Section, fs FileSystem, store *SnapshotStore, originalSnap
 			snapContent := ""
 			if orig, ok := originalSnapshots[storePath]; ok {
 				snapContent = orig
-			} else if snap, ok := store.Get(storePath); ok {
+			} else if snap, ok := store.Get(storePath); ok && snap.TAG == sec.TAG {
 				snapContent = snap.Content
 			}
 			if snapContent != "" {
@@ -1011,7 +1011,7 @@ func validateTAGAndRecover(sec Section, storePath string, currentContent string,
 	snapContent := ""
 	if orig, ok := originalSnapshots[storePath]; ok {
 		snapContent = orig
-	} else if snap, ok := store.Get(storePath); ok {
+	} else if snap, ok := store.Get(storePath); ok && snap.TAG == sec.TAG {
 		snapContent = snap.Content
 	}
 
