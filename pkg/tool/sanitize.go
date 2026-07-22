@@ -1,6 +1,7 @@
 package tool
 
 import (
+	"encoding/json"
 	"strings"
 	"unicode"
 
@@ -100,5 +101,50 @@ func isDangerousUnicode(r rune) bool {
 
 	default:
 		return false
+	}
+}
+
+// SanitizeJSON 递归清洗 JSON 字符串中的所有键和值。
+// 对标 Claude Code recursivelySanitizeUnicode。
+//
+// 攻击者可在 JSON 的 key 中嵌入隐藏 Unicode 字符，
+// 纯字符串清洗（SanitizeToolOutput）不处理 key。
+// 此函数先对原始字符串做整体清洗，再解析为 map 后递归清洗 key。
+func SanitizeJSON(raw string) string {
+	raw = SanitizeToolOutput(raw)
+
+	// 尝试解析为 JSON 对象，递归清洗 key
+	var data interface{}
+	if err := json.Unmarshal([]byte(raw), &data); err != nil {
+		return raw // 非 JSON 或解析失败，返回已经历过字符串清洗的内容
+	}
+
+	cleaned := sanitizeJSONValue(data)
+	result, err := json.Marshal(cleaned)
+	if err != nil {
+		return raw
+	}
+	return string(result)
+}
+
+func sanitizeJSONValue(v interface{}) interface{} {
+	switch val := v.(type) {
+	case map[string]interface{}:
+		cleaned := make(map[string]interface{}, len(val))
+		for k, vv := range val {
+			cleanKey := SanitizeToolOutput(k)
+			cleaned[cleanKey] = sanitizeJSONValue(vv)
+		}
+		return cleaned
+	case []interface{}:
+		cleaned := make([]interface{}, len(val))
+		for i, item := range val {
+			cleaned[i] = sanitizeJSONValue(item)
+		}
+		return cleaned
+	case string:
+		return SanitizeToolOutput(val)
+	default:
+		return v
 	}
 }

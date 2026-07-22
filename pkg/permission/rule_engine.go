@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/Menfre01/waveloom/pkg/bash"
 	"github.com/Menfre01/waveloom/pkg/pathutil"
 )
 
@@ -282,17 +283,24 @@ func matchContent(toolName, pattern string, input json.RawMessage) bool {
 		return false
 	}
 
-	// 对 bash 命令，支持前缀匹配（"git *" 匹配 "git status" 和 "git"）
+	// 对 bash 命令：优先使用 AST 精确匹配 baseCommand，
+	// 退化为 glob 匹配以保证向后兼容。
 	if toolName == "bash" {
+		// 尝试 AST 解析
+		if ci, err := bash.Parse(target); err == nil && ci != nil {
+			// 转换旧 pattern 格式为 AST pattern
+			astPattern := convertToASTPattern(pattern)
+			if ci.Match(astPattern) {
+				return true
+			}
+		}
+		// AST 未命中 → 退化到 glob 前缀匹配
 		if strings.HasSuffix(pattern, "*") {
 			prefix := strings.TrimRight(strings.TrimSuffix(pattern, "*"), " ")
-			// target 必须精确等于 prefix（无参数），或以 prefix + " " 开头（有参数），
-			// 防止 "git *" 误匹配 "gitfoo"。
 			if target == prefix || strings.HasPrefix(target, prefix+" ") {
 				return true
 			}
 		}
-		// 也尝试 glob 匹配
 		matched, _ := path.Match(pattern, target)
 		return matched
 	}
@@ -366,4 +374,18 @@ func removeRuleFrom(rules []RuleEntry, rule Rule, scope RuleScope) []RuleEntry {
 		result = append(result, e)
 	}
 	return result
+}
+
+// convertToASTPattern 将旧 permission pattern 转换为 AST Match() 格式。
+// 旧格式: "git *" → 新格式: "git:*"
+// 旧格式: "curl -s" → 新格式: "curl:-s"
+func convertToASTPattern(old string) string {
+	if !strings.Contains(old, " ") {
+		return old
+	}
+	parts := strings.SplitN(old, " ", 2)
+	if len(parts) == 2 && parts[1] == "*" {
+		return parts[0] + ":*"
+	}
+	return parts[0] + ":" + parts[1]
 }

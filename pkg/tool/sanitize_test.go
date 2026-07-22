@@ -687,3 +687,76 @@ func TestSanitizeToolOutput_Combined_AllLayers(t *testing.T) {
 		t.Errorf("combined attack not fully cleaned: got %q, want %q", got, want)
 	}
 }
+
+// ============================================================================
+// SanitizeJSON — 递归 JSON 清洗
+// ============================================================================
+
+func TestSanitizeJSON_Clean(t *testing.T) {
+	// json.Marshal 会按字母序重排 key，不等于原始字符串不代表错误
+	input := `{"name":"hello","count":42}`
+	got := SanitizeJSON(input)
+	if !strings.Contains(got, `"count":42`) || !strings.Contains(got, `"name":"hello"`) {
+		t.Errorf("clean JSON content should be preserved: got %q", got)
+	}
+}
+
+func TestSanitizeJSON_DirtyValue(t *testing.T) {
+	// value 中的零宽字符应被清洗
+	input := `{"name":"hel\u200Blo"}`
+	got := SanitizeJSON(input)
+	if strings.Contains(got, "\u200B") {
+		t.Errorf("ZWSP in JSON value should be cleaned: got %q", got)
+	}
+	if !strings.Contains(got, `"hello"`) {
+		t.Errorf("cleaned value should be 'hello': got %q", got)
+	}
+}
+
+func TestSanitizeJSON_DirtyKey(t *testing.T) {
+	// key 中的零宽字符应被清洗
+	input := `{"na\u200Bme":"safe"}`
+	got := SanitizeJSON(input)
+	if strings.Contains(got, "\u200B") {
+		t.Errorf("ZWSP in JSON key should be cleaned: got %q", got)
+	}
+	if !strings.Contains(got, `"name"`) {
+		t.Errorf("cleaned key should be 'name': got %q", got)
+	}
+}
+
+func TestSanitizeJSON_NestedObject(t *testing.T) {
+	// 嵌套对象中的 key 和 value 都应被清洗
+	input := `{"serv\u200Ber":{"na\u200Bme":"val\u200Bue"}}`
+	got := SanitizeJSON(input)
+	if strings.Contains(got, "\u200B") {
+		t.Errorf("ZWSP in nested JSON should be cleaned: got %q", got)
+	}
+	if !strings.Contains(got, `"server"`) {
+		t.Errorf("nested key should be cleaned: got %q", got)
+	}
+	if !strings.Contains(got, `"value"`) {
+		t.Errorf("nested value should be cleaned: got %q", got)
+	}
+}
+
+func TestSanitizeJSON_Array(t *testing.T) {
+	// 数组中的元素应被清洗
+	input := `["hel\u200Blo","wor\u200Bld"]`
+	got := SanitizeJSON(input)
+	if strings.Contains(got, "\u200B") {
+		t.Errorf("ZWSP in JSON array should be cleaned: got %q", got)
+	}
+	if !strings.Contains(got, `"hello"`) && !strings.Contains(got, `"world"`) {
+		t.Error("array values should be cleaned")
+	}
+}
+
+func TestSanitizeJSON_RawString(t *testing.T) {
+	// 非 JSON 纯字符串应退化为 SanitizeToolOutput
+	input := "hello\u200Bworld"
+	got := SanitizeJSON(input)
+	if strings.Contains(got, "\u200B") {
+		t.Errorf("ZWSP in non-JSON should be cleaned: got %q", got)
+	}
+}
