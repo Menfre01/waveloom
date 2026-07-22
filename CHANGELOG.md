@@ -1,5 +1,35 @@
 # Changelog
 
+## [v0.3.0] — 2026-07-22
+
+### 新增功能
+- **安全防线全面对齐**:24 个 Shell 安全检测器(mvdan/sh AST 预检消除误报)、parser differential 攻击检测(反斜杠操作符/花括号展开/混淆 flags)、递归 JSON 清洗,共计 198 个安全测试用例
+- **五层工具输出安全管线**:Unicode 清洗(NFKC 正规化 + Cf/Co/Cs 类别检测)、prompt injection 模式扫描(指令覆盖/角色扮演/伪造上下文/编码混淆 4 类 30+ 正则)、外部数据边界标记、风险分级、安全截断
+- **Hook 系统**:支持 PreToolUse / PostToolUse / Notification / Stop 等 5 种事件类型和 permission_mode 字段,通过 settings.json 配置外部脚本,runtime fail-open 不阻断工具执行
+- **`/provider` 交互式覆盖层**:`/provider` 无参时弹出 ↑↓ 选择 / Enter 切换 / Esc 取消覆盖层,支持运行时动态切换 LLM Provider
+- **分级超时机制**:agent / subagent / MCP 工具默认超时 30min,普通工具 5min,Shell 工具 5min,支持 `ToolWithTimeout` 接口自定义
+- **todo_create / todo_update 拆分**:引入 ID 优先匹配机制,消除并发新增与状态丢失
+- **JSONL 统一持久化**:跨轮次 session、plan mode、filehistory、subagent 状态统一为 JSONL 格式
+
+### 修复
+- **Hashline 编辑模型修复**:recovery TAG 校验防止误恢复、readBody 截断修复、多 Section 原子写入、操作行 + 前缀错误提示
+- **Skill 与内置命令同名导致 panic**:新增 `HasCommand` 冲突检测,同名 skill 跳过而不覆盖内置命令
+- **`settings.json` 解析错误静默回退 → 立即 panic**:配置损坏时不再悄悄进入 TUI,直接暴露问题
+- **Kimi baseUrl 修正**:默认地址改为 `https://api.kimi.com/coding/v1`
+- **Provider 切换 404 与余额残留修复**
+- **Resume viewport 系统消息泄漏**:移除压缩路径冗余注入,与 live TUI 静默行为对齐
+- **流式输出文件 FD 模式输出翻倍修复**
+- **Shell 超时死上限消除**:`Shell` 实现 `ToolWithTimeout`,不再受全局 `MaxShellTimeoutMs` 限制
+
+### 重构
+- **Subagent model 收紧为 pro/flash enum**:Explore 锁定 flash,evaluate/verification 锁定 pro,fork 最大轮次 200→50;收紧 subagent 使用场景提示
+- **Prompt 提取为 go:embed**:agent 系统提示词从代码字符串提取为独立 .md 文件
+- **环境探测缓存 TTL 缩短**:24 小时 → 15 分钟
+- **移除旧版 read_file / edit_file**:统一使用 hashline 编辑模型
+
+---
+
+📝 [Changelog (English)](https://github.com/Menfre01/waveloom/blob/dev/CHANGELOG.en.md)
 ## [v0.2.0-beta.3] — 2026-07-21
 
 ### 修复

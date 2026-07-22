@@ -1,5 +1,33 @@
 # Changelog
 
+## [v0.3.0] — 2026-07-22
+
+### Added
+- **Security defense alignment**: 24 Shell security detectors (mvdan/sh AST pre-check eliminates false positives), parser differential attack detection (backslash operators/brace expansion/obfuscated flags), recursive JSON sanitization; 198 security test cases total
+- **Five-layer tool output security pipeline**: Unicode sanitization (NFKC normalization + Cf/Co/Cs category detection), prompt injection pattern scanning (4 categories, 30+ regex patterns), external data boundary markers, risk classification, safe truncation
+- **Hook system**: Supports 5 event types including PreToolUse / PostToolUse / Notification / Stop with permission_mode field; configurable via settings.json; runtime fail-open preserves tool execution
+- **`/provider` interactive overlay**: No-argument `/provider` shows an ↑↓ select / Enter switch / Esc cancel overlay for runtime LLM Provider switching
+- **Tiered timeout mechanism**: agent/subagent/MCP tools default to 30min, regular tools 5min, Shell tools 5min; `ToolWithTimeout` interface for customization
+- **todo_create / todo_update split**: ID-first matching eliminates duplicate creation and state loss
+- **Unified JSONL persistence**: Cross-turn session, plan mode, filehistory, and subagent state unified into JSONL format
+
+### Fixed
+- **Hashline edit model fixes**: Recovery TAG validation, readBody truncation fix, multi-section atomic writes, operator line prefix error reporting
+- **Skill/built-in command name collision panic**: `HasCommand` collision detection skips conflicting skills
+- **`settings.json` parse error silent fallback → immediate panic**
+- **Kimi baseUrl corrected**: Default changed to `https://api.kimi.com/coding/v1`
+- **Provider switch 404 and balance residue fixes**
+- **Resume viewport system message leak**: Removed redundant compaction path injection
+- **Streaming output FD mode double-output fix**
+- **Shell timeout hard cap removed**: `Shell` implements `ToolWithTimeout`
+
+### Changed
+- **Subagent model tightened to pro/flash enum**: Explore locked to flash, evaluate/verification locked to pro; fork max turns 200→50
+- **Prompt extracted to go:embed**: Agent system prompt extracted to standalone .md files
+- **Environment probe cache TTL shortened**: 24 hours → 15 minutes
+- **Removed legacy read_file/edit_file**: Unified under hashline edit model
+
+---
 ## [v0.2.0-beta.3] — 2026-07-21
 
 ### Fixed
