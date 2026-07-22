@@ -493,8 +493,14 @@ func ValidateFlagsReadOnly(cmd string) FlagValidationResult {
 
 	// 验证每个 flag
 	for _, flag := range ci.Flags {
-		// 处理 -abc 组合形式（如 -la）
-		if !strings.HasPrefix(flag, "--") && len(flag) > 2 {
+		// 先检查完整 flag 名（长标志如 -exec, -name）
+		flagName := strings.SplitN(flag, "=", 2)[0]
+		if _, ok := config.SafeFlags[flagName]; ok {
+			continue
+		}
+
+		// 处理 -abc 组合形式（仅当 flag 为短标志组合：2-3 个小写字母）
+		if !strings.HasPrefix(flag, "--") && len(flag) >= 2 && len(flag) <= 4 && isShortFlagCombo(flag[1:]) {
 			for _, ch := range flag[1:] {
 				single := "-" + string(ch)
 				if _, ok := config.SafeFlags[single]; !ok {
@@ -507,15 +513,23 @@ func ValidateFlagsReadOnly(cmd string) FlagValidationResult {
 			continue
 		}
 
-		// 分离 flag 名（去掉 =value 后缀）
-		flagName := strings.SplitN(flag, "=", 2)[0]
-		if _, ok := config.SafeFlags[flagName]; !ok {
-			return FlagValidationResult{
-				Allowed: false,
-				Message: "flag '" + flagName + "' not in read-only allowlist for '" + ci.BaseCommand + "'",
-			}
+		// 完整 flag 名不在白名单 → 拒绝
+		return FlagValidationResult{
+			Allowed: false,
+			Message: "flag '" + flagName + "' not in read-only allowlist for '" + ci.BaseCommand + "'",
 		}
 	}
 
 	return FlagValidationResult{Allowed: true}
+}
+
+// isShortFlagCombo 判断字符串是否为短标志组合（仅小写字母）。
+// -la, -rn → true; -exec → false（太长，非组合）。
+func isShortFlagCombo(s string) bool {
+	for _, r := range s {
+		if r < 'a' || r > 'z' {
+			return false
+		}
+	}
+	return true
 }

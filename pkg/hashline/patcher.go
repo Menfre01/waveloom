@@ -494,10 +494,10 @@ func (s *patchScanner) readBody() ([]string, error) {
 		s.pos++
 		} else {
 			// 不以 + 开头 → 判断是正常终止还是 LLM 遗漏 + 前缀
-			if len(bodyLines) == 0 && !isBodyTerminator(trimmed) {
+			if !isBodyTerminator(trimmed) {
 				return nil, &ParseError{
 					Line: s.currentLine(),
-					Msg:  fmt.Sprintf("body lines must start with '+', got: %q", trimmed),
+					Msg:  fmt.Sprintf("body lines must start with '+', got: %q (missing '+' prefix?)", trimmed),
 				}
 			}
 			break

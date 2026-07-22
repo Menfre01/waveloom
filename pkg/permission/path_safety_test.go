@@ -231,9 +231,9 @@ func TestIsWithinDir_Subdir(t *testing.T) {
 }
 
 func TestIsWithinDir_SamePath(t *testing.T) {
-	// path == dir → rel == "." → 不算在目录内（用途上 path 必须是 dir 的子孙）
-	if isWithinDir("/home/user/project", "/home/user/project") {
-		t.Error("same path should not be considered within (rel == '.')")
+	// path == dir → rel == "." → 视为在目录内（目录自身也属于工作目录）
+	if !isWithinDir("/home/user/project", "/home/user/project") {
+		t.Error("same path should be considered within (rel == '.')")
 	}
 }
 

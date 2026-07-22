@@ -194,7 +194,7 @@ func IsWithinDir(path, dir string) bool {
 	if err != nil {
 		return false
 	}
-	return !strings.HasPrefix(rel, "..") && rel != "." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+	return !strings.HasPrefix(rel, "..") && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
 // ---------------------------------------------------------------------------

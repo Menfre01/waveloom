@@ -182,7 +182,13 @@ func formatSectionResults(results []hashline.SectionResult) string {
 // LLM 可交叉对照确认编辑边界正确。
 func formatLocalDiffExcerpt(hunks []hashline.EditHunk, maxLines int) string {
 	var b strings.Builder
-	b.WriteString("--- edit delta ---\n")
+	var totalOld, totalNew int
+	for _, h := range hunks {
+		totalOld += h.OldCount
+		totalNew += h.NewCount
+	}
+	delta := totalNew - totalOld
+	fmt.Fprintf(&b, "--- edit delta --- (removed %d lines, added %d lines, delta %+d)\n", totalOld, totalNew, delta)
 	written := 0
 	for _, h := range hunks {
 		if written >= maxLines {
@@ -307,10 +313,16 @@ func formatPostEditContext(fs hashline.FileSystem, results []hashline.SectionRes
 
 		editLen := lastChanged - firstChanged + 1
 		truncated := editLen > maxEditDisplay
-
-		// 计算显示范围（扩展上下文）
-		showStart := firstChanged - editContextLines
-		showEnd := lastChanged + editContextLines
+		// 计算显示范围:编辑区域较大时扩展上下文窗口,让 LLM 能看到更多周边代码验证完整性。
+		contextLines := editContextLines
+		if editLen > maxEditDisplay {
+			contextLines = editLen / 2
+			if contextLines > 50 {
+				contextLines = 50
+			}
+		}
+		showStart := firstChanged - contextLines
+		showEnd := lastChanged + contextLines
 		if showStart < 1 {
 			showStart = 1
 		}

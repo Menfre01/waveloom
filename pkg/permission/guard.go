@@ -354,6 +354,10 @@ func (g *GuardImpl) shellSafetyCheck(input json.RawMessage) DecisionResult {
 
 	switch cmdCheck.Level {
 	case RiskNone:
+		// 纯只读命令：仍需验证路径和破坏性操作
+		if r := g.quickPathCheck(safeCmd); r != nil {
+			return *r
+		}
 		return DecisionResult{
 			Decision: DecisionAllow,
 			Reason:   ReasonSafety,
@@ -362,13 +366,22 @@ func (g *GuardImpl) shellSafetyCheck(input json.RawMessage) DecisionResult {
 
 	case RiskLow:
 		if g.planMode {
+			// Plan 模式:如果命令在 flag 白名单中,检查 flag;否则维持旧行为(直接放行)
+			ci := bash.ParseLenient(safeCmd)
+			if ci != nil {
+				if _, ok := COMMAND_ALLOWLIST[ci.BaseCommand]; ok {
+					if !ValidateFlagsReadOnly(safeCmd).Allowed {
+						// flag 不在白名单 → 继续走后续权限检查(path→ASK)
+						break
+					}
+				}
+			}
 			return DecisionResult{
 				Decision: DecisionAllow,
 				Reason:   ReasonSafety,
 				Message:  fmt.Sprintf("plan mode: low-risk command allowed: %s", cmdCheck.Pattern),
 			}
 		}
-
 	case RiskHigh:
 		return DecisionResult{
 			Decision: DecisionDeny,
@@ -439,6 +452,28 @@ func (g *GuardImpl) cwd() string {
 		return cwd
 	}
 	return "."
+}
+
+// quickPathCheck 对安全命令执行路径和破坏性操作检查。
+// 用于 RiskNone 命令不跳过路径验证。
+func (g *GuardImpl) quickPathCheck(cmd string) *DecisionResult {
+	compoundHasCd := strings.Contains(cmd, "cd ") || strings.Contains(cmd, "cd\t") || strings.Contains(cmd, "cd;")
+	pathResult := ValidatePathCommand(cmd, g.cwd(), g.workingDirs, compoundHasCd)
+	if !pathResult.Allowed {
+		m := "⚠️ " + pathResult.Message
+		if pathResult.Blocked {
+			m = "⛔ " + pathResult.Message
+		}
+		d := DecisionAsk
+		if pathResult.Blocked {
+			d = DecisionDeny
+		}
+		return &DecisionResult{Decision: d, Reason: ReasonSafety, Message: m}
+	}
+	if warning := GetDestructiveWarning(cmd); warning != "" {
+		return &DecisionResult{Decision: DecisionAsk, Reason: ReasonSafety, Message: "⚠️ " + warning}
+	}
+	return nil
 }
 
 // fileSafetyCheck 对文件工具执行路径安全检查。

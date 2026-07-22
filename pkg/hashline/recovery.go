@@ -62,6 +62,17 @@ func RecoverOps(snapshot, current string, ops []Op) *RecoverResult {
 			result.MappedOps = nil
 			return result
 		}
+		// SWAP 重映射后校验目标位置内容是否与快照一致,
+		// 防止 LCS 将行号错误对齐到文本相同但语义不同的重复代码块。
+		if op.Kind == OpSWAP {
+			if err := validateSwapContent(snapLines, currLines, op, mapped); err != nil {
+				result.Success = false
+				result.Warnings = append(result.Warnings,
+					fmt.Sprintf("LCS alignment ambiguous for SWAP %d.=%d: %v", op.LineStart, op.LineEnd, err))
+				result.MappedOps = nil
+				return result
+			}
+		}
 		mappedOps = append(mappedOps, mapped)
 	}
 
@@ -419,4 +430,25 @@ func collectAddrs(orig, mapped Op) []addrPair {
 		}
 	}
 	return pairs
+}
+
+// validateSwapContent 校验 SWAP 重映射后的目标位置内容是否与快照一致。
+// 内容不一致意味着 LCS 将行号错误对齐到了文本相同但语义不同的重复代码块,
+// recovery 必须拒绝而非静默替换错误的代码。
+func validateSwapContent(snapLines, currLines []string, orig, mapped Op) error {
+	for i := 0; i <= orig.LineEnd-orig.LineStart; i++ {
+		snapIdx := orig.LineStart - 1 + i
+		currIdx := mapped.LineStart - 1 + i
+		if snapIdx >= len(snapLines) || currIdx >= len(currLines) {
+			return fmt.Errorf("line index out of bounds at offset %d", i)
+		}
+		if snapLines[snapIdx] != currLines[currIdx] {
+			return fmt.Errorf(
+				"content mismatch at L%d: snap has %q, curr has %q",
+				mapped.LineStart+i,
+				snapLines[snapIdx],
+				currLines[currIdx])
+		}
+	}
+	return nil
 }

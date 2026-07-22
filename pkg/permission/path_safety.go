@@ -323,9 +323,8 @@ func isWithinDir(path, dir string) bool {
 	if err != nil {
 		return false
 	}
-	// rel 为 "." 表示 path == dir，不算"在目录内"
 	// rel 以 ".." 开头表示在目录外
-	return rel != "." && !strings.HasPrefix(rel, "..") && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+	return !strings.HasPrefix(rel, "..") && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
 // evalExistingPrefix 对路径中已存在的部分做 EvalSymlinks，

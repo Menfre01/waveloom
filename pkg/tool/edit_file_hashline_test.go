@@ -690,13 +690,15 @@ func TestFormatLocalDiffExcerpt_LineHeaderIgnored(t *testing.T) {
 }
 
 func TestFormatLocalDiffExcerpt_EmptyHunks(t *testing.T) {
+	expected := "--- edit delta --- (removed 0 lines, added 0 lines, delta +0)\n"
+
 	got := formatLocalDiffExcerpt(nil, 12)
-	if got != "--- edit delta ---\n" {
+	if got != expected {
 		t.Errorf("expected only header for nil hunks, got:\n%s", got)
 	}
 
 	got = formatLocalDiffExcerpt([]hashline.EditHunk{}, 12)
-	if got != "--- edit delta ---\n" {
+	if got != expected {
 		t.Errorf("expected only header for empty hunks, got:\n%s", got)
 	}
 }

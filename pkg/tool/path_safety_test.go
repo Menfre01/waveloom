@@ -36,7 +36,6 @@ func TestIsWithinDirInside(t *testing.T) {
 	dir := t.TempDir()
 	subDir := filepath.Join(dir, "sub")
 	_ = os.Mkdir(subDir, 0o755)
-
 	if !IsWithinDir(subDir, dir) {
 		t.Errorf("IsWithinDir(%q, %q) = false, want true", subDir, dir)
 	}
@@ -63,9 +62,9 @@ func TestIsWithinDirDifferentBranch(t *testing.T) {
 
 func TestIsWithinDirSelf(t *testing.T) {
 	dir := t.TempDir()
-	// self — rel would be ".", so should be false per IsWithinDir logic
-	if IsWithinDir(dir, dir) {
-		t.Errorf("IsWithinDir(self) = true, want false (same dir is not 'within')")
+	// rel 为 ".",现在视为在目录内
+	if !IsWithinDir(dir, dir) {
+		t.Errorf("IsWithinDir(self) = false, want true (same dir is within)")
 	}
 }
 
