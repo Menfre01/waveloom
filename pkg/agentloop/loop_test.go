@@ -444,7 +444,7 @@ func TestRunSingleToolCall(t *testing.T) {
 	if toolMsg.Role != llm.RoleTool {
 		t.Errorf("expected tool role, got %s", toolMsg.Role)
 	}
-	if toolMsg.Content != "hello" {
+	if toolMsg.Content != "[tool_result from read_file]\nhello" {
 		t.Errorf("expected tool result 'hello', got %s", toolMsg.Content)
 	}
 	if toolMsg.ToolCallID != "tc1" {
@@ -484,9 +484,9 @@ func TestRunMultipleToolCalls(t *testing.T) {
 	}
 	// 验证 tool 消息按原始顺序
 	for i, expected := range []struct{ id, content string }{
-		{"tc1", "content-a"},
-		{"tc2", "content-a"},
-		{"tc3", "3 matches"}} {
+		{"tc1", "[tool_result from read_file]\ncontent-a"},
+		{"tc2", "[tool_result from read_file]\ncontent-a"},
+		{"tc3", "[tool_result from grep]\n3 matches"}} {
 		msg := finalEv.Messages[2+i]
 		if msg.Role != llm.RoleTool {
 			t.Errorf("msg %d: expected tool role, got %s", i, msg.Role)
@@ -701,7 +701,7 @@ func TestRunRecoverableError(t *testing.T) {
 	if toolMsg.Role != llm.RoleTool {
 		t.Errorf("expected tool role, got %s", toolMsg.Role)
 	}
-	if toolMsg.Content != "Error [file_not_found]: file not found: /tmp/missing.txt" {
+	if toolMsg.Content != "[tool_result from read_file]\nError [file_not_found]: file not found: /tmp/missing.txt" {
 		t.Errorf("expected error content, got: %s", toolMsg.Content)
 	}
 }
@@ -1025,7 +1025,7 @@ func TestRunPreservesMessageHistoryOnError(t *testing.T) {
 	// 验证 Turn 1 的 tool 结果在历史中
 	hasToolResult := false
 	for _, m := range finalEv.Messages {
-		if m.Role == llm.RoleTool && m.Content == "file content ok" {
+		if m.Role == llm.RoleTool && strings.Contains(m.Content, "file content ok") {
 			hasToolResult = true
 		}
 	}
@@ -1583,18 +1583,18 @@ func TestConcurrentPartialRecoverableError(t *testing.T) {
 		t.Fatalf("expected 3 tool messages, got %d", len(msgs))
 	}
 
-	// 验证成功工具的消息内容
-	if msgs[0].ToolCallID != "tc1" || msgs[0].Content != "result-a" {
-		t.Errorf("msg[0]: expected tc1/result-a, got %s/%s", msgs[0].ToolCallID, msgs[0].Content)
+	// 验证成功工具的消息内容（含 [tool_result from <name>] 前缀）
+	if msgs[0].ToolCallID != "tc1" || msgs[0].Content != "[tool_result from tool_a]\nresult-a" {
+		t.Errorf("msg[0]: expected tc1/[tool_result from tool_a]\\nresult-a, got %s/%s", msgs[0].ToolCallID, msgs[0].Content)
 	}
-	if msgs[1].ToolCallID != "tc2" || msgs[1].Content != "result-b" {
-		t.Errorf("msg[1]: expected tc2/result-b, got %s/%s", msgs[1].ToolCallID, msgs[1].Content)
+	if msgs[1].ToolCallID != "tc2" || msgs[1].Content != "[tool_result from tool_b]\nresult-b" {
+		t.Errorf("msg[1]: expected tc2/[tool_result from tool_b]\\nresult-b, got %s/%s", msgs[1].ToolCallID, msgs[1].Content)
 	}
-	// 验证 Recoverable 错误的消息内容
+	// 验证 Recoverable 错误的消息内容（同样含前缀）
 	if msgs[2].ToolCallID != "tc3" {
 		t.Errorf("msg[2]: expected ToolCallID tc3, got %s", msgs[2].ToolCallID)
 	}
-	if msgs[2].Content != "Error [file_not_found]: file not found: /tmp/missing" {
+	if msgs[2].Content != "[tool_result from tool_c]\nError [file_not_found]: file not found: /tmp/missing" {
 		t.Errorf("msg[2]: expected error content, got %s", msgs[2].Content)
 	}
 }
@@ -1761,15 +1761,15 @@ func TestMixedConcurrentSerialWithRecoverableError(t *testing.T) {
 		t.Fatalf("expected 2 messages, got %d", len(msgs))
 	}
 
-	// 并发工具结果在前
-	if msgs[0].ToolCallID != "tc1" || msgs[0].Content != "data" {
+	// 并发工具结果在前（含 [tool_result from <name>] 前缀）
+	if msgs[0].ToolCallID != "tc1" || msgs[0].Content != "[tool_result from concurrent_read]\ndata" {
 		t.Errorf("msg[0]: expected tc1/data, got %s/%s", msgs[0].ToolCallID, msgs[0].Content)
 	}
-	// 串行工具错误
+	// 串行工具错误（同样含前缀）
 	if msgs[1].ToolCallID != "tc2" {
 		t.Errorf("msg[1]: expected ToolCallID tc2, got %s", msgs[1].ToolCallID)
 	}
-	if msgs[1].Content != "Error [command_failed]: command exited with code 1" {
+	if msgs[1].Content != "[tool_result from serial_write]\nError [command_failed]: command exited with code 1" {
 		t.Errorf("msg[1]: expected error content, got %s", msgs[1].Content)
 	}
 }

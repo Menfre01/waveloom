@@ -47,7 +47,7 @@ func TestRunContentAndToolCallsTogether(t *testing.T) {
 	if toolMsg.Role != llm.RoleTool {
 		t.Errorf("expected tool role, got %s", toolMsg.Role)
 	}
-	if toolMsg.Content != "hello world" {
+	if toolMsg.Content != "[tool_result from read_file]\nhello world" {
 		t.Errorf("expected tool result, got %s", toolMsg.Content)
 	}
 

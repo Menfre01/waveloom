@@ -672,6 +672,42 @@ func (l *Loop) buildToolMessages(
 			anySuccess = true
 		}
 
+		// ── 工具输出安全管线 ──
+
+		// Layer 1: Unicode 清洗 — 移除隐藏字符（零宽、方向控制、TAG、PUA 等）
+		content = tool.SanitizeToolOutput(content)
+
+		// Layer 2: 模式扫描 — 检测 prompt injection 攻击模式
+		// 对标 Claude Code PostToolUse Hook。命中时注入 WARNING 标记到输出中，
+		// 改变 LLM 从"执行指令"到"警惕审查"的行为模式。
+		if warning := tool.ScanToolOutput(content); warning != "" {
+			content = warning + "\n" + content
+		}
+
+		// Layer 3: 外部数据边界标记 — 所有工具输出均标记为不可信外部数据
+		content = "[tool_result from " + tc.Name + "]\n" + content
+
+		// Layer 4: 外部源风险分级 — 对高风险来源叠加额外警告
+		if isHighRiskTool(tc.Name) {
+			content = strings.Replace(content,
+				"[tool_result from "+tc.Name+"]",
+				"[tool_result from "+tc.Name+" — ⚠️ EXTERNAL UNTRUSTED SOURCE]",
+				1)
+		}
+
+		// Layer 5: 上下文窗口保护 — 32KB 安全截断
+		const maxToolOutputBytes = 32 * 1024
+		if len(content) > maxToolOutputBytes {
+			truncated := content[:maxToolOutputBytes]
+			// 退回到最后一个完整 UTF-8 字符边界
+			for len(truncated) > 0 && truncated[len(truncated)-1]&0xC0 == 0x80 {
+				truncated = truncated[:len(truncated)-1]
+			}
+			content = truncated +
+				fmt.Sprintf("\n\n[tool_result truncated: %d bytes omitted, %d bytes kept — do NOT attempt to infer or reconstruct the missing content]",
+					len(content)-len(truncated), len(truncated))
+		}
+
 		messages = append(messages, llm.Message{
 			Role:       llm.RoleTool,
 			Content:    content,
@@ -1289,4 +1325,16 @@ var nouns = []string{
 func safeSend[T any](ch chan<- T, v T) {
 	defer func() { _ = recover() }()
 	ch <- v
+}
+
+// isHighRiskTool 判断工具是否为高风险外部数据源。
+// 这些工具的输出来源于不受信任的外部环境（互联网、任意 shell 命令），
+// 需要叠加 ⚠️ EXTERNAL UNTRUSTED SOURCE 标记。
+func isHighRiskTool(name string) bool {
+	switch name {
+	case "bash", "bash_subagent", "web_fetch", "web_search":
+		return true
+	default:
+		return false
+	}
 }

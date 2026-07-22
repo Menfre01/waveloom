@@ -946,14 +946,14 @@ func TestBuildToolMessages_WithSkip(t *testing.T) {
 	if len(msgs) != 2 {
 		t.Fatalf("expected 2 messages, got %d", len(msgs))
 	}
-	// tc1: 正常结果
-	if msgs[0].Content != "result-a" {
-		t.Errorf("msg[0]: expected 'result-a', got %s", msgs[0].Content)
+	// tc1: 正常结果，含 [tool_result from <name>] 前缀
+	if msgs[0].Content != "[tool_result from tool_a]\nresult-a" {
+		t.Errorf("msg[0]: expected '[tool_result from tool_a]\\nresult-a', got %s", msgs[0].Content)
 	}
-	// tc2: 在 skip 中，原始内容应保留
-	if msgs[1].Content != "result-b" {
-		t.Errorf("msg[1]: expected 'result-b' (skip preserves original), got %s", msgs[1].Content)
-	}
+	// tc2: 在 skip 中，原始内容应保留，同样含前缀
+	if msgs[1].Content != "[tool_result from tool_b]\nresult-b" {
+		t.Errorf("msg[1]: expected '[tool_result from tool_b]\\nresult-b' (skip preserves original), got %s", msgs[1].Content)
+}
 }
 
 func TestBuildToolMessages_MissingResult(t *testing.T) {
