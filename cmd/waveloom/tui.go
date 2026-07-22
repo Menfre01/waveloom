@@ -384,7 +384,7 @@ type model struct {
 	skillLoader   *skill.Loader
 	cwd           string
 	loop          *agentloop.Loop
-	hookRunner    *hook.Runner // Claude Code 兼容 hooks（RTK 等）
+	hookRunner    *hook.Runner // hooks 系统(RTK 等)
 
 	// Advisor mode
 	advisorMode  bool   // 是否启用 advisor mode

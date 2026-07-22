@@ -29,7 +29,6 @@ type SecurityReport struct {
 }
 
 // SecurityContext 为各检测器提供预计算的命令视图。
-// SecurityContext 为各检测器提供预计算的命令视图。
 type SecurityContext struct {
 	OriginalCommand string
 	BaseCommand     string
@@ -1195,7 +1194,7 @@ func checkGitCommit(ctx SecurityContext) SecurityCheck {
 	}
 
 	// 手动扫描 -m "message" 或 -m 'message'
-// reGitCommitMsg 匹配 git commit message 引用。
+	// reGitCommitMsg 匹配 git commit message 引用。
 	quote, msgContent, remainder := extractGitCommitMsg(raw)
 	if quote == 0 {
 		return SecurityCheck{Name: "git_commit", Passed: true}

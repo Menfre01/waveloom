@@ -673,7 +673,8 @@ func (l *Loop) buildToolMessages(
 		content = tool.SanitizeToolOutput(content)
 
 		// Layer 2: 模式扫描 — 检测 prompt injection 攻击模式
-		// Hook。命中时注入 WARNING 标记到输出中，		// 改变 LLM 从"执行指令"到"警惕审查"的行为模式。
+		// PostToolUse Hook: 命中时注入 WARNING 标记到输出中,
+		// 改变 LLM 从"执行指令"到"警惕审查"的行为模式。
 		if warning := tool.ScanToolOutput(content); warning != "" {
 			content = warning + "\n" + content
 		}

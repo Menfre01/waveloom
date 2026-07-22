@@ -83,7 +83,7 @@ func msgRoleToEntryType(role llm.Role) string {
 	case llm.RoleSystem:
 		return "system"
 	case llm.RoleTool:
-		return "user" // tool result → user (Claude Code convention)
+		return "user" // tool_result messages → role "user" per transcript convention
 	default:
 		return "user"
 	}

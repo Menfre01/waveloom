@@ -12,8 +12,9 @@ import (
 //
 // 三步清洗管线:
 //
-// 1. NFKC 正规化 — 折叠兼容性等價字符（如 ﬁ→fi、K→K），// 防止攻击者利用 Unicode 同形异义绕过关键词检测。
-// 2. 主防御：Unicode 类别检测 — 移除 Cf（格式字符）、Co（私有使用区，含 TAG 字符）、
+// 1. NFKC 正规化 — 折叠兼容性等價字符(如 fi→fi、K→K),
+// 防止攻击者利用 Unicode 同形异义绕过关键词检测。
+// 2. 主防御:Unicode 类别检测 — 移除 Cf(格式字符)、Co(私有使用区,含 TAG 字符)、
 // Cs(孤立代理)。
 // 3. 辅助防御:显式区间 — 控制字符、Unicode 空白、非字符。
 //
@@ -60,7 +61,8 @@ func isDangerousUnicode(r rune) bool {
 	// Co = 私有使用区：BMP PUA (U+E000-U+F8FF) + Supplementary PUA planes 15-16。
 	// TAG 字符 (U+E0001, U+E0020-U+E007F) 也属于此类别 —
 	// 这是 HackerOne #3086545 中 ASCII smuggling 的载体。
-	// Cs = 代理对：U+D800-U+DFFF。合法 UTF-8 不应包含孤立代理，	// 但防御纵深要求移除它们。
+	// Cs = 代理对:U+D800-U+DFFF。合法 UTF-8 不应包含孤立代理,
+	// 但防御纵深要求移除它们。
 	if unicode.Is(unicode.Cf, r) || unicode.Is(unicode.Co, r) || unicode.Is(unicode.Cs, r) {
 		return true
 	}
@@ -101,8 +103,7 @@ func isDangerousUnicode(r rune) bool {
 
 // SanitizeJSON 递归清洗 JSON 字符串中的所有键和值。
 //
-// 攻击者可在 JSON 的 key 中嵌入隐藏 Unicode 字符，// 纯字符串清洗（SanitizeToolOutput）不处理 key。
-// 此函数先对原始字符串做整体清洗，再解析为 map 后递归清洗 key。
+// 攻击者可在 JSON 的 key 中嵌入隐藏 Unicode 字符,纯字符串清洗(SanitizeToolOutput)不处理 key。
 func SanitizeJSON(raw string) string {
 	raw = SanitizeToolOutput(raw)
 
