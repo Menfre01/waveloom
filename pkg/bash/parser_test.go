@@ -155,10 +155,11 @@ func TestMatch_FullPath(t *testing.T) {
 // Security — Backslash-escaped Operators
 // ============================================================================
 
+// REGRESSION: 单命令中 \; 不会被误判为操作符。
+// mvdan/sh AST 将 \; 识别为 word 参数而非 ; 操作符节点。
 func TestAudit_BackslashOperator_Detected(t *testing.T) {
-	// 攻击场景: cat safe.txt \; echo /etc/passwd
-	// splitCommand 将 \; 正規化为 ; 导致 re-parse 误拆
-	report, err := Audit("cat safe.txt \\; echo /etc/passwd")
+	// 需要真实操作符（如 &&）加上 \; 才触发检测
+	report, err := Audit("false && cat safe.txt \\; echo /etc/passwd")
 	if err != nil {
 		t.Fatalf("unexpected audit error: %v", err)
 	}
@@ -173,14 +174,13 @@ func TestAudit_BackslashOperator_Detected(t *testing.T) {
 }
 
 func TestAudit_BackslashOperator_FindSafe(t *testing.T) {
-	// find . -exec cmd {} \; — 常见安全用法，但仍触发（保守侧）
+	// find . -exec cmd {} \; — AST 预检确认无真实操作符，放行
 	report, err := Audit("find . -exec cat {} \\;")
 	if err != nil {
 		t.Fatalf("unexpected audit error: %v", err)
 	}
-	// \; 在 find -exec 中是合法的，但我们保守触发
-	if !report.HasIssue {
-		t.Log("find -exec with \\; not flagged (may be OK with tree-sitter in future)")
+	if report.HasIssue {
+		t.Errorf("find -exec with \\; should pass AST pre-check, but got: %+v", report.Checks)
 	}
 }
 
@@ -306,5 +306,55 @@ func TestParseLenient_Fallback(t *testing.T) {
 	ci := ParseLenient("(invalid")
 	if ci.BaseCommand == "" {
 		t.Error("ParseLenient should extract baseCommand even for invalid syntax")
+	}
+}
+
+// ============================================================================
+// 审查修复 — CRITICAL bypass 场景
+// ============================================================================
+
+func TestParse_SudoWithFlags(t *testing.T) {
+	// sudo -u root rm -rf / → baseCommand 应为 "rm"，不是 "-u"
+	ci, err := Parse("sudo -u root rm -rf /")
+	if err != nil {
+		t.Fatalf("unexpected parse error: %v", err)
+	}
+	if ci.BaseCommand != "rm" {
+		t.Errorf("expected baseCommand 'rm', got %q", ci.BaseCommand)
+	}
+}
+
+func TestParse_SudoWithEnv(t *testing.T) {
+	// sudo -E rm -rf /
+	ci, err := Parse("sudo -E rm -rf /")
+	if err != nil {
+		t.Fatalf("unexpected parse error: %v", err)
+	}
+	if ci.BaseCommand != "rm" {
+		t.Errorf("expected baseCommand 'rm', got %q", ci.BaseCommand)
+	}
+}
+
+func TestParse_CommandSubstitution(t *testing.T) {
+	// $(rm -rf /) — mvdan/sh 将独立的 CmdSubst 视为不完整语句
+	// Parse 可能返回空 Stmts，此时 baseCommand=""。
+	// 实际的命令替换攻击由 security.go 的 backslash_operator / obfuscated_flags 检测。
+	// 这里验证至少不 panic，返回 nil error 或可预期的空结果。
+	ci, err := Parse("$(rm -rf /)")
+	if err != nil {
+		t.Logf("parse of standalone CmdSubst failed (expected): %v", err)
+		return
+	}
+	t.Logf("standalone CmdSubst: baseCommand=%q", ci.BaseCommand)
+}
+
+func TestParse_Subshell(t *testing.T) {
+	// (cd /tmp && rm -rf /) → 从第一个内部命令提取 baseCommand
+	ci, err := Parse("(cd /tmp && rm -rf /)")
+	if err != nil {
+		t.Fatalf("unexpected parse error: %v", err)
+	}
+	if ci.BaseCommand != "cd" {
+		t.Errorf("expected baseCommand 'cd', got %q", ci.BaseCommand)
 	}
 }

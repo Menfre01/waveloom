@@ -9,10 +9,9 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
-
+	"github.com/Menfre01/waveloom/pkg/bash"
 	"github.com/Menfre01/waveloom/pkg/pathutil"
 )
-
 // ---------------------------------------------------------------------------
 // GuardOption — 函数式选项
 // ---------------------------------------------------------------------------
@@ -306,9 +305,7 @@ func (g *GuardImpl) toolSafetyCheck(toolName string, input json.RawMessage) Deci
 }
 
 // shellSafetyCheck 对 shell 工具的命令执行安全检查。
-// RiskNone → 直接 ALLOW（纯只读命令，零风险）；
-// RiskLow → passthrough（构建工具，后续规则/默认策略决定）；
-// RiskHigh → DENY（高危命令硬拦截）。
+// 集成所有安全模块：parser differential 检测 + 命令安全 + 路径验证 + 模式感知。
 func (g *GuardImpl) shellSafetyCheck(input json.RawMessage) DecisionResult {
 	var params struct {
 		Command string `json:"command"`
@@ -317,9 +314,11 @@ func (g *GuardImpl) shellSafetyCheck(input json.RawMessage) DecisionResult {
 		return DecisionResult{}
 	}
 
+	cmd := params.Command
+
 	// Skill Bash 白名单优先：白名单命令直接放行，不触发高危拦截
 	for _, pattern := range g.skillBashPatterns {
-		if MatchBashPattern(params.Command, pattern) {
+		if MatchBashPattern(cmd, pattern) {
 			return DecisionResult{
 				Decision: DecisionAllow,
 				Reason:   ReasonBuiltinAllow,
@@ -328,11 +327,33 @@ func (g *GuardImpl) shellSafetyCheck(input json.RawMessage) DecisionResult {
 		}
 	}
 
-	cmdCheck := CommandSafetyCheck(params.Command)
+
+	// ── 预处理:剥离危险环境变量 + 注释行 ──
+	safeCmd := StripBinaryHijackVars(cmd)
+	safeCmd = StripCommentLines(safeCmd)
+
+	// ── 完整 bash 安全审查(Audit) ──
+	report, _ := bash.Audit(cmd)
+	if report != nil && report.HasIssue {
+		for _, c := range report.Checks {
+			if !c.Passed {
+				if c.IsParse {
+					return DecisionResult{
+						Decision: DecisionAsk,
+						Reason:   ReasonSafety,
+						Message:  "⚠️ Command contains parser differential patterns: " + c.Reason + " — manual review required",
+					}
+				}
+			}
+		}
+		// 非 parse 检测器触发 → 记录但不拦截
+	}
+
+	// ── 命令安全分级 ──
+	cmdCheck := CommandSafetyCheck(safeCmd)
 
 	switch cmdCheck.Level {
 	case RiskNone:
-		// 纯只读命令：跳过后续规则/默认策略，直接放行
 		return DecisionResult{
 			Decision: DecisionAllow,
 			Reason:   ReasonSafety,
@@ -340,7 +361,6 @@ func (g *GuardImpl) shellSafetyCheck(input json.RawMessage) DecisionResult {
 		}
 
 	case RiskLow:
-		// plan 模式：构建工具（RiskLow）直接 ALLOW，无需逐条确认
 		if g.planMode {
 			return DecisionResult{
 				Decision: DecisionAllow,
@@ -348,21 +368,77 @@ func (g *GuardImpl) shellSafetyCheck(input json.RawMessage) DecisionResult {
 				Message:  fmt.Sprintf("plan mode: low-risk command allowed: %s", cmdCheck.Pattern),
 			}
 		}
-		// 非 plan 模式：passthrough，交给后续规则/默认策略
-		return DecisionResult{}
 
 	case RiskHigh:
 		return DecisionResult{
 			Decision: DecisionDeny,
 			Reason:   ReasonSafety,
-			Message:  fmt.Sprintf("dangerous command blocked: %s", cmdCheck.Pattern),
+			Message:  "⛔ dangerous command blocked: " + cmdCheck.Pattern,
 			Rule:     cmdCheck.Pattern,
 		}
-
-	default:
-		// RiskMedium → passthrough，交给后续规则/默认策略
-		return DecisionResult{}
 	}
+
+	// ── 模式感知权限 ──
+	mode := g.currentMode()
+	modeDecision := CheckPermissionMode(safeCmd, mode)
+	if modeDecision.Decision == DecisionAllow {
+		return DecisionResult{
+			Decision: DecisionAllow,
+			Reason:   ReasonSafety,
+			Message:  modeDecision.Reason,
+		}
+	}
+
+	// ── 复合命令 cd 检测 ──
+	compoundHasCd := strings.Contains(cmd, "cd ") || strings.Contains(cmd, "cd\t") || strings.Contains(cmd, "cd;")
+
+	// ── 路径验证 ──
+	pathResult := ValidatePathCommand(safeCmd, g.cwd(), g.workingDirs, compoundHasCd)
+	if !pathResult.Allowed {
+		result := DecisionResult{
+			Decision: DecisionAsk,
+			Reason:   ReasonSafety,
+			Message:  "⚠️ " + pathResult.Message,
+		}
+		if pathResult.Blocked {
+			result.Decision = DecisionDeny
+			result.Message = "⛔ " + pathResult.Message
+		}
+		return result
+	}
+
+	// ── 破坏性警告 ──
+	if warning := GetDestructiveWarning(safeCmd); warning != "" {
+		return DecisionResult{
+			Decision: DecisionAsk,
+			Reason:   ReasonSafety,
+			Message:  "⚠️ " + warning,
+		}
+	}
+
+	return DecisionResult{}
+}
+
+// currentMode 返回当前权限模式。
+func (g *GuardImpl) currentMode() PermissionMode {
+	if g.bypassMode {
+		return ModeBypass
+	}
+	if g.planMode {
+		return ModePlan
+	}
+	return ModeDefault
+}
+
+// cwd 返回当前工作目录。
+func (g *GuardImpl) cwd() string {
+	if len(g.workingDirs) > 0 {
+		return g.workingDirs[0]
+	}
+	if cwd, err := os.Getwd(); err == nil {
+		return cwd
+	}
+	return "."
 }
 
 // fileSafetyCheck 对文件工具执行路径安全检查。

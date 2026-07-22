@@ -38,7 +38,8 @@ type ShellParams struct {
 }
 
 type Shell struct {
-	AllowBg bool // true for "bash" (main agent), false for "bash_subagent"
+	AllowBg     bool // true for "bash" (main agent), false for "bash_subagent"
+	lastCommand string
 }
 
 func (t *Shell) Name() string {
@@ -148,6 +149,7 @@ func shellInterpreter() (binary string, args []string) {
 // ── Execute ──
 
 func (t *Shell) Execute(ctx context.Context, p ShellParams) (*ToolResult, error) {
+	t.lastCommand = p.Command
 	// ── Step 0: 父 context 已取消 → 提前返回 ──
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -606,16 +608,23 @@ func (t *Shell) formatResult(execErr error, cmdCtx context.Context, output []byt
 	default:
 		stderrOutput := truncateOutput(string(output), MaxShellLines)
 		content = formatShellResult("Command failed", exitCode, duration, timeout, stderrOutput, true)
-		kind := classifyShellError(exitCode, stderrOutput)
-		recovery := classifyShellRecovery(kind)
-		msg := fmt.Sprintf("command exited with code %d", exitCode)
-		if recovery != "" {
-			msg += ". " + recovery
-		}
-		toolErr = &ToolError{
-			Class:   ErrorClassRecoverable,
-			Kind:    kind,
-			Message: msg,
+		// 检查是否为语义上的"非错误"退出码（如 grep 无匹配）
+		if semanticMsg := interpretShellExitCode(t.lastCommand, exitCode); semanticMsg != "" {
+			// 有语义解释 → 非真实错误，不生成 ToolError
+			content = formatShellResult("Command completed", exitCode, duration, timeout, stderrOutput, false)
+			content += "\n" + semanticMsg
+		} else {
+			kind := classifyShellError(exitCode, stderrOutput)
+			recovery := classifyShellRecovery(kind)
+			msg := fmt.Sprintf("command exited with code %d", exitCode)
+			if recovery != "" {
+				msg += ". " + recovery
+			}
+			toolErr = &ToolError{
+				Class:   ErrorClassRecoverable,
+				Kind:    kind,
+				Message: msg,
+			}
 		}
 	}
 
@@ -862,4 +871,58 @@ func prepareBackgroundCommand(p *ShellParams) (bgLogFile string, isBackground bo
 	}
 
 	return "", false
+}
+// interpretShellExitCode 解释命令退出码的语义。
+// 对标 Claude Code commandSemantics.ts。
+// 返回空字符串表示退出码是真正的错误。
+func interpretShellExitCode(cmd string, exitCode int) string {
+	base := extractBaseCmd(cmd)
+	switch base {
+	case "grep", "rg":
+		if exitCode == 1 {
+			return "No matches found"
+		}
+	case "find":
+		if exitCode == 1 {
+			return "Some directories were inaccessible"
+		}
+	case "diff":
+		if exitCode == 1 {
+			return "Files differ"
+		}
+	case "test", "[":
+		if exitCode == 1 {
+			return "Condition is false"
+		}
+	case "git":
+		if exitCode == 1 {
+			// git diff/grep 等子命令的 1 = 正常非零退出
+			return ""
+		}
+	}
+	return ""
+}
+
+// extractBaseCmd 从命令字符串中提取基础命令名。
+func extractBaseCmd(cmd string) string {
+	// 跳过空白和环境变量
+	for {
+		cmd = strings.TrimLeft(cmd, " \t")
+		if eq := strings.IndexByte(cmd, '='); eq > 0 && eq < len(cmd) {
+			if sp := strings.IndexByte(cmd[eq:], ' '); sp > 0 {
+				cmd = strings.TrimLeft(cmd[eq+sp:], " \t")
+				continue
+			}
+		}
+		break
+	}
+	sp := strings.IndexByte(cmd, ' ')
+	if sp < 0 {
+		sp = len(cmd)
+	}
+	base := cmd[:sp]
+	if slash := strings.LastIndexByte(base, '/'); slash >= 0 {
+		base = base[slash+1:]
+	}
+	return base
 }

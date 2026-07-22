@@ -125,10 +125,16 @@ func extractArgs(cmd syntax.Command, info *CommandInfo) {
 		if c.X != nil && c.X.Cmd != nil {
 			extractArgs(c.X.Cmd, info)
 		}
+	case *syntax.Subshell:
+		for _, stmt := range c.Stmts {
+			if stmt != nil && stmt.Cmd != nil {
+				extractArgs(stmt.Cmd, info)
+				return
+			}
+		}
 	}
 }
 
-// extractCallArgs 从 CallExpr 中提取参数列表。
 func extractCallArgs(call *syntax.CallExpr, info *CommandInfo) {
 	args := call.Args
 	if len(args) == 0 {
@@ -161,6 +167,24 @@ func extractCallArgs(call *syntax.CallExpr, info *CommandInfo) {
 	}
 	if idx < len(argList) && argList[idx] == "sudo" {
 		idx++
+		// 跳过 sudo 自身的标志（-u, -E, -n, -g, -- 等）
+		for idx < len(argList) {
+			arg := argList[idx]
+			if arg == "--" {
+				idx++
+				break // -- 之后全是命令
+			}
+			if !strings.HasPrefix(arg, "-") {
+				break // 不再以 - 开头 → 这是命令本身
+			}
+			// 跳过标志
+			idx++
+			// -u/-g/-U 等需要参数值的标志 → 多跳一个
+			if isSudoFlagWithValue(arg) && idx < len(argList) {
+				idx++
+			}
+		}
+		// sudo 之后可能还有修饰符
 		for idx < len(argList) && modifiers[argList[idx]] {
 			idx++
 		}
@@ -180,8 +204,17 @@ func extractCallArgs(call *syntax.CallExpr, info *CommandInfo) {
 	}
 }
 
+// isSudoFlagWithValue 判断 sudo 标志是否需要参数值。
+func isSudoFlagWithValue(flag string) bool {
+	switch flag {
+	case "-u", "-g", "-U", "-C", "--close-from":
+		return true
+	default:
+		return false
+	}
+}
+
 // Match 检查 deny/allow 规则是否匹配命令。
-// pattern: "curl" / "curl:*" / "git:push" / "curl:-s"
 func (ci *CommandInfo) Match(pattern string) bool {
 	if ci == nil {
 		return false

@@ -3,9 +3,9 @@ package permission
 import (
 	"strings"
 	"sync"
-)
 
-// ---------------------------------------------------------------------------
+	"github.com/Menfre01/waveloom/pkg/bash"
+)
 // SessionMemory — 会话记忆
 // ---------------------------------------------------------------------------
 
@@ -55,12 +55,23 @@ func (sm *SessionMemory) Lookup(toolName, pattern string) (Decision, bool) {
 		}
 	}
 
-	// 2. 对 bash 工具：prefix 模糊匹配（命令的参数/重定向变化不应破坏 session 记忆）
+	// 2. 对 bash 工具：AST baseCommand+firstArg 匹配
+	// 使用 "baseCommand:firstArg" 签名确保子命令不串扰：
+	//   "make build" ↔ "make build 2>&1" → match (同命令+子命令)
+	//   "make build" ↔ "make test"    → no match (子命令不同)
 	if toolName == "bash" && pattern != "" {
+		patternCI, _ := bash.Parse(pattern)
 		for k, d := range sm.store {
 			if k.ToolName != toolName || k.Pattern == "" {
 				continue
 			}
+			memCI, _ := bash.Parse(k.Pattern)
+			if patternCI != nil && memCI != nil {
+				if commandSignature(patternCI) == commandSignature(memCI) {
+					return d, true
+				}
+			}
+			// 退化：前缀模糊匹配
 			if shellPrefixFuzzyMatch(k.Pattern, pattern) {
 				return d, true
 			}
@@ -75,22 +86,17 @@ func (sm *SessionMemory) Lookup(toolName, pattern string) (Decision, bool) {
 	return "", false
 }
 
-// shellPrefixFuzzyMatch 检查两个 shell 命令是否"同类"。
-// 若较短的字符串是较长的字符串的空格边界前缀，则认为匹配。
-// 例: "make build" 与 "make build 2>&1" → match（"make build" 是前缀）
-//
-//	"git status" 与 "git push"      → no match
-//	"make" 与 "make build"          → match
-func shellPrefixFuzzyMatch(a, b string) bool {
-	if a == b {
-		return true
+
+// commandSignature 返回命令的语义签名（baseCommand + firstArg），
+// 用于 session 记忆匹配时区分同命令的不同子命令。
+// "make build" 和 "make build 2>&1" 签名相同，
+// 但 "make build" 和 "make test" 签名不同。
+func commandSignature(ci *bash.CommandInfo) string {
+	sig := ci.BaseCommand
+	if len(ci.Args) > 0 {
+		sig += "\x00" + ci.Args[0]
 	}
-	shorter, longer := a, b
-	if len(a) > len(b) {
-		shorter, longer = b, a
-	}
-	// shorter 必须是 longer 的空格边界前缀
-	return longer == shorter || strings.HasPrefix(longer, shorter+" ")
+	return sig
 }
 
 // Len 返回记忆条目数。
@@ -100,6 +106,18 @@ func (sm *SessionMemory) Len() int {
 	return len(sm.store)
 }
 
+// shellPrefixFuzzyMatch 退化路径：前缀模糊匹配。
+// 当 AST 解析失败时保证向后兼容。
+func shellPrefixFuzzyMatch(a, b string) bool {
+	if a == b {
+		return true
+	}
+	shorter, longer := a, b
+	if len(a) > len(b) {
+		shorter, longer = b, a
+	}
+	return longer == shorter || strings.HasPrefix(longer, shorter+" ")
+}
 // Clear 清空所有记忆。
 func (sm *SessionMemory) Clear() {
 	sm.mu.Lock()

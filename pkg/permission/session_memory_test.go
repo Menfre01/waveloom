@@ -357,3 +357,22 @@ func TestBehaviorFromDecision_Covered(t *testing.T) {
 		t.Error("behaviorFromDecision(unknown) should default to RuleAsk")
 	}
 }
+
+// REGRESSION: 同命令不同子命令不应串扰 session 记忆。
+// "make build" 的 Allow 不应让 "make test" 也自动通过。
+func TestSessionMemory_NoCrossSubcommandLeak(t *testing.T) {
+	sm := NewSessionMemory()
+	sm.Remember("bash", "make build", DecisionAllow)
+
+	// 同子命令（含额外参数/重定向）→ 应命中
+	_, ok := sm.Lookup("bash", "make build 2>&1")
+	if !ok {
+		t.Error(`"make build" remembered → "make build 2>&1" should match via commandSignature`)
+	}
+
+	// 不同子命令 → 不应命中
+	_, ok = sm.Lookup("bash", "make test")
+	if ok {
+		t.Error(`"make build" remembered → "make test" should NOT match (different subcommand)`)
+	}
+}

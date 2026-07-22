@@ -242,9 +242,10 @@ func matchContent(toolName, pattern string, input json.RawMessage) bool {
 		if json.Unmarshal(input, &params) != nil {
 			return false
 		}
+		// 预处理：剥离 BINARY_HIJACK_VARS 防止绕过白名单
+		target = StripBinaryHijackVars(params.Command)
 		// 归一化：剥离 "cd <path> &&" 前缀，使 pattern 匹配更稳定
-		target, _ = pathutil.NormalizeShellCommand(params.Command)
-
+		target, _ = pathutil.NormalizeShellCommand(target)
 	case "web_fetch":
 		var params struct {
 			URL string `json:"url"`
@@ -383,9 +384,14 @@ func convertToASTPattern(old string) string {
 	if !strings.Contains(old, " ") {
 		return old
 	}
-	parts := strings.SplitN(old, " ", 2)
-	if len(parts) == 2 && parts[1] == "*" {
-		return parts[0] + ":*"
+	// 仅含通配符的模式转为 AST 子匹配: "git *" → "git:*"
+	if strings.Contains(old, "*") {
+		parts := strings.SplitN(old, " ", 2)
+		if parts[1] == "*" {
+			return parts[0] + ":*"
+		}
 	}
-	return parts[0] + ":" + parts[1]
+	// 精确模式（无 *）不可转为子匹配 —
+	// "go test" 不应匹配 "go test ./..."。返回原串由 glob 退化精确比对。
+	return old
 }
