@@ -1,5 +1,13 @@
 # Changelog
 
+## [v0.3.1] — 2026-07-23
+
+### Fixed
+- **Interrupt path input leak**: User-entered prompt was not cleared on loop interrupt, causing the next loop to reuse the stale prompt across turns
+- **Native text selection**: Removed mouse tracking mode; terminal restores native mouse behavior, allowing text selection and copy without holding Shift
+
+---
+
 ## [v0.3.0] — 2026-07-22
 
 ### Added
