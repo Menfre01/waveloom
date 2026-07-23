@@ -3216,7 +3216,6 @@ func (m *model) View() tea.View {
 
 	v := tea.NewView(mainContent)
 	v.AltScreen = true
-	v.MouseMode = tea.MouseModeCellMotion
 
 	// real cursor 模式：定位输入光标
 	if m.overlay == overlayNone {
