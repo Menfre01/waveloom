@@ -1,5 +1,15 @@
 # Changelog
 
+## [v0.3.1] — 2026-07-23
+
+### 修复
+- **中断路径输入泄漏**:Loop 中断时用户已输入的 prompt 未清理,导致新 Loop 复用旧 prompt 跨轮残留
+- **原生文本选择**:移除鼠标追踪模式,终端恢复原生鼠标行为,无需 Shift 即可选中文本并复制
+
+---
+
+📝 [Changelog (English)](https://github.com/Menfre01/waveloom/blob/dev/CHANGELOG.en.md)
+
 ## [v0.3.0] — 2026-07-22
 
 ### 新增功能
