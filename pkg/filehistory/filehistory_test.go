@@ -468,7 +468,7 @@ func TestExportImportSnapshot_RoundTrip(t *testing.T) {
 	if exported == nil {
 		t.Fatal("ExportSnapshot returned nil")
 	}
-	if exported.SnapshotSeq != state.SnapshotSeq {
+	if exported.SnapshotSeq != state.SnapshotSeq { //nolint:SA5011 // t.Fatal above guards nil
 		t.Errorf("SnapshotSeq = %d, want %d", exported.SnapshotSeq, state.SnapshotSeq)
 	}
 

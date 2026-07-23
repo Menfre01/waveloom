@@ -170,7 +170,7 @@ func TestNewRunner(t *testing.T) {
 	if runner == nil {
 		t.Fatal("NewRunner returned nil")
 	}
-	if runner.sessionID != "session-1" {
+	if runner.sessionID != "session-1" { //nolint:SA5011 // t.Fatal above guards nil
 		t.Errorf("expected sessionID 'session-1', got %q", runner.sessionID)
 	}
 }

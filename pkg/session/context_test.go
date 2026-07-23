@@ -1033,7 +1033,7 @@ func TestFileHistory_PersistsThroughSave(t *testing.T) {
 	if loaded == nil {
 		t.Fatal("FileHistory returned nil after load")
 	}
-	if loaded.SnapshotSeq != 5 {
+	if loaded.SnapshotSeq != 5 { //nolint:SA5011 // t.Fatal above guards nil
 		t.Errorf("SnapshotSeq = %d, want 5", loaded.SnapshotSeq)
 	}
 	if len(loaded.Snapshots) != 1 || loaded.Snapshots[0].MessageID != "msg-1" {
