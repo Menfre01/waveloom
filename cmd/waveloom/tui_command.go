@@ -382,6 +382,18 @@ func (m *model) buildThemeList() {
 
 // handleThemePickerKey 处理主题选择器中的按键。
 func (m *model) handleThemePickerKey(msg tea.KeyPressMsg) (bool, tea.Cmd) {
+	// 滚动键:允许用户滚动查看选择器背后的对话内容
+	switch {
+	case key.Matches(msg, m.keys.PageUp):
+		m.scrollUp(m.bodyHeight)
+		return true, nil
+	case key.Matches(msg, m.keys.PageDown):
+		m.scrollDown(m.bodyHeight)
+		return true, nil
+	case key.Matches(msg, m.keys.JumpBottom):
+		m.scrollToBottom()
+		return true, nil
+	}
 	keyStr := msg.String()
 	switch keyStr {
 	case "up", "down":
@@ -490,6 +502,18 @@ func (m *model) buildLocaleList() {
 
 // handleLocalePickerKey 处理语言选择器中的按键。
 func (m *model) handleLocalePickerKey(msg tea.KeyPressMsg) (bool, tea.Cmd) {
+	// 滚动键:允许用户滚动查看选择器背后的对话内容
+	switch {
+	case key.Matches(msg, m.keys.PageUp):
+		m.scrollUp(m.bodyHeight)
+		return true, nil
+	case key.Matches(msg, m.keys.PageDown):
+		m.scrollDown(m.bodyHeight)
+		return true, nil
+	case key.Matches(msg, m.keys.JumpBottom):
+		m.scrollToBottom()
+		return true, nil
+	}
 	keyStr := msg.String()
 	switch keyStr {
 	case "up", "down":
@@ -579,6 +603,18 @@ func (m *model) buildModelPickerList() {
 
 // handleModelPickerKey 处理模型选择器中的按键。
 func (m *model) handleModelPickerKey(msg tea.KeyPressMsg) (bool, tea.Cmd) {
+	// 滚动键:允许用户滚动查看选择器背后的对话内容
+	switch {
+	case key.Matches(msg, m.keys.PageUp):
+		m.scrollUp(m.bodyHeight)
+		return true, nil
+	case key.Matches(msg, m.keys.PageDown):
+		m.scrollDown(m.bodyHeight)
+		return true, nil
+	case key.Matches(msg, m.keys.JumpBottom):
+		m.scrollToBottom()
+		return true, nil
+	}
 	keyStr := msg.String()
 	switch keyStr {
 	case "up", "down":
@@ -729,6 +765,18 @@ func (m *model) buildProviderPickerList() {
 
 // handleProviderPickerKey 处理 provider 选择器中的按键。
 func (m *model) handleProviderPickerKey(msg tea.KeyPressMsg) (bool, tea.Cmd) {
+	// 滚动键:允许用户滚动查看选择器背后的对话内容
+	switch {
+	case key.Matches(msg, m.keys.PageUp):
+		m.scrollUp(m.bodyHeight)
+		return true, nil
+	case key.Matches(msg, m.keys.PageDown):
+		m.scrollDown(m.bodyHeight)
+		return true, nil
+	case key.Matches(msg, m.keys.JumpBottom):
+		m.scrollToBottom()
+		return true, nil
+	}
 	keyStr := msg.String()
 	switch keyStr {
 	case "up", "down":

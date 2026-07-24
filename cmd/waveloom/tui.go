@@ -1437,8 +1437,20 @@ func (m *model) handleKeyPress(msg tea.KeyPressMsg) (bool, tea.Cmd) {
 	// 3. 权限面板活跃时路由
 	// =====================================================================
 	if m.overlay == overlayPermission {
+		// 滚动键:允许用户滚动查看权限请求的上下文
+		switch {
+		case key.Matches(msg, m.keys.PageUp):
+			m.scrollUp(m.bodyHeight)
+			return true, nil
+		case key.Matches(msg, m.keys.PageDown):
+			m.scrollDown(m.bodyHeight)
+			return true, nil
+		case key.Matches(msg, m.keys.JumpBottom):
+			m.scrollToBottom()
+			return true, nil
+		}
 		keyStr := msg.String()
-		// ↑↓ 仅导航权限列表，不透传给 viewport
+		// ↑↓ 仅导航权限列表,不透传给 viewport
 		if keyStr == "up" || keyStr == "down" {
 			var cmd tea.Cmd
 			m.permList, cmd = m.permList.Update(msg)
@@ -1451,7 +1463,19 @@ func (m *model) handleKeyPress(msg tea.KeyPressMsg) (bool, tea.Cmd) {
 	// 3a. 选择题面板活跃时路由
 	// =====================================================================
 	if m.overlay == overlayQuestion {
-		// Esc → 拒绝回答（关闭 overlay，发送 nil）
+		// 滚动键:允许用户滚动查看问题背后的对话内容
+		switch {
+		case key.Matches(msg, m.keys.PageUp):
+			m.scrollUp(m.bodyHeight)
+			return true, nil
+		case key.Matches(msg, m.keys.PageDown):
+			m.scrollDown(m.bodyHeight)
+			return true, nil
+		case key.Matches(msg, m.keys.JumpBottom):
+			m.scrollToBottom()
+			return true, nil
+		}
+		// Esc → 拒绝回答(关闭 overlay,发送 nil)
 		if key.Matches(msg, m.keys.Interrupt) {
 			// Other 输入中取消 → 回退到选项列表
 			if m.questionFormIsOther {
@@ -1461,7 +1485,7 @@ func (m *model) handleKeyPress(msg tea.KeyPressMsg) (bool, tea.Cmd) {
 			m.handleQuestionFormAborted()
 			return true, nil
 		}
-		// 其余按键交由 huh 或 otherInput Update 处理
+		// 其余按键交由 huh 或 otherInput Update 处理(含 ↑↓ 导航)
 		return false, nil
 	}
 
@@ -1497,6 +1521,24 @@ func (m *model) handleKeyPress(msg tea.KeyPressMsg) (bool, tea.Cmd) {
 	// 3e. Plan 进入确认活跃时路由
 	// =====================================================================
 	if m.overlay == overlayPlanEnter {
+		// 滚动键:允许用户滚动查看之前的对话内容
+		switch {
+		case key.Matches(msg, m.keys.Up):
+			m.scrollUp(1)
+			return true, nil
+		case key.Matches(msg, m.keys.Down):
+			m.scrollDown(1)
+			return true, nil
+		case key.Matches(msg, m.keys.PageUp):
+			m.scrollUp(m.bodyHeight)
+			return true, nil
+		case key.Matches(msg, m.keys.PageDown):
+			m.scrollDown(m.bodyHeight)
+			return true, nil
+		case key.Matches(msg, m.keys.JumpBottom):
+			m.scrollToBottom()
+			return true, nil
+		}
 		keyStr := msg.String()
 		switch keyStr {
 		case "enter":
@@ -1504,7 +1546,7 @@ func (m *model) handleKeyPress(msg tea.KeyPressMsg) (bool, tea.Cmd) {
 			m.inPlanMode = true
 			m.planEnteredByUser = false
 			m.input.Placeholder = m.msg().InputPlanModePlaceholder
-			// plan 文件路径和配对 ID 由 Loop 的 executeEnterPlanMode 生成，			// [plan:start] 由 Loop 注入消息历史，TUI 不重复管理。
+			// plan 文件路径和配对 ID 由 Loop 的 executeEnterPlanMode 生成,			// [plan:start] 由 Loop 注入消息历史,TUI 不重复管理。
 			if m.planEnterReply != nil {
 				m.planEnterReply <- true
 				m.planEnterReply = nil
@@ -1527,6 +1569,24 @@ func (m *model) handleKeyPress(msg tea.KeyPressMsg) (bool, tea.Cmd) {
 	// 3f. Plan 退出审批活跃时路由
 	// =====================================================================
 	if m.overlay == overlayPlanExit {
+		// 滚动键:允许用户滚动查看 plan 内容及之前的对话
+		switch {
+		case key.Matches(msg, m.keys.Up):
+			m.scrollUp(1)
+			return true, nil
+		case key.Matches(msg, m.keys.Down):
+			m.scrollDown(1)
+			return true, nil
+		case key.Matches(msg, m.keys.PageUp):
+			m.scrollUp(m.bodyHeight)
+			return true, nil
+		case key.Matches(msg, m.keys.PageDown):
+			m.scrollDown(m.bodyHeight)
+			return true, nil
+		case key.Matches(msg, m.keys.JumpBottom):
+			m.scrollToBottom()
+			return true, nil
+		}
 		keyStr := msg.String()
 		switch keyStr {
 		case "enter":
