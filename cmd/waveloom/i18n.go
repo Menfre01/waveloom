@@ -113,6 +113,8 @@ type Messages struct {
 	KeyPaste       string
 	KeyHelp        string
 	KeyHelpTitle   string // ? 帮助 overlay 标题
+	KeyHistoryUp   string
+	KeyHistoryDown string
 
 	// ── Focus separator ──────────────────────────────────
 	FocusSeparatorHint string
@@ -327,7 +329,7 @@ var zhCN = Messages{
 	KeyToggle:      "勾选",
 	KeySend:        "发送消息",
 	KeyInterrupt:   "中断 agent loop",
-	KeyQuit:        "退出",
+	KeyQuit:        "双击退出",
 	KeyFocusNext:   "聚焦下一个可交互段落",
 	KeyFocusPrev:   "聚焦上一个可交互段落",
 	KeyScrollUp:    "向上滚动",
@@ -340,6 +342,8 @@ var zhCN = Messages{
 	KeyPaste:       "粘贴",
 	KeyHelp:        "快捷键",
 	KeyHelpTitle:   "快捷键帮助",
+	KeyHistoryUp:   "向上导航输入历史",
+	KeyHistoryDown: "向下导航输入历史",
 
 	// Focus separator
 	FocusSeparatorHint: " ◆ 段落已聚焦 · ⏎ 展开/折叠 · Esc 退出 ◆ ",
@@ -376,7 +380,7 @@ var zhCN = Messages{
 	SetupDoneReady:       "现在可以运行 waveloom 进入交互模式了。",
 	SetupConfirmTitle:    "确认配置",
 	SetupConfirmPrompt:   "确认以上配置？",
-	SetupHelpHint:        "↑↓ 导航   ⏎ 确认   Esc 回退   Ctrl+C 退出",
+	SetupHelpHint:        "↑↓ 导航   ⏎ 确认   Esc 回退   Ctrl+C×2 退出",
 	SetupSummaryTheme:    "主题",
 	SetupSummaryLanguage: "语言",
 	SetupSummaryProvider: "Provider",
@@ -407,7 +411,8 @@ var zhCN = Messages{
   —— 以下仅在空闲时生效 ——
   输入 /         查看并补全命令（↑↓ 导航，⏎ 确认，Tab 自动补全）
   输入 @         引用文件（↑↓ 导航，⏎ 确认，Tab 深入目录）
-  ↑↓              浏览输入历史
+  ↑↓              滚动页面
+  Ctrl+P / Ctrl+N 浏览输入历史
   Tab / Shift+Tab 段落间导航，⏎ 展开 / 折叠
   Esc（双击）      清空输入框
   exit            退出程序
@@ -418,7 +423,7 @@ var zhCN = Messages{
    Ctrl+G          循环切换主题（dark → light → colorblind → auto）
    ?               快捷键帮助 overlay
    Ctrl+E / End    跳到底部
-   Ctrl+C          退出
+   Ctrl+C×2        双击退出
    PgUp / PgDn     上下翻页
    Esc（运行中）     中断当前 Agent 执行
 
@@ -617,7 +622,7 @@ var enUS = Messages{
 	KeyToggle:      "Toggle",
 	KeySend:        "Send message",
 	KeyInterrupt:   "Interrupt agent loop",
-	KeyQuit:        "Quit",
+	KeyQuit:        "Double-tap to quit",
 	KeyFocusNext:   "Focus next interactive paragraph",
 	KeyFocusPrev:   "Focus previous interactive paragraph",
 	KeyScrollUp:    "Scroll up",
@@ -630,6 +635,8 @@ var enUS = Messages{
 	KeyPaste:       "Paste",
 	KeyHelp:        "Shortcuts",
 	KeyHelpTitle:   "Keyboard Shortcuts",
+	KeyHistoryUp:   "Navigate input history up",
+	KeyHistoryDown: "Navigate input history down",
 
 	// Focus separator
 	FocusSeparatorHint: " ◆ Paragraph focused · ⏎ expand/collapse · Esc exit ◆ ",
@@ -666,7 +673,7 @@ var enUS = Messages{
 	SetupDoneReady:       "You can now run waveloom to start the interactive mode.",
 	SetupConfirmTitle:    "Confirm Settings",
 	SetupConfirmPrompt:   "Confirm the settings above?",
-	SetupHelpHint:        "↑↓ navigate   ⏎ confirm   Esc back   Ctrl+C quit",
+	SetupHelpHint:        "↑↓ navigate   ⏎ confirm   Esc back   Ctrl+C×2 quit",
 	SetupSummaryTheme:    "Theme",
 	SetupSummaryLanguage: "Language",
 	SetupSummaryProvider: "Provider",
@@ -697,7 +704,8 @@ var enUS = Messages{
   —— Idle only ——
   Type /         View and complete commands (↑↓ navigate, ⏎ confirm, Tab autocomplete)
   Type @         Reference files (↑↓ navigate, ⏎ confirm, Tab dive into directories)
-  ↑↓              Browse input history
+  ↑↓              Scroll page
+  Ctrl+P / Ctrl+N Browse input history
   Tab / Shift+Tab Navigate between paragraphs, ⏎ expand / collapse
   Esc (double)    Clear input
   exit            Exit program
@@ -708,7 +716,7 @@ var enUS = Messages{
    Ctrl+G          Cycle theme (dark → light → colorblind → auto)
    ?               Shortcut help overlay
    Ctrl+E / End    Jump to bottom
-   Ctrl+C          Quit
+   Ctrl+C×2        Double-tap to quit
    PgUp / PgDn     Page up / down
    Esc (running)   Interrupt current agent execution
 

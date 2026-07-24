@@ -421,6 +421,7 @@ func keyMapToGroups(km keyMap) [][]key.Binding {
 		{km.Enter, km.Interrupt, km.Quit},
 		{km.FocusNext, km.FocusPrev, km.Picker, km.Paste, km.ToggleTheme, km.Help},
 		{km.Up, km.Down, km.PageUp, km.PageDown, km.JumpBottom},
+		{km.HistoryUp, km.HistoryDown},
 	}
 }
 

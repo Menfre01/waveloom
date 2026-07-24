@@ -316,6 +316,8 @@ type keyMap struct {
 	Picker      key.Binding
 	Paste       key.Binding
 	Help        key.Binding
+	HistoryUp   key.Binding
+	HistoryDown key.Binding
 }
 
 // permKeyBindings / questionSingleKeyBindings 等已移至 tui_overlay.go，// 作为接受 *Messages 的函数实现，支持国际化。
@@ -323,7 +325,7 @@ type keyMap struct {
 var defaultKeys = keyMap{
 	Enter:       key.NewBinding(key.WithKeys("enter"), key.WithHelp("⏎", "Send message")),
 	Interrupt:   key.NewBinding(key.WithKeys("esc"), key.WithHelp("Esc", "Interrupt agent loop")),
-	Quit:        key.NewBinding(key.WithKeys("ctrl+c"), key.WithHelp("Ctrl+C", "Quit")),
+	Quit:        key.NewBinding(key.WithKeys("ctrl+c"), key.WithHelp("Ctrl+C×2", "Double-tap to quit")),
 	FocusNext:   key.NewBinding(key.WithKeys("tab"), key.WithHelp("Tab", "Focus next interactive paragraph")),
 	FocusPrev:   key.NewBinding(key.WithKeys("shift+tab"), key.WithHelp("Shift+Tab", "Focus previous interactive paragraph")),
 	Up:          key.NewBinding(key.WithKeys("up"), key.WithHelp("↑", "Scroll up")),
@@ -335,6 +337,8 @@ var defaultKeys = keyMap{
 	Picker:      key.NewBinding(key.WithKeys("@"), key.WithHelp("@", "Pick file/directory")),
 	Paste:       key.NewBinding(key.WithKeys("ctrl+v"), key.WithHelp("Ctrl+V", "Paste")),
 	Help:        key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "Shortcuts")),
+	HistoryUp:   key.NewBinding(key.WithKeys("ctrl+p"), key.WithHelp("Ctrl+P", "Navigate input history up")),
+	HistoryDown: key.NewBinding(key.WithKeys("ctrl+n"), key.WithHelp("Ctrl+N", "Navigate input history down")),
 }
 
 // makeKeyMap 根据 locale 生成带翻译帮助文本的 keyMap。
@@ -354,6 +358,8 @@ func makeKeyMap(lc *Messages) keyMap {
 		Picker:      key.NewBinding(key.WithKeys("@"), key.WithHelp("@", lc.KeyPicker)),
 		Paste:       key.NewBinding(key.WithKeys("ctrl+v"), key.WithHelp("Ctrl+V", lc.KeyPaste)),
 		Help:        key.NewBinding(key.WithKeys("?"), key.WithHelp("?", lc.KeyHelp)),
+		HistoryUp:   key.NewBinding(key.WithKeys("ctrl+p"), key.WithHelp("Ctrl+P", lc.KeyHistoryUp)),
+		HistoryDown: key.NewBinding(key.WithKeys("ctrl+n"), key.WithHelp("Ctrl+N", lc.KeyHistoryDown)),
 	}
 }
 
@@ -527,8 +533,8 @@ type model struct {
 	historyDraft string   // 进入历史导航前输入框中的草稿文本
 
 	// 双击 Esc 清空输入
-	lastEscTime time.Time // 上次在空闲态按 Esc 的时间
-
+	lastEscTime   time.Time // 上次在空闲态按 Esc 的时间
+	lastCtrlCTime time.Time // 上次按 Ctrl+C 的时间(双击退出)
 	// 状态
 	running               bool                           // agent loop 正在执行中
 	inPlanMode            bool                           // 当前是否在 plan 模式
@@ -1384,7 +1390,15 @@ func (m *model) handleKeyPress(msg tea.KeyPressMsg) (bool, tea.Cmd) {
 	// =====================================================================
 	switch {
 	case key.Matches(msg, m.keys.Quit):
-		return true, tea.Quit
+		// 双击 Ctrl+C 退出，防止误触
+		now := time.Now()
+		if !m.lastCtrlCTime.IsZero() && now.Sub(m.lastCtrlCTime) < 500*time.Millisecond {
+			m.lastCtrlCTime = time.Time{}
+			return true, tea.Quit
+		}
+		m.lastCtrlCTime = now
+		m.noticeBanner = "Press Ctrl+C again to quit"
+		return true, nil
 
 	case key.Matches(msg, m.keys.ToggleTheme):
 		m.toggleTheme()
@@ -1677,15 +1691,7 @@ func (m *model) handleKeyPress(msg tea.KeyPressMsg) (bool, tea.Cmd) {
 		if m.focusIndex >= 0 {
 			return true, m.focusPrev()
 		}
-		// 空闲态 ↑ → 输入历史导航（仅在未处于历史导航中时尝试）
-		if !m.running && m.overlay == overlayNone && !m.pickerVisible {
-			if m.historyPos == -1 || m.historyPos < len(m.inputHistory)-1 {
-				if m.navigateHistoryUp() {
-					return true, nil
-				}
-			}
-		}
-		// 未消费 → 向上滚动
+		// 向上滚动页面
 		m.scrollUp(1)
 		return true, nil
 
@@ -1694,15 +1700,31 @@ func (m *model) handleKeyPress(msg tea.KeyPressMsg) (bool, tea.Cmd) {
 		if m.focusIndex >= 0 {
 			return true, m.focusNext()
 		}
-		// 空闲态 ↓ → 输入历史导航
+		// 向下滚动页面
+		m.scrollDown(1)
+		return true, nil
+
+	case key.Matches(msg, m.keys.HistoryUp):
+		// 空闲态 Ctrl+P → 输入历史导航
+		if !m.running && m.overlay == overlayNone && !m.pickerVisible {
+			if m.historyPos == -1 || m.historyPos < len(m.inputHistory)-1 {
+				if m.navigateHistoryUp() {
+					return true, nil
+				}
+			}
+		}
+		// 未消费 → 传给 textarea(用于多行光标移动)
+		return false, nil
+
+	case key.Matches(msg, m.keys.HistoryDown):
+		// 空闲态 Ctrl+N → 输入历史导航
 		if !m.running && m.overlay == overlayNone && !m.pickerVisible {
 			if m.navigateHistoryDown() {
 				return true, nil
 			}
 		}
-		// 未消费 → 向下滚动
-		m.scrollDown(1)
-		return true, nil
+		// 未消费 → 传给 textarea
+		return false, nil
 
 	case key.Matches(msg, m.keys.PageUp):
 		m.scrollUp(m.bodyHeight)
