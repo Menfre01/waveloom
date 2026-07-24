@@ -21,10 +21,12 @@ var readHashlinePrompt string
 
 
 type ReadFileHashlineParams struct {
-	FilePath   string `json:"file_path"`   // 与 read_file 一致
-	Offset     int    `json:"offset"`      // 0-based: 0 = 文件第一行
-	Limit      int    `json:"limit"`       // 读取行数（0 = 不限）
-	WorkingDir string `json:"working_dir"` // 工作目录（可选）
+	FilePath     string `json:"file_path"`     // 与 read_file 一致
+	Offset       int    `json:"offset"`        // 0-based: 0 = 文件第一行
+	Limit        int    `json:"limit"`         // 读取行数(0 = 不限)
+	Pattern      string `json:"pattern"`       // 可选:在文件中定位子串,窗口显示第一个匹配 ±context_lines
+	ContextLines int    `json:"context_lines"` // 匹配行上下各显示的行数(默认 5,最大 50)
+	WorkingDir   string `json:"working_dir"`   // 工作目录(可选)
 }
 
 type ReadFileHashline struct{}
@@ -39,8 +41,6 @@ func (t *ReadFileHashline) Description() string {
 
 // Prompt 返回 read 工具使用指南，由 Registry.FormatToolPrompts() 注入 system prompt。
 func (t *ReadFileHashline) Prompt() string { return readHashlinePrompt }
-
-
 var readFileHashlineSchema = json.RawMessage(`{
   "type": "object",
   "properties": {
@@ -50,11 +50,19 @@ var readFileHashlineSchema = json.RawMessage(`{
     },
     "offset": {
       "type": "integer",
-      "description": "Starting line number (0-based, 0 = first line, optional)"
+      "description": "Without pattern: starting line number (0-based, 0 = first line, optional). With pattern: match index (0-based) to page through matches."
     },
     "limit": {
       "type": "integer",
       "description": "Number of lines to read (optional, default: all)"
+    },
+    "pattern": {
+      "type": "string",
+      "description": "Optional substring to locate in the file. When present, the output centers on the first match ±context_lines, eliminating a separate grep call. Use offset/limit to page through additional matches."
+    },
+    "context_lines": {
+      "type": "integer",
+      "description": "Lines of context above and below each match (default: 5, max: 50). 0 is treated as default. Only meaningful with pattern. For match-line-only, use limit=1."
     },
     "working_dir": {
       "type": "string",
@@ -177,8 +185,77 @@ func (t *ReadFileHashline) Execute(ctx context.Context, p ReadFileHashlineParams
 		tag = "0000"
 	}
 
-	// ── Step 7: 格式化输出 ──
+	// ── Step 7: pattern 匹配(可选)──
+	// pattern 选择显示窗口:匹配行 ±ContextLines。TAG 始终对应完整文件,不受 pattern 影响。
+	var matchFooter string
+	if p.Pattern != "" && totalLines > 0 {
+		lines := strings.Split(fullContent, "\n")
+		if len(lines) > 0 && lines[len(lines)-1] == "" {
+			lines = lines[:len(lines)-1]
+		}
+
+		var matches []int
+		for i, line := range lines {
+			if strings.Contains(line, p.Pattern) {
+				matches = append(matches, i) // 0-based
+			}
+		}
+		// ContextLines 为 0 时使用默认值 5(Go int 零值无法区分"未传"和"传 0")。
+		// 想要仅显示匹配行本身:传入 limit=1。
+		ctxLines := p.ContextLines
+		if ctxLines <= 0 {
+			ctxLines = 5
+		}
+		if ctxLines > 50 {
+			ctxLines = 50
+		}
+
+		if len(matches) == 0 {
+			matchFooter = fmt.Sprintf("\n<system-reminder>Pattern %q not found in file. Check pattern spelling. Showing full file.</system-reminder>", p.Pattern)
+		} else {
+			// offset 复用为匹配索引(0-based),limit 约束显示行数
+			requestedIdx := p.Offset // 保存原始值,用于后续钳位提示
+			matchIdx := requestedIdx
+			if matchIdx < 0 {
+				matchIdx = 0
+			}
+			if matchIdx >= len(matches) {
+				matchIdx = len(matches) - 1
+			}
+
+			matchLine := matches[matchIdx]
+			start := matchLine - ctxLines
+			if start < 0 {
+				start = 0
+			}
+			end := matchLine + ctxLines + 1
+			if end > totalLines {
+				end = totalLines
+			}
+			if p.Limit > 0 && start+p.Limit < end {
+				end = start + p.Limit
+			}
+
+			p.Offset = start
+			p.Limit = end - start
+
+			matchFooter = fmt.Sprintf("\n<system-reminder>Match %d of %d for %q at line %d (%d lines shown).",
+				matchIdx+1, len(matches), p.Pattern, matchLine+1, p.Limit)
+			if requestedIdx > 0 && requestedIdx >= len(matches) {
+				matchFooter += fmt.Sprintf(" Requested match %d, clamped to %d.", requestedIdx+1, matchIdx+1)
+			}
+			if len(matches) > 1 {
+				matchFooter += " Use offset=N to page through matches."
+			}
+			matchFooter += "</system-reminder>"
+		}
+	}
+
+	// ── Step 8: 格式化输出 ──
 	content := hashline.FormatContent(path, tag, fullContent, p.Offset, p.Limit)
+	if matchFooter != "" {
+		content += matchFooter
+	}
 
 	if totalLines == 0 {
 		content = fmt.Sprintf("[%s#%s]\n<system-reminder>Warning: the file exists but the contents are empty.</system-reminder>", path, tag)

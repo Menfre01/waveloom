@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/Menfre01/waveloom/pkg/hashline"
@@ -452,5 +453,276 @@ func TestReadFileHashline_LargeFileRejected(t *testing.T) {
 	}
 	if result.Error.Kind != ErrKindLargeFile {
 		t.Errorf("expected ErrKindLargeFile, got %q", result.Error.Kind)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// ReadFileHashline — pattern 匹配
+// ---------------------------------------------------------------------------
+
+func TestReadFileHashline_Pattern_SingleMatch(t *testing.T) {
+	dir := t.TempDir()
+	filePath := filepath.Join(dir, "main.go")
+	content := "package main\n\nimport \"fmt\"\n\n// HandleRequest processes incoming requests\nfunc HandleRequest() {\n\tfmt.Println(\"handling\")\n}\n\nfunc main() {\n\tHandleRequest()\n}\n"
+	if err := os.WriteFile(filePath, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	store := hashline.NewStore()
+	ctx := hashline.WithStore(context.Background(), store)
+
+	tool := &ReadFileHashline{}
+	result, err := tool.Execute(ctx, ReadFileHashlineParams{FilePath: filePath, Pattern: "HandleRequest"})
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if result.Error != nil {
+		t.Fatalf("unexpected error: %s", result.Error.Message)
+	}
+	// 应该显示匹配行周围的上下文,而不是全文件
+	if !strings.Contains(result.Content, "Match 1 of") {
+		t.Errorf("expected content to contain matched pattern, got:\n%s", result.Content)
+	}
+	// TAG 仍应在 store 中
+	if _, ok := store.Get(filePath); !ok {
+		t.Error("store should contain snapshot after read with pattern")
+	}
+}
+
+func TestReadFileHashline_Pattern_MultipleMatches(t *testing.T) {
+	dir := t.TempDir()
+	filePath := filepath.Join(dir, "main.go")
+	content := ""
+	for i := 1; i <= 30; i++ {
+		if i%5 == 0 {
+			content += fmt.Sprintf("// TODO: fix line %d\n", i)
+		} else {
+			content += fmt.Sprintf("line %d\n", i)
+		}
+	}
+	if err := os.WriteFile(filePath, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	store := hashline.NewStore()
+	ctx := hashline.WithStore(context.Background(), store)
+
+	tool := &ReadFileHashline{}
+	// 第一个匹配 (matchIdx=0)
+	result, err := tool.Execute(ctx, ReadFileHashlineParams{FilePath: filePath, Pattern: "TODO"})
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if result.Error != nil {
+		t.Fatalf("unexpected error: %s", result.Error.Message)
+	}
+	if !strings.Contains(result.Content, "Match 1 of 6") {
+		t.Errorf("expected Match 1 of 6, got footer:\n%s", result.Content)
+	}
+
+	// 第三个匹配 (matchIdx=2)
+	result2, err := tool.Execute(ctx, ReadFileHashlineParams{FilePath: filePath, Pattern: "TODO", Offset: 2})
+	if err != nil {
+		t.Fatalf("Execute() offset=2 error = %v", err)
+	}
+	if result2.Error != nil {
+		t.Fatalf("unexpected error: %s", result2.Error.Message)
+	}
+	if !strings.Contains(result2.Content, "Match 3 of 6") {
+		t.Errorf("expected Match 3 of 6, got:\n%s", result2.Content)
+	}
+}
+
+func TestReadFileHashline_Pattern_NoMatch(t *testing.T) {
+	dir := t.TempDir()
+	filePath := filepath.Join(dir, "main.go")
+	content := "package main\n\nfunc main() {\n\tfmt.Println(\"hello\")\n}\n"
+	if err := os.WriteFile(filePath, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	store := hashline.NewStore()
+	ctx := hashline.WithStore(context.Background(), store)
+
+	tool := &ReadFileHashline{}
+	result, err := tool.Execute(ctx, ReadFileHashlineParams{FilePath: filePath, Pattern: "NotFound"})
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if result.Error != nil {
+		t.Fatalf("unexpected error: %s", result.Error.Message)
+	}
+	// 应显示全文件 + 未匹配提示
+	if !strings.Contains(result.Content, "not found in file") {
+		t.Errorf("expected 'not found' reminder, got:\n%s", result.Content)
+	}
+	if !strings.Contains(result.Content, "package main") {
+		t.Errorf("expected full file content, got:\n%s", result.Content)
+	}
+}
+
+func TestReadFileHashline_Pattern_EmptyPattern(t *testing.T) {
+	dir := t.TempDir()
+	filePath := filepath.Join(dir, "main.go")
+	content := "package main\n\nfunc main() {\n\tfmt.Println(\"hello\")\n}\n"
+	if err := os.WriteFile(filePath, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	store := hashline.NewStore()
+	ctx := hashline.WithStore(context.Background(), store)
+
+	tool := &ReadFileHashline{}
+	// 空 pattern 等同于不传 pattern — 显示全文件,无 match footer
+	result, err := tool.Execute(ctx, ReadFileHashlineParams{FilePath: filePath, Pattern: ""})
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if result.Error != nil {
+		t.Fatalf("unexpected error: %s", result.Error.Message)
+	}
+	if strings.Contains(result.Content, "Match") || strings.Contains(result.Content, "not found") {
+		t.Errorf("empty pattern should behave like no pattern, got:\n%s", result.Content)
+	}
+}
+
+func TestReadFileHashline_Pattern_ContextLines(t *testing.T) {
+	dir := t.TempDir()
+	filePath := filepath.Join(dir, "main.go")
+	content := ""
+	for i := 1; i <= 30; i++ {
+		content += fmt.Sprintf("line %d\n", i)
+	}
+	if err := os.WriteFile(filePath, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	store := hashline.NewStore()
+	ctx := hashline.WithStore(context.Background(), store)
+
+	tool := &ReadFileHashline{}
+	// context_lines=2 → 匹配行 ±2 行
+	result, err := tool.Execute(ctx, ReadFileHashlineParams{
+		FilePath:     filePath,
+		Pattern:      "line 15",
+		ContextLines: 2,
+	})
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if result.Error != nil {
+		t.Fatalf("unexpected error: %s", result.Error.Message)
+	}
+	// 应显示 line 13-17 (5 行 = 2+1+2)
+	lines := strings.Split(strings.TrimSpace(result.Content), "\n")
+	matched := false
+	for _, l := range lines {
+		if strings.Contains(l, "line 15") {
+			matched = true
+			break
+		}
+	}
+	if !matched {
+		t.Errorf("expected match for 'line 15', got:\n%s", result.Content)
+	}
+}
+
+func TestReadFileHashline_Pattern_WithLimit(t *testing.T) {
+	dir := t.TempDir()
+	filePath := filepath.Join(dir, "main.go")
+	content := ""
+	for i := 1; i <= 30; i++ {
+		content += fmt.Sprintf("line %d\n", i)
+	}
+	if err := os.WriteFile(filePath, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	store := hashline.NewStore()
+	ctx := hashline.WithStore(context.Background(), store)
+
+	tool := &ReadFileHashline{}
+	// limit=3 → 只显示 3 行,即使 context 更大
+	result, err := tool.Execute(ctx, ReadFileHashlineParams{
+		FilePath:     filePath,
+		Pattern:      "line 15",
+		ContextLines: 10,
+		Limit:        3,
+	})
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if result.Error != nil {
+		t.Fatalf("unexpected error: %s", result.Error.Message)
+	}
+	if result.Meta.LineCount != 3 {
+		t.Errorf("expected LineCount=3 with limit=3, got %d", result.Meta.LineCount)
+	}
+}
+
+func TestReadFileHashline_Pattern_OffsetOutOfRange(t *testing.T) {
+	dir := t.TempDir()
+	filePath := filepath.Join(dir, "main.go")
+	content := "package main\n\nfunc main() {\n\tfmt.Println(\"hello\")\n}\n"
+	if err := os.WriteFile(filePath, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	store := hashline.NewStore()
+	ctx := hashline.WithStore(context.Background(), store)
+
+	tool := &ReadFileHashline{}
+	// offset=99 超出匹配数 → 回退到最后一个匹配
+	result, err := tool.Execute(ctx, ReadFileHashlineParams{FilePath: filePath, Pattern: "main", Offset: 99})
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if result.Error != nil {
+		t.Fatalf("unexpected error: %s", result.Error.Message)
+	}
+	// 应显示最后一个匹配,不崩溃
+	if !strings.Contains(result.Content, "Match") {
+		t.Errorf("expected match footer even with out-of-range offset, got:\n%s", result.Content)
+	}
+}
+
+func TestReadFileHashline_Pattern_OffsetAndLimit(t *testing.T) {
+	dir := t.TempDir()
+	filePath := filepath.Join(dir, "main.go")
+	content := ""
+	for i := 1; i <= 30; i++ {
+		if i%10 == 0 {
+			content += fmt.Sprintf("// MARKER at line %d\n", i)
+		} else {
+			content += fmt.Sprintf("line %d\n", i)
+		}
+	}
+	if err := os.WriteFile(filePath, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	store := hashline.NewStore()
+	ctx := hashline.WithStore(context.Background(), store)
+
+	tool := &ReadFileHashline{}
+	// offset=2(第三个匹配) + limit=3 → 应显示第三个 MARKER ±5 行中的前 3 行
+	result, err := tool.Execute(ctx, ReadFileHashlineParams{
+		FilePath:     filePath,
+		Pattern:      "MARKER",
+		Offset:       2,
+		Limit:        3,
+		ContextLines: 5,
+	})
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if result.Error != nil {
+		t.Fatalf("unexpected error: %s", result.Error.Message)
+	}
+	if !strings.Contains(result.Content, "Match 3 of 3") {
+		t.Errorf("expected Match 3 of 3, got:\n%s", result.Content)
+	}
+	if result.Meta.LineCount != 3 {
+		t.Errorf("expected LineCount=3 with limit=3, got %d", result.Meta.LineCount)
 	}
 }
