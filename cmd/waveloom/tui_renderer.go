@@ -146,7 +146,7 @@ func stripCWDPrefix(field, cwd string) string {
 func formatToolArgs(toolName string, argsJSON string, cwd string) string {
 	switch toolName {
 	case "read":
-		return stripCWDPrefix(extractField(argsJSON, "file_path"), cwd)
+		return formatReadArgs(argsJSON, cwd)
 	case "write":
 		return stripCWDPrefix(extractField(argsJSON, "file_path"), cwd)
 	case "edit":
@@ -163,11 +163,15 @@ func formatToolArgs(toolName string, argsJSON string, cwd string) string {
 		return first
 	case "bash":
 		cmd := extractField(argsJSON, "command")
-		// 归一化：剥离 "cd <path> &&" 前缀，避免 turn log 中显示冗长的 cd 前缀
+		// 归一化:剥离 "cd <path> &&" 前缀,避免 turn log 中显示冗长的 cd 前缀
+		var result string
 		if normalized, _ := pathutil.NormalizeShellCommand(cmd); normalized != "" {
-			return normalized
+			result = normalized
+		} else {
+			result = cmd
 		}
-		return cmd
+		// 多行命令拼接为单行,用 && 连接,保持摘要行整洁
+		return collapseMultilineCommand(result)
 	case "web_fetch":
 		u := extractField(argsJSON, "url")
 		if u != "" {
@@ -246,6 +250,67 @@ func extractField(jsonStr, key string) string {
 	}
 	return rest[:endIdx]
 }
+// extractInt 从 JSON 字符串中提取指定 key 的整数值(纯字符串操作)。
+// 未找到或解析失败返回 0(调用方通过返回值区分"未设置"和"0"已足够)。
+func extractInt(jsonStr, key string) int {
+	search := `"` + key + `"`
+	idx := strings.Index(jsonStr, search)
+	if idx < 0 {
+		return 0
+	}
+	rest := jsonStr[idx+len(search):]
+	colonIdx := strings.Index(rest, ":")
+	if colonIdx < 0 {
+		return 0
+	}
+	rest = strings.TrimLeft(rest[colonIdx+1:], " \t")
+	numStr := takeDigits(rest)
+	if numStr == "" {
+		return 0
+	}
+	return atoi(numStr)
+}
+
+// formatReadArgs 格式化 read 工具的参数摘要。
+// 在文件路径基础上展示 pattern / offset / limit / context_lines。
+func formatReadArgs(argsJSON, cwd string) string {
+	fp := stripCWDPrefix(extractField(argsJSON, "file_path"), cwd)
+	if fp == "" {
+		return truncateStr(argsJSON, 40)
+	}
+	var parts []string
+	parts = append(parts, fp)
+
+	// pattern: 显示为 "pattern text"
+	pattern := extractField(argsJSON, "pattern")
+	if pattern != "" {
+		parts = append(parts, fmt.Sprintf("· %q", truncateStr(pattern, 30)))
+	}
+
+	// offset / limit: 显示为 @LN 或 @LN+N
+	offset := extractInt(argsJSON, "offset")
+	limit := extractInt(argsJSON, "limit")
+	if offset > 0 || limit > 0 {
+		loc := "@L"
+		if offset > 0 {
+			loc += strconv.Itoa(offset)
+		} else {
+			loc += "0"
+		}
+		if limit > 0 {
+			loc += "+" + strconv.Itoa(limit)
+		}
+		parts = append(parts, loc)
+	}
+
+	// context_lines: 仅在有 pattern 时有意义,显示为 ±N
+	ctxLines := extractInt(argsJSON, "context_lines")
+	if ctxLines > 0 && pattern != "" {
+		parts = append(parts, fmt.Sprintf("±%d", ctxLines))
+	}
+
+	return strings.Join(parts, " ")
+}
 
 // truncateStr 截断字符串到 maxLen。
 func truncateStr(s string, maxLen int) string {
@@ -254,6 +319,28 @@ func truncateStr(s string, maxLen int) string {
 		return s
 	}
 	return string(runes[:maxLen])
+}
+// collapseMultilineCommand 将多行 shell 命令拼接为单行。
+// JSON 中的 \n 转义序列经 extractField 提取后为字面量 \n,
+// 此处连同实际换行符统一替换为 &&,同时清理行尾的 \ 续行符。
+func collapseMultilineCommand(cmd string) string {
+	// 1. 替换 shell 续行符(JSON 中 \\n = 字面量 \ + 换行),先于 \n 处理避免子串误匹配
+	s := strings.ReplaceAll(cmd, `\\n`, " ")
+	// 2. 替换 JSON 字面量 \n(extractField 不会做 JSON 反转义)
+	s = strings.ReplaceAll(s, `\n`, " && ")
+	// 3. 替换实际换行符
+	s = strings.ReplaceAll(s, "\n", " && ")
+	// 4. 压缩多余空白(多个空格 → 单个)
+	s = strings.Join(strings.Fields(s), " ")
+	// 5. 压缩多余的 &&
+	for strings.Contains(s, " &&  && ") {
+		s = strings.ReplaceAll(s, " &&  && ", " && ")
+	}
+	// 6. 去除首尾残留的连接符
+	s = strings.TrimSpace(s)
+	s = strings.TrimPrefix(s, "&& ")
+	s = strings.TrimSuffix(s, " &&")
+	return s
 }
 // extractPatchFilePaths 从 hashline patch 文本中提取所有 [PATH#TAG] 节的文件路径。
 // 返回去重后的路径列表（保持首次出现的顺序）。

@@ -109,9 +109,67 @@ func TestNormalizeWidth_AlreadyHalfwidth(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestFormatToolArgs_Read(t *testing.T) {
+	// 仅文件路径 → 保持原有行为
 	result := formatToolArgs("read", `{"file_path":"/home/user/project/main.go"}`, "/home/user/project")
 	if result != "main.go" {
 		t.Errorf("expected 'main.go', got %q", result)
+	}
+}
+
+func TestFormatToolArgs_ReadWithPattern(t *testing.T) {
+	result := formatToolArgs("read", `{"file_path":"/home/user/project/main.go","pattern":"func main"}`, "/home/user/project")
+	if result != `main.go · "func main"` {
+		t.Errorf("expected 'main.go · \"func main\"', got %q", result)
+	}
+}
+
+func TestFormatToolArgs_ReadWithOffset(t *testing.T) {
+	result := formatToolArgs("read", `{"file_path":"/home/user/project/main.go","offset":10}`, "/home/user/project")
+	if result != "main.go @L10" {
+		t.Errorf("expected 'main.go @L10', got %q", result)
+	}
+}
+
+func TestFormatToolArgs_ReadWithOffsetLimit(t *testing.T) {
+	result := formatToolArgs("read", `{"file_path":"/home/user/project/main.go","offset":10,"limit":5}`, "/home/user/project")
+	if result != "main.go @L10+5" {
+		t.Errorf("expected 'main.go @L10+5', got %q", result)
+	}
+}
+
+func TestFormatToolArgs_ReadWithContextLines(t *testing.T) {
+	result := formatToolArgs("read", `{"file_path":"/home/user/project/main.go","pattern":"func","context_lines":3}`, "/home/user/project")
+	if result != `main.go · "func" ±3` {
+		t.Errorf("expected 'main.go · \"func\" ±3', got %q", result)
+	}
+}
+
+func TestFormatToolArgs_ReadWithAll(t *testing.T) {
+	result := formatToolArgs("read", `{"file_path":"/home/user/project/main.go","pattern":"func main","offset":10,"limit":5,"context_lines":3}`, "/home/user/project")
+	if result != `main.go · "func main" @L10+5 ±3` {
+		t.Errorf("expected full params, got %q", result)
+	}
+}
+
+func TestExtractInt(t *testing.T) {
+	tests := []struct {
+		name string
+		json string
+		key  string
+		want int
+	}{
+		{"simple", `{"offset":10}`, "offset", 10},
+		{"zero", `{"offset":0}`, "offset", 0},
+		{"missing", `{"foo":1}`, "offset", 0},
+		{"large", `{"offset":12345}`, "offset", 12345},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := extractInt(tt.json, tt.key)
+			if got != tt.want {
+				t.Errorf("extractInt(%q, %q) = %d, want %d", tt.json, tt.key, got, tt.want)
+			}
+		})
 	}
 }
 
@@ -133,6 +191,72 @@ func TestFormatToolArgs_UnknownTool(t *testing.T) {
 	result := formatToolArgs("unknown", `{"key":"value"}`, "/tmp")
 	if result == "" || len(result) > 50+3 {
 		t.Errorf("expected truncated or raw args, got %q", result)
+	}
+}
+
+
+func TestCollapseMultilineCommand(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{
+			name:  "single line unchanged",
+			input: "go test ./...",
+			want:  "go test ./...",
+		},
+		{
+			name:  "JSON literal newlines (extractField output)",
+			input: `go build ./...\ngo test ./...\ngo vet ./...`,
+			want:  "go build ./... && go test ./... && go vet ./...",
+		},
+		{
+			name:  "actual newline characters",
+			input: "go build ./...\ngo test ./...\ngo vet ./...",
+			want:  "go build ./... && go test ./... && go vet ./...",
+		},
+		{
+			name:  "shell line continuation ( \\n in JSON source)",
+			input: `go build ./... \\n    && go test ./...`,
+			want:  "go build ./... && go test ./...",
+		},
+		{
+			name:  "cd prefix already stripped",
+			input: "make build && make test",
+			want:  "make build && make test",
+		},
+		{
+			name:  "empty string",
+			input: "",
+			want:  "",
+		},
+		{
+			name:  "mixed literal and actual newlines",
+			input: "echo hello\\n",
+			want:  "echo hello",
+		},
+		{
+			name:  "newline at end trimmed",
+			input: `go build ./...\n`,
+			want:  "go build ./...",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := collapseMultilineCommand(tt.input)
+			if got != tt.want {
+				t.Errorf("collapseMultilineCommand(%q) = %q, want %q", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+func TestFormatToolArgs_BashMultiline(t *testing.T) {
+	// 验证 formatToolArgs → collapseMultilineCommand 集成路径
+	// raw string 中 \n 即 JSON 的 \n 转义序列
+	result := formatToolArgs("bash", `{"command":"go build ./...\ngo test ./...\ngo vet ./..."}`, "/tmp")
+	if result != "go build ./... && go test ./... && go vet ./..." {
+		t.Errorf("expected joined single line, got %q", result)
 	}
 }
 

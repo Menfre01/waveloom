@@ -51,16 +51,17 @@ specs/           各组件规格书（修改前先阅读；内部文档，不纳
 
 | 阶段 | 操作 |
 |------|------|
-| 修改前 | shell('find . -name "*.go"') / shell('grep -rn "pattern" .') 定位 → read 确认行号和 TAG |
+| 修改前 | 搜索定位 → read 确认行号和 TAG |
 | 修改后 | 构建验证 → make build 编译 → make test（涉及 pkg/ 时） |
 | 涉及 bin/ 更新 | `make build` 仅更新 `./bin/waveloom` 二进制，agent 进程运行的是旧版本；修改 `pkg/` 或 `cmd/` 后提醒用户重启 TUI 以生效 |
-| 重构前 | shell('grep -rn ...') → read → 评估影响范围 |
+| 重构前 | 搜索 → read → 评估影响范围 |
 
 ### 工具调用原则
 
 - **独立只读操作并行**（read），写操作（edit/write）串行
 - **edit 响应包含新 TAG 和编辑后上下文**，目标行在上下文中时可直接链式编辑；目标行不可见或 tag_mismatch 时先 re-read。
 - **write 返回 TAG**，写入后可直接 edit 无需 re-read。
+- **edit 范围格式用 `N.=M`**,不是 `N:=M`（`SWAP 3.=5` ✓ / `SWAP 3:=5` ✗）—— 常见 parse error 根因
 - `security_violation` → 致命错误，停止当前路径
 
 ### 代码审查
@@ -167,7 +168,7 @@ Release notes 以用户可感知的功能变化为描述单位，分类汇总：
 
 1. **汇总 changelog** — 从上次 tag 到 HEAD 扫描 commit，按分类汇总，更新 `CHANGELOG.md` 和 `CHANGELOG.en.md`；`CHANGELOG.md` 中每个版本条目末尾必须包含英文 changelog 锚点（格式见上文 Release body 格式）
 2. **核对日期** — 检查 `CHANGELOG.md` 和 `CHANGELOG.en.md` 中新版本的日期是否为当天日期（`date '+%Y-%m-%d'`），防止日期偏移
-3. **核对英文锚点** — 检查 `CHANGELOG.md` 中新版本条目末尾是否包含英文 changelog 锚点（`grep '📝 \[Changelog (English)\]' CHANGELOG.md`），确保 Release body 末尾有英文入口
+3. **核对英文锚点** — 检查 `CHANGELOG.md` 中新版本条目末尾是否包含英文 changelog 锚点（搜索 `📝 [Changelog (English)]`），确保 Release body 末尾有英文入口
 4. **审查 Windows 兼容性** — 检查本次变更涉及的代码是否存在平台依赖问题：
    - 路径拼接是否使用 `filepath.Join`，无硬编码 `/` 或 `\`
    - 文件遍历优先使用 `filepath.WalkDir` / `os.ReadDir`，无外部命令
