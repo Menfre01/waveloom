@@ -129,7 +129,7 @@ func main() {
 
 	// 5.5 获取 CWD、homeDir、构造 skill loader
 	cwd, _ := os.Getwd()
-	homeDir, _ := os.UserHomeDir()
+	homeDir, _ = os.UserHomeDir()
 	skillLoader := skill.NewLoader(cwd, homeDir, "", "medium", guard)
 
 	// 6. 初始化 Tool Registry
@@ -186,6 +186,8 @@ func main() {
 	// 注入 subagent 模型选择指导（始终注入，agent 工具 schema 引用此项）。
 	// 注入 subagent 模型选择指导（使用 pro/flash 语义，不绑具体模型名）。
 	systemPrompt += buildModelSelectionSection()
+	// 注入工具错误处理指导(始终注入,适配所有模式)
+	systemPrompt += buildToolErrorGuidance()
 	// 注入 advisor mode 指导（仅 advisor mode 下）
 	if advisorMode {
 		systemPrompt += buildAdvisorModeSection(llmSettings.Model, llmSettings.SubModel)
@@ -654,6 +656,33 @@ You are running in **advisor mode** to optimize token costs:
   safety-critical code — auth, crypto, input validation, permissions — always
   warrants advisor regardless of scope.)
 `, subModel, primaryModel, subModel, primaryModel, subModel)
+}
+
+// buildToolErrorGuidance 构造注入到 system prompt 的工具错误处理指导。
+// 始终注入,适配所有模式(normal + advisor)。
+// 侧重行动指令而非被动告知阈值——具体计数由 loop 的 [system] 警告动态提供。
+func buildToolErrorGuidance() string {
+	return `
+## Tool Error Handling
+
+When a tool call fails, the loop tracks consecutive failures by (tool, error type):
+
+- Any successful tool call resets the failure counter — the loop recognizes progress.
+- Changing tools or approaches resets the counter — exploration is encouraged, not punished.
+
+When you see a [system] warning about consecutive errors:
+1. **STOP repeating the same call.** The same (tool, error) pattern means the approach
+   is wrong, not that the tool needs retrying.
+2. **Read the error message carefully.** Shell errors include recovery hints (e.g.,
+   "Check the command name with 'which <cmd>'" or "Verify the file path with 'ls'").
+3. **Try a different tool or different parameters.** If rg fails → try find or ls.
+   If a file path fails → verify with ls/read first.
+4. **If stuck after 2+ warnings → delegate.** Spawn an evaluate/Explore subagent or use
+   a simple tool (ls, read) to recheck environment state before reattempting.
+
+Fatal errors (permission_denied, security_violation, disk_full, unknown_tool) cannot
+be retried — explain the issue to the user and ask for guidance.
+`
 }
 
 // loadHookRunner 从 settings.json 加载 hook 配置并创建 Runner。
