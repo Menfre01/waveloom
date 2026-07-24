@@ -300,14 +300,24 @@ func formatCapabilityGuide(info *IDEInfo, prefix string) string {
 		return fmt.Sprintf(`### %s — IntelliJ IDEA (PRIORITY OVER SHELL)
 You are connected to IntelliJ IDEA via MCP. When this section is present, the following rules OVERRIDE the default shell-first behavior in the "How you work" section:
 
-- **File search**: use %s instead of find/rg for filename search (PSI index, auto-excludes ignored dirs)
-- **Text search**: use %s instead of grep for full-text search with IDE-indexed snippet results
-- **Symbol lookup**: use %s instead of grep for quick documentation, signatures, and types at cursor
-- **Symbol search**: use %s instead of rg for semantic search of classes/methods/fields across project and libraries
-- **Build**: use %s instead of go build/make for incremental compilation with rich diagnostics
-- **Diagnostics**: use %s instead of go vet / cargo check for IDE inspections per file
-- **Refactoring**: use %s instead of sed/edit for context-aware rename across the project
-- **Run**: use %s instead of shell commands to execute run configurations or entry points`,
+**Checkpoint**: before using bash, find, rg, or grep, scan this table — the IDE tool is almost always faster and more precise.
+
+| Task | IDE tool | Instead of |
+|------|----------|------------|
+| File search | %s | find/rg (PSI index, auto-excludes ignored dirs) |
+| Text search | %s | grep (IDE-indexed snippets) |
+| Symbol lookup | %s | grep (docs, signatures, types at cursor) |
+| Symbol search | %s | rg (semantic, cross-project) |
+| **Build** | **%s** | **go build / make** |
+| **Check errors** | **%s** | **go vet / cargo check** |
+| Rename | %s | sed/edit (context-aware, project-wide) |
+| Run | %s | shell commands (run configurations) |
+
+
+**Build & diagnostics rule**: use `+"`"+`build_project`+"`"+` for incremental compilation and `+"`"+`get_file_problems`+"`"+` for per-file inspections. Together they catch errors faster than a full go build — after every edit_file, check diagnostics first.
+- ` + "`" + `find . -name '*Handler.go'` + "`" + ` → use find_files_by_name_keyword
+- ` + "`" + `rg -n 'class UserService'` + "`" + ` → use search_symbol
+- ` + "`" + `go build ./...` + "`" + ` before checking errors → use build_project or get_file_problems first`,
 			info.ServerName,
 			prefix+"find_files_by_name_keyword",
 			prefix+"search_text",
@@ -322,14 +332,24 @@ You are connected to IntelliJ IDEA via MCP. When this section is present, the fo
 		return fmt.Sprintf(`### %s — VS Code (PRIORITY OVER SHELL)
 You are connected to VS Code via MCP. When this section is present, the following rules OVERRIDE the default shell-first behavior in the "How you work" section:
 
-- **Symbol search**: use %s instead of rg/grep for finding symbols (definitions, references, call hierarchy)
-- **File listing**: use %s instead of find/ls for locating files by glob pattern
-- **Symbol lookup**: use %s instead of rg/grep for hover info and type definitions in the active document
-- **References**: use %s instead of rg for finding all callers/usages of a symbol
-- **Diagnostics**: use %s instead of go vet / cargo check / npx tsc for checking errors
-- **Refactoring**: use %s instead of sed/edit for context-aware rename across the workspace
-- **Debugging**: use %s / %s to start a debug session and set breakpoints instead of shell-based debugging
-- **Terminal**: use %s for shell commands when you need VS Code terminal output
+**Checkpoint**: before using bash, rg, grep, or find, scan this table — the IDE tool is almost always faster and more precise.
+
+| Task | IDE tool | Instead of |
+|------|----------|------------|
+| Find symbols | %s | rg/grep (semantic, not text) |
+| List files | %s | find/ls (glob, instant) |
+| Document symbols | %s | rg/grep (structured, not regex) |
+| Find references | %s | rg (call hierarchy) |
+| **Check errors** | **%s** | **go build / go vet** |
+| Rename | %s | sed/edit (workspace-wide) |
+| Debug | %s / %s | print/run |
+| Terminal output | %s | bash (keeps output in IDE) |
+**Diagnostics rule**: after every edit_file call, use `+"`"+`get_diagnostics`+"`"+` immediately. IDE diagnostics catch errors without compilation — this avoids failed go build cycles. Do NOT run go build before checking diagnostics.
+
+**Anti-patterns** — these shell commands waste turns (use the IDE tool instead):
+- ` + "`" + `rg -n 'func Test' pkg/foo_test.go` + "`" + ` → open the file, use get_document_symbols
+- ` + "`" + `find . -name '*.go'` + "`" + ` → use list_files with glob
+- ` + "`" + `rg -rn 'type Handler' pkg/` + "`" + ` → use get_workspace_symbols with query
 
 VS Code MCP tools apply to the currently active workspace — verify with %s that the CWD project is open before using these tools.`,
 			info.ServerName,
