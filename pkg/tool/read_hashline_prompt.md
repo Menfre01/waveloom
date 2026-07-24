@@ -4,39 +4,38 @@ Use `read` to get a TAG and line-numbered content for hash-anchored editing.
 Always read a file before editing it — the TAG certifies the file snapshot
 and must match the TAG in the edit patch section header.
 
-### Primary usage: read replaces rg/grep for file-local searches
+### Strategy: one read per file, not one read per section
 
-`read` with `pattern` does in ONE call what used to take two (rg + read):
-- Provide `file_path` and `pattern` → you get a TAG AND a centered window
-  around the match. No need to grep first.
-- Use `context_lines` generously for initial exploration (15-30, not the
-  default 5). A larger window lets you verify the edit region without a
-  follow-up read. The max is 50.
+- **Multi-edit session** (you'll edit ≥2 locations in the same file):
+  read the FULL file — omit `pattern`, `offset`, and `limit`.
+  One call gives you the complete file + TAG. Plan all edits from one read.
 
-**The default pattern**: when you know which file to read, go straight to
-`read` with `pattern` and `context_lines=30`. Skip `bash rg` entirely.
+- **Single-target edit** (you know exactly which function/symbol to change):
+  use `pattern` + `context_lines=30`. The centered window usually covers
+  everything needed for that one edit.
 
-Only reach for `bash rg`/`grep` when:
-- You need to find WHICH files contain a symbol (multi-file search)
-- The file is >10MB (rejected by read)
-- You need regex patterns beyond simple substring matching
+- **Exploring an unfamiliar file**: read the full file first.
+  Do NOT read the top 80 lines, then the next 80 — that wastes turns.
+  Small files (≤200 lines) are shown entirely after edit anyway.
+
+### read replaces rg/grep for file-local searches
+
+`read` with `pattern` does in ONE call what used to take two (rg + read).
+Skip `bash rg` entirely when you know which file to search.
+Only reach for `bash rg`/`grep` for multi-file search or >10MB files.
 
 ### Parameters
 
-- `pattern` — substring to locate in the file. Centers the output on the
-  first match ±context_lines. Use `offset` (0-based) to page through
-  subsequent matches.
-- `context_lines` — lines above and below each match (default 5, max 50).
-  For initial reading, prefer 20-30 to minimize re-reads. Use `limit=1`
-  for match-line-only display.
-- `offset` — without pattern: starting line number (0-based). With pattern:
-  match index (0-based) to skip earlier matches.
-- `limit` — maximum lines to return (default: all, capped by file size).
+- `pattern` — substring match, centers window ±context_lines on first hit.
+  Use `offset` (0-based) to page through subsequent matches.
+- `context_lines` — lines around match (default 5, max 50).
+  For editing, prefer 30. Use `limit=1` for match-line-only.
+- `offset` — without pattern: start line (0-based). With pattern: match index.
+- `limit` — max lines (default: all). Omit to read the entire file.
 
 ### TAG and editing
 
-- TAG is computed from the COMPLETE file content, even when offset/limit
-  display only a range. Read once, edit multiple times with the same TAG.
-- After editing, the response includes a new TAG and context window.
-  If your next edit target falls within that context, chain without re-read.
-- Files >10MB rejected — use shell tools (head/tail/grep/sed/awk).
+- TAG covers the COMPLETE file, even when offset/limit show a range.
+- After editing, the response includes new TAG + context window.
+  Target in context → chain edit without re-read.
+- Files >10MB rejected — use shell tools.
