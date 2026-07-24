@@ -58,9 +58,9 @@ func main() {
 	default:
 		logLevel = slog.LevelInfo
 	}
-	cleanup := logging.Init(filepath.Join(".waveloom"), logLevel)
+	homeDir, _ := os.UserHomeDir()
+	cleanup := logging.Init(filepath.Join(homeDir, ".waveloom", "logs"), logLevel)
 	defer cleanup()
-
 	// 3. 解析配置文件路径（全局 + 项目）
 	globalPath, projectPath := resolveSettingsPaths(cfg.SettingsPath)
 

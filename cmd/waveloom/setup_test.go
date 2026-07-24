@@ -144,7 +144,7 @@ func TestWriteFullSetup_CreatesNew(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "settings.json")
 
-	err := writeFullSetup(path, nil, "zh-CN", "dark")
+	err := writeFullSetup(path, nil, "zh-CN", "dark", "")
 	if err != nil {
 		t.Fatalf("writeFullSetup: %v", err)
 	}
@@ -180,7 +180,7 @@ func TestWriteFullSetup_PreservesExisting(t *testing.T) {
 	}
 
 	// 覆盖 locale
-	err := writeFullSetup(path, nil, "zh-CN", "auto")
+	err := writeFullSetup(path, nil, "zh-CN", "auto", "")
 	if err != nil {
 		t.Fatalf("writeFullSetup: %v", err)
 	}

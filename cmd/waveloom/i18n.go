@@ -160,6 +160,10 @@ type Messages struct {
 	SetupSummaryBaseURL  string
 	SetupSummaryAPIKey   string
 	SetupConfirmSave     string
+
+	SetupStepContextLimit    string
+	SetupContextLimitDesc    string
+	SetupSummaryContextLimit string
 	SetupConfirmBack     string
 
 	// ── Slash commands ────────────────────────────────────
@@ -386,6 +390,10 @@ var zhCN = Messages{
 	SetupSummaryProvider: "Provider",
 	SetupSummaryModel:    "模型",
 	SetupSummarySubModel: "子代理模型",
+
+	SetupStepContextLimit:    "Step %d/%d — 上下文窗口",
+	SetupContextLimitDesc:    "模型上下文窗口上限(token)。默认 1M 适配 DeepSeek V4,切换其他模型建议按实际情况调整,防止上下文溢出或过早压缩。",
+	SetupSummaryContextLimit: "上下文窗口",
 	SetupSummaryBaseURL:  "API 端点",
 	SetupSummaryAPIKey:   "API Key",
 	SetupConfirmSave:     "Save  — 确认保存",
@@ -675,6 +683,10 @@ var enUS = Messages{
 	SetupConfirmPrompt:   "Confirm the settings above?",
 	SetupHelpHint:        "↑↓ navigate   ⏎ confirm   Esc back   Ctrl+C×2 quit",
 	SetupSummaryTheme:    "Theme",
+
+	SetupStepContextLimit:    "Step %d/%d — Context Window",
+	SetupContextLimitDesc:    "Model context window limit (in tokens). Default 1M for DeepSeek V4. Adjust when switching models to prevent context overflow or premature compaction.",
+	SetupSummaryContextLimit: "Context Window",
 	SetupSummaryLanguage: "Language",
 	SetupSummaryProvider: "Provider",
 	SetupSummaryModel:    "Model",

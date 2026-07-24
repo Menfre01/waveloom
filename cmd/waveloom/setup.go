@@ -32,6 +32,7 @@ type setupState struct {
 	apiKeyError string
 	configPath  string
 	lc          *Messages
+	contextLimit string // "200K" / "1M" 等
 }
 
 // ---------------------------------------------------------------------------
@@ -49,7 +50,7 @@ type setupModel struct {
 	quitting    bool
 }
 
-const totalSteps = 5
+const totalSteps = 6
 
 func newSetupModel(loc Locale) *setupModel {
 	lc := messagesFor(loc)
@@ -61,7 +62,8 @@ func newSetupModel(loc Locale) *setupModel {
 			model:    "deepseek-v4-pro",
 			subModel: "deepseek-v4-flash",
 			baseURL:  "https://api.deepseek.com",
-			lc:       lc,
+			lc:           lc,
+			contextLimit: "1M",
 		},
 	}
 }
@@ -132,7 +134,7 @@ func (m *setupModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch m.form.State {
 	case huh.StateCompleted:
 		m.handleStepComplete()
-		if m.step < 6 {
+		if m.step < 7 {
 			m.buildForm()
 			initCmd := m.formInitCmd
 			m.formInitCmd = nil
@@ -251,21 +253,24 @@ func (m *setupModel) handleStepComplete() {
 		}
 		m.step++
 	case 5:
+		m.state.contextLimit = m.form.GetString("contextLimit")
+		m.step++
+	case 6:
 		choice := m.form.GetString("saveChoice")
 		if choice == "save" {
 			if err := validateAPIKey(m.state.prov, m.state.apiKey, m.state.baseURL); err != nil {
 				m.state.apiKeyError = fmt.Sprintf(m.state.lc.SetupAPIKeyInvalidFmt, err)
-				m.state.apiKey = "" // 清空旧值，避免密码模式下用户看不到旧值导致重新拼接
+				m.state.apiKey = "" // 清空旧值,避免密码模式下用户看不到旧值导致重新拼接
 				m.step = 3
 				return
 			}
 			m.saveAndFinish()
 			m.step++
 		} else {
-			// Back → 回到 Step 4
-			m.step = 4
+			// Back → 回到 Step 5
+			m.step = 5
 		}
-	}
+}
 }
 
 // ---------------------------------------------------------------------------
@@ -385,6 +390,23 @@ func (m *setupModel) buildForm() {
 			WithTheme(theme).WithWidth(formWidth).WithShowHelp(false)
 
 	case 5:
+		contextLimitVal := m.state.contextLimit
+		contextDesc := lc.SetupContextLimitDesc
+		selCtx := huh.NewSelect[string]().
+			Key("contextLimit").
+			Title(fmt.Sprintf(lc.SetupStepContextLimit, 6, totalSteps)).
+			Description(contextDesc).
+			Options(
+				huh.NewOption("1M (DeepSeek V4 / Kimi K3, Recommended)", "1M"),
+				huh.NewOption("200K (GPT-4o / Claude 等)", "200K"),
+				huh.NewOption("128K", "128K"),
+				huh.NewOption("32K", "32K"),
+			).
+			Value(&contextLimitVal)
+		m.form = huh.NewForm(huh.NewGroup(selCtx)).
+			WithTheme(theme).WithWidth(formWidth).WithShowHelp(false)
+
+	case 6:
 		note := huh.NewNote().
 			Title(lc.SetupConfirmTitle).
 			Description(renderSummary(m.state))
@@ -399,8 +421,8 @@ func (m *setupModel) buildForm() {
 			Value(&saveChoice)
 		m.form = huh.NewForm(huh.NewGroup(note, sel)).
 			WithTheme(theme).WithWidth(formWidth).WithShowHelp(false)
-	}
 
+	}
 	m.formInitCmd = m.form.Init()
 }
 
@@ -457,6 +479,7 @@ func renderSummary(s *setupState) string {
 		fmt.Sprintf("%s:  %s", lc.SetupSummaryModel, s.model),
 		fmt.Sprintf("%s:  %s", lc.SetupSummarySubModel, s.subModel),
 		fmt.Sprintf("%s:  %s", lc.SetupSummaryBaseURL, s.baseURL),
+		fmt.Sprintf("%s:  %s", lc.SetupSummaryContextLimit, s.contextLimit),
 		fmt.Sprintf("%s:  %s", lc.SetupSummaryAPIKey, maskKey(s.apiKey)),
 	}
 	return strings.Join(lines, "\n")
@@ -508,7 +531,7 @@ func (m *setupModel) saveAndFinish() {
 	}
 	existing.Provider = m.state.prov
 
-	_ = writeFullSetup(configPath, existing, m.state.locale, m.state.theme)
+	_ = writeFullSetup(configPath, existing, m.state.locale, m.state.theme, m.state.contextLimit)
 }
 
 // ---------------------------------------------------------------------------
@@ -562,6 +585,7 @@ func runSetup(loc Locale) {
 	fmt.Printf("  %s: %s\n", lc.SetupSummaryModel, m.state.model)
 	fmt.Printf("  %s: %s\n", lc.SetupSummarySubModel, m.state.subModel)
 	fmt.Printf("  %s: %s\n", lc.SetupSummaryBaseURL, m.state.baseURL)
+	fmt.Printf("  %s: %s\n", lc.SetupSummaryContextLimit, m.state.contextLimit)
 	fmt.Printf("\n  %s\n\n", lc.SetupDoneReady)
 }
 
@@ -576,7 +600,7 @@ func maskKey(key string) string {
 	return key[:4] + strings.Repeat("*", len(key)-8) + key[len(key)-4:]
 }
 
-func writeFullSetup(path string, llmSettings *llm.LLMSettings, locale, theme string) error {
+func writeFullSetup(path string, llmSettings *llm.LLMSettings, locale, theme, contextLimit string) error {
 	full := make(map[string]any)
 	if data, err := os.ReadFile(path); err == nil {
 		_ = json.Unmarshal(data, &full)
@@ -595,6 +619,11 @@ func writeFullSetup(path string, llmSettings *llm.LLMSettings, locale, theme str
 	}
 	if theme != "" {
 		full["theme"] = theme
+	}
+	if contextLimit != "" && contextLimit != "1M" {
+		full["compaction"] = map[string]any{
+			"context_limit_tokens": contextLimit,
+		}
 	}
 	out, err := json.MarshalIndent(full, "", "    ")
 	if err != nil {
