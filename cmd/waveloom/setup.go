@@ -624,6 +624,9 @@ func writeFullSetup(path string, llmSettings *llm.LLMSettings, locale, theme, co
 		full["compaction"] = map[string]any{
 			"context_limit_tokens": contextLimit,
 		}
+	} else if contextLimit == "1M" {
+		// 用户选择默认值 → 清理旧的 compaction key 防止残留
+		delete(full, "compaction")
 	}
 	out, err := json.MarshalIndent(full, "", "    ")
 	if err != nil {
