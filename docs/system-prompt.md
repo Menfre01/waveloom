@@ -328,3 +328,70 @@ Available tools:
 
 Not found: dotnet, php, rg
 ```
+
+## IDE Integration(运行时追加)
+
+> 以下内容由 `IDEContextProvider.FormatCapabilityGuide()` 在启动时一次性注入 system prompt,
+> 紧接在 `## Environment` 之后。仅当检测到 IDE MCP Server 连接时才出现,
+> 不在 `defaultSystemPrompt` 常量中。
+
+### IntelliJ IDEA 示例
+
+```
+### idea — IntelliJ IDEA
+You are connected to IntelliJ IDEA via MCP. The following IDE tools are available as alternatives to shell commands:
+
+| Task | IDE tool | Shell alternative |
+|------|----------|-------------------|
+| File search | mcp__idea__find_files_by_name_keyword | find / rg |
+| Text search | mcp__idea__search_text | grep |
+| Symbol lookup | mcp__idea__get_symbol_info | grep |
+| Symbol search | mcp__idea__search_symbol | rg |
+| Build | mcp__idea__build_project | go build / make |
+| Check errors | mcp__idea__get_file_problems | go vet / cargo check |
+| Rename | mcp__idea__rename_refactoring | sed / edit |
+| Run | mcp__idea__execute_run_configuration | shell commands |
+
+Prefer IDE tools for semantic operations (symbol lookup, references, refactoring) where the IDE's pre-built index avoids full disk scans. Prefer shell tools for batch processing, pipelines, and one-off searches in known locations.
+```
+
+### VS Code 示例
+
+```
+### vscode — VS Code
+You are connected to VS Code via MCP. The following IDE tools are available as alternatives to shell commands:
+
+| Task | IDE tool | Shell alternative |
+|------|----------|-------------------|
+| Find symbols | mcp__vscode__get_workspace_symbols | rg / grep |
+| List files | mcp__vscode__list_files | find / ls |
+| Document symbols | mcp__vscode__get_document_symbols | rg / grep |
+| Find references | mcp__vscode__find_references | rg |
+| Check errors | mcp__vscode__get_diagnostics | go build / go vet |
+| Rename | mcp__vscode__rename_symbol | sed / edit |
+| Debug | mcp__vscode__start_debugging / mcp__vscode__add_breakpoint | print / run |
+| Terminal output | mcp__vscode__execute_in_terminal | bash |
+
+Prefer IDE tools for semantic operations (symbol lookup, references, refactoring) where the IDE's pre-built index avoids full disk scans. Prefer shell tools for batch processing, pipelines, and one-off searches in known locations. Verify with mcp__vscode__get_workspace_folders that the CWD project is open before using these tools.
+```
+
+## IDE Context(运行时追加)
+
+> 以下内容由 `IDEContextProvider.QueryDynamicContext()` 每轮查询并注入 user 消息,
+> 结果缓存 15 分钟。包含 IDE 当前打开的文件列表等信息,
+> 帮助 LLM 理解用户当前工作上下文。
+
+格式示例:
+
+```
+## IDE Context
+
+### idea — Open Files
+
+pkg/mcp/ide_context.go
+pkg/tool/read_file_hashline.go
+cmd/waveloom/tui.go
+```
+
+> 查询流程:先校验 CWD 项目是否在 IDE 中打开(通过 `get_project_modules` / `get_workspace_folders`),
+> 再获取打开文件列表。校验失败时此段不出现,避免跨项目上下文泄漏。

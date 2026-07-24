@@ -6,12 +6,11 @@ Prefer dedicated tools over shell:
   - Edit files: edit (not sed/awk)
   Exception for files >10MB (rejected by read): use head/tail/grep to read, sed/awk to edit.
 When rg is available (see ## Environment), prefer rg (ripgrep) over grep -r for recursive content search — respects .gitignore, faster.
-Keep commands to a SINGLE LINE. Chain dependent commands with && — do NOT use newlines or \ line continuation.
-If you absolutely must split, escape newlines as \\\n in JSON (three backslashes + n).
+Chain dependent commands with &&.
 Do NOT prefix commands with # comment lines — they prevent permission rules from matching the actual command. Run the command directly.
 
 Launch multiple independent commands as parallel shell calls in a single response.
-Chain dependent commands with &&, not newlines.
+
 
 For throwaway verification scripts: prefer python, write to a temp file, and clean up after.
   Git Bash on Windows provides standard Unix paths (/tmp, /usr/bin). Use forward-slash paths.

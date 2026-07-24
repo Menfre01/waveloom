@@ -143,6 +143,7 @@ Waveloom works with any text-based project. Code verification uses each language
 | [`prefix-cache`](./docs/prefix-cache.en.md) | DeepSeek caching, four-tier compaction |
 | [`environment`](./docs/environment.en.md) | Toolchain probing |
 | [`mcp`](./docs/mcp.en.md) | MCP client, config sources, CLI management |
+| [`mcp-ide-setup`](./docs/mcp-ide-setup-en.md) | Connect IntelliJ IDEA / VS Code MCP Server |
 | [`faq`](./docs/faq.en.md) | Frequently asked questions |
 
 ---

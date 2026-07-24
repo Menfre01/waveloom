@@ -222,6 +222,11 @@ func TestCollapseMultilineCommand(t *testing.T) {
 			want:  "go build ./... && go test ./...",
 		},
 		{
+			name:  "shell line continuation with backslash-newline (JSON \\\\\\n → shell \\<newline>)",
+			input: `echo hello\\\nworld`,
+			want:  "echo hello world",
+		},
+		{
 			name:  "cd prefix already stripped",
 			input: "make build && make test",
 			want:  "make build && make test",

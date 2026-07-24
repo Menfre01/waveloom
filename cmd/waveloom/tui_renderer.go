@@ -327,8 +327,10 @@ func truncateStr(s string, maxLen int) string {
 // JSON 中的 \n 转义序列经 extractField 提取后为字面量 \n,
 // 此处连同实际换行符统一替换为 &&,同时清理行尾的 \ 续行符。
 func collapseMultilineCommand(cmd string) string {
-	// 1. 替换 shell 续行符(JSON 中 \\n = 字面量 \ + 换行),先于 \n 处理避免子串误匹配
-	s := strings.ReplaceAll(cmd, `\\n`, " ")
+	// 1a. 替换 shell 续行符 \\\n(JSON: \\\n → shell: \<newline>),先于 \\n 处理避免遗留孤立的 \
+	s := strings.ReplaceAll(cmd, `\\\n`, " ")
+	// 1b. 替换 shell 续行符剩余模式 \\n(JSON 中 \\n = 字面量 \ + 换行)
+	s = strings.ReplaceAll(s, `\\n`, " ")
 	// 2. 替换 JSON 字面量 \n(extractField 不会做 JSON 反转义)
 	s = strings.ReplaceAll(s, `\n`, " && ")
 	// 3. 替换实际换行符

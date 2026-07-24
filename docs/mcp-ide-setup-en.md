@@ -1,32 +1,28 @@
-# Connecting IDE MCP Servers
+# Connecting IDE MCP Server
 
-Waveloom can connect to IntelliJ IDEA or VS Code MCP Servers via the MCP protocol, leveraging IDE code indexing capabilities (symbol lookup, file search, build diagnostics, etc.) as an alternative to shell commands.
+Waveloom supports connecting to IntelliJ IDEA or VS Code MCP Server via the MCP protocol, leveraging the IDE's code indexing capabilities (symbol lookup, file search, build diagnostics, etc.) as alternatives to shell commands.
 
 ## Why connect an IDE?
 
 | Scenario | Shell approach | IDE MCP approach |
-|----------|---------------|-----------------|
+|------|-----------|-------------|
 | File search | `find` / `rg` (disk scan) | IDE index (milliseconds, auto-excludes `node_modules`) |
-| Symbol lookup | `grep` (text match) | PSI / LSP precise semantic lookup |
-| Build verification | `go build` / `make` | IDE incremental compilation + diagnostics |
-| Current file | Requires `@` reference | IDE provides open file list directly |
+| Symbol lookup | `grep` (text match) | PSI/LSP precise semantic lookup |
+| Current file | Requires `@` reference | IDE directly provides open file list |
 
 ## Supported features
 
 | Feature | IntelliJ IDEA | VS Code |
-|---------|:---:|:---:|
+|------|:---:|:---:|
 | Static capability guide (tool usage hints) | ✅ | ✅ |
-| Dynamic context injection (open files) | ✅ | ❌ [1] |
-| Project workspace matching (CWD validation) | ✅ | ✅ [2] |
+| Dynamic context injection (open file list) | ✅ | ❌ * |
+| Project workspace matching (CWD validation) | ✅ | ✅ |
 
-[1] VS Code MCP Server does not expose a reliable "list open editors" tool.  
-[2] Static guide only; dynamic open-file injection does not apply.
-
----
+*VS Code MCP Server does not have a tool for listing all open files, but validates workspace match via `get_workspace_folders`.
 
 ## IntelliJ IDEA
 
-**Prerequisites**: IntelliJ IDEA 2025.2+, MCP Server plugin enabled (default).
+**Prerequisites**: IntelliJ IDEA 2025.2+, MCP Server plugin enabled (enabled by default).
 
 ### 1. Enable MCP Server
 
@@ -36,21 +32,21 @@ Waveloom can connect to IntelliJ IDEA or VS Code MCP Servers via the MCP protoco
 
 ### 2. Configure Waveloom
 
-Paste the copied configuration into your project's `.mcp.json`:
+Paste the copied configuration into `.mcp.json` in your project root:
 
 ```json
 {
   "mcpServers": {
     "idea": {
       "type": "stdio",
-      "command": "/path/to/idea",
+      "command": "/Applications/IntelliJ IDEA.app/Contents/MacOS/idea",
       "args": ["mcp-server"]
     }
   }
 }
 ```
 
-> **Note**: The `command` and `args` should match IDEA's `Copy Stdio Config` output. Paths vary by platform:
+> **Note**: The `command` and `args` should match IDEA's `Copy Stdio Config` output — paths differ by platform.
 >
 > - macOS: `/Applications/IntelliJ IDEA.app/Contents/MacOS/idea`
 > - Windows: `idea64.exe`
@@ -58,13 +54,13 @@ Paste the copied configuration into your project's `.mcp.json`:
 
 ### 3. Verify
 
-Start Waveloom and check that the system prompt contains the `## IDE Integration — IntelliJ IDEA` section.
+Start Waveloom and check for the `## IDE Integration — IntelliJ IDEA` section in the system prompt.
 
 ---
 
 ## VS Code
 
-**Prerequisites**: VS Code + the community extension `nabheet.vscode-ide-mcp`.
+**Prerequisites**: VS Code + community extension `nabheet.vscode-ide-mcp`.
 
 ### 1. Install the extension
 
@@ -72,11 +68,11 @@ Start Waveloom and check that the system prompt contains the `## IDE Integration
 code --install-extension nabheet.vscode-ide-mcp
 ```
 
-Or install `vscode-ide-mcp` from the VS Code Marketplace.
+Or search and install `vscode-ide-mcp` from the VS Code Marketplace.
 
 ### 2. Configure Waveloom
 
-Add to your project's `.mcp.json`:
+Add to `.mcp.json` in your project root:
 
 ```json
 {
@@ -89,7 +85,7 @@ Add to your project's `.mcp.json`:
 }
 ```
 
-The extension listens on `http://127.0.0.1:9876` by default. No additional configuration is required.
+The extension listens on `http://127.0.0.1:9876` by default — no additional configuration needed.
 
 ### 3. Verify
 
@@ -99,12 +95,12 @@ curl -s -X POST http://127.0.0.1:9876/mcp \
   -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
 ```
 
-Start Waveloom and check that the system prompt contains the `## IDE Integration — VS Code` section.
+Start Waveloom and check for the `## IDE Integration — VS Code` section in the system prompt.
 
 ---
 
 ## How it works
 
-- **Static injection**: On startup, Waveloom detects connected IDE types and injects tool usage guidance into the system prompt (prefix-cache safe).
-- **Dynamic context**: Each turn, Waveloom queries the IDE for the current open file list and injects it into the user message — no system prompt modification, preserving the prefix cache.
-- **MCP tool isolation**: IDE tools are registered as `mcp__<server>__<tool>`, avoiding conflicts with Waveloom built-in tools.
+- **Static injection**: On first startup, Waveloom detects connected IDE types and injects tool usage guidance into the system prompt (preserving prefix cache)
+- **Dynamic context**: On subsequent turns, Waveloom queries the IDE for current open files and injects them into the user message
+- **MCP tool isolation**: IDE tools are registered as `mcp__<server>__<tool>`, not conflicting with Waveloom's built-in tools
