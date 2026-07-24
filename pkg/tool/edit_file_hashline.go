@@ -88,33 +88,49 @@ func (t *EditFileHashline) Execute(ctx context.Context, p EditFileHashlineParams
 	fs := &hashline.OSFS{WorkingDir: p.WorkingDir}
 	results := hashline.ApplyPatch(patch, fs, store)
 
-	// ── Step 5: 构造返回结果（含编辑后上下文，LLM 可链式编辑无需 re-read）──
-	content := formatSectionResults(results)
-	content += formatPostEditContext(fs, results)
+	// ── Step 5: 构造返回结果(含编辑后上下文,LLM 可链式编辑无需 re-read)──
+	sectionContent := formatSectionResults(results)
 
-	// 收集第一个错误（如有）
-	var firstError *ToolError
+	// ── 统计成功/失败:部分成功时不应将整个调用标记为失败 ──
+	var succeeded, failed int
 	for _, r := range results {
 		if r.Error != nil {
-			class := ErrorClassRecoverable
-			if r.Error.Fatal {
-				class = ErrorClassFatal
-			}
-			firstError = &ToolError{
-				Class:   class,
-				Kind:    r.Error.Kind,
-				Message: r.Error.Message,
-			}
-			break
+			failed++
+		} else {
+			succeeded++
 		}
 	}
 
-	if firstError != nil {
+	// ── 仅当全部失败时才返回 error（没有任何文件被修改）──
+	if succeeded == 0 && failed > 0 {
+		var firstError *ToolError
+		for _, r := range results {
+			if r.Error != nil {
+				class := ErrorClassRecoverable
+				if r.Error.Fatal {
+					class = ErrorClassFatal
+				}
+				firstError = &ToolError{
+					Class:   class,
+					Kind:    r.Error.Kind,
+					Message: r.Error.Message,
+				}
+				break
+			}
+		}
 		return &ToolResult{
-			Content: content,
+			Content: sectionContent,
 			Error:   firstError,
 		}, nil
 	}
+
+	// ── 部分成功时在 section 结果之后追加醒目提醒,确保不被长 post-edit context 淹没 ──
+	if failed > 0 {
+		sectionContent += fmt.Sprintf("\n⚠ PARTIAL FAILURE: %d/%d sections failed — the ✗ files below were NOT modified. Only the ✓ files were written.\n", failed, failed+succeeded)
+	}
+
+	content := sectionContent
+	content += formatPostEditContext(fs, results)
 
 	// ── 构造 DiffHunks ──
 	var allHunks []DiffHunk
@@ -129,7 +145,13 @@ func (t *EditFileHashline) Execute(ctx context.Context, p EditFileHashlineParams
 		DiffHunks: allHunks,
 	}
 	if len(results) > 0 {
-		meta.FilePath = results[0].Path
+		// 取第一个成功 section 的路径作为 Meta.FilePath;全失败时不设置
+		for _, r := range results {
+			if r.Error == nil {
+				meta.FilePath = r.Path
+				break
+			}
+		}
 		meta.LineCount = len(strings.Split(content, "\n"))
 		meta.ByteCount = len(content)
 	}

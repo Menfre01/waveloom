@@ -4,13 +4,29 @@
 
 ### Edit vs Write
 
-Prefer `edit` for 1-3 surgical changes in a file you've already read. Prefer `write` when:
-- 4+ separate changes in the same file
+`edit` is for 1-2 surgical changes in a file you've already read. For larger changes, choose based on file size:
+
+| File size | 1-2 changes | 3-5 changes (scattered) | 3-5 changes (same function) | 6+ changes |
+|---|---|---|---|---|
+| ≤200 lines | edit | write | write | write |
+| 200-500 lines | edit | edit (multi-section) | write | write |
+| >500 lines | edit | edit (multi-step) | edit (multi-step) | edit (multi-step) |
+
+**Multi-section** (same file, one edit call): put changes in separate `[PATH#TAG]` sections within one patch — they merge atomically, no TAG staleness. Preferred for 200-500 line files.
+
+**Multi-step** (>500 line files): chain sequential edit calls. Read the full file once to get TAG + line numbers for ALL target regions, then edit one region per call. Edit bottom-to-top across calls so earlier edits don't shift later line numbers (within a single edit call the patcher auto-calculates offsets — this only matters _across_ separate calls). Verify with `make build` after each step.
+
+**Write** (small files, concentrated changes): `read` + `write` the whole file. Use when the function/block being changed fits comfortably in the output. Always `read` first to get the current state.
+
+**Prefer `write` when:**
+- Changing 3+ lines inside a multi-line expression (e.g. `fmt.Sprintf` with many `%s` placeholders, large struct literal)
 - Moving or renaming large code blocks (restructuring)
 - Replacing >50% of the file
 - A previous `edit` was **rejected** — for `tag_mismatch`: re-read and retry, or rewrite with `write`; for `overlapping`: split into separate `edit` calls
 
-Rule of thumb: if you'd rather modify the whole file in one pass than track line numbers across scattered changes, `read` + `write`.
+**Anti-pattern**: making 4+ individual SWAP/INS operations to update tool names inside a single `fmt.Sprintf` call — gets boundaries wrong, costs multiple turns. Rewrite the whole function with `write`.
+
+Rule of thumb: if you'd rather modify the whole file in one pass than track line numbers across scattered changes, `read` + `write`. Each failed edit wastes a turn; when in doubt, write for small files, multi-step edit for large files.
 
 ### Operations
 

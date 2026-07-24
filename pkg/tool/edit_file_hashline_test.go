@@ -952,3 +952,89 @@ func TestFormatPostEditContext_SkipEmptyHunks(t *testing.T) {
 		t.Errorf("expected empty for nil hunks, got:\n%s", got)
 	}
 }
+// ---------------------------------------------------------------------------
+// 部分成功 — 多文件 patch 一成一败
+// ---------------------------------------------------------------------------
+
+func TestEditFileHashline_PartialSuccess(t *testing.T) {
+	dir := t.TempDir()
+
+	// 文件 A: 记录后修改内容，模拟 TAG 过期（tag_mismatch）
+	fileA := filepath.Join(dir, "a.go")
+	contentA := "package a\n"
+	if err := os.WriteFile(fileA, []byte(contentA), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	store := hashline.NewStore()
+	store.Record(fileA, contentA)
+
+	// 修改文件 A（TAG 过期）
+	if err := os.WriteFile(fileA, []byte("package a_modified\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// 文件 B: 正常记录，TAG 有效
+	fileB := filepath.Join(dir, "b.go")
+	contentB := "package b\n"
+	if err := os.WriteFile(fileB, []byte(contentB), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	tagB, err := store.Record(fileB, contentB)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// 获取文件 A 的旧 TAG（在修改前记录的）
+	snapA, ok := store.Get(fileA)
+	if !ok {
+		t.Fatal("snapshot for file A not found")
+	}
+	tagA := snapA.TAG
+
+	ctx := hashline.WithStore(context.Background(), store)
+
+	// 构建双文件 patch: A TAG 过期 → 失败，B 正常 → 成功
+	patch := makePatch(
+		makeSection(fileA, tagA, "SWAP 1.=1:", "+package aa"),
+		makeSection(fileB, tagB, "SWAP 1.=1:", "+package bb"),
+	)
+
+	tool := &EditFileHashline{}
+	result, err := tool.Execute(ctx, EditFileHashlineParams{Patch: patch, WorkingDir: dir})
+	if err != nil {
+		t.Fatalf("Execute() returned error: %v", err)
+	}
+
+	// 关键断言: 部分成功时 ToolResult.Error 应为 nil
+	if result.Error != nil {
+		t.Errorf("expected nil Error for partial success, got: %s", result.Error.Message)
+	}
+
+	// Content 应包含部分失败警告
+	if !strings.Contains(result.Content, "PARTIAL FAILURE") {
+		t.Errorf("expected PARTIAL FAILURE warning in content, got:\n%s", result.Content)
+	}
+
+	// Content 应包含成功 ✓ 和失败 ✗
+	if !strings.Contains(result.Content, "✓") {
+		t.Errorf("expected ✓ for successful file, got:\n%s", result.Content)
+	}
+	if !strings.Contains(result.Content, "✗") {
+		t.Errorf("expected ✗ for failed file, got:\n%s", result.Content)
+	}
+
+	// 文件 A 应被 Recovery 成功修复后修改，或 tag_mismatch 失败不修改
+	// 注意: hashline 有自动 Recovery 机制，过期 TAG 可能被自动修复
+	// 此测试主要验证 Error 为 nil + 警告出现
+
+	// 文件 B 应被修改
+	contentBAfter := readTestFile(t, fileB)
+	if contentBAfter != "package bb\n" {
+		t.Errorf("file B should be updated, got: %q", contentBAfter)
+	}
+
+	// Meta.FilePath 应指向成功的文件
+	if result.Meta.FilePath != fileB {
+		t.Errorf("Meta.FilePath should point to successful file %q, got %q", fileB, result.Meta.FilePath)
+	}
+}
