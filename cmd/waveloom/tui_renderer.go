@@ -185,10 +185,13 @@ func formatToolArgs(toolName string, argsJSON string, cwd string) string {
 	case "skill":
 		name := extractField(argsJSON, "name")
 		args := extractField(argsJSON, "arguments")
+		// 去掉 / 前缀(用户输入 /skill-name,内部存储 skill-name)
+		name = strings.TrimPrefix(name, "/")
 		if args != "" {
-			return name + " " + args
+			// 对 skill 名称和参数分别做宽度适配:名称最多 30 字符,参数最多 40 字符
+			return truncateStr(name, 30) + " " + truncateStr(args, 40)
 		}
-		return name
+		return truncateStr(name, 30)
 	case "agent":
 		if desc := extractField(argsJSON, "description"); desc != "" {
 			return desc
