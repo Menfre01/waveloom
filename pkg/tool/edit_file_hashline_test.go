@@ -966,7 +966,9 @@ func TestEditFileHashline_PartialSuccess(t *testing.T) {
 		t.Fatal(err)
 	}
 	store := hashline.NewStore()
-	store.Record(fileA, contentA)
+	if _, err := store.Record(fileA, contentA); err != nil {
+		t.Fatal(err)
+	}
 
 	// 修改文件 A（TAG 过期）
 	if err := os.WriteFile(fileA, []byte("package a_modified\n"), 0o644); err != nil {

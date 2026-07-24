@@ -2390,14 +2390,14 @@ func transcriptEntryToParagraph(e session.TranscriptEntry, paras *[]Paragraph) {
 					State:              stateDone,
 					SubagentToolCallID: tc.ID,
 					ToolName:           tc.Name,
-					ToolArgs:           formatToolArgs(tc.Name, tc.Arguments, ""),
+					ToolArgs:           formatToolArgs(tc.Name, tc.Arguments, e.Cwd),
 				})
 			} else {
 				*paras = append(*paras, Paragraph{
 					Type:     paraTool,
 					State:    stateDone,
 					ToolName: tc.Name,
-					ToolArgs: formatToolArgs(tc.Name, tc.Arguments, ""),
+					ToolArgs: formatToolArgs(tc.Name, tc.Arguments, e.Cwd),
 				})
 			}
 		}
@@ -4303,14 +4303,14 @@ func (m *model) rebuildParasFromMessages() {
 						State:              stateDone,
 						SubagentToolCallID: tc.ID,
 						ToolName:           tc.Name,
-						ToolArgs:           formatToolArgs(tc.Name, tc.Arguments, ""),
+						ToolArgs:           formatToolArgs(tc.Name, tc.Arguments, m.cwd),
 					})
 				} else {
 					m.paras = append(m.paras, Paragraph{
 						Type:     paraTool,
 						State:    stateDone,
 						ToolName: tc.Name,
-						ToolArgs: formatToolArgs(tc.Name, tc.Arguments, ""),
+						ToolArgs: formatToolArgs(tc.Name, tc.Arguments, m.cwd),
 					})
 				}
 			}

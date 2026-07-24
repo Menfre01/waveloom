@@ -2,6 +2,7 @@ package session
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -133,18 +134,23 @@ func convertToContentBlocks(msg llm.Message) json.RawMessage {
 		Usage:      msg.Usage,
 	}
 
-	data, err := json.Marshal(am)
-	if err != nil {
-		// 回退：纯文本 content
-		fallback, _ := json.Marshal(anthropicMessage{
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(am); err != nil {
+		// 回退:纯文本 content(同样禁用 HTML 转义)
+		var fb bytes.Buffer
+		fbEnc := json.NewEncoder(&fb)
+		fbEnc.SetEscapeHTML(false)
+		_ = fbEnc.Encode(anthropicMessage{
 			Role:    am.Role,
 			Content: []contentBlock{{Type: "text", Text: msg.Content}},
 		})
-		return fallback
+		return bytes.TrimSuffix(fb.Bytes(), []byte{'\n'})
 	}
-	return data
+	// json.Encoder 会在末尾追加换行符,strip 掉以确保 json.RawMessage 不含多余 \n
+	return bytes.TrimSuffix(buf.Bytes(), []byte{'\n'})
 }
-
 // ToMessage 将 TranscriptEntry 转换回 llm.Message（反向 content blocks 映射）。
 func (e TranscriptEntry) ToMessage() llm.Message {
 	msg := llm.Message{

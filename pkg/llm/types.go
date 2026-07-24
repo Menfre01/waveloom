@@ -1,6 +1,7 @@
 package llm
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
@@ -54,7 +55,10 @@ type openaiToolCall struct {
 // MarshalJSON 输出 OpenAI 兼容格式 {id, type:"function", function:{name, arguments}}。
 // Index（内部字段，用于流式分片累积）不出现在输出中。
 func (tc ToolCall) MarshalJSON() ([]byte, error) {
-	return json.Marshal(openaiToolCall{
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(openaiToolCall{
 		ID:   tc.ID,
 		Type: "function",
 		Function: struct {
@@ -64,7 +68,10 @@ func (tc ToolCall) MarshalJSON() ([]byte, error) {
 			Name:      tc.Name,
 			Arguments: tc.Arguments,
 		},
-	})
+	}); err != nil {
+		return nil, err
+	}
+	return bytes.TrimSuffix(buf.Bytes(), []byte{'\n'}), nil
 }
 
 // UnmarshalJSON 从 OpenAI 兼容格式 {id, type:"function", function:{name, arguments}} 反序列化。

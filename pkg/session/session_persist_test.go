@@ -626,3 +626,42 @@ func TestSaveSessionToFile_WithPlanModeAndFileHistory(t *testing.T) {
 		t.Errorf("fileHistory seq=%d files=%v, want seq=3 files=[test.go]", loadedFH.SnapshotSeq, loadedFH.TrackedFiles)
 	}
 }
+
+// TestRegression_HTMLUnescapeInToolCallArgs 验证 TranscriptEntry round-trip 后
+// tool call arguments 中的 & 和 > 等 HTML 特殊字符不被转义为 \u0026 / \u003e。
+// 根因: convertToContentBlocks 曾使用 json.Marshal(EscapeHTML=true) 序列化
+// anthropicMessage,导致 json.RawMessage(Input) 内的字符串被 HTML 编码,round-trip 后
+// extractField 提取到转义后的字面量,NormalizeShellCommand 无法匹配 cd && 前缀。
+func TestRegression_HTMLUnescapeInToolCallArgs(t *testing.T) {
+	args := `{"command":"cd /tmp && make build 2>&1"}`
+	msg := llm.Message{
+		ID:   "msg-1",
+		Role: llm.RoleAssistant,
+		ToolCalls: []llm.ToolCall{
+			{ID: "call-1", Name: "bash", Arguments: args},
+		},
+	}
+
+	entry := NewTranscriptEntry(msg, nil, "sid", "1.0", "/cwd", "main")
+	restored := entry.ToMessage()
+
+	if len(restored.ToolCalls) != 1 {
+		t.Fatalf("expected 1 tool call, got %d", len(restored.ToolCalls))
+	}
+	if restored.ToolCalls[0].Arguments != args {
+		t.Errorf("tool call arguments mismatch after round-trip:\n  want: %s\n  got:  %s", args, restored.ToolCalls[0].Arguments)
+	}
+
+	// 额外检测:确保 JSONL 写入的原始字节也不含 \u0026
+	entries := MessagesToTranscriptEntries([]llm.Message{msg}, nil, "sid", "1.0", "/cwd", "main")
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 entry, got %d", len(entries))
+	}
+	raw := string(entries[0].Message)
+	if strings.Contains(raw, `\u0026`) {
+		t.Errorf("JSONL Message field contains \\u0026 escape: %s", raw)
+	}
+	if strings.Contains(raw, `\u003e`) {
+		t.Errorf("JSONL Message field contains \\u003e escape: %s", raw)
+	}
+}
