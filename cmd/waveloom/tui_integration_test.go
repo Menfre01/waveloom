@@ -354,3 +354,113 @@ func TestRenderRewindConfirmOverlay_ProducesOutput(t *testing.T) {
 		t.Fatal("rewind confirm overlay should produce non-empty output")
 	}
 }
+
+// ---------------------------------------------------------------------------
+// 回归测试:overlay ↑↓ 边界穿透 body 滚动
+// macOS 终端将触控板/鼠标滚轮转为键盘 ↑↓,列表到边界时应转为 body 滚动。
+// ---------------------------------------------------------------------------
+
+func newTestModelForPermissionOverlay() *model {
+	m := newTestModelForOverlay()
+	m.overlay = overlayPermission
+	m.permList = m.buildPermList()
+	m.permList.SetSize(40, 3) // 设置有效宽度避免 delegate 除零
+	m.input.Blur()
+	return m
+}
+
+func TestHandleKeyPress_PermissionBoundary_UpScrollsBody(t *testing.T) {
+	m := newTestModelForPermissionOverlay()
+	// 设 body 有足够内容可滚动
+	m.scrollTop = 5
+	m.bodyHeight = 10
+
+	// 列表选中第一项(index 0),按 ↑ 应转为 body 上滚
+	m.permList.Select(0)
+	handled, _ := m.handleKeyPress(tea.KeyPressMsg{Text: "up", Code: 'u'})
+	if !handled {
+		t.Error("up at boundary should be handled (scroll body)")
+	}
+	// body 应向上滚动
+	if m.scrollTop != 4 {
+		t.Errorf("scrollTop should decrease from 5 to 4, got %d", m.scrollTop)
+	}
+	// 列表选中项不应变化
+	if m.permList.Index() != 0 {
+		t.Errorf("permList index should stay at 0, got %d", m.permList.Index())
+	}
+}
+
+func TestHandleKeyPress_PermissionBoundary_DownScrollsBody(t *testing.T) {
+	m := newTestModelForPermissionOverlay()
+
+	m.scrollTop = 5
+	m.bodyHeight = 10
+
+	// 列表选中最后一项(index 2 = Deny),按 ↓ 应转为 body 下滚
+	m.permList.Select(2)
+	handled, _ := m.handleKeyPress(tea.KeyPressMsg{Text: "down", Code: 'd'})
+	if !handled {
+		t.Error("down at boundary should be handled (scroll body)")
+	}
+	if m.scrollTop != 6 {
+		t.Errorf("scrollTop should increase from 5 to 6, got %d", m.scrollTop)
+	}
+	if m.permList.Index() != 2 {
+		t.Errorf("permList index should stay at 2, got %d", m.permList.Index())
+	}
+}
+
+func TestHandleKeyPress_PermissionMiddle_NavigatesList(t *testing.T) {
+	m := newTestModelForPermissionOverlay()
+
+	// 列表选中中间项(index 1 = Allow All),按 ↑↓ 应正常导航
+	m.permList.Select(1)
+	handled, _ := m.handleKeyPress(tea.KeyPressMsg{Text: "up", Code: 'u'})
+	if !handled {
+		t.Error("up in middle should be handled (navigate list)")
+	}
+	if m.permList.Index() != 0 {
+		t.Errorf("permList should move to 0, got %d", m.permList.Index())
+	}
+
+	// 再按 ↓ 回到中间
+	handled, _ = m.handleKeyPress(tea.KeyPressMsg{Text: "down", Code: 'd'})
+	if !handled {
+		t.Error("down in middle should be handled (navigate list)")
+	}
+	if m.permList.Index() != 1 {
+		t.Errorf("permList should move back to 1, got %d", m.permList.Index())
+	}
+}
+
+// 主题选择器边界穿透
+func TestHandleThemePickerKey_BoundaryUpScrollsBody(t *testing.T) {
+	m := newTestModelForThemePicker()
+	m.scrollTop = 5
+	m.bodyHeight = 10
+	m.themeList.Select(0) // 第一项
+
+	handled, _ := m.handleThemePickerKey(tea.KeyPressMsg{Text: "up", Code: 'u'})
+	if !handled {
+		t.Error("up at boundary should scroll body")
+	}
+	if m.scrollTop != 4 {
+		t.Errorf("scrollTop should be 4, got %d", m.scrollTop)
+	}
+}
+
+func TestHandleThemePickerKey_BoundaryDownScrollsBody(t *testing.T) {
+	m := newTestModelForThemePicker()
+	m.scrollTop = 5
+	m.bodyHeight = 10
+	m.themeList.Select(len(themeItems) - 1) // 最后一项
+
+	handled, _ := m.handleThemePickerKey(tea.KeyPressMsg{Text: "down", Code: 'd'})
+	if !handled {
+		t.Error("down at boundary should scroll body")
+	}
+	if m.scrollTop != 6 {
+		t.Errorf("scrollTop should be 6, got %d", m.scrollTop)
+	}
+}

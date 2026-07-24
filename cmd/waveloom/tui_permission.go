@@ -424,3 +424,4 @@ func (m *model) closeQuestionOverlay() {
 	m.otherInput.Blur()
 	m.input.Focus()
 }
+

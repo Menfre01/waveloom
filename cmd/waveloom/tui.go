@@ -53,6 +53,7 @@ import (
 	"github.com/Menfre01/waveloom/pkg/environment"
 	"github.com/Menfre01/waveloom/pkg/filehistory"
 	"github.com/Menfre01/waveloom/pkg/llm"
+	"github.com/Menfre01/waveloom/pkg/mcp"
 	"github.com/Menfre01/waveloom/pkg/pathutil"
 	"github.com/Menfre01/waveloom/pkg/permission"
 	"github.com/Menfre01/waveloom/pkg/reference"
@@ -392,6 +393,7 @@ type model struct {
 	cwd           string
 	loop          *agentloop.Loop
 	hookRunner    *hook.Runner // hooks 系统(RTK 等)
+	mcpManager *mcp.Manager // IDE MCP Server 上下文提供者
 
 	// Advisor mode
 	advisorMode  bool   // 是否启用 advisor mode
@@ -1450,8 +1452,18 @@ func (m *model) handleKeyPress(msg tea.KeyPressMsg) (bool, tea.Cmd) {
 			return true, nil
 		}
 		keyStr := msg.String()
-		// ↑↓ 仅导航权限列表,不透传给 viewport
 		if keyStr == "up" || keyStr == "down" {
+			// ↑↓ 在列表边界时转为 body 滚动,否则导航列表项。
+			// 解决 macOS 终端触控板滚动产生键盘 ↑↓ 导致 body 无法滚动的问题。
+			idx := m.permList.Index()
+			if keyStr == "up" && idx <= 0 {
+				m.scrollUp(1)
+				return true, nil
+			}
+			if keyStr == "down" && idx >= 2 {
+				m.scrollDown(1)
+				return true, nil
+			}
 			var cmd tea.Cmd
 			m.permList, cmd = m.permList.Update(msg)
 			return true, cmd
@@ -1463,21 +1475,8 @@ func (m *model) handleKeyPress(msg tea.KeyPressMsg) (bool, tea.Cmd) {
 	// 3a. 选择题面板活跃时路由
 	// =====================================================================
 	if m.overlay == overlayQuestion {
-		// 滚动键:允许用户滚动查看问题背后的对话内容
-		switch {
-		case key.Matches(msg, m.keys.PageUp):
-			m.scrollUp(m.bodyHeight)
-			return true, nil
-		case key.Matches(msg, m.keys.PageDown):
-			m.scrollDown(m.bodyHeight)
-			return true, nil
-		case key.Matches(msg, m.keys.JumpBottom):
-			m.scrollToBottom()
-			return true, nil
-		}
 		// Esc → 拒绝回答(关闭 overlay,发送 nil)
 		if key.Matches(msg, m.keys.Interrupt) {
-			// Other 输入中取消 → 回退到选项列表
 			if m.questionFormIsOther {
 				m.handleOtherInputCancel()
 				return true, nil
@@ -1488,7 +1487,6 @@ func (m *model) handleKeyPress(msg tea.KeyPressMsg) (bool, tea.Cmd) {
 		// 其余按键交由 huh 或 otherInput Update 处理(含 ↑↓ 导航)
 		return false, nil
 	}
-
 	// =====================================================================
 	// 3b. 主题选择器活跃时路由
 	// =====================================================================
@@ -2851,6 +2849,13 @@ func (m *model) doTurn(userInput string) tea.Cmd {
 		m.cm.RemoveLastUserMessage()
 	}
 
+	// 查询 IDE 动态上下文(当前打开文件等),注入到 user 消息
+	if m.mcpManager != nil {
+		if dc := m.mcpManager.IDEContextProvider().QueryDynamicContext(context.Background(), m.cwd); dc != "" {
+			expanded = "[IDECONTEXT]\n" + dc + "\n\n" + expanded
+		}
+	}
+
 	// 1. PrepareRun — 使用展开后的输入
 	messagesSnapshot, messageID := m.cm.PrepareRun(expanded)
 	// 1.4 上轮用户快捷键退出 plan 模式 → 注入 [plan:end] 通知 LLM
@@ -4043,11 +4048,15 @@ func (m *model) handleRewindSelectKey(keyStr string) tea.Cmd {
 		if m.rewindSelectedIdx > 0 {
 			m.rewindSelectedIdx--
 			m.rewindScrollToVisible()
+		} else {
+			m.scrollUp(1)
 		}
 	case "down":
 		if m.rewindSelectedIdx < len(m.rewindMessages)-1 {
 			m.rewindSelectedIdx++
 			m.rewindScrollToVisible()
+		} else {
+			m.scrollDown(1)
 		}
 	case "enter":
 		if m.rewindSelectedIdx >= 0 && m.rewindSelectedIdx < len(m.rewindMessages) {
@@ -4103,10 +4112,14 @@ func (m *model) handleRewindConfirmKey(keyStr string) tea.Cmd {
 	case "up":
 		if m.rewindSelectedIdx > 0 {
 			m.rewindSelectedIdx--
+		} else {
+			m.scrollUp(1)
 		}
 	case "down":
 		if m.rewindSelectedIdx < 3 {
 			m.rewindSelectedIdx++
+		} else {
+			m.scrollDown(1)
 		}
 	case "enter":
 		return m.executeRewind(rewindOption(m.rewindSelectedIdx))
@@ -4894,8 +4907,9 @@ func newSlashRegistry(creator slashcommand.SessionCreator, store slashcommand.Se
 // ---------------------------------------------------------------------------
 
 // runTUI 启动交互式 TUI 模式。依赖由 main() 统一初始化后传入，无需重复创建。
-func runTUI(llmClient llm.Client, registry tool.Registry, guard permission.Guard, expander *reference.Expander, modelName string, theme string, contextLimit int, maxTurns int, toolTimeout time.Duration, toolTimeoutSource string, bypassPerm bool, ctxMgr *session.ContextManager, isResume bool, sessionDir string, globalPath string, projectPath string, agentsMdText string, loc Locale, todoState *todo.TodoState, advisorMode bool, subModel string, hookRunner *hook.Runner, agentTool *subagent.AgentTool) {
+func runTUI(llmClient llm.Client, registry tool.Registry, guard permission.Guard, expander *reference.Expander, modelName string, theme string, contextLimit int, maxTurns int, toolTimeout time.Duration, toolTimeoutSource string, bypassPerm bool, ctxMgr *session.ContextManager, isResume bool, sessionDir string, globalPath string, projectPath string, agentsMdText string, loc Locale, todoState *todo.TodoState, advisorMode bool, subModel string, hookRunner *hook.Runner, agentTool *subagent.AgentTool, mcpManager *mcp.Manager) {
 	m := newTUIModel(llmClient, registry, guard, expander, modelName, theme, contextLimit, maxTurns, toolTimeout, toolTimeoutSource, loc, todoState, hookRunner)
+	m.mcpManager = mcpManager
 	m.sessionDir = sessionDir
 	m.agentsMdText = agentsMdText
 	m.advisorMode = advisorMode

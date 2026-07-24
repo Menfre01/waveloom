@@ -396,7 +396,19 @@ func (m *model) handleThemePickerKey(msg tea.KeyPressMsg) (bool, tea.Cmd) {
 	}
 	keyStr := msg.String()
 	switch keyStr {
-	case "up", "down":
+	case "up":
+		if m.themeList.Index() <= 0 {
+			m.scrollUp(1)
+			return true, nil
+		}
+		var cmd tea.Cmd
+		m.themeList, cmd = m.themeList.Update(msg)
+		return true, cmd
+	case "down":
+		if m.themeList.Index() >= len(themeItems)-1 {
+			m.scrollDown(1)
+			return true, nil
+		}
 		var cmd tea.Cmd
 		m.themeList, cmd = m.themeList.Update(msg)
 		return true, cmd
@@ -516,7 +528,19 @@ func (m *model) handleLocalePickerKey(msg tea.KeyPressMsg) (bool, tea.Cmd) {
 	}
 	keyStr := msg.String()
 	switch keyStr {
-	case "up", "down":
+	case "up":
+		if m.localeList.Index() <= 0 {
+			m.scrollUp(1)
+			return true, nil
+		}
+		var cmd tea.Cmd
+		m.localeList, cmd = m.localeList.Update(msg)
+		return true, cmd
+	case "down":
+		if m.localeList.Index() >= 1 { // 2 项,索引 0 和 1
+			m.scrollDown(1)
+			return true, nil
+		}
 		var cmd tea.Cmd
 		m.localeList, cmd = m.localeList.Update(msg)
 		return true, cmd
@@ -617,7 +641,19 @@ func (m *model) handleModelPickerKey(msg tea.KeyPressMsg) (bool, tea.Cmd) {
 	}
 	keyStr := msg.String()
 	switch keyStr {
-	case "up", "down":
+	case "up":
+		if m.modelPickerList.Index() <= 0 {
+			m.scrollUp(1)
+			return true, nil
+		}
+		var cmd tea.Cmd
+		m.modelPickerList, cmd = m.modelPickerList.Update(msg)
+		return true, cmd
+	case "down":
+		if m.modelPickerList.Index() >= len(m.modelPickerItems)-1 {
+			m.scrollDown(1)
+			return true, nil
+		}
 		var cmd tea.Cmd
 		m.modelPickerList, cmd = m.modelPickerList.Update(msg)
 		return true, cmd
@@ -779,7 +815,19 @@ func (m *model) handleProviderPickerKey(msg tea.KeyPressMsg) (bool, tea.Cmd) {
 	}
 	keyStr := msg.String()
 	switch keyStr {
-	case "up", "down":
+	case "up":
+		if m.providerPickerList.Index() <= 0 {
+			m.scrollUp(1)
+			return true, nil
+		}
+		var cmd tea.Cmd
+		m.providerPickerList, cmd = m.providerPickerList.Update(msg)
+		return true, cmd
+	case "down":
+		if m.providerPickerList.Index() >= len(m.providerPickerItems)-1 {
+			m.scrollDown(1)
+			return true, nil
+		}
 		var cmd tea.Cmd
 		m.providerPickerList, cmd = m.providerPickerList.Update(msg)
 		return true, cmd
