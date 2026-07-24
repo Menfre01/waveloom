@@ -28,7 +28,7 @@ type Manager struct {
 	// TUI 可通过此回调刷新连接状态展示。
 	OnStatusChange func()
 
-	// connectFunc 用于创建 MCP 连接，测试时可替换。
+	ideCtx *IDEContextProvider
 	connectFunc func(ctx context.Context, name string, config ServerConfig) (*Client, error)
 }
 
@@ -43,6 +43,11 @@ func WithLogger(l *log.Logger) ManagerOption {
 	}
 }
 
+// IDEContextProvider 返回 IDE 上下文提供者，供 system prompt 构建使用。
+func (m *Manager) IDEContextProvider() *IDEContextProvider {
+	return m.ideCtx
+}
+
 // NewManager 创建一个新的 MCP Manager。
 func NewManager(registry tool.Registry, opts ...ManagerOption) *Manager {
 	m := &Manager{
@@ -51,6 +56,7 @@ func NewManager(registry tool.Registry, opts ...ManagerOption) *Manager {
 		clients:     make(map[string]*Client),
 		failedErr:   make(map[string]error),
 		connectFunc: Connect,
+		ideCtx:      &IDEContextProvider{ides: make(map[string]*IDEInfo)},
 	}
 	for _, o := range opts {
 		o(m)
@@ -165,6 +171,9 @@ func (m *Manager) connectServer(ctx context.Context, config ServerConfig) {
 	m.clients[name] = client
 	m.mu.Unlock()
 
+	// 注册 IDE 上下文(若为 IDE 类型)
+	m.ideCtx.Register(name, client.ServerInfo().Title, client)
+
 	m.logger.Printf("connected %q (%s v%s), registered %d tools",
 		name, client.ServerInfo().Title, client.ServerInfo().Version, count)
 
@@ -203,6 +212,7 @@ func (m *Manager) Stop() error {
 	m.mu.Lock()
 	var lastErr error
 	for name, client := range m.clients {
+		m.ideCtx.Unregister(name)
 		if err := client.Close(); err != nil {
 			m.logger.Printf("error closing %q: %v", name, err)
 			lastErr = err

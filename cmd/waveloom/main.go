@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"time"
 
 	"github.com/Menfre01/waveloom/pkg/agentloop"
 	"github.com/Menfre01/waveloom/pkg/hook"
@@ -139,6 +140,17 @@ func main() {
 	// 8.5 启动 MCP Manager — 连接配置的 MCP Server，注册工具代理
 	mcpManager := mcp.NewManager(registry)
 	mcpManager.Start(context.Background(), mcp.LoadConfigs(cwd, homeDir))
+	// 等待 MCP 连接完成（本地连接 < 3s），确保 capability guide 注入时有 IDE 信息
+	mcpWaitCtx, mcpWaitCancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer mcpWaitCancel()
+waitLoop:
+	for mcpManager.ClientCount() == 0 {
+		select {
+		case <-mcpWaitCtx.Done():
+			break waitLoop
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
 	defer func() { _ = mcpManager.Stop() }()
 
 	// 9. 创建 @ 引用展开器（用于 AGENTS.md 和用户输入中的 @ 引用展开）
@@ -177,6 +189,11 @@ func main() {
 	// 注入环境探测结果：让 LLM 在首次交互前就知道系统可用工具链，	// 避免因命令缺失陷入探测死循环。
 	// globalPath 和 projectPath 用于加载用户配置的工具路径覆盖。
 	systemPrompt += formatEnvironmentSection(probeResults, cwd, globalPath, projectPath)
+
+	// 注入 IDE 能力引导（静态，不破坏前缀缓存）
+	if capGuide := mcpManager.IDEContextProvider().FormatCapabilityGuide(); capGuide != "" {
+		systemPrompt += capGuide
+	}
 
 	// 注入 skill 列表到 system prompt
 	if skillListing := skillLoader.FormatSkillListing(); skillListing != "" {
@@ -292,13 +309,13 @@ func main() {
 	if cfg.OneShot == "" {
 		// 16.5 加载 Hook Runner（RTK 等 hooks）
 		hookRunner := loadHookRunner()
-		runTUI(llmClient, registry, guard, expander, llmSettings.Model, cfg.Theme, cfg.ContextLimit, cfg.MaxTurns, cfg.ToolTimeout, cfg.ToolTimeoutSource, cfg.BypassPerm, ctxMgr, isResume, sessionDir, globalPath, projectPath, agentsMdText, loc, todoState, advisorMode, subModel, hookRunner, agentTool)
+		runTUI(llmClient, registry, guard, expander, llmSettings.Model, cfg.Theme, cfg.ContextLimit, cfg.MaxTurns, cfg.ToolTimeout, cfg.ToolTimeoutSource, cfg.BypassPerm, ctxMgr, isResume, sessionDir, globalPath, projectPath, agentsMdText, loc, todoState, advisorMode, subModel, hookRunner, agentTool, mcpManager)
 		return
 	}
 
 	// 16.5 加载 Hook Runner（RTK 等 hooks）
 	hookRunner := loadHookRunner()
-	runOneShot(cfg, llmClient, registry, guard, expander, cwd, ctxMgr, agentsMdText, loc, todoState, advisorMode, subModel, llmSettings.Model, hookRunner, agentTool)
+	runOneShot(cfg, llmClient, registry, guard, expander, cwd, ctxMgr, agentsMdText, loc, todoState, advisorMode, subModel, llmSettings.Model, hookRunner, agentTool, mcpManager)
 }
 
 

@@ -48,7 +48,7 @@ type JSONRPCError struct {
 // ---------------------------------------------------------------------------
 
 const (
-	// ProtocolVersion 是本实现支持的 MCP 协议版本。
+	// ProtocolVersion 是本实现首选 MCP 协议版本。
 	ProtocolVersion = "2025-11-25"
 
 	// JSONRPCVersion 是 JSON-RPC 版本。

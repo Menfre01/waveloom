@@ -115,8 +115,10 @@ func (c *Client) initialize(ctx context.Context) error {
 
 	c.serverInfo = initResult.ServerInfo
 
-	// 协议版本协商：检查 server 返回的版本是否兼容
-	if initResult.ProtocolVersion != "" && initResult.ProtocolVersion != ProtocolVersion {
+	// 协议版本兼容性检查：接受 2024-11-05 和 2025-11-25
+	if initResult.ProtocolVersion != "" &&
+		initResult.ProtocolVersion != "2024-11-05" &&
+		initResult.ProtocolVersion != ProtocolVersion {
 		return fmt.Errorf("unsupported protocol version: server=%q client=%q", initResult.ProtocolVersion, ProtocolVersion)
 	}
 
@@ -177,7 +179,9 @@ func (c *Client) CallTool(ctx context.Context, name string, args map[string]any)
 func (c *Client) Tools() []ToolDef {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return c.tools
+	copied := make([]ToolDef, len(c.tools))
+	copy(copied, c.tools)
+	return copied
 }
 
 // ServerName 返回配置中的 server 名称。

@@ -690,8 +690,8 @@ func (l *Loop) buildToolMessages(
 				1)
 		}
 
-		// Layer 5: 上下文窗口保护 — 32KB 安全截断
-		const maxToolOutputBytes = 32 * 1024
+		// Layer 5: 上下文窗口保护 — 256KB 安全截断（~64K tokens，128K 窗口的半数）
+		const maxToolOutputBytes = 256 * 1024
 		if len(content) > maxToolOutputBytes {
 			truncated := content[:maxToolOutputBytes]
 			// 退回到最后一个完整 UTF-8 字符边界

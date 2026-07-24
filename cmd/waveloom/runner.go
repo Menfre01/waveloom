@@ -13,6 +13,7 @@ import (
 	"github.com/Menfre01/waveloom/pkg/hook"
 	"github.com/Menfre01/waveloom/pkg/llm"
 	"github.com/Menfre01/waveloom/pkg/permission"
+	"github.com/Menfre01/waveloom/pkg/mcp"
 	"github.com/Menfre01/waveloom/pkg/reference"
 	"github.com/Menfre01/waveloom/pkg/session"
 	"github.com/Menfre01/waveloom/pkg/subagent"
@@ -21,7 +22,7 @@ import (
 )
 
 // runOneShot 执行单次/管道模式（无 TUI，纯文本输出）。
-func runOneShot(cfg CLIConfig, llmClient llm.Client, registry tool.Registry, guard permission.Guard, expander *reference.Expander, cwd string, cm *session.ContextManager, agentsMdText string, loc Locale, todoState *todo.TodoState, advisorMode bool, subModel string, model string, hookRunner *hook.Runner, agentTool *subagent.AgentTool) {
+func runOneShot(cfg CLIConfig, llmClient llm.Client, registry tool.Registry, guard permission.Guard, expander *reference.Expander, cwd string, cm *session.ContextManager, agentsMdText string, loc Locale, todoState *todo.TodoState, advisorMode bool, subModel string, model string, hookRunner *hook.Runner, agentTool *subagent.AgentTool, mcpManager *mcp.Manager) {
 	lc := messagesFor(loc)
 	// Context Manager 已管理 system prompt，Loop 无需重复注入
 	initialModel := ""
@@ -73,8 +74,13 @@ func runOneShot(cfg CLIConfig, llmClient llm.Client, registry tool.Registry, gua
 		slog.Warn("@ reference expansion failed", "err", expandErr)
 		expandedInput = userInput
 	}
+	// 查询 IDE 动态上下文(当前打开文件等),注入到 user 消息
+	if mcpManager != nil {
+		if dc := mcpManager.IDEContextProvider().QueryDynamicContext(ctx, cwd); dc != "" {
+			expandedInput = "[IDECONTEXT]\n" + dc + "\n\n" + expandedInput
+		}
+	}
 
-	// 通过 Context Manager 获取完整消息历史
 	messages, _ := cm.PrepareRun(expandedInput)
 
 	ctx = context.Background()
