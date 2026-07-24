@@ -108,21 +108,10 @@ func (t *Shell) ToolTimeout() time.Duration {
 	return time.Duration(MaxShellTimeoutMs) * time.Millisecond
 }
 
-// Description 仅描述 API 契约。行为约束（使用规则、策略）见 Prompt()，// 由 Registry.FormatToolPrompts() 注入 C1 system prompt。
+// Description 仅描述 API 契约。行为约束(使用规则、策略)见 Prompt(),
+// 由 Registry.FormatToolPrompts() 注入 C1 system prompt。
 func (t *Shell) Description() string {
-	lines := []string{
-		"Execute a shell command in a subprocess. Configurable timeout (default 300s, max 1800s), captures stdout and stderr.",
-	}
-	if t.AllowBg {
-		lines = append(lines,
-			"Set run_in_background to true for long-running commands (servers, watchers, daemons). The tool returns immediately with a task ID and log path — use read to check progress. Use kill_background_task to stop a running background task.",
-		)
-	}
-	lines = append(lines,
-		"Unix/macOS uses bash -c (sh fallback), Windows uses Git Bash (bash -c).",
-		"Commands already run in the workspace directory. To operate elsewhere, use the working_dir parameter.",
-	)
-	return strings.Join(lines, "\n")
+	return "Execute a shell command in a subprocess. Rules: see system prompt ## Shell Usage."
 }
 
 // Prompt 返回 shell 使用行为约束，由 Registry.FormatToolPrompts() 注入 C1 system prompt。

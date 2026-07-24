@@ -34,9 +34,7 @@ type ReadFileHashline struct{}
 func (t *ReadFileHashline) Name() string { return "read" }
 
 func (t *ReadFileHashline) Description() string {
-	return "Read a file with TAG and line numbers for hash-anchored editing. " +
-		"Use with edit — the TAG certifies the file snapshot, " +
-		"line numbers are used directly in SWAP/INS/DEL operations."
+	return "Read a file with TAG and line numbers for hash-anchored editing. Rules: see system prompt ## Read File (Hashline)."
 }
 
 // Prompt 返回 read 工具使用指南，由 Registry.FormatToolPrompts() 注入 system prompt。

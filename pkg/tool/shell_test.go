@@ -474,10 +474,8 @@ func TestShellDescriptionGuidesToolUsage(t *testing.T) {
 			t.Errorf("Prompt should mention %s as preferred over shell", toolName)
 		}
 	}
-	// Description 应提及 working_dir（API 契约在 Description → C2）
-	if !strings.Contains(desc, "working_dir") {
-		t.Error("Description should mention working_dir for directory switching")
-	}
+	// C2 Description 是静态 API 契约，不承载参数细节;
+	// working_dir 在 JSON Schema 和 C1 system prompt 中描述。
 	// Description 不应包含行为约束（已移至 Prompt）
 	if strings.Contains(desc, "Prefer dedicated tools") {
 		t.Error("Description should NOT contain behavioral rules — they belong in Prompt()")
@@ -1182,10 +1180,12 @@ func TestShell_Description_WithAndWithoutBackground(t *testing.T) {
 	bgDesc := sBg.Description()
 	noBgDesc := sNoBg.Description()
 
-	if !strings.Contains(bgDesc, "run_in_background") {
-		t.Error("bash description should mention run_in_background")
+	// C2 Description 是静态 API 契约，不因 AllowBg 变化;
+	// 行为规则(含 run_in_background)走 C1 system prompt。
+	if bgDesc != noBgDesc {
+		t.Errorf("Description should be static regardless of AllowBg; bg=%q noBg=%q", bgDesc, noBgDesc)
 	}
-	if strings.Contains(noBgDesc, "run_in_background") {
-		t.Error("bash_subagent description should NOT mention run_in_background")
+	if !strings.Contains(bgDesc, "Shell Usage") {
+		t.Error("Description should reference C1 Shell Usage section")
 	}
 }

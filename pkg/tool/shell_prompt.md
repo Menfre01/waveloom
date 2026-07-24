@@ -20,3 +20,11 @@ Examples:
   {"command":"python /tmp/check.py && rm /tmp/check.py"}  — Unix/macOS or Windows (Git Bash)
 
   {"command":"ls", "working_dir":"/tmp"}                   — runs in /tmp, clean
+
+### Background Tasks
+
+Long-running commands can run in the background via `bash(run_in_background=true)`. The tool returns immediately with a task ID and log path — use `read` to check progress.
+
+Use `kill_background_task(task_id="<id>")` to stop a running background task. The task ID is shown in background-task notifications (`<background-task id="..."/>`) and in the original bash tool response.
+
+On Unix, kills the entire process group (SIGKILL). On Windows, kills the process. If the task is already completed or not found, returns an appropriate message.

@@ -28,10 +28,7 @@ type EditFileHashline struct{}
 func (t *EditFileHashline) Name() string { return "edit" }
 
 func (t *EditFileHashline) Description() string {
-	return "Edit files using hash-anchored patches. " +
-		"Use read to get TAGs and line numbers, " +
-		"then specify operations (SWAP/INS/DEL/REM/MV) by TAG and line number. " +
-		"No need to reproduce old code — just the TAG, line numbers, and new content."
+	return "Edit files using hash-anchored patches. Rules: see system prompt ## Edit File (Hashline)."
 }
 
 // Prompt 返回 hashline 使用指南，由 Registry.FormatToolPrompts() 注入 C1 system prompt。

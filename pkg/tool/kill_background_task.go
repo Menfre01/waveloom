@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"runtime"
-	"strings"
 
 	"github.com/Menfre01/waveloom/pkg/task"
 )
@@ -39,15 +38,7 @@ func (t *KillBackgroundTask) ConcurrentSafe() bool       { return true }
 func (t *KillBackgroundTask) SupportsStreaming() bool    { return false }
 
 func (t *KillBackgroundTask) Description() string {
-	return strings.Join([]string{
-		"Kill a running background task by its task ID.",
-		"Use this to stop long-running background commands (servers, watchers) started via bash(run_in_background=true).",
-		"The task ID is shown in the background-task notifications (<background-task id=\"...\"/>) and in the original bash tool response (Task ID: xxx).",
-		"Call with kill_background_task(task_id=\"<id>\").",
-		"",
-		"On Unix, kills the entire process group (SIGKILL). On Windows, kills the process.",
-		"If the task is already completed or not found, returns an appropriate message.",
-	}, "\n")
+	return "Kill a running background task by its task ID. Rules: see system prompt ## Shell Usage."
 }
 
 func (t *KillBackgroundTask) Execute(ctx context.Context, p KillBackgroundTaskParams) (*ToolResult, error) {
