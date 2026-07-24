@@ -200,8 +200,7 @@ waitLoop:
 		systemPrompt += skillListing
 	}
 
-	// 注入 subagent 模型选择指导（始终注入，agent 工具 schema 引用此项）。
-	// 注入 subagent 模型选择指导（使用 pro/flash 语义，不绑具体模型名）。
+	// 注入 subagent 模型选择指导(始终注入,agent 工具 schema 引用 pro/flash 语义)。
 	systemPrompt += buildModelSelectionSection()
 	// 注入工具错误处理指导(始终注入,适配所有模式)
 	systemPrompt += buildToolErrorGuidance()
@@ -699,6 +698,24 @@ When you see a [system] warning about consecutive errors:
 
 Fatal errors (permission_denied, security_violation, disk_full, unknown_tool) cannot
 be retried — explain the issue to the user and ask for guidance.
+
+Recoverable errors (retry once with corrected input): command_failed, command_not_found,
+command_permission_denied, timeout, file_not_found, invalid_args, no_match, no_results,
+not_dir, binary_file, multiple_matches. Recovery per kind:
+- For not_dir: the error message includes a directory listing and may suggest a specific
+  file (Did you mean). Pick a file from the listing or use the suggestion, then retry immediately.
+- For file_not_found: the error message includes CWD and may suggest a similar path
+  (Did you mean). Use the suggested path, or use bash to locate the correct file.
+- For binary_file: the file is not a readable text file — verify you have the correct
+  filename; use bash to check the directory contents.
+- For no_match: the error includes a hint with the closest matching lines and line numbers
+  — use read_file to verify the exact content at those lines, then copy text verbatim
+  (including indentation).
+- For multiple_matches: the error shows each match location with surrounding context and
+  line numbers. Pick one occurrence and include 1-2 unique surrounding lines in your
+  old_string to disambiguate.
+- For no_results: the skill was not found or not applicable — try a different skill name
+  or check available skills.
 `
 }
 

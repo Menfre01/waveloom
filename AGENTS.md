@@ -58,11 +58,7 @@ specs/           各组件规格书（修改前先阅读；内部文档，不纳
 
 ### 工具调用原则
 
-- **独立只读操作并行**（read），写操作（edit/write）串行
-- **edit 响应包含新 TAG 和编辑后上下文**，目标行在上下文中时可直接链式编辑；目标行不可见或 tag_mismatch 时先 re-read。
-- **write 返回 TAG**，写入后可直接 edit 无需 re-read。
-- **edit 范围格式用 `N.=M`**,不是 `N:=M`（`SWAP 3.=5` ✓ / `SWAP 3:=5` ✗）—— 常见 parse error 根因
-- `security_violation` → 致命错误，停止当前路径
+- **独立只读操作并行**(read),写操作(edit/write)串行
 
 ### 代码审查
 
