@@ -51,9 +51,9 @@ INS.TAIL:
 *** End Patch
 ```
 
-- Multiple `[PATH#TAG]` sections allowed; same-file sections merge atomically.
+- Multiple `[PATH#TAG]` sections allowed; same-file sections merge atomically — this is the RECOMMENDED way to edit one file in multiple places. Always merge same-file edits into one call to avoid TAG staleness.
 - REM/MV cannot combine with line ops in the same section — split into separate sections.
-- Overlapping operations (two ops on the same line) must be split into separate `edit` calls.
+- Overlapping operations (two ops on the same line) must be split into separate `edit` calls (different files are fine in one call).
 - Operations apply in declaration order; offsets auto-calculated — use original line numbers.
 
 ### Reading edit responses

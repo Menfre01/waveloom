@@ -891,7 +891,7 @@ func applySectionGroupAtomic(results []SectionResult, indices []int, sections []
 					Error: &EditError{
 						Fatal:   false,
 						Kind:    "tag_mismatch",
-						Message: fmt.Sprintf("All %d changes to %q were rejected: %s. The file has not been modified. Re-read with read_file_hashline to get a fresh TAG and retry, or rewrite the entire file with write_file.", len(indices), firstSec.Path, err.Error()),
+						Message: fmt.Sprintf("All %d changes to %q were rejected: %s. The file has not been modified. Merge all same-file edits into one edit call with multiple [PATH#TAG] sections, re-read to get a fresh TAG, then retry. Or rewrite the entire file with write_file.", len(indices), firstSec.Path, err.Error()),
 					},
 				}
 			}
