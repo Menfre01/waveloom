@@ -51,4 +51,4 @@ cmd/cache-proxy/
 /benchmark-cache
 /cache-proxy
 **/..jsonl
-*.mcp
+.mcp.json
