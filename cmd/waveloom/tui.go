@@ -2814,6 +2814,12 @@ func (m *model) doTurn(userInput string) tea.Cmd {
 		messagesSnapshot = append(messagesSnapshot, startMsg)
 	}
 
+	// 确保 Loop plan 状态与 TUI 一致(resume / provider 切换等场景可能导致不一致)
+	if m.inPlanMode && m.planFile != "" && !m.loop.InPlanMode() {
+		m.loop.RestorePlanMode(m.planFile)
+	}
+
+
 	// ctx bar 保持上轮压缩后值,待 TurnStats 用 API PromptTokens 更新
 
 	// 2. 追加 user 段落
