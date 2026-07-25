@@ -295,6 +295,51 @@ func TestFormatToolArgs_BashMultiline(t *testing.T) {
 	}
 }
 
+// REGRESSION: extractField 遇到 JSON 转义双引号(\")时提前截断,
+// 导致含双引号的 bash 命令(如 rg "pattern")只显示首段。
+func TestFormatToolArgs_BashWithDoubleQuotes(t *testing.T) {
+	// 模拟 LLM 返回的 ToolCall Arguments JSON 字符串
+	// 实际命令: rg -n "pattern" file
+	result := formatToolArgs("bash", `{"command":"rg -n \"pattern\" file"}`, "/tmp")
+	if result != `rg -n "pattern" file` {
+		t.Errorf("expected 'rg -n \"pattern\" file', got %q", result)
+	}
+}
+
+func TestFormatToolArgs_BashMultilineWithDoubleQuotes(t *testing.T) {
+	// 多行续行命令中包含双引号参数
+	// 实际命令: rg -n \↵  "pattern" \↵  file
+	result := formatToolArgs("bash", `{"command":"rg -n \\\n  \"pattern\" \\\n  file"}`, "/tmp")
+	if result != `rg -n "pattern" file` {
+		t.Errorf("expected 'rg -n \"pattern\" file', got %q", result)
+	}
+}
+
+func TestExtractField_EscapedQuotes(t *testing.T) {
+	// JSON 中的 \" 应视为转义引号,不作为结束符
+	json := `{"command":"echo \"hello world\""}`
+	result := extractField(json, "command")
+	if result != `echo \"hello world\"` {
+		t.Errorf("expected 'echo \\\"hello world\\\"', got %q", result)
+	}
+}
+
+func TestCollapseMultilineCommand_EscapedQuotes(t *testing.T) {
+	// JSON 转义引号 \" 应还原为 "
+	result := collapseMultilineCommand(`rg -n \"pattern\" file`)
+	if result != `rg -n "pattern" file` {
+		t.Errorf("expected 'rg -n \"pattern\" file', got %q", result)
+	}
+}
+
+func TestCollapseMultilineCommand_EscapedBackslash(t *testing.T) {
+	// JSON \\ 应还原为单个 \
+	result := collapseMultilineCommand(`sed 's/\\n/ /g'`)
+	if result != `sed 's/\n/ /g'` {
+		t.Errorf("expected 'sed 's/\\n/ /g'', got %q", result)
+	}
+}
+
 func TestExtractField_Valid(t *testing.T) {
 	json := `{"file_path":"/home/user/main.go","offset":10}`
 	result := extractField(json, "file_path")
@@ -309,7 +354,6 @@ func TestExtractField_Missing(t *testing.T) {
 		t.Errorf("expected empty, got %q", result)
 	}
 }
-
 func TestStripCWDPrefix_Matches(t *testing.T) {
 	result := stripCWDPrefix("/home/user/project/main.go", "/home/user/project")
 	if result != "main.go" {

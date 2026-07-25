@@ -247,7 +247,19 @@ func extractField(jsonStr, key string) string {
 	}
 	rest = rest[1:] // 跳过开引号
 
-	endIdx := strings.Index(rest, `"`)
+	// 跳过 JSON 转义:找到未转义的闭合引号
+	// JSON 字符串中 \" 是转义引号(不计为结束),\\ 是转义反斜杠
+	endIdx := -1
+	for i := 0; i < len(rest); i++ {
+		if rest[i] == '\\' && i+1 < len(rest) {
+			i++ // 跳过转义字符(下一个字符无论是 " 还是 \ 都不作为终结符)
+			continue
+		}
+		if rest[i] == '"' {
+			endIdx = i
+			break
+		}
+	}
 	if endIdx < 0 {
 		return ""
 	}
@@ -346,6 +358,10 @@ func collapseMultilineCommand(cmd string) string {
 	// Pass 3: 还原标记
 	s = strings.ReplaceAll(s, markerLineCont, " ")
 	s = strings.ReplaceAll(s, markerLitN, `\n`)
+
+	// Pass 3b: 还原 JSON 转义引号和反斜杠
+	s = strings.ReplaceAll(s, `\"`, `"`)
+	s = strings.ReplaceAll(s, `\\`, `\`)
 
 	// Pass 4: 清理
 	s = strings.Join(strings.Fields(s), " ")
