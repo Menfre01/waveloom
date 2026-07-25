@@ -97,13 +97,6 @@ func main() {
 		os.Exit(1)
 	}
 
-	// 判断是否启用 advisor mode
-	advisorMode := llmSettings.IsAdvisorMode()
-	subModel := llmSettings.SubModel
-	if !advisorMode {
-		subModel = "" // normal mode 不需要次模型
-	}
-
 	// 4.5 创建 Tier 3 摘要专用 Client（开启 JSON 模式）
 	summarizerClient := llmClient
 	summaryCfg := llmClientCfg
@@ -136,7 +129,8 @@ func main() {
 	// 6. 初始化 Tool Registry
 	registry := tool.NewRegistry()
 	settingsProvider := &fileSettingsProvider{projectPath: projectPath, globalPath: globalPath}
-	agentTool := registerBuiltinTools(registry, skillLoader, llmClient, llmSettings.Model, llmSettings.SubModel, cwd, settingsProvider)
+ 
+	agentTool := registerBuiltinTools(registry, skillLoader, llmClient, llmSettings.Model, cwd, settingsProvider)
 	// 8.5 启动 MCP Manager — 连接配置的 MCP Server，注册工具代理
 	mcpManager := mcp.NewManager(registry)
 	mcpManager.Start(context.Background(), mcp.LoadConfigs(cwd, homeDir))
@@ -204,10 +198,6 @@ waitLoop:
 	systemPrompt += buildModelSelectionSection()
 	// 注入工具错误处理指导(始终注入,适配所有模式)
 	systemPrompt += buildToolErrorGuidance()
-	// 注入 advisor mode 指导（仅 advisor mode 下）
-	if advisorMode {
-		systemPrompt += buildAdvisorModeSection(llmSettings.Model, llmSettings.SubModel)
-	}
 
 	// 注入工具使用指南：ToolWithPrompt.Prompt() → C1 system prompt。
 	// 按需组装 — 仅已注册且实现了 ToolWithPrompt 的工具会贡献内容。
@@ -308,18 +298,18 @@ waitLoop:
 	if cfg.OneShot == "" {
 		// 16.5 加载 Hook Runner（RTK 等 hooks）
 		hookRunner := loadHookRunner()
-		runTUI(llmClient, registry, guard, expander, llmSettings.Model, cfg.Theme, cfg.ContextLimit, cfg.MaxTurns, cfg.ToolTimeout, cfg.ToolTimeoutSource, cfg.BypassPerm, ctxMgr, isResume, sessionDir, globalPath, projectPath, agentsMdText, loc, todoState, advisorMode, subModel, hookRunner, agentTool, mcpManager)
+ 		runTUI(llmClient, registry, guard, expander, llmSettings.Model, cfg.Theme, cfg.ContextLimit, cfg.MaxTurns, cfg.ToolTimeout, cfg.ToolTimeoutSource, cfg.BypassPerm, ctxMgr, isResume, sessionDir, globalPath, projectPath, agentsMdText, loc, todoState, hookRunner, agentTool, mcpManager)
 		return
 	}
 
 	// 16.5 加载 Hook Runner（RTK 等 hooks）
 	hookRunner := loadHookRunner()
-	runOneShot(cfg, llmClient, registry, guard, expander, cwd, ctxMgr, agentsMdText, loc, todoState, advisorMode, subModel, llmSettings.Model, hookRunner, agentTool, mcpManager)
+ 	runOneShot(cfg, llmClient, registry, guard, expander, cwd, ctxMgr, agentsMdText, loc, todoState, llmSettings.Model, hookRunner, agentTool, mcpManager)
 }
 
 
 // registerBuiltinTools 注册内置工具。
-func registerBuiltinTools(r tool.Registry, skillLoader *skill.Loader, llmClient llm.Client, defaultModel string, subModel string, cwd string, settings subagent.SettingsProvider) *subagent.AgentTool {
+ func registerBuiltinTools(r tool.Registry, skillLoader *skill.Loader, llmClient llm.Client, defaultModel string, cwd string, settings subagent.SettingsProvider) *subagent.AgentTool {
 	r.Register(tool.Wrap(&tool.ReadFileHashline{}))
 	r.Register(tool.Wrap(&tool.EditFileHashline{}))
 	r.Register(tool.Wrap(&tool.WriteFile{}))
@@ -343,13 +333,12 @@ func registerBuiltinTools(r tool.Registry, skillLoader *skill.Loader, llmClient 
 	r.Register(tool.Wrap(&tool.KillBackgroundTask{}))
 
 	// Agent — subagent delegation
-	at := &subagent.AgentTool{
-		LLMClient:       llmClient,
-		Settings:        settings,
-		DefaultModel:    defaultModel,
-		DefaultSubModel: subModel,
-		WorkspaceDir:    cwd,
-	}
+ 	at := &subagent.AgentTool{
+ 		LLMClient:    llmClient,
+ 		Settings:     settings,
+ 		DefaultModel: defaultModel,
+ 		WorkspaceDir: cwd,
+ 	}
 	r.Register(tool.Wrap(at))
 
 	// TodoCreate / TodoUpdate — 结构化任务列表管理
@@ -612,71 +601,9 @@ If the task is finding, reading, renaming, or summarizing something that already
 Invalid values are silently ignored — the default (pro) is used.
 `
 }
-// buildAdvisorModeSection 构造注入到 system prompt 的 advisor mode 指导。
-func buildAdvisorModeSection(subModel, primaryModel string) string {
-	return fmt.Sprintf(`
-## Advisor Mode
-
-You are running in **advisor mode** to optimize token costs:
-
-- **DEFAULT MODEL**: %s — use for reading, searching, implementing. ~2x cheaper.
-
-- **PLAN MODE**: Enter plan mode → model auto-switches to %s. Exit → back to %s.
-
-- **ADVISOR SUBAGENT**: You are on the sub-model — delegate deep reasoning to the
-  primary model. A single advisor call costs ~1 turn of tokens but can save 5+ turns
-  of wrong implementation. Spawn advisor (type="advisor", runs on %s) when:
-  * You need to choose between ≥2 implementation approaches (e.g., "should I use
-    a mutex or a channel?", "rewrite vs refactor incrementally?")
-  * The change spans ≥3 files and you're not sure about downstream effects
-  * You're working in an unfamiliar package for the first time and need orientation
-  * A bug spans multiple modules and root cause is unclear
-  * Safety-critical code: auth, crypto, input validation, permissions
-  * Performance-sensitive hot paths or data structure selection
-  * Any decision that, if wrong, would require reverting ≥2 turns of work
-  * BEFORE writing code for any architectural change (new abstraction, API change,
-    data model change)
-  Advisor explores and recommends — it NEVER writes code.
-
-  **Writing the prompt**: Pose the key decision or trade-off as an analytical
-  question (e.g., "Should I use approach A (mutex) or B (channel) for this
-  concurrency problem? Analyze trade-offs."). Include file paths and the
-  relevant context the advisor needs to answer. Do NOT include implementation
-  steps — the advisor only evaluates, not executes.
-
-  **After advisor returns**, consume its output by Confidence level:
-  - HIGH → implement the Recommendation directly
-  - MEDIUM → validate the top assumption first (read the key file, check the approach),
-    then implement
-  - LOW → reconsider the approach. Read the Alternatives, pick one to investigate
-    further, or spawn a second advisor for a second opinion
-
-- **SELF-CHECK**: Before making any change that affects ≥2 files (across one
-  or more tool calls), run through this checklist:
-  * Have I read every file I plan to modify?
-  * Do I know the exact public API signatures of the affected interfaces?
-  * If this approach is wrong, is it easy to revert?
-  If any answer is "no" → spawn advisor first.
-
-- **REVIEW**: After global-impact changes (≥3 modules, public API, security),
-  spawn evaluate. It always uses the primary model regardless of the model
-  parameter — just pass the task description.
-
-- **TOOL ERROR ESCALATION**: The loop tracks consecutive failures by (tool, error type).
-  You get 2 silent retries (count 1-2). At count 3-4, [system] warnings appear suggesting
-  you spawn advisor. At count 5, the loop terminates. If you see a count=3 warning,
-  spawn advisor before the loop forces termination.
-
-- Simple single-file fixes, formatting, lint issues, or tasks with clear step-by-step
-  instructions do not need advisor — just implement directly on %s. (Exception:
-  safety-critical code — auth, crypto, input validation, permissions — always
-  warrants advisor regardless of scope.)
-`, subModel, primaryModel, subModel, primaryModel, subModel)
-}
 
 // buildToolErrorGuidance 构造注入到 system prompt 的工具错误处理指导。
-// 始终注入,适配所有模式(normal + advisor)。
-// 侧重行动指令而非被动告知阈值——具体计数由 loop 的 [system] 警告动态提供。
+ // 始终注入。侧重行动指令而非被动告知阈值——具体计数由 loop 的 [system] 警告动态提供。
 func buildToolErrorGuidance() string {
 	return `
 ## Tool Error Handling

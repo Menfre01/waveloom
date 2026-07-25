@@ -24,7 +24,6 @@ func testMessagesZhCN() *SlashMessages {
 		ModelConfigReadFailed: "读取配置失败: %v",
 		ModelConfigSaveFailed: "保存配置失败: %v",
 		ModelSwitched:          "模型已切换为 %s。",
-		ModelAdvisorModeNotice: "注意：当前为 advisor 模式。",
 		ThemeDescription:       "选择主题（Auto / Dark / Light）",
 		LocaleDescription:     "切换语言（zh-CN / en-US）",
 		HelpDescription:       "显示所有可用命令",

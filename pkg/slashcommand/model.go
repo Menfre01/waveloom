@@ -86,9 +86,6 @@ func (c *ModelCommand) executeWithArgs(ctx context.Context, name string) (*Resul
 		}, nil
 	}
 
-	// 记录切换前的 advisor mode 状态
-	wasAdvisorMode := settings.IsAdvisorMode()
-
 	settings.SetModel(name)
 	if err := c.store.SaveLLM(settings); err != nil {
 		return &Result{
@@ -97,9 +94,6 @@ func (c *ModelCommand) executeWithArgs(ctx context.Context, name string) (*Resul
 	}
 
 	text := fmt.Sprintf(c.messages.ModelSwitched, name)
-	if wasAdvisorMode {
-		text += "\n" + c.messages.ModelAdvisorModeNotice
-	}
 
 	return &Result{
 		Text: text,

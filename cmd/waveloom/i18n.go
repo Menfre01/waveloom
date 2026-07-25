@@ -138,14 +138,13 @@ type Messages struct {
 	SetupStepProvider    string
 	SetupStepAPIKey      string
 	SetupStepModel       string
-	SetupStepTheme       string
-	SetupStepSubModel    string
 	SetupStepBaseURL     string
+	SetupStepTheme       string
 	SetupAPIKeyEmptyError string
 	SetupAPIKeyInvalidFmt string // 含 %v
 	SetupProviderOther   string
 	SetupBaseURLDesc     string
-	SetupSubModelDesc    string // 含 %s — 子代理模型推荐值
+
 	SetupDoneTitle       string
 	SetupDoneConfigSaved string
 	SetupDoneReady       string
@@ -156,7 +155,6 @@ type Messages struct {
 	SetupSummaryLanguage string
 	SetupSummaryProvider string
 	SetupSummaryModel    string
-	SetupSummarySubModel string
 	SetupSummaryBaseURL  string
 	SetupSummaryAPIKey   string
 	SetupConfirmSave     string
@@ -177,7 +175,6 @@ type Messages struct {
 	SlashModelConfigReadFailed string // 含 %v
 	SlashModelConfigSaveFailed string // 含 %v
 	SlashModelSwitched         string // 含 %s
-	SlashModelAdvisorModeNotice string
 	SlashThemeDescription      string
 	SlashLocaleDescription     string
 	SlashHelpDescription       string
@@ -371,12 +368,10 @@ var zhCN = Messages{
 	SetupStepProvider:    "Step %d/%d — 选择 Provider",
 	SetupStepAPIKey:      "Step %d/%d — API Key",
 	SetupStepModel:       "Step %d/%d — 模型名称",
-	SetupStepSubModel:    "Step %d/%d — 子代理模型",
 	SetupStepBaseURL:     "Step %d/%d — API 端点",
 	SetupStepTheme:       "Step %d/%d — 主题",
 	SetupProviderOther:   "Other (OpenAI-compatible)",
 	SetupBaseURLDesc:     "兼容 OpenAI API 的服务地址，如 http://localhost:11434/v1",
-	SetupSubModelDesc:    "%s (Recommended) — 子代理默认模型",
 	SetupAPIKeyEmptyError: "API Key 不能为空",
 	SetupAPIKeyInvalidFmt: "API Key 验证失败: %v",
 	SetupDoneTitle:       "设置完成！",
@@ -389,7 +384,6 @@ var zhCN = Messages{
 	SetupSummaryLanguage: "语言",
 	SetupSummaryProvider: "Provider",
 	SetupSummaryModel:    "模型",
-	SetupSummarySubModel: "子代理模型",
 
 	SetupStepContextLimit:    "Step %d/%d — 上下文窗口",
 	SetupContextLimitDesc:    "模型上下文窗口上限(token)。默认 1M 适配 DeepSeek V4,切换其他模型建议按实际情况调整,防止上下文溢出或过早压缩。",
@@ -403,14 +397,13 @@ var zhCN = Messages{
 	SlashNewDescription:        "创建全新 session",
 	SlashNewCreated:            "新 session 已创建。",
 	SlashNewFailed:             "创建新 session 失败: %v",
-	SlashModelDescription:      "显示或切换模型（不切换 normal/advisor 模式）",
+	SlashModelDescription:      "显示或切换模型",
 	SlashModelListFailed:       "无法获取模型列表: %v",
 	SlashModelListFailedNoNet:  "无法获取模型列表，请检查网络连接后重试。",
 	SlashModelUnknown:          "未知模型: %s。输入 /model 查看可用列表。",
 	SlashModelConfigReadFailed: "读取配置失败: %v",
 	SlashModelConfigSaveFailed: "保存配置失败: %v",
 	SlashModelSwitched:         "模型已切换为 %s。",
-	SlashModelAdvisorModeNotice: "注意：当前为 advisor 模式，切换模型不改变 normal/advisor 模式。如需切换模式请修改 settings.json 中的 mode 字段后重启。",
 	SlashThemeDescription:      "选择主题（Auto / Dark / Light / ColorBlind）",
 	SlashLocaleDescription:     "切换语言（zh-CN / en-US）",
 	SlashHelpDescription:       "显示所有可用命令",
@@ -668,12 +661,10 @@ var enUS = Messages{
 	SetupStepProvider:    "Step %d/%d — Select Provider",
 	SetupStepAPIKey:      "Step %d/%d — API Key",
 	SetupStepModel:       "Step %d/%d — Model Name",
-	SetupStepSubModel:    "Step %d/%d — Subagent Model",
 	SetupStepBaseURL:     "Step %d/%d — API Endpoint",
 	SetupStepTheme:       "Step %d/%d — Theme",
 	SetupProviderOther:   "Other (OpenAI-compatible)",
 	SetupBaseURLDesc:     "OpenAI-compatible API endpoint, e.g. http://localhost:11434/v1",
-	SetupSubModelDesc:    "%s (Recommended) — default model for subagents",
 	SetupAPIKeyEmptyError: "API Key cannot be empty",
 	SetupAPIKeyInvalidFmt: "API key validation failed: %v",
 	SetupDoneTitle:       "Setup Complete!",
@@ -690,7 +681,6 @@ var enUS = Messages{
 	SetupSummaryLanguage: "Language",
 	SetupSummaryProvider: "Provider",
 	SetupSummaryModel:    "Model",
-	SetupSummarySubModel: "Subagent Model",
 	SetupSummaryBaseURL:  "API Endpoint",
 	SetupSummaryAPIKey:   "API Key",
 	SetupConfirmSave:     "Save",
@@ -700,14 +690,13 @@ var enUS = Messages{
 	SlashNewDescription:        "Create new session",
 	SlashNewCreated:            "New session created.",
 	SlashNewFailed:             "Failed to create session: %v",
-	SlashModelDescription:      "Show or switch model (doesn't change normal/advisor mode)",
+	SlashModelDescription:      "Show or switch model",
 	SlashModelListFailed:       "Unable to fetch model list: %v",
 	SlashModelListFailedNoNet:  "Unable to fetch model list. Please check your network and retry.",
 	SlashModelUnknown:          "Unknown model: %s. Type /model to see available models.",
 	SlashModelConfigReadFailed: "Failed to read config: %v",
 	SlashModelConfigSaveFailed: "Failed to save config: %v",
 	SlashModelSwitched:         "Model switched to %s.",
-	SlashModelAdvisorModeNotice: "Note: you're in advisor mode — switching model won't change the normal/advisor mode. To toggle modes, edit the mode field in settings.json and restart.",
 	SlashThemeDescription:      "Select theme (Auto / Dark / Light / ColorBlind)",
 	SlashLocaleDescription:     "Switch language (zh-CN / en-US)",
 	SlashHelpDescription:       "Show all available commands",

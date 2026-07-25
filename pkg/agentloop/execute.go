@@ -728,35 +728,14 @@ func (l *Loop) buildToolMessages(
 			l.consecutiveSameError = 1
 		}
 
-		// 警告注入：连续失败达到阈值时，向 messages 末尾注入 system 提示，		// 引导 LLM 意识到重复错误并改变策略。
-		//
-		// 正常模式阶梯： count=3 警告 → count=5 警告 → count=8 终止
-		// Advisor mode 阶梯：count=3 警告 → count=4 警告 → count=5 终止
-		// (count=1 正常调用，count=2 试错不警告)
-		thresholds := warnThresholds
-		effectiveMax := maxConsecutiveSameError
-		if l.config.AdvisorMode {
-			thresholds = advisorWarnThresholds
-			effectiveMax = maxAdvisorConsecutiveSameError
-		}
-
-		if thresholds[l.consecutiveSameError] {
-			var warnContent string
-			if l.config.AdvisorMode {
-				verb := "consider spawning"
-				if l.consecutiveSameError == effectiveMax-1 {
-					verb = "you MUST spawn"
-				}
-				warnContent = fmt.Sprintf(
-					"[system] You have received %d consecutive %q errors on the %q tool. You are in advisor mode — %s advisor (type=\"advisor\") to get the primary model's analysis. Continuing with the same approach will cause the loop to terminate after %d consecutive failures.",
-					l.consecutiveSameError, firstRecoverableKind, firstRecoverableTool, verb, effectiveMax,
-				)
-			} else {
-				warnContent = fmt.Sprintf(
-					"[system] You have received %d consecutive %q errors on the %q tool. Reassess your approach — try a different tool, different parameters, or re-examine the task. Do not repeat the same call pattern. If the root cause remains unclear, consider delegating analysis to a subagent for a fresh perspective.",
-					l.consecutiveSameError, firstRecoverableKind, firstRecoverableTool,
-				)
-			}
+		// 警告注入:连续失败达到阈值时,向 messages 末尾注入 system 提示,		// 引导 LLM 意识到重复错误并改变策略。
+		// 阶梯:count=3 警告 → count=5 警告 → count=8 终止
+		// (count=1 正常调用,count=2 试错不警告)
+		if warnThresholds[l.consecutiveSameError] {
+			warnContent := fmt.Sprintf(
+				"[system] You have received %d consecutive %q errors on the %q tool. Reassess your approach — try a different tool, different parameters, or re-examine the task. Do not repeat the same call pattern. If the root cause remains unclear, consider delegating analysis to a subagent for a fresh perspective.",
+				l.consecutiveSameError, firstRecoverableKind, firstRecoverableTool,
+			)
 			warnMsg := llm.Message{
 				Role:    llm.RoleUser,
 				Content: warnContent,
@@ -765,7 +744,7 @@ func (l *Loop) buildToolMessages(
 			messages = append(messages, warnMsg)
 		}
 
-		if l.consecutiveSameError >= effectiveMax {
+		if l.consecutiveSameError >= maxConsecutiveSameError {
 			if fatalErr == nil {
 				fatalReason = ReasonToolFatal
 				fatalErr = fmt.Errorf(
@@ -1080,12 +1059,6 @@ Remember: DO NOT write or edit any source files — these operations will be blo
 	l.plan = true
 	l.planPairID = generatePairID()
 
-	// Advisor mode：进入 plan 时切到主模型（清空 Model override，回退到 Client 默认）
-	if l.config.AdvisorMode {
-		l.prePlanModel = l.config.Model
-		l.config.Model = ""
-	}
-
 	if l.config.Guard != nil {
 		l.config.Guard.EnterPlanMode(l.config.PlanFile)
 	}
@@ -1175,13 +1148,8 @@ func (l *Loop) executeExitPlanMode(ctx context.Context, tc llm.ToolCall, state *
 	// 审批通过：退出 plan 模式
 	l.plan = false
 	l.approvedPlan = planStr // 暂存，由 executeToolCalls 在 tool 消息后注入 [plan:end]
-	l.config.PlanFile = ""   // 清除，确保下次进入生成新文件
+	l.config.PlanFile = ""   // 清除,确保下次进入生成新文件
 
-	// Advisor mode：退出 plan 时恢复次模型
-	if l.config.AdvisorMode && l.prePlanModel != "" {
-		l.config.Model = l.prePlanModel
-		l.prePlanModel = ""
-	}
 
 	if l.config.Guard != nil {
 		l.config.Guard.ExitPlanMode()

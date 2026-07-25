@@ -20,7 +20,7 @@ import (
 // ---------------------------------------------------------------------------
 
 // ParentSystemPromptFromContext 从 ctx 提取父 Loop 注入的 system prompt。
-// 委托到 agentloop.ParentSystemPromptFromContext（key 定义在 agentloop/context.go）。
+// 委托到 agentloop.ParentSystemPromptFromContext(key 定义在 agentloop/context.go)。
 func ParentSystemPromptFromContext(ctx context.Context) string {
 	return agentloop.ParentSystemPromptFromContext(ctx)
 }
@@ -34,7 +34,7 @@ type AgentParams struct {
 	SubagentType string `json:"subagent_type,omitempty"` // 可选。省略 = fork 模式
 	Description  string `json:"description"`              // 简短描述
 	Prompt       string `json:"prompt"`                   // 委派任务
-	Model        string `json:"model,omitempty"`          // 可选模型覆盖，空/无效 = 继承主模型
+	Model        string `json:"model,omitempty"`          // 可选模型覆盖,空/无效 = 继承主模型
 }
 
 // SettingsProvider 抽象 settings.json 中 LLM 配置的读取。
@@ -42,13 +42,12 @@ type SettingsProvider interface {
 	LoadLLM() (*llm.LLMSettings, error)
 }
 
-// AgentTool 实现 tool.TypedTool[AgentParams]，将任务委派给子 agent 执行。
+// AgentTool 实现 tool.TypedTool[AgentParams],将任务委派给子 agent 执行。
 type AgentTool struct {
 	LLMClient       llm.Client
 	Settings        SettingsProvider
-	DefaultModel    string // 主模型名，advisor subagent 锁定使用（也用于 TUI suffix 显示）
-	DefaultSubModel string // Explore 等轻量 agent 的默认模型
-	WorkspaceDir    string // 工作目录，用于分类器路径检查
+	DefaultModel    string // 主模型名
+	WorkspaceDir    string // 工作目录,用于分类器路径检查
 
 	// subagent JSONL 持久化
 	sessionsDir string // session 目录路径
@@ -78,7 +77,7 @@ func (a *AgentTool) saveSubagentTranscript(agentID, agentType, description, mode
 		CompletionTokens: complTok,
 	})
 
-	// 转换 SubagentEvent → TranscriptEntry（CC 兼容格式，isSidechain:true）
+	// 转换 SubagentEvent → TranscriptEntry(CC 兼容格式,isSidechain:true)
 	messages := subagentEventsToMessages(events)
 	entries := session.MessagesToTranscriptEntries(messages, nil, a.sessionID, a.buildVer, "", "")
 	for i := range entries {
@@ -92,7 +91,7 @@ func (a *AgentTool) saveSubagentTranscript(agentID, agentType, description, mode
 }
 
 // subagentEventsToMessages 将 SubagentEvent 列表转换为 llm.Message 列表。
-// 连续的文本事件合并为一条 assistant 消息，tool_start+tool_result 配对为 assistant+tool 消息。
+// 连续的文本事件合并为一条 assistant 消息,tool_start+tool_result 配对为 assistant+tool 消息。
 func subagentEventsToMessages(events []SubagentEvent) []llm.Message {
 	if len(events) == 0 {
 		return nil
@@ -142,38 +141,20 @@ func subagentEventsToMessages(events []SubagentEvent) []llm.Message {
 func (a *AgentTool) Name() string              { return "agent" }
 func (a *AgentTool) ConcurrentSafe() bool      { return true }
 
-// ToolTimeout 返回 agent 工具的推荐超时（30 分钟）。
-// 子 agent 内部有多轮 LLM 调用 + 工具执行，需要比普通工具更充裕的时间。
+// ToolTimeout 返回 agent 工具的推荐超时(30 分钟)。
+// 子 agent 内部有多轮 LLM 调用 + 工具执行,需要比普通工具更充裕的时间。
 func (a *AgentTool) ToolTimeout() time.Duration { return 30 * time.Minute }
 
-// resolveModel 将 pro/flash 枚举映射到 settings 中的实际模型名。
-// "" 或 "pro" → 主模型；"flash" → 子模型；其他 → fallback DefaultModel。
+// resolveModel 将模型名映射到实际模型。所有子代理统一使用主模型。
 func (a *AgentTool) resolveModel(m string) string {
-	switch m {
-	case "flash":
-		if a.Settings != nil {
-			if s, err := a.Settings.LoadLLM(); err == nil && s.SubModel != "" {
-				return s.SubModel
-			}
-		}
-		if a.DefaultSubModel != "" {
-			return a.DefaultSubModel
-		}
-	case "pro", "":
-		if a.Settings != nil {
-			if s, err := a.Settings.LoadLLM(); err == nil && s.Model != "" {
-				return s.Model
-			}
+	if a.Settings != nil {
+		if s, err := a.Settings.LoadLLM(); err == nil && s.Model != "" {
+			return s.Model
 		}
 	}
 	return a.DefaultModel
 }
 
-// Description and Schema.subagent_type cross-reference "## Agent Tool" in the
-// system prompt (cmd/waveloom/tui.go:defaultSystemPrompt). If that section is
-// ever renamed, truncated by context limits, or omitted in a non-TUI entry
-// point, the LLM will lose agent-type guidance — both descriptions must be
-// updated in tandem.
 func (a *AgentTool) Description() string {
 	return "Launch a subagent to handle complex, multi-step tasks. See ## Agent Tool in the system prompt for agent types, when to fork vs cold, and prompt-writing guidance."
 }
@@ -184,7 +165,7 @@ func (a *AgentTool) Schema() json.RawMessage {
   "properties": {
     "subagent_type": {
       "type": "string",
-      "description": "Omit to fork (DEFAULT). Set to 'Explore', 'evaluate', 'verification', or 'advisor' for specialized agents. See ## Agent Tool in system prompt for details."
+      "description": "Omit to fork (DEFAULT). Set to 'Explore', 'evaluate', or 'verification' for specialized agents. See ## Agent Tool in system prompt for details."
     },
     "description": {
       "type": "string",
@@ -209,16 +190,16 @@ func (a *AgentTool) Schema() json.RawMessage {
 // ---------------------------------------------------------------------------
 
 const (
-	forkMaxTurns  = 50  // 并行任务极少需要 >10 turns；50 与 cold agent 对齐防成本失控
-	coldMaxTurns  = 50
-	exploreMaxTurns = 25 // 只读搜索任务通常更快完成
+	forkMaxTurns    = 50
+	coldMaxTurns    = 50
+	exploreMaxTurns = 25
 
-	// forkBoilerplateTag 是 fork 身份边界的 XML 标签，用于：
-	// 1. 告知 fork 子 agent 它是 fork 而非主 agent（身份识别）
-	// 2. 检测递归 fork（isInForkChild 通过扫描此标签判断）
+	// forkBoilerplateTag 是 fork 身份边界的 XML 标签,用于:
+	// 1. 告知 fork 子 agent 它是 fork 而非主 agent(身份识别)
+	// 2. 检测递归 fork(isInForkChild 通过扫描此标签判断)
 	forkBoilerplateTag = "fork-boilerplate"
-
 )
+
 // ---------------------------------------------------------------------------
 // agent system prompts
 // ---------------------------------------------------------------------------
@@ -332,61 +313,13 @@ OUTPUT RULES:
   Suggestions: <optional improvements, only if substantive>`
 }
 
-func advisorSystemPrompt() string {
-	return `You are a read-only analysis agent. You inherit the FULL conversation context from your parent — 
-you see the same message history, codebase, and tool results they saw.
-
-Your role is to explore the codebase, analyze trade-offs, and provide a recommendation — 
-NOT to implement changes. You MUST NOT write code or edit files.
-
-=== APPROACH ===
-1. Read key files to understand the problem space — what changed, what depends on it
-2. Identify constraints, dependencies, stakeholders, and invariants
-3. Enumerate viable approaches with explicit trade-offs (complexity, performance, safety, maintainability)
-4. Recommend the best option with rationale — state your assumptions and confidence level
-
-You see the full context — do not rediscover what the parent already knows.
-Focus on unresolved analysis, not restatement. If the answer is clear and well-documented,
-say so concisely rather than fabricating depth.
-
-You are READ-ONLY for the project directory. You CANNOT use write_file or edit_file.
-bash_subagent is for READ-ONLY operations: running tests, compiling, reading files,
-searching code, checking git history — anything that does not modify project files.
-NEVER use bash_subagent for: mkdir, touch, rm, cp, mv, chmod, chown, echo > (redirect),
-tee, sed -i, git add, git commit, npm install, pip install, or any filesystem modification
-inside the project directory.
-You MAY create ephemeral shell scripts in /tmp via bash_subagent when you need to
-validate a hypothesis (e.g., a quick Go snippet to test behavior). Clean up ONLY the specific files you created in /tmp when done. Do NOT delete directories or files you did not create.
-
-Distinguish between "this is wrong" (must fix) and "this could be improved" (nice to have).
-Do not recommend changes without evidence.
-
-=== OUTPUT RULES ===
-- Your final message MUST contain a non-empty analysis. Never end with a silent response.
-- Aim for under 300 words unless the analysis genuinely demands more detail.
-- Reference paths and line numbers — do not echo file contents verbatim.
-- No conversational filler, no "let me analyze", no meta-commentary.
-- Preferred format:
-  Scope: <one sentence>
-  Analysis: <key findings, trade-offs, constraints>
-  Recommendation: <preferred approach with rationale>
-  Alternatives: <other approaches considered, with pros/cons>
-  Assumptions: <explicit premises the analysis depends on>
-  Confidence: HIGH / MEDIUM / LOW with reason
-  Risks: <what could go wrong with the recommendation>
-  Key files: <paths, line ranges>`
-}
-
 // ---------------------------------------------------------------------------
-// Execute
-// ---------------------------------------------------------------------------
-
 // Execute
 // ---------------------------------------------------------------------------
 
 func (a *AgentTool) Execute(ctx context.Context, p AgentParams) (*tool.ToolResult, error) {
 	// Normalize subagent type: lowercase to tolerate LLM-generated casing
-	// (e.g. "Explore", "EVALUATE", "advisor" all map correctly).
+	// (e.g. "Explore", "EVALUATE" all map correctly).
 	p.SubagentType = strings.ToLower(strings.TrimSpace(p.SubagentType))
 
 	if p.SubagentType == "" {
@@ -407,10 +340,6 @@ func (a *AgentTool) Execute(ctx context.Context, p AgentParams) (*tool.ToolResul
 		}
 		return a.executeFork(ctx, p)
 	}
-	// advisor is a fork variant: hot-start, read-only tools, primary model
-	if p.SubagentType == "advisor" {
-		return a.executeFork(ctx, p)
-	}
 	return a.executeCold(ctx, p)
 }
 
@@ -421,10 +350,10 @@ func (a *AgentTool) Execute(ctx context.Context, p AgentParams) (*tool.ToolResul
 func (a *AgentTool) executeFork(ctx context.Context, p AgentParams) (*tool.ToolResult, error) {
 	cb := agentloop.EventCallbackFromContext(ctx)
 
-	// 模型安全兜底：空/"pro"→主模型，"flash"→子模型，其他→主模型
+	// 模型安全兜底:空/"pro"→主模型,"flash"→子模型,其他→主模型
 	model := a.resolveModel(p.Model)
 
-	// 从 context 获取父消息历史；buildForkMessages 会保留最后一条 assistant
+	// 从 context 获取父消息历史;buildForkMessages 会保留最后一条 assistant
 	// 并注入占位 tool_result 以保证缓存友好的 fork 构造。
 	parentRaw := agentloop.ParentMessagesFromContext(ctx)
 	messages := buildForkMessages(parentRaw, p.Description, p.Prompt)
@@ -432,16 +361,7 @@ func (a *AgentTool) executeFork(ctx context.Context, p AgentParams) (*tool.ToolR
 	subCtx, subCancel := context.WithCancel(ctx)
 	defer subCancel()
 
-	// Advisor specialization: read-only tools, primary model, advisor system prompt
 	registry := a.buildForkRegistry()
-	if p.SubagentType == "advisor" {
-		// 始终锁定主模型（不参与次模型降级，忽略 LLM 传入的 model 参数）
-		model = a.DefaultModel
-		// 替换为只读 registry
-		registry = buildColdRegistry(exploreDisallowed)
-		// 注入 advisor system prompt 到 fork 消息中
-		messages = injectAdvisorGuidance(messages)
-	}
 
 	subLoop := agentloop.New(a.LLMClient, registry, agentloop.Config{
 		MaxTurns:      forkMaxTurns,
@@ -457,9 +377,6 @@ func (a *AgentTool) executeFork(ctx context.Context, p AgentParams) (*tool.ToolR
 	toolCallID := agentloop.ToolCallIDFromContext(ctx)
 
 	agentType := "fork"
-	if p.SubagentType == "advisor" {
-		agentType = "advisor"
-	}
 
 	if cb != nil {
 		cb(SubagentStart{Prompt: p.Description, AgentType: agentType, InheritCtx: true, ToolCallID: toolCallID, Model: model})
@@ -485,8 +402,6 @@ func (a *AgentTool) executeFork(ctx context.Context, p AgentParams) (*tool.ToolR
 	// 持久化 subagent JSONL
 	a.saveSubagentTranscript(toolCallID, agentType, p.Description, model, totalTurns, promptTok, complTok, events)
 
-
-
 	return &tool.ToolResult{
 		Content: fmt.Sprintf("(fork subagent completed, %d turns, %d+%d tokens)\n\n%s%s", totalTurns, promptTok, complTok, lastTurnText, formatFindings(classified)),
 		Meta:    tool.ToolMeta{Duration: time.Since(startTime)},
@@ -500,14 +415,14 @@ func (a *AgentTool) executeFork(ctx context.Context, p AgentParams) (*tool.ToolR
 func (a *AgentTool) executeCold(ctx context.Context, p AgentParams) (*tool.ToolResult, error) {
 	cb := agentloop.EventCallbackFromContext(ctx)
 
-	// 模型锁定：每种子代理类型绑定固定模型，忽略 LLM 传入的 model 参数。
+	// 模型锁定:每种子代理类型绑定固定模型,忽略 LLM 传入的 model 参数。
 	// 防止 LLM 误传 model 导致审查/验证质量降级或搜索成本不必要升高。
 	switch p.SubagentType {
 	case "explore":
-		// Explore 始终锁定 flash 模型（快速搜索，忽略 LLM 传入的 model）
+		// Explore 始终锁定 flash 模型(快速搜索,忽略 LLM 传入的 model)
 		p.Model = "flash"
 	case "evaluate", "verification":
-		// 始终锁定主模型（推理质量优先）
+		// 始终锁定主模型(推理质量优先)
 		p.Model = "pro"
 	}
 	model := a.resolveModel(p.Model)
@@ -520,7 +435,7 @@ func (a *AgentTool) executeCold(ctx context.Context, p AgentParams) (*tool.ToolR
 	// listing unavailable tools wastes prompt tokens and misleads the LLM.
 	sp += formatSubagentEnvironment(ctx, subRegistry)
 
-	// 注入工具使用指南（ToolWithPrompt.Prompt() → C1）。
+	// 注入工具使用指南(ToolWithPrompt.Prompt() → C1)。
 	// 按需组装 — 仅已注册且实现了 ToolWithPrompt 的工具会贡献内容。
 	if toolPrompts := subRegistry.FormatToolPrompts(); toolPrompts != "" {
 		sp += "\n\n" + toolPrompts
@@ -580,7 +495,6 @@ func (a *AgentTool) executeCold(ctx context.Context, p AgentParams) (*tool.ToolR
 	// 持久化 subagent JSONL
 	a.saveSubagentTranscript(toolCallID, p.SubagentType, p.Description, model, totalTurns, promptTok, complTok, events)
 
-
 	return &tool.ToolResult{
 		Content: fmt.Sprintf("(subagent [%s] completed, %d turns, %d+%d tokens)\n\n%s%s", p.SubagentType, totalTurns, promptTok, complTok, lastTurnText, formatFindings(classified)),
 		Meta:    tool.ToolMeta{Duration: time.Since(startTime)},
@@ -635,7 +549,7 @@ var allAgentDisallowed = map[string]bool{
 	"exit_plan_mode":       true,
 	"ask_user_question":    true,
 	"kill_background_task": true,
-	// todo_create / todo_update 由父 agent loop 独占管理，子代理 TodoState 为 nil，
+	// todo_create / todo_update 由父 agent loop 独占管理,子代理 TodoState 为 nil,
 	// 其 Prompt 也因工具被禁止而不会注入子代理上下文。
 	"todo_create":          true,
 	"todo_update":          true,
@@ -647,7 +561,7 @@ var exploreDisallowed = map[string]bool{
 	"edit":       true,
 }
 
-// verificationDisallowed 与 exploreDisallowed 相同：审查 agent 只读项目文件，
+// verificationDisallowed 与 exploreDisallowed 相同:审查 agent 只读项目文件,
 // 但可通过 bash_subagent 在 /tmp 创建临时脚本。
 var verificationDisallowed = map[string]bool{
 	"write_file": true,
@@ -656,7 +570,7 @@ var verificationDisallowed = map[string]bool{
 	"edit":       true,
 }
 
-// evaluateDisallowed 与 explore/verification 相同：评估 agent 只读项目文件，
+// evaluateDisallowed 与 explore/verification 相同:评估 agent 只读项目文件,
 // 但可通过 bash_subagent 在 /tmp 创建临时脚本来测试行为。
 var evaluateDisallowed = map[string]bool{
 	"write_file": true,
@@ -673,8 +587,6 @@ func agentConfig(agentType string) (systemPrompt string, extraDisallowed map[str
 		return evaluateSystemPrompt(), evaluateDisallowed
 	case "verification":
 		return verificationSystemPrompt(), verificationDisallowed
-	case "advisor":
-		return advisorSystemPrompt(), exploreDisallowed
 	default:
 		// Unknown type: fall back to evaluate (safe default, read-only).
 		// This path is reachable if the schema adds a new type before the
@@ -686,15 +598,15 @@ func agentConfig(agentType string) (systemPrompt string, extraDisallowed map[str
 
 // formatSubagentEnvironment 为冷启动子 agent 构建精简的 ## Environment 节。
 //
-// 与父 agent 的完整工具列表不同，子 agent 只需要：
-//   - OS / Shell 信息（来自父 system prompt）
-//   - 自身 registry 中的工具列表（父 prompt 的工具列表对子 agent 无效且误导）
+// 与父 agent 的完整工具列表不同,子 agent 只需要:
+//   - OS / Shell 信息(来自父 system prompt)
+//   - 自身 registry 中的工具列表(父 prompt 的工具列表对子 agent 无效且误导)
 //
 // 这避免了向 Explore agent 列出 cargo、docker 等无法直接使用的工具。
 //
-// 依赖：解析父 prompt 的 "## Workspace" 和 "## Environment" 节。
-// 如果 defaultSystemPrompt 的格式变更，对应的轮询测试
-// TestSubagentEnvironment_RoundTrip（agent_test.go）必须同步更新。
+// 依赖:解析父 prompt 的 "## Workspace" 和 "## Environment" 节。
+// 如果 defaultSystemPrompt 的格式变更,对应的轮询测试
+// TestSubagentEnvironment_RoundTrip(agent_test.go)必须同步更新。
 func formatSubagentEnvironment(ctx context.Context, registry tool.Registry) string {
 	parentSP := agentloop.ParentSystemPromptFromContext(ctx)
 	if parentSP == "" {
@@ -713,8 +625,8 @@ func formatSubagentEnvironment(ctx context.Context, registry tool.Registry) stri
 		}
 	}
 
-	// 从父 system prompt 提取 Workspace（CWD）信息
-	// 先尝试精确匹配 "## Workspace"，再尝试松散匹配 "Workspace" 节
+	// 从父 system prompt 提取 Workspace(CWD)信息
+	// 先尝试精确匹配 "## Workspace",再尝试松散匹配 "Workspace" 节
 	wsStart := findSectionStart(parentSP, "## Workspace", "Workspace")
 	if wsStart >= 0 {
 		// 找下一个同级别节作为结束边界
@@ -742,12 +654,12 @@ func formatSubagentEnvironment(ctx context.Context, registry tool.Registry) stri
 	return b.String()
 }
 
-// findSectionStart 按优先级搜索节标题。主格式优先，辅助格式兜底。
+// findSectionStart 按优先级搜索节标题。主格式优先,辅助格式兜底。
 func findSectionStart(s string, primary, fallback string) int {
 	if idx := strings.Index(s, primary); idx >= 0 {
 		return idx
 	}
-	// 辅助格式：搜索所有包含 fallback 的行（不局限 ## {title}），
+	// 辅助格式:搜索所有包含 fallback 的行(不局限 ## {title}),
 	// 在 system prompt 结构稳定时兼顾灵活性。
 	for _, line := range strings.Split(s, "\n") {
 		trimmed := strings.TrimSpace(line)
@@ -758,8 +670,8 @@ func findSectionStart(s string, primary, fallback string) int {
 	return -1
 }
 
-// findNextSection 从 pos 向后找到下一个 markdown 节（## / ### 开头）。
-// 找不到时返回末尾，确保截取不越界。
+// findNextSection 从 pos 向后找到下一个 markdown 节(## / ### 开头)。
+// 找不到时返回末尾,确保截取不越界。
 func findNextSection(s string, pos int) int {
 	rest := s[pos+1:] // 跳过当前节本身
 	for _, line := range strings.Split(rest, "\n") {
@@ -771,7 +683,7 @@ func findNextSection(s string, pos int) int {
 	return len(s)
 }
 
-// truncateTo 截断字符串到 maxLen 字符，超出部分用 "..." 替代。
+// truncateTo 截断字符串到 maxLen 字符,超出部分用 "..." 替代。
 func truncateTo(s string, maxLen int) string {
 	if len(s) <= maxLen {
 		return s
@@ -796,16 +708,9 @@ func forwardEvents(ctx context.Context, subCh <-chan agentloop.TurnEvent, cb fun
 	var sb strings.Builder
 	var writeOps []writeOp
 	var currentTurn int
-	var lastToolCalls []string // 最后一个 turn 的工具调用名列表（用于空文本兜底）
+	var lastToolCalls []string // 最后一个 turn 的工具调用名列表(用于空文本兜底)
 
-	// 缓冲扇出通道：解耦 subagent 事件消费与 TUI 投递。
-	// 若不隔离，pushEvent → m.program.Send() 可能因 TUI 消息通道拥塞而阻塞，
-	// 进而阻塞 forwardEvents → 阻塞 subLoop goroutine → 级联死锁。
-	// 此 channel 由专用 goroutine 消费，保证事件投递顺序且不丢事件。
-	//
-	// Buffer 容量选取：subagent 事件总量受 MaxTurns（fork=200, cold=50）约束，
-	// 不存在无界增长风险。16384 ≈ 典型场景（20 turns × 500 tokens）的 ~1.6 倍余量，
-	// 在 100 events/s 流式速率下可吸收 ~164 秒的 TUI 拥塞，远超任何合理卡顿时长。
+	// 缓冲扇出通道:解耦 subagent 事件消费与 TUI 投递。
 	fanout := make(chan agentloop.TurnEvent, 16384)
 	fanoutDone := make(chan struct{})
 	go func() {
@@ -817,7 +722,7 @@ func forwardEvents(ctx context.Context, subCh <-chan agentloop.TurnEvent, cb fun
 		}
 	}()
 
-	// defer 在函数返回前关闭 fanout 并等待所有事件投递完成，
+	// defer 在函数返回前关闭 fanout 并等待所有事件投递完成,
 	// 确保 SubagentEnd 之前的全部 SubagentEvent 已被 TUI 消费。
 	defer func() {
 		close(fanout)
@@ -828,12 +733,12 @@ func forwardEvents(ctx context.Context, subCh <-chan agentloop.TurnEvent, cb fun
 		switch e := ev.(type) {
 		case agentloop.StreamDelta:
 			if e.Turn > currentTurn {
-				// 进入新 turn：只保留最后一个 turn 的文本，丢弃中间推理过程
+				// 进入新 turn:只保留最后一个 turn 的文本,丢弃中间推理过程
 				currentTurn = e.Turn
 				sb.Reset()
 				lastToolCalls = lastToolCalls[:0]
 			}
-			// Phase 2: 转发思考过程（dimmed 渲染）
+			// Phase 2: 转发思考过程(dimmed 渲染)
 			if e.ReasoningDelta != "" {
 				ev := SubagentEvent{ToolCallID: toolCallID, Kind: SubagentThought, TextDelta: e.ReasoningDelta}
 				fanout <- ev
@@ -881,8 +786,8 @@ func forwardEvents(ctx context.Context, subCh <-chan agentloop.TurnEvent, cb fun
 			if e.Err != nil {
 				finalErr = e.Err
 			}
-			// 兜底：子 agent 最后一个 turn 无文本输出时，
-			// 合成非空 fallback 防止 tool_result 内容为空，避免父 agent 因空结果而误解。
+			// 兜底:子 agent 最后一个 turn 无文本输出时,
+			// 合成非空 fallback 防止 tool_result 内容为空,避免父 agent 因空结果而误解。
 			ensureNonEmpty(&sb, lastToolCalls)
 			if len(writeOps) > 0 {
 				sb.WriteString("\n\n<subagent_write_operations>\n")
@@ -899,17 +804,13 @@ func forwardEvents(ctx context.Context, subCh <-chan agentloop.TurnEvent, cb fun
 			return sb.String(), totalTurns, promptTokens, completionTokens, cacheHitTokens, cacheMissTokens, events, finalErr
 		}
 	}
-	// Channel 关闭但未收到 LoopDone（跨包防御：当前 agentloop.Run 总是会发送 LoopDone，
-	// 但此处做兜底防止未来引入的不发送 LoopDone 的路径导致空文本传播）。
+	// Channel 关闭但未收到 LoopDone(跨包防御:当前 agentloop.Run 总是会发送 LoopDone,
+	// 但此处做兜底防止未来引入的不发送 LoopDone 的路径导致空文本传播)。
 	ensureNonEmpty(&sb, lastToolCalls)
 	return sb.String(), totalTurns, promptTokens, completionTokens, cacheHitTokens, cacheMissTokens, events, nil
 }
 
 // ensureNonEmpty 在 sb 为空时合成非空 fallback 文本。
-// 覆盖三种场景：
-//   - 全程无文本输出（!anyText 的情况由调用方保证，此处仅检查 sb）
-//   - 前序 turn 有文本但最后 turn 被重置为空，且无工具调用
-//   - 前序 turn 有文本但最后 turn 被重置为空，有工具调用
 func ensureNonEmpty(sb *strings.Builder, lastToolCalls []string) {
 	if sb.Len() > 0 {
 		return
@@ -996,15 +897,15 @@ func fmtBytes(n int) string {
 
 // buildForkMessages 从父消息构建 fork 子 agent 的消息历史。
 //
-// 策略：
-//  1. 从父消息中过滤掉所有 tool 角色消息（父级工具执行产物，fork 不需要），
-//     同时移除最后一条 assistant（它包含触发 fork 的 agent tool_call）。
+// 策略:
+//  1. 从父消息中过滤掉所有 tool 角色消息(父级工具执行产物,fork 不需要),
+//     同时移除最后一条 assistant(它包含触发 fork 的 agent tool_call)。
 //     两步共同防止 LLM 看到 agent 占位文本后输出 boilerplate。
-//  2. 追加一条 user 消息，包含 <fork-boilerplate> 身份注入 + 任务指令
+//  2. 追加一条 user 消息,包含 <fork-boilerplate> 身份注入 + 任务指令
 //
-// 结果：[...parent clean history, user(<fork-boilerplate> + task directive)]
+// 结果:[...parent clean history, user(<fork-boilerplate> + task directive)]
 //
-// 若父消息不存在则创建新的干净消息（兜底）。
+// 若父消息不存在则创建新的干净消息(兜底)。
 func buildForkMessages(parentRaw interface{}, description, prompt string) []llm.Message {
 	if parentRaw == nil {
 		return []llm.Message{
@@ -1019,8 +920,8 @@ func buildForkMessages(parentRaw interface{}, description, prompt string) []llm.
 			{Role: llm.RoleUser, Content: buildForkDirective(description, prompt)},
 		}
 	}
-	// 1. 过滤：移除所有 tool 消息（父级工具执行产物），fork 只需要 system/user/assistant
-	// 2. 截断到最后一个 user 消息（排除包含 agent tool_call 的最后 assistant）
+	// 1. 过滤:移除所有 tool 消息(父级工具执行产物),fork 只需要 system/user/assistant
+	// 2. 截断到最后一个 user 消息(排除包含 agent tool_call 的最后 assistant)
 	var filtered []llm.Message
 	lastUserFilteredIdx := -1
 	for _, m := range msgs {
@@ -1033,18 +934,18 @@ func buildForkMessages(parentRaw interface{}, description, prompt string) []llm.
 		}
 	}
 
-	// 截断到最后一个 user（排除其后可能存在的 assistant）
+	// 截断到最后一个 user(排除其后可能存在的 assistant)
 	if lastUserFilteredIdx >= 0 {
 		filtered = filtered[:lastUserFilteredIdx+1]
 	}
 
-	// 3. 清理 orphaned tool_calls：剥离 filter 后残留在 assistant 消息中的 ToolCalls
-	//    （这些 tool_calls 引用的 tool 消息已在步骤 1 中被移除，不剥离会导致 API 400 错误）
+	// 3. 清理 orphaned tool_calls:剥离 filter 后残留在 assistant 消息中的 ToolCalls
+	//    (这些 tool_calls 引用的 tool 消息已在步骤 1 中被移除,不剥离会导致 API 400 错误)
 	cleanFiltered := filtered[:0]
 	for _, m := range filtered {
 		if m.Role == llm.RoleAssistant && len(m.ToolCalls) > 0 {
 			if m.Content == "" {
-				// 纯 tool_calls assistant（无文本内容）→ 整条删除
+				// 纯 tool_calls assistant(无文本内容)→ 整条删除
 				continue
 			}
 			// 有文本内容 → 保留消息但清除 ToolCalls
@@ -1062,7 +963,7 @@ func buildForkMessages(parentRaw interface{}, description, prompt string) []llm.
 	return filtered
 }
 
-// findLastAssistant 返回消息列表中最后一条 assistant 消息的指针，nil 表示不存在。
+// findLastAssistant 返回消息列表中最后一条 assistant 消息的指针,nil 表示不存在。
 func findLastAssistant(msgs []llm.Message) *llm.Message {
 	for i := len(msgs) - 1; i >= 0; i-- {
 		if msgs[i].Role == llm.RoleAssistant {
@@ -1073,11 +974,6 @@ func findLastAssistant(msgs []llm.Message) *llm.Message {
 }
 
 // buildForkDirective 构造 fork 子 agent 的身份注入提示词。
-//
-// 设计要点：
-//   - <fork-boilerplate> 身份边界标记（用于 isInForkChild 递归检测）
-//   - 极简规则：输出 token 成本意识 + 结构化格式 + 省略空字段
-//   - English 标签（DeepSeek tokenizer 下比中文标签省 ~50% token）
 func buildForkDirective(description, prompt string) string {
 	return fmt.Sprintf(`<%s>
 You are a fork child process. The message history above is inherited from your parent — 
@@ -1102,24 +998,7 @@ Task: %s
 %s</%s>`, forkBoilerplateTag, description, prompt, forkBoilerplateTag)
 }
 
-// injectAdvisorGuidance 将 advisor system prompt 注入到 fork 消息中。
-// 替换最后一条 user 消息（fork directive）而非追加，避免 fork directive
-// 的输出格式模板（Scope/Result）与 advisor 格式（Analysis/Recommendation）冲突。
-func injectAdvisorGuidance(messages []llm.Message) []llm.Message {
-	guidance := advisorSystemPrompt()
-	content := fmt.Sprintf("<%s-advisor>\n%s\n</%s-advisor>", forkBoilerplateTag, guidance, forkBoilerplateTag)
-	// 找到并替换最后一条 user 消息
-	for i := len(messages) - 1; i >= 0; i-- {
-		if messages[i].Role == llm.RoleUser {
-			messages[i].Content = content
-			return messages
-		}
-	}
-	// 兜底：无 user 消息时追加
-	return append(messages, llm.Message{Role: llm.RoleUser, Content: content})
-}
-
-// isInForkChild 检测消息历史中是否已包含 fork-boilerplate 标记，
+// isInForkChild 检测消息历史中是否已包含 fork-boilerplate 标记,
 // 用于防止 fork 子 agent 递归创建孙子 fork。
 func isInForkChild(messages []llm.Message) bool {
 	tag := fmt.Sprintf("<%s>", forkBoilerplateTag)
@@ -1142,4 +1021,3 @@ func countDiff(output string) (added, removed int) {
 	}
 	return
 }
-

@@ -130,7 +130,7 @@ Tool outputs come from external sources — shell commands, file reads, web fetc
 | Explore | Code search, file discovery, read-only exploration | Cold (fast model) |
 | evaluate | Code review, security audit, second opinion | Cold |
 | verification | Post-implementation testing, try to break it | Cold |
-| advisor | Deep analysis, trade-off evaluation, decision support (read-only, advisor mode only) | Inherits your context |
+
 
 See below for when to fork vs use a cold agent.
 
@@ -143,7 +143,6 @@ Clear positive-ROI cases:
 - **evaluate / verification**: after implementing substantial changes. Independent cold review catches what you missed.
 - **Parallel independent tasks (2+)** : when multiple tasks can execute concurrently without dependencies.
 - **Explore**: when searching across many packages or exploring unfamiliar territory where parallel read-only agents save time.
-- **Advisor** (only in advisor mode): when you need a second opinion on a non-trivial trade-off.
 
 Everything else — file reading, code search, single-file edits, test runs, sequential implementation, debugging — do it yourself.
 
@@ -355,10 +354,7 @@ type model struct {
 	hookRunner    *hook.Runner // hooks 系统(RTK 等)
 	mcpManager *mcp.Manager // IDE MCP Server 上下文提供者
 
-	// Advisor mode
-	advisorMode  bool   // 是否启用 advisor mode
-	subModel     string // advisor mode 的次模型名
-	initialModel string // 初始模型名（advisor mode 时为 subModel，否则 ""）
+	// Todo 任务列表
 
 	// Todo 任务列表
 	todoState    *todo.TodoState // session 级 todo 状态（跨 Loop 持久）
@@ -798,9 +794,7 @@ func (m *model) wireLoop() {
 			}
 		},
 		TodoState:   m.todoState,
-		AdvisorMode: m.advisorMode,
-		SubModel:    m.subModel,
-		Model:       m.initialModel,
+		Model:       m.hudModel,
 	})
 	m.loop.SetHookRunner(m.hookRunner)
 }
@@ -4521,15 +4515,7 @@ func (m *model) reconfigureLLMClient(newModel string) {
 	}
 	m.llmClient = client
 
-	// 模型切换后重新判断 advisor mode 状态，避免 stale state
-	// 导致 plan mode 下模型切换逻辑不一致。
-	m.advisorMode = settings.IsAdvisorMode()
-	m.subModel = settings.SubModel
-	if m.advisorMode {
-		m.initialModel = settings.SubModel
-	} else {
-		m.initialModel = ""
-	}
+	m.rebuildSlashRegistry()
 
 	m.rebuildSlashRegistry()
 
@@ -4565,14 +4551,7 @@ func (m *model) reconfigureLLMClientForProvider(newProvider string, settings *ll
 	}
 	m.hudThinkingEffort = resolveThinkingEffort(settings)
 
-	// 重新判断 advisor mode 状态
-	m.advisorMode = settings.IsAdvisorMode()
-	m.subModel = settings.SubModel
-	if m.advisorMode {
-		m.initialModel = settings.SubModel
-	} else {
-		m.initialModel = ""
-	}
+
 
 
 	// 重置余额状态，避免旧 provider 的余额残留
@@ -4809,7 +4788,7 @@ func slashMessagesFrom(lc *Messages) *slashcommand.SlashMessages {
 		ModelConfigReadFailed:  lc.SlashModelConfigReadFailed,
 		ModelConfigSaveFailed:  lc.SlashModelConfigSaveFailed,
 		ModelSwitched:          lc.SlashModelSwitched,
-		ModelAdvisorModeNotice: lc.SlashModelAdvisorModeNotice,
+
 		ThemeDescription:       lc.SlashThemeDescription,
 		LocaleDescription:      lc.SlashLocaleDescription,
 		HelpDescription:        lc.SlashHelpDescription,
@@ -4867,16 +4846,11 @@ func newSlashRegistry(creator slashcommand.SessionCreator, store slashcommand.Se
 // ---------------------------------------------------------------------------
 
 // runTUI 启动交互式 TUI 模式。依赖由 main() 统一初始化后传入，无需重复创建。
-func runTUI(llmClient llm.Client, registry tool.Registry, guard permission.Guard, expander *reference.Expander, modelName string, theme string, contextLimit int, maxTurns int, toolTimeout time.Duration, toolTimeoutSource string, bypassPerm bool, ctxMgr *session.ContextManager, isResume bool, sessionDir string, globalPath string, projectPath string, agentsMdText string, loc Locale, todoState *todo.TodoState, advisorMode bool, subModel string, hookRunner *hook.Runner, agentTool *subagent.AgentTool, mcpManager *mcp.Manager) {
+func runTUI(llmClient llm.Client, registry tool.Registry, guard permission.Guard, expander *reference.Expander, modelName string, theme string, contextLimit int, maxTurns int, toolTimeout time.Duration, toolTimeoutSource string, bypassPerm bool, ctxMgr *session.ContextManager, isResume bool, sessionDir string, globalPath string, projectPath string, agentsMdText string, loc Locale, todoState *todo.TodoState, hookRunner *hook.Runner, agentTool *subagent.AgentTool, mcpManager *mcp.Manager) {
 	m := newTUIModel(llmClient, registry, guard, expander, modelName, theme, contextLimit, maxTurns, toolTimeout, toolTimeoutSource, loc, todoState, hookRunner)
 	m.mcpManager = mcpManager
 	m.sessionDir = sessionDir
 	m.agentsMdText = agentsMdText
-	m.advisorMode = advisorMode
-	m.subModel = subModel
-	if advisorMode {
-		m.initialModel = subModel
-	}
 
 	// 构造 slash command registry（TUI 侧依赖实现）
 	store := &tuiSettingsStore{projectPath: projectPath, globalPath: globalPath}

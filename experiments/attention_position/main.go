@@ -207,7 +207,7 @@ Manual steps before release:
 - Explore: Code search, file discovery, read-only. Cold (fast model).
 - evaluate: Code review, security audit, second opinion. Cold.
 - verification: Post-implementation testing. Cold.
-- advisor: Deep analysis, trade-off evaluation. Inherits context.
+
 
 ### When to fork (omit subagent_type)
 - Fork when intermediate output isn't worth keeping in context.

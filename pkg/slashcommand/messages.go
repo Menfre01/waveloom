@@ -16,7 +16,6 @@ type SlashMessages struct {
 	ModelConfigReadFailed string // 含 %v
 	ModelConfigSaveFailed string // 含 %v
 	ModelSwitched         string // 含 %s
-	ModelAdvisorModeNotice string
 
 	// ── /theme ──
 	ThemeDescription string

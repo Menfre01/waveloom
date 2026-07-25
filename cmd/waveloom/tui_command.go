@@ -695,8 +695,6 @@ func (m *model) commitModelSwitch(modelID string) {
 		settings = &llm.LLMSettings{}
 	}
 
-	wasAdvisorMode := settings.IsAdvisorMode()
-
 	settings.SetModel(modelID)
 	if err := m.settingsStore.SaveLLM(settings); err != nil {
 		slog.Warn("failed to save LLM settings", "err", err)
@@ -708,9 +706,6 @@ func (m *model) commitModelSwitch(modelID string) {
 	// 追加系统通知
 	lc := m.msg()
 	text := fmt.Sprintf(lc.SlashModelSwitched, modelID)
-	if wasAdvisorMode {
-		text += "\n" + lc.SlashModelAdvisorModeNotice
-	}
 	m.paras = append(m.paras, Paragraph{
 		Type:      paraSystem,
 		State:     stateDone,

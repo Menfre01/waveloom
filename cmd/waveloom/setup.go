@@ -22,16 +22,15 @@ import (
 // ---------------------------------------------------------------------------
 
 type setupState struct {
-	theme       string
-	locale      string
-	prov        string
-	model       string
-	subModel    string
-	baseURL     string
-	apiKey      string
-	apiKeyError string
-	configPath  string
-	lc          *Messages
+	theme        string
+	locale       string
+	prov         string
+	model        string
+	baseURL      string
+	apiKey       string
+	apiKeyError  string
+	configPath   string
+	lc           *Messages
 	contextLimit string // "200K" / "1M" 等
 }
 
@@ -56,12 +55,11 @@ func newSetupModel(loc Locale) *setupModel {
 	lc := messagesFor(loc)
 	return &setupModel{
 		state: &setupState{
-			theme:    "auto",
-			locale:   string(loc),
-			prov:     "deepseek",
-			model:    "deepseek-v4-pro",
-			subModel: "deepseek-v4-flash",
-			baseURL:  "https://api.deepseek.com",
+			theme:        "auto",
+			locale:       string(loc),
+			prov:         "deepseek",
+			model:        "deepseek-v4-pro",
+			baseURL:      "https://api.deepseek.com",
 			lc:           lc,
 			contextLimit: "1M",
 		},
@@ -105,7 +103,7 @@ func (m *setupModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 
-	// 终端 resize → 记录尺寸，如果变化超过阈值则重建 form
+	// 终端 resize → 记录尺寸,如果变化超过阈值则重建 form
 	if ws, ok := msg.(tea.WindowSizeMsg); ok {
 		prevW := m.width
 		m.width = ws.Width
@@ -169,7 +167,7 @@ func (m *setupModel) View() tea.View {
 		parts = append(parts, renderBannerLine(m.state.lc))
 	}
 
-	// Form（左缩进 4 列）
+	// Form(左缩进 4 列)
 	formView := lipgloss.NewStyle().PaddingLeft(4).Render(m.form.View())
 	parts = append(parts, formView)
 
@@ -189,7 +187,7 @@ func (m *setupModel) handleStepComplete() {
 	switch m.step {
 	case 0:
 		m.state.theme = m.form.GetString("theme")
-		// 立即应用主题，setup 自身配色跟随变化
+		// 立即应用主题,setup 自身配色跟随变化
 		switch m.state.theme {
 		case "light":
 			applyTheme(lightPalette)
@@ -218,15 +216,12 @@ func (m *setupModel) handleStepComplete() {
 		switch m.state.prov {
 		case "openai":
 			m.state.model = "gpt-4o"
-			m.state.subModel = "gpt-4o-mini"
 			m.state.baseURL = "https://api.openai.com/v1"
 		case "deepseek":
 			m.state.model = "deepseek-v4-pro"
-			m.state.subModel = "deepseek-v4-flash"
 			m.state.baseURL = "https://api.deepseek.com"
 		case "kimi":
 			m.state.model = "kimi-k3"
-			m.state.subModel = "kimi-k2.7-code-highspeed"
 			m.state.baseURL = "https://api.kimi.com/coding/v1"
 		}
 		m.step++
@@ -242,10 +237,6 @@ func (m *setupModel) handleStepComplete() {
 		model := m.form.GetString("model")
 		if model != "" {
 			m.state.model = model
-		}
-		subModel := m.form.GetString("subModel")
-		if subModel != "" {
-			m.state.subModel = subModel
 		}
 		baseURL := m.form.GetString("baseURL")
 		if baseURL != "" {
@@ -270,7 +261,7 @@ func (m *setupModel) handleStepComplete() {
 			// Back → 回到 Step 5
 			m.step = 5
 		}
-}
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -350,23 +341,17 @@ func (m *setupModel) buildForm() {
 	case 4:
 		defaultModel := m.state.model
 		modelVal := defaultModel
-		defaultSubModel := m.state.subModel
-		subModelVal := defaultSubModel
 		defaultBaseURL := m.state.baseURL
 		baseURLVal := defaultBaseURL
 		desc := ""
-		subDesc := ""
 		baseURLDesc := lc.SetupBaseURLDesc
 		switch m.state.prov {
 		case "deepseek":
 			desc = "deepseek-v4-pro (Recommended) / deepseek-v4-flash"
-			subDesc = fmt.Sprintf(lc.SetupSubModelDesc, "deepseek-v4-flash")
 		case "openai":
 			desc = "gpt-4o (Recommended) / gpt-4o-mini"
-			subDesc = fmt.Sprintf(lc.SetupSubModelDesc, "gpt-4o-mini")
 		case "kimi":
 			desc = "kimi-k3 (Recommended) / kimi-k2.7-code-highspeed"
-			subDesc = fmt.Sprintf(lc.SetupSubModelDesc, "kimi-k2.7-code-highspeed")
 		}
 		modelInp := huh.NewInput().
 			Key("model").
@@ -374,19 +359,13 @@ func (m *setupModel) buildForm() {
 			Description(desc).
 			Placeholder(defaultModel).
 			Value(&modelVal)
-		subInp := huh.NewInput().
-			Key("subModel").
-			Title(fmt.Sprintf(lc.SetupStepSubModel, 5, totalSteps)).
-			Description(subDesc).
-			Placeholder(defaultSubModel).
-			Value(&subModelVal)
 		baseURLInp := huh.NewInput().
 			Key("baseURL").
 			Title(fmt.Sprintf(lc.SetupStepBaseURL, 5, totalSteps)).
 			Description(baseURLDesc).
 			Placeholder(defaultBaseURL).
 			Value(&baseURLVal)
-		m.form = huh.NewForm(huh.NewGroup(modelInp, subInp, baseURLInp)).
+		m.form = huh.NewForm(huh.NewGroup(modelInp, baseURLInp)).
 			WithTheme(theme).WithWidth(formWidth).WithShowHelp(false)
 
 	case 5:
@@ -477,7 +456,6 @@ func renderSummary(s *setupState) string {
 		fmt.Sprintf("%s:  %s", lc.SetupSummaryLanguage, s.locale),
 		fmt.Sprintf("%s:  %s", lc.SetupSummaryProvider, s.prov),
 		fmt.Sprintf("%s:  %s", lc.SetupSummaryModel, s.model),
-		fmt.Sprintf("%s:  %s", lc.SetupSummarySubModel, s.subModel),
 		fmt.Sprintf("%s:  %s", lc.SetupSummaryBaseURL, s.baseURL),
 		fmt.Sprintf("%s:  %s", lc.SetupSummaryContextLimit, s.contextLimit),
 		fmt.Sprintf("%s:  %s", lc.SetupSummaryAPIKey, maskKey(s.apiKey)),
@@ -486,6 +464,7 @@ func renderSummary(s *setupState) string {
 }
 
 // ---------------------------------------------------------------------------
+// 保存
 // ---------------------------------------------------------------------------
 
 func (m *setupModel) buildExtraParams() map[string]any {
@@ -512,7 +491,7 @@ func (m *setupModel) saveAndFinish() {
 	m.state.configPath = configPath
 	_ = os.MkdirAll(filepath.Dir(configPath), 0o755)
 
-	// 加载已有配置（如果存在，保留其他 profile）
+	// 加载已有配置(如果存在,保留其他 profile)
 	existing, _ := llm.LoadSettingsIfExists(configPath)
 	if existing == nil {
 		existing = &llm.LLMSettings{Timeout: "600s"}
@@ -525,7 +504,6 @@ func (m *setupModel) saveAndFinish() {
 	existing.Profiles[m.state.prov] = &llm.LLMSettings{
 		APIKey:      m.state.apiKey,
 		Model:       m.state.model,
-		SubModel:    m.state.subModel,
 		BaseURL:     m.state.baseURL,
 		ExtraParams: m.buildExtraParams(),
 	}
@@ -583,7 +561,6 @@ func runSetup(loc Locale) {
 	fmt.Printf("  %s: %s\n", lc.SetupSummaryTheme, m.state.theme)
 	fmt.Printf("  %s: %s\n", lc.SetupSummaryProvider, m.state.prov)
 	fmt.Printf("  %s: %s\n", lc.SetupSummaryModel, m.state.model)
-	fmt.Printf("  %s: %s\n", lc.SetupSummarySubModel, m.state.subModel)
 	fmt.Printf("  %s: %s\n", lc.SetupSummaryBaseURL, m.state.baseURL)
 	fmt.Printf("  %s: %s\n", lc.SetupSummaryContextLimit, m.state.contextLimit)
 	fmt.Printf("\n  %s\n\n", lc.SetupDoneReady)
@@ -652,7 +629,7 @@ func needsSetup() bool {
 }
 
 // validateAPIKey 向 Provider 发送轻量请求验证 API Key 是否有效。
-// 成功返回 nil，失败返回具体错误信息。
+// 成功返回 nil,失败返回具体错误信息。
 func validateAPIKey(provider, apiKey, baseURL string) error {
 	cfg := llm.ClientConfig{
 		Provider: llm.ProviderType(provider),

@@ -495,7 +495,7 @@ func TestForwardEvents_EmptyStream(t *testing.T) {
 	if err != nil {
 		t.Fatalf("forwardEvents error: %v", err)
 	}
-	// 空流（无任何文本输出）应返回兜底文本，而非空字符串，
+	// 空流(无任何文本输出)应返回兜底文本,而非空字符串,
 	// 防止 tool_result 内容为空导致父 agent 误解。
 	if aggregated == "" {
 		t.Errorf("aggregated is empty, want non-empty fallback")
@@ -605,7 +605,7 @@ func TestForwardEvents_ChannelCloseWithoutLoopDone(t *testing.T) {
 	}
 }
 
-// REGRESSION: forwardEvents 只返回最后一个 turn 的文本，丢弃中间推理过程，
+// REGRESSION: forwardEvents 只返回最后一个 turn 的文本,丢弃中间推理过程,
 // 节省主 agent 的 token 消耗。
 func TestRegression_ForwardEvents_OnlyLastTurnText(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
@@ -613,12 +613,12 @@ func TestRegression_ForwardEvents_OnlyLastTurnText(t *testing.T) {
 
 	ch := make(chan agentloop.TurnEvent, 10)
 	go func() {
-		// Turn 1（中间推理，应被丢弃）
+		// Turn 1(中间推理,应被丢弃)
 		ch <- agentloop.StreamDelta{Turn: 1, ContentDelta: "turn 1 thinking..."}
 		ch <- agentloop.StreamDelta{Turn: 1, ContentDelta: " more turn 1"}
 		ch <- agentloop.ToolCallStart{Turn: 1, ToolCallName: "read", Arguments: `{"file_path":"a.go"}`}
 		ch <- agentloop.ToolCallResult{Turn: 1, ToolCallName: "read", Result: "content", DurationMs: 10}
-		// Turn 2（最终结论，应保留）
+		// Turn 2(最终结论,应保留)
 		ch <- agentloop.StreamDelta{Turn: 2, ContentDelta: "conclusion"}
 		ch <- agentloop.StreamDelta{Turn: 2, ContentDelta: " finalized"}
 		ch <- agentloop.LoopDone{Turn: 2}
@@ -658,14 +658,14 @@ func TestAgentTool_ExecuteFork_WorksWithoutParentMessages(t *testing.T) {
 }
 
 func TestBuildForkMessages(t *testing.T) {
-	// fork 仅继承到最后一个 user 消息（不含 assistant），然后追加 fork directive
+	// fork 仅继承到最后一个 user 消息(不含 assistant),然后追加 fork directive
 	msgs := []llm.Message{
 		{Role: llm.RoleSystem, Content: "sys"},
 		{Role: llm.RoleUser, Content: "hello"},
 		{Role: llm.RoleAssistant, Content: "hi there"},
 	}
 	result := buildForkMessages(msgs, "test", "do it")
-	// sys + user + fork directive = 3（assistant 被排除）
+	// sys + user + fork directive = 3(assistant 被排除)
 	if len(result) != 3 {
 		t.Fatalf("expected 3 messages (assistant excluded), got %d", len(result))
 	}
@@ -687,7 +687,7 @@ func TestBuildForkMessages(t *testing.T) {
 }
 
 func TestBuildForkMessages_NoAssistantInContext(t *testing.T) {
-	// 最后一条 assistant 含 tool_calls → fork 不应看到（避免 agent 占位符混淆）
+	// 最后一条 assistant 含 tool_calls → fork 不应看到(避免 agent 占位符混淆)
 	msgs := []llm.Message{
 		{Role: llm.RoleSystem, Content: "sys"},
 		{Role: llm.RoleUser, Content: "hello"},
@@ -697,7 +697,7 @@ func TestBuildForkMessages_NoAssistantInContext(t *testing.T) {
 		}},
 	}
 	result := buildForkMessages(msgs, "fork-desc", "do something")
-	// sys + user + fork directive = 3（assistant + tool_calls 全部排除）
+	// sys + user + fork directive = 3(assistant + tool_calls 全部排除)
 	if len(result) != 3 {
 		t.Fatalf("expected 3 messages, got %d", len(result))
 	}
@@ -723,7 +723,7 @@ func TestBuildForkMessages_AgentToolCallPreserved(t *testing.T) {
 		{Role: llm.RoleTool, Content: "file list", ToolCallID: "call_2"},
 	}
 	result := buildForkMessages(msgs, "fork-desc", "do something")
-	// sys + user + user(fork directive) = 3（assistant + tool_calls 全部排除）
+	// sys + user + user(fork directive) = 3(assistant + tool_calls 全部排除)
 	if len(result) != 3 {
 		t.Fatalf("expected 3 messages, got %d", len(result))
 	}
@@ -819,7 +819,7 @@ func TestFindLastAssistant_None(t *testing.T) {
 func TestExecute_RecursiveForkGuard(t *testing.T) {
 	// fork 子 agent 尝试再次 fork → 返回 recoverable 错误
 	ctx := context.Background()
-	// 构造包含 fork-boilerplate 的父消息历史（模拟已在 fork 中的场景）
+	// 构造包含 fork-boilerplate 的父消息历史(模拟已在 fork 中的场景)
 	msgs := []llm.Message{
 		{Role: llm.RoleSystem, Content: "sys"},
 		{Role: llm.RoleUser, Content: "<fork-boilerplate>\nYou are a fork child process...\n</fork-boilerplate>\n\nTask: original fork"},
@@ -849,7 +849,7 @@ func TestExecute_RecursiveForkGuard(t *testing.T) {
 }
 
 func TestExecute_RecursiveForkGuard_NonForkParent(t *testing.T) {
-	// 正常父 agent（无 fork-boilerplate）可以自由 fork
+	// 正常父 agent(无 fork-boilerplate)可以自由 fork
 	ctx := context.Background()
 	msgs := []llm.Message{
 		{Role: llm.RoleSystem, Content: "sys"},
@@ -1177,25 +1177,24 @@ func BenchmarkForwardEvents(b *testing.B) {
 
 
 // ---------------------------------------------------------------------------
-// Model resolution tests (pro/flash enum -> settings-based mapping)
+// Model resolution tests (pro/flash enum -> Default{Sub}Model on AgentTool)
 // ---------------------------------------------------------------------------
 
 type mockSettingsProvider struct {
-	model    string
-	subModel string
-	err      error
+	model string
+	err   error
 }
 
 func (m *mockSettingsProvider) LoadLLM() (*llm.LLMSettings, error) {
 	if m.err != nil {
 		return nil, m.err
 	}
-	return &llm.LLMSettings{Model: m.model, SubModel: m.subModel}, nil
+	return &llm.LLMSettings{Model: m.model}, nil
 }
 
 func TestResolveModel_Pro(t *testing.T) {
 	a := &AgentTool{
-		Settings:     &mockSettingsProvider{model: "gpt-4o", subModel: "gpt-4o-mini"},
+		Settings:     &mockSettingsProvider{model: "gpt-4o"},
 		DefaultModel: "gpt-4o",
 	}
 	if got := a.resolveModel("pro"); got != "gpt-4o" {
@@ -1203,47 +1202,29 @@ func TestResolveModel_Pro(t *testing.T) {
 	}
 }
 
-func TestResolveModel_Flash(t *testing.T) {
+func TestResolveModel_FlashFallsBackToDefault(t *testing.T) {
+	// DefaultSubModel removed — flash now uses DefaultModel.
 	a := &AgentTool{
-		Settings:     &mockSettingsProvider{model: "gpt-4o", subModel: "gpt-4o-mini"},
 		DefaultModel: "gpt-4o",
 	}
-	if got := a.resolveModel("flash"); got != "gpt-4o-mini" {
-		t.Errorf("resolveModel('flash') = %q, want 'gpt-4o-mini'", got)
+	if got := a.resolveModel("flash"); got != "gpt-4o" {
+		t.Errorf("resolveModel('flash') = %q, want 'gpt-4o' (fallback to DefaultModel)", got)
+	}
+	if got := a.resolveModel("pro"); got != "gpt-4o" {
+		t.Errorf("resolveModel('pro') = %q, want 'gpt-4o'", got)
 	}
 }
 
-func TestResolveModel_Empty(t *testing.T) {
+func TestResolveModel_FallbackToDefaultModel(t *testing.T) {
 	a := &AgentTool{
-		Settings:     &mockSettingsProvider{model: "gpt-4o", subModel: "gpt-4o-mini"},
-		DefaultModel: "gpt-4o",
-	}
-	if got := a.resolveModel(""); got != "gpt-4o" {
-		t.Errorf("resolveModel('') = %q, want 'gpt-4o' (pro default)", got)
-	}
-}
-
-func TestResolveModel_Unknown(t *testing.T) {
-	a := &AgentTool{
-		Settings:     &mockSettingsProvider{model: "gpt-4o", subModel: "gpt-4o-mini"},
-		DefaultModel: "gpt-4o",
-	}
-	if got := a.resolveModel("garbage"); got != "gpt-4o" {
-		t.Errorf("resolveModel(unknown) = %q, want 'gpt-4o' (fallback)", got)
-	}
-}
-
-func TestResolveModel_NilSettings(t *testing.T) {
-	a := &AgentTool{
-		Settings:        nil,
-		DefaultModel:    "fallback-pro",
-		DefaultSubModel: "fallback-flash",
+		Settings:     nil,
+		DefaultModel: "fallback-pro",
 	}
 	if got := a.resolveModel("pro"); got != "fallback-pro" {
 		t.Errorf("resolveModel('pro') with nil settings = %q, want 'fallback-pro'", got)
 	}
-	if got := a.resolveModel("flash"); got != "fallback-flash" {
-		t.Errorf("resolveModel('flash') with nil settings = %q, want 'fallback-flash'", got)
+	if got := a.resolveModel("flash"); got != "fallback-pro" {
+		t.Errorf("resolveModel('flash') = %q, want 'fallback-pro' (uses DefaultModel)", got)
 	}
 }
 
@@ -1254,166 +1235,5 @@ func TestResolveModel_SettingsError(t *testing.T) {
 	}
 	if got := a.resolveModel("pro"); got != "fallback-pro" {
 		t.Errorf("resolveModel('pro') on error = %q, want 'fallback-pro'", got)
-	}
-}
-
-
-// ---------------------------------------------------------------------------
-// Advisor mode tests
-// ---------------------------------------------------------------------------
-
-func TestAdvisorMode_ExploreAutoFlash(t *testing.T) {
-	ctx := context.Background()
-	a := &AgentTool{
-		LLMClient:       &stubLLM{},
-		DefaultSubModel: "sub-model",
-	}
-
-	var capturedModel string
-	cb := func(ev agentloop.TurnEvent) {
-		if start, ok := ev.(SubagentStart); ok {
-			capturedModel = start.Model
-		}
-	}
-	ctx = agentloop.WithEventCallback(ctx, cb)
-	ctx = agentloop.WithToolCallID(ctx, "call-explore-auto")
-
-	result, err := a.Execute(ctx, AgentParams{
-		SubagentType: "Explore",
-		Description:  "auto flash test",
-		Prompt:       "find something",
-	})
-	if err != nil {
-		t.Fatalf("Execute() error: %v", err)
-	}
-	if !strings.Contains(result.Content, "explore") {
-		t.Errorf("result should mention agent type: %s", result.Content)
-	}
-	if capturedModel != "sub-model" {
-		t.Errorf("SubagentStart.Model = %q, want %q (Explore auto uses DefaultSubModel)", capturedModel, "sub-model")
-	}
-}
-
-func TestAdvisorMode_EvaluateStaysPro(t *testing.T) {
-	ctx := context.Background()
-	a := &AgentTool{
-		LLMClient:       &stubLLM{},
-		DefaultSubModel: "flash",
-	}
-
-	var capturedModel string
-	cb := func(ev agentloop.TurnEvent) {
-		if start, ok := ev.(SubagentStart); ok {
-			capturedModel = start.Model
-		}
-	}
-	ctx = agentloop.WithEventCallback(ctx, cb)
-	ctx = agentloop.WithToolCallID(ctx, "call-evaluate-pro")
-
-	result, err := a.Execute(ctx, AgentParams{
-		SubagentType: "evaluate",
-		Description:  "stay pro test",
-		Prompt:       "review something",
-	})
-	if err != nil {
-		t.Fatalf("Execute() error: %v", err)
-	}
-	if !strings.Contains(result.Content, "evaluate") {
-		t.Errorf("result should mention agent type: %s", result.Content)
-	}
-	if capturedModel != "" {
-		t.Errorf("SubagentStart.Model = %q, want empty (evaluate should not downgrade)", capturedModel)
-	}
-}
-
-func TestAdvisorMode_ColdAgentExplicitModel(t *testing.T) {
-	// REGRESSION: 冷代理模型锁定后，LLM 传入的 model 参数被忽略。
-	// evaluate 始终锁定 DefaultModel，缺少时为空（走 client 默认）。
-	ctx := context.Background()
-	a := &AgentTool{LLMClient: &stubLLM{}}
-
-	var capturedModel string
-	cb := func(ev agentloop.TurnEvent) {
-		if start, ok := ev.(SubagentStart); ok {
-			capturedModel = start.Model
-		}
-	}
-	ctx = agentloop.WithEventCallback(ctx, cb)
-	ctx = agentloop.WithToolCallID(ctx, "call-cold-explicit")
-
-	result, err := a.Execute(ctx, AgentParams{
-		SubagentType: "evaluate",
-		Description:  "explicit model test",
-		Prompt:       "review something",
-		Model:        "custom-model",
-	})
-	if err != nil {
-		t.Fatalf("Execute() error: %v", err)
-	}
-	// evaluate locks to DefaultModel ("" when unset), ignoring LLM's explicit model
-	if capturedModel != "" {
-		t.Errorf("SubagentStart.Model = %q, want %q (evaluate locks to DefaultModel, ignores explicit)", capturedModel, "")
-	}
-	_ = result
-}
-
-func TestAdvisorMode_AdvisorSubagent_UsesPrimaryModel(t *testing.T) {
-	ctx := context.Background()
-	msgs := []llm.Message{
-		{Role: llm.RoleSystem, Content: "sys"},
-		{Role: llm.RoleUser, Content: "hello"},
-	}
-	ctx = agentloop.WithParentMessages(ctx, msgs)
-
-	var capturedModel string
-	cb := func(ev agentloop.TurnEvent) {
-		if start, ok := ev.(SubagentStart); ok {
-			capturedModel = start.Model
-		}
-	}
-	ctx = agentloop.WithEventCallback(ctx, cb)
-	ctx = agentloop.WithToolCallID(ctx, "call-advisor-model")
-
-	a := &AgentTool{
-		LLMClient:       &stubLLM{},
-		DefaultModel:    "deepseek-v4-pro",
-		DefaultSubModel: "flash",
-	}
-
-	result, err := a.Execute(ctx, AgentParams{
-		SubagentType: "advisor",
-		Description:  "advisor test",
-		Prompt:       "analyze something",
-	})
-	if err != nil {
-		t.Fatalf("Execute() error: %v", err)
-	}
-	// Advisor routes to executeFork → fork format, not cold format
-	if !strings.Contains(result.Content, "fork subagent completed") {
-		t.Errorf("advisor should produce fork-style result, got: %s", result.Content)
-	}
-	if strings.Contains(result.Content, "subagent [advisor]") {
-		t.Errorf("advisor should NOT produce cold-style result: %s", result.Content)
-	}
-	// Advisor must lock to DefaultModel regardless of AgentParams.Model
-	if capturedModel != "deepseek-v4-pro" {
-		t.Errorf("SubagentStart.Model = %q, want %q (advisor always locks to DefaultModel)", capturedModel, "deepseek-v4-pro")
-	}
-}
-
-func TestAdvisorMode_AdvisorSubagent_ReadOnly(t *testing.T) {
-	// Advisor uses buildColdRegistry(exploreDisallowed) — same as Explore
-	// The advisor path in executeFork replaces the fork registry with this
-	r := buildColdRegistry(exploreDisallowed)
-	names := toolNames(r)
-	for _, name := range []string{"write", "edit"} {
-		if contains(names, name) {
-			t.Errorf("advisor registry should NOT have %q", name)
-		}
-	}
-	for _, name := range []string{"read", "web_fetch", "bash_subagent"} {
-		if !contains(names, name) {
-			t.Errorf("advisor registry missing %q", name)
-		}
 	}
 }

@@ -72,16 +72,7 @@ type Config struct {
 
 	// Model 覆盖 LLM Client 的默认 model。空 = 使用 Client 默认。
 	// 用于 subagent 按任务复杂度选择不同模型。
-	// Advisor mode 下：默认 = SubModel（次模型），plan mode 内临时清空（主模型）。
 	Model string
-
-	// AdvisorMode 启用时，Loop 在 plan mode 进入/退出时自动切换 Model。
-	// 默认 false（向后兼容）。
-	AdvisorMode bool
-
-	// SubModel advisor mode 下的默认模型名（即配置中的 sub_model）。
-	// 取值为 llmSettings.SubModel。AdvisorMode=false 时忽略。
-	SubModel string
 }
 
 // DefaultToolTimeout 是单个工具执行的推荐超时时间（5 分钟）。
@@ -118,18 +109,10 @@ type LoopState struct {
 // 阈值设为 8 轮：其中第 3、第 5 轮会注入提醒消息引导 LLM 改变策略，// 8 轮后仍未改变则判定为死循环强制终止。
 const maxConsecutiveSameError = 8
 
-// maxAdvisorConsecutiveSameError 是 advisor mode 下的容忍上限。
-// 阈值降至 5 轮：flash 模型不应有 8 次试错机会。
-// 阶梯：count=1 正常调用 → count=2 试错 → count=3 警告 → count=4 警告 → count=5 终止
-const maxAdvisorConsecutiveSameError = 5
-
-// warnThresholds 定义正常模式下需要注入提醒消息的连续失败轮次。
-// 阶梯：3 → 5 → 8(终止)
+// warnThresholds 定义需要注入提醒消息的连续失败轮次。
+// 阶梯:3 → 5 → 8(终止)
 var warnThresholds = map[int]bool{3: true, 5: true}
 
-// advisorWarnThresholds 定义 advisor mode 下的警告轮次。
-// 阶梯：3(警告) → 4(警告) → 5(终止)，count=1,2 为正常调用和试错阶段不警告
-var advisorWarnThresholds = map[int]bool{3: true, 4: true}
 
 // todoReminderInterval 定义 todo 周期性提醒的间隔（assistant turn 数）。
 // 首次提醒在 idleTodoWrite（距上次 todo_update 达到此值）时触发，// 后续提醒至少间隔 idleTodoReminder 轮。
@@ -181,8 +164,6 @@ type Loop struct {
 	planPairID  string // START/END 配对 ID（4 位 hex，如 "a3f7"）
 	approvedPlan string // 审批通过的 plan 内容（用于 executeToolCalls 在 tool 消息后注入 [plan:end]）
 
-	// prePlanModel advisor mode 下进入 plan 前的 Model 值，退出时恢复。
-	prePlanModel string
 
 	// ── 退避追踪（会话级，跨 Run() 持久化）──
 
@@ -248,12 +229,6 @@ func (l *Loop) SetPlanMode(planFile string) (planPairID string, startMessage llm
 	l.planPairID = generatePairID()
 	l.config.PlanFile = planFile
 
-	// Advisor mode：进入 plan 时切到主模型（仅在尚未进入 plan 时切换，避免重复）
-	if l.config.AdvisorMode && l.prePlanModel == "" {
-		l.prePlanModel = l.config.Model
-		l.config.Model = ""
-	}
-
 	if l.config.Guard != nil {
 		l.config.Guard.EnterPlanMode(planFile)
 	}
@@ -276,12 +251,6 @@ func (l *Loop) ResetPlanMode() {
 	l.planPairID = ""
 	l.config.PlanFile = ""
 	l.approvedPlan = ""
-
-	// Advisor mode：退出 plan 时恢复次模型
-	if l.config.AdvisorMode && l.prePlanModel != "" {
-		l.config.Model = l.prePlanModel
-		l.prePlanModel = ""
-	}
 }
 
 // Run 执行主循环，逐轮推送 TurnEvent 到返回的 channel。
