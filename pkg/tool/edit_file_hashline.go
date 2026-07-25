@@ -32,6 +32,8 @@ func (t *EditFileHashline) Description() string {
 }
 
 
+// Prompt 返回 hashline 使用指南，由 Registry.FormatToolPrompts() 注入 system prompt。
+func (t *EditFileHashline) Prompt() string { return editHashlinePrompt }
 
 var editFileHashlineSchema = json.RawMessage(`{
   "type": "object",
