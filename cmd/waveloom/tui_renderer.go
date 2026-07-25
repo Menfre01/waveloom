@@ -1585,13 +1585,12 @@ func renderToolPara(sb *strings.Builder, p *Paragraph, ctx ViewportCtx) {
 
 	// tool 名颜色:执行中灰色,成功绿色,recoverable 错误金色,fatal 错误红色
 	toolNameStyle := styleToolPrefixPending
-	if toolState == stateError {
-		if p.ToolFatal {
-			toolNameStyle = styleToolPrefixErr
-		} else {
-			toolNameStyle = styleToolPrefixWarn
-		}
-	} else if toolState == stateDone || toolState == stateExpanded || toolState == stateCollapsed {
+	switch {
+	case toolState == stateError && p.ToolFatal:
+		toolNameStyle = styleToolPrefixErr
+	case toolState == stateError:
+		toolNameStyle = styleToolPrefixWarn
+	case toolState == stateDone || toolState == stateExpanded || toolState == stateCollapsed:
 		toolNameStyle = styleToolPrefixDone
 	}
 
@@ -2297,13 +2296,12 @@ func renderSubagentPara(sb *strings.Builder, p *Paragraph, ctx ViewportCtx) {
 	// agent 类型标签颜色:执行中灰色,成功绿色,错误红/金
 
 	toolNameStyle := styleToolPrefixPending
-	if subState == stateError {
-		if p.ToolFatal {
-			toolNameStyle = styleToolPrefixErr
-		} else {
-			toolNameStyle = styleToolPrefixWarn
-		}
-	} else if subState == stateDone || subState == stateExpanded || subState == stateCollapsed {
+	switch {
+	case subState == stateError && p.ToolFatal:
+		toolNameStyle = styleToolPrefixErr
+	case subState == stateError:
+		toolNameStyle = styleToolPrefixWarn
+	case subState == stateDone || subState == stateExpanded || subState == stateCollapsed:
 		toolNameStyle = styleToolPrefixDone
 	}
 	toolNameRendered := toolNameStyle.Render("agent")
