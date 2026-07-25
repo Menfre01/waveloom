@@ -252,7 +252,17 @@ func (t *ReadFileHashline) Execute(ctx context.Context, p ReadFileHashlineParams
 
 	// ── Step 8: 格式化输出 ──
 	content := hashline.FormatContent(path, tag, fullContent, p.Offset, p.Limit)
-	content += "\n<system-reminder>Line numbers are 1-based current positions. SWAP N.=M replaces lines N through M inclusive. INS.PRE N inserts before line N. INS.POST N inserts after line N.</system-reminder>"
+	content += "\n<system-reminder>Line numbers are 1-based current positions. SWAP N.=M replaces lines N through M inclusive. INS.PRE N inserts before line N. INS.POST N inserts after line N. Brace-only lines like `}` are real content with line numbers — include them when they belong inside a SWAP range.</system-reminder>"
+	if totalLines > 0 {
+		displayedLines := totalLines
+		if p.Limit > 0 && p.Offset+p.Limit < totalLines {
+			displayedLines = p.Limit
+		}
+		if p.Offset > 0 || displayedLines < totalLines {
+			lines := splitLines(fullContent)
+			content += "\n" + formatFileIndex(lines)
+		}
+	}
 	if matchFooter != "" {
 		content += matchFooter
 	}

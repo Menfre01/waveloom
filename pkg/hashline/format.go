@@ -42,7 +42,11 @@ func FormatContent(path string, tag string, content string, offset, limit int) s
 	fmt.Fprintf(&b, "[%s#%s]\n", path, tag)
 
 	for i := start; i < end; i++ {
-		fmt.Fprintf(&b, "%d:%s\n", i+1, lines[i])
+		if lines[i] == "" {
+			fmt.Fprintf(&b, "%d:·\n", i+1)
+		} else {
+			fmt.Fprintf(&b, "%d:%s\n", i+1, lines[i])
+		}
 	}
 
 	// 截断提示

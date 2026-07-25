@@ -83,7 +83,7 @@ var instructionOverrideRe = regexp.MustCompile(
 		`|` +
 		`disregard\s+(all\s+)?(prior|previous)\s+(instructions?|prompts?)` +
 		`|` +
-		`<system>\s*` +
+		`<system>[\s>]` +
 		`|` +
 		`\[INST\]`,
 )
