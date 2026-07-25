@@ -244,6 +244,18 @@ func (l *Loop) InPlanMode() bool {
 	return l.plan
 }
 
+// RestorePlanMode 从 session 恢复 plan 模式状态(resume 时由 TUI 调用)。
+// 与 SetPlanMode 不同:不生成新的 [plan:start] 消息和 planPairID(已在消息历史中),
+// 仅恢复 Loop 和 Guard 的 plan 模式状态。
+func (l *Loop) RestorePlanMode(planFile string) {
+	l.plan = true
+	l.config.PlanFile = planFile
+
+	if l.config.Guard != nil {
+		l.config.Guard.EnterPlanMode(planFile)
+	}
+}
+
 // ResetPlanMode 由 TUI 调用，在用户快捷键退出 plan 模式时清除 Loop 内部 plan 状态。
 // 仅重置 l.plan / l.planPairID / l.config.PlanFile，不操作 Guard（Guard 由 TUI 层统一管理）。
 func (l *Loop) ResetPlanMode() {

@@ -2474,6 +2474,25 @@ func hasOpenPlan(messages []llm.Message) bool {
 	return depth > 0
 }
 
+// extractPlanPairID 从消息历史中提取最近一个 [plan:start #xxxx] 的配对 ID。
+// 未找到时返回空字符串。
+func extractPlanPairID(messages []llm.Message) string {
+	for i := len(messages) - 1; i >= 0; i-- {
+		msg := messages[i]
+		if msg.Role != llm.RoleUser {
+			continue
+		}
+		if idx := strings.Index(msg.Content, "[plan:start #"); idx >= 0 {
+			rest := msg.Content[idx+len("[plan:start #"):]
+			if end := strings.IndexAny(rest, "]\n "); end > 0 {
+				return rest[:end]
+			}
+		}
+	}
+	return ""
+}
+
+
 // isExpandable 判断段落是否可通过焦点 Enter 展开/折叠。
 // contentWidth 用于计算内容换行后的行数，避免将未溢出预览区的段落标记为可交互。
 func isExpandable(p *Paragraph, contentWidth int) bool {
@@ -4857,12 +4876,17 @@ func runTUI(llmClient llm.Client, registry tool.Registry, guard permission.Guard
 		m.fh.ImportSnapshot(fhData)
 	}
 
-	// Resume：恢复 plan mode 状态
+	// Resume:恢复 plan mode 状态
 	if isResume {
 		if active, planFile := ctxMgr.PlanState(); active {
 			m.inPlanMode = true
 			m.planFile = planFile
+			m.planStartSent = true // 消息历史中已有 [plan:start],避免 doTurn 重复注入
+			m.planPairID = extractPlanPairID(ctxMgr.Messages()) // 从消息历史中提取配对 ID
 			m.input.Placeholder = m.msg().InputPlanModePlaceholder
+			// 恢复 Guard 和 Loop 的 plan 模式状态(权限守门人 + 工具拦截)
+			m.guard.EnterPlanMode(planFile)
+			m.loop.RestorePlanMode(planFile)
 		} else if hasOpenPlan(ctxMgr.Messages()) {
 			// plan mode 已退出但上下文中有未闭合的 [plan:start] → 注入 [plan:end]
 			ctxMgr.InjectUserInstructions("[plan:end #resume] Plan mode was exited before session ended.")

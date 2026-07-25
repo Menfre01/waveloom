@@ -1048,6 +1048,64 @@ func TestResetPlanMode_Idempotent(t *testing.T) {
 }
 
 // ============================================================================
+// RestorePlanMode 测试
+// ============================================================================
+
+func TestRestorePlanMode(t *testing.T) {
+	guard := &mockGuard{}
+	l := New(nil, nil, Config{
+		Guard: guard,
+	})
+
+	l.RestorePlanMode("/tmp/resume-plan.md")
+
+	if !l.plan {
+		t.Error("expected plan=true after RestorePlanMode")
+	}
+	if l.config.PlanFile != "/tmp/resume-plan.md" {
+		t.Errorf("expected PlanFile='/tmp/resume-plan.md', got %q", l.config.PlanFile)
+	}
+	if guard.enterPlanModeCalls != 1 {
+		t.Errorf("expected 1 EnterPlanMode call, got %d", guard.enterPlanModeCalls)
+	}
+	if guard.planFilePath != "/tmp/resume-plan.md" {
+		t.Errorf("expected planFilePath='/tmp/resume-plan.md', got %q", guard.planFilePath)
+	}
+}
+
+func TestRestorePlanMode_NilGuard(t *testing.T) {
+	l := New(nil, nil, Config{
+		// Guard = nil
+	})
+
+	// Guard 为 nil 时不应 panic
+	l.RestorePlanMode("/tmp/resume-plan.md")
+
+	if !l.plan {
+		t.Error("expected plan=true after RestorePlanMode with nil guard")
+	}
+}
+
+func TestRestorePlanMode_DoesNotGeneratePairID(t *testing.T) {
+	guard := &mockGuard{}
+	l := New(nil, nil, Config{
+		Guard: guard,
+	})
+
+	l.RestorePlanMode("/tmp/resume-plan.md")
+
+	// RestorePlanMode 不应生成 planPairID(与 SetPlanMode 的区别)
+	if l.planPairID != "" {
+		t.Errorf("expected empty planPairID after RestorePlanMode, got %q", l.planPairID)
+	}
+	// 不应产生 [plan:start] 消息
+	if l.approvedPlan != "" {
+		t.Errorf("expected empty approvedPlan, got %q", l.approvedPlan)
+	}
+}
+
+
+// ============================================================================
 // generatePlanFilePath fallback 路径测试
 // ============================================================================
 

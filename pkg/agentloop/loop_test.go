@@ -285,8 +285,11 @@ type mockGuard struct {
 	rules         []permission.RuleEntry
 	addRuleCalls  int
 	persistCalls  int
-	sessionAllowCalls int
-	sessionDenyCalls  int
+	sessionAllowCalls   int
+	sessionDenyCalls    int
+	enterPlanModeCalls  int
+	exitPlanModeCalls   int
+	planFilePath        string
 }
 
 func (g *mockGuard) Check(ctx context.Context, toolName string, input json.RawMessage) permission.DecisionResult {
@@ -342,8 +345,18 @@ func (g *mockGuard) ClearSession() {}
 
 func (g *mockGuard) SessionMemoryLen() int { return 0 }
 
-func (g *mockGuard) EnterPlanMode(planFilePath string) {}
-func (g *mockGuard) ExitPlanMode()                      {}
+func (g *mockGuard) EnterPlanMode(planFilePath string) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.enterPlanModeCalls++
+	g.planFilePath = planFilePath
+}
+func (g *mockGuard) ExitPlanMode() {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.exitPlanModeCalls++
+}
+
 func (g *mockGuard) SetAvailableBuildTools(tools []string) {}
 
 // mockUserResponder 实现 permission.UserResponder，返回预编程的用户选择。

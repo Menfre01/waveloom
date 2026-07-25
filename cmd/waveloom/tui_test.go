@@ -1176,3 +1176,77 @@ func TestNewSlashRegistry_NoSkillLoader(t *testing.T) {
 		}
 	}
 }
+
+// ============================================================================
+// extractPlanPairID 测试
+// ============================================================================
+
+func TestExtractPlanPairID(t *testing.T) {
+	messages := []llm.Message{
+		{Role: llm.RoleSystem, Content: "system prompt"},
+		{Role: llm.RoleUser, Content: "[plan:start #a3f7] Plan file: /tmp/plan.md\n\nYou are now in plan mode."},
+	}
+
+	id := extractPlanPairID(messages)
+	if id != "a3f7" {
+		t.Errorf("expected 'a3f7', got %q", id)
+	}
+}
+
+func TestExtractPlanPairID_LastMatch(t *testing.T) {
+	// 多个 [plan:start] → 返回最后一个(最近的)
+	messages := []llm.Message{
+		{Role: llm.RoleUser, Content: "[plan:start #1111] first plan"},
+		{Role: llm.RoleUser, Content: "[plan:start #2222] second plan"},
+		{Role: llm.RoleUser, Content: "[plan:end #1111] first plan ended"},
+		{Role: llm.RoleUser, Content: "[plan:start #3333] third plan"},
+	}
+
+	id := extractPlanPairID(messages)
+	if id != "3333" {
+		t.Errorf("expected last match '3333', got %q", id)
+	}
+}
+
+func TestExtractPlanPairID_NoMatch(t *testing.T) {
+	messages := []llm.Message{
+		{Role: llm.RoleSystem, Content: "system"},
+		{Role: llm.RoleUser, Content: "hello world"},
+		{Role: llm.RoleAssistant, Content: "hi"},
+	}
+
+	id := extractPlanPairID(messages)
+	if id != "" {
+		t.Errorf("expected empty string when no match, got %q", id)
+	}
+}
+
+func TestExtractPlanPairID_EmptyMessages(t *testing.T) {
+	id := extractPlanPairID(nil)
+	if id != "" {
+		t.Errorf("expected empty string for nil messages, got %q", id)
+	}
+}
+
+func TestExtractPlanPairID_NonUserRole(t *testing.T) {
+	// plan:start 在 assistant 消息中不应被提取
+	messages := []llm.Message{
+		{Role: llm.RoleAssistant, Content: "[plan:start #abcd] this is in assistant"},
+	}
+
+	id := extractPlanPairID(messages)
+	if id != "" {
+		t.Errorf("expected empty string for non-user role, got %q", id)
+	}
+}
+
+func TestExtractPlanPairID_ContentWithNewlineAfterID(t *testing.T) {
+	messages := []llm.Message{
+		{Role: llm.RoleUser, Content: "[plan:start #f1a2]\nPlan file: /tmp/plan.md\n\nYou are now in plan mode."},
+	}
+
+	id := extractPlanPairID(messages)
+	if id != "f1a2" {
+		t.Errorf("expected 'f1a2', got %q", id)
+	}
+}
