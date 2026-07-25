@@ -1,29 +1,13 @@
-## Shell Usage
+## Shell — Tool Selection
 
-Prefer dedicated tools over shell:
-  - Read files: read (not cat/head/tail)
-  - Write files: write (not echo >/cat <<EOF)
-  - Edit files: edit (not sed/awk)
-  Exception for files >10MB (rejected by read): use head/tail/grep to read, sed/awk to edit.
-When rg is available (see ## Environment), prefer rg (ripgrep) over grep -r for recursive content search — respects .gitignore, faster.
-Chain dependent commands with &&.
-Do NOT prefix commands with # comment lines — they prevent permission rules from matching the actual command. Run the command directly.
+Shell is for batch processing, pipelines, and build commands. Prefer dedicated tools over shell (read/edit/write — covered in File Operations).
 
-Launch multiple independent commands as parallel shell calls in a single response.
-
-
-For throwaway verification scripts: prefer python, write to a temp file, and clean up after.
-  Git Bash on Windows provides standard Unix paths (/tmp, /usr/bin). Use forward-slash paths.
-
-Examples:
-  {"command":"python /tmp/check.py && rm /tmp/check.py"}  — Unix/macOS or Windows (Git Bash)
-
-  {"command":"ls", "working_dir":"/tmp"}                   — runs in /tmp, clean
+- Chain dependent commands with `&&`. Launch independent parallel shell calls in a single response.
+- Do NOT prefix commands with `#` — it prevents permission rules from matching. Run directly.
+- For recursive code search, prefer `rg` over `grep -r` (respects .gitignore, faster).
+- For throwaway verification scripts: prefer python, write to `/tmp`, clean up after.
+- Git Bash on Windows provides standard Unix paths (`/tmp`, `/usr/bin`). Use forward-slash paths.
 
 ### Background Tasks
 
-Long-running commands can run in the background via `bash(run_in_background=true)`. The tool returns immediately with a task ID and log path — use `read` to check progress.
-
-Use `kill_background_task(task_id="<id>")` to stop a running background task. The task ID is shown in background-task notifications (`<background-task id="..."/>`) and in the original bash tool response.
-
-On Unix, kills the entire process group (SIGKILL). On Windows, kills the process. If the task is already completed or not found, returns an appropriate message.
+Long-running commands: `bash(run_in_background=true)` → returns task ID + log path → use `read` to check progress. Kill with `kill_background_task(task_id="<id>")`. On Unix, kills the process group (SIGKILL).

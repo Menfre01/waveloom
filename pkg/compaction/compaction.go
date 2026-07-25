@@ -714,16 +714,17 @@ func applyTier3(
 	oldLen := len(*messages)
 	newMessages := make([]llm.Message, 0, tier3Cursor+1+(oldLen-scanEnd))
 	newMessages = append(newMessages, (*messages)[:tier3Cursor]...)
-
-	// 追加摘要作为 user 消息
+	// 追加摘要通知 + 摘要内容作为 user 消息
+	notification := llm.Message{
+		Role: llm.RoleUser,
+		Content: "[system:compaction] Context has been summarized — messages before this point have been replaced with the summary below. The original detail is gone; re-read files or re-run commands if you need the original content.",
+	}
+	newMessages = append(newMessages, notification)
 	summaryMsg := llm.Message{
 		Role:    llm.RoleUser,
 		Content: summary,
 	}
 	newMessages = append(newMessages, summaryMsg)
-
-	// 追加保护区及之后的消息
-	newMessages = append(newMessages, (*messages)[scanEnd:]...)
 
 	*messages = newMessages
 
