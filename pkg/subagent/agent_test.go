@@ -236,7 +236,7 @@ func TestAgentTool_ExecuteCold_SubagentEndError(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestBuildColdRegistry_Evaluate_IsReadOnly(t *testing.T) {
-	r := buildColdRegistry(evaluateDisallowed)
+	r := buildColdRegistry(coldDisallowed)
 	names := toolNames(r)
 	for _, name := range []string{"read", "web_fetch", "bash_subagent"} {
 		if !contains(names, name) {
@@ -255,7 +255,7 @@ func TestBuildColdRegistry_Evaluate_IsReadOnly(t *testing.T) {
 }
 
 func TestBuildColdRegistry_Explore_IsReadOnly(t *testing.T) {
-	r := buildColdRegistry(exploreDisallowed)
+	r := buildColdRegistry(coldDisallowed)
 	names := toolNames(r)
 	for _, name := range []string{"read", "web_fetch", "bash_subagent"} {
 		if !contains(names, name) {
@@ -988,7 +988,7 @@ func TestAgentTool_ExecuteCold_Verification(t *testing.T) {
 }
 
 func TestVerificationRegistry_IsReadOnly(t *testing.T) {
-	r := buildColdRegistry(verificationDisallowed)
+	r := buildColdRegistry(coldDisallowed)
 	names := toolNames(r)
 	for _, name := range []string{"read", "web_fetch", "bash_subagent"} {
 		if !contains(names, name) {
@@ -1108,7 +1108,7 @@ func TestFormatSubagentEnvironment_ExploreRegistry(t *testing.T) {
 	ctx := context.Background()
 	ctx = agentloop.WithParentSystemPrompt(ctx, parentSP)
 
-	r := buildColdRegistry(exploreDisallowed)
+	r := buildColdRegistry(coldDisallowed)
 
 	got := formatSubagentEnvironment(ctx, r)
 	// Explore 只有 read, web_fetch, bash_subagent

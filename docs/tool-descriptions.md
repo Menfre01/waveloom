@@ -20,7 +20,7 @@
 | `skill` | ❌ | 系统 | 调用用户定义的 Skill |
 | `enter_plan_mode` | ❌ | Plan | 进入先规划后执行的 Plan 模式 |
 | `exit_plan_mode` | ❌ | Plan | 提交 Plan 审批,通过后恢复正常模式 |
-| `agent` | ✅ | 子代理 | 委派复杂任务给子 agent(Fork / Cold / Explore / Evaluate / Verification / Advisor) |
+| `agent` | ✅ | 子代理 | 委派复杂任务给子 agent(Fork / Cold / Explore / Evaluate / Verification) |
 | `kill_background_task` | ✅ | 任务 | 终止后台运行的任务 |
 | `todo_create` | ❌ | 任务 | 创建待办任务 |
 | `todo_update` | ❌ | 任务 | 更新任务状态(in_progress / completed) |
@@ -331,7 +331,7 @@ Launch a subagent to handle complex, multi-step tasks. See ## Agent Tool in the 
   "properties": {
     "subagent_type": {
       "type": "string",
-      "description": "Omit to fork (DEFAULT). Set to 'Explore', 'evaluate', 'verification', or 'advisor' for specialized agents. See ## Agent Tool in system prompt for details."
+      "description": "Omit to fork (DEFAULT). Set to 'Explore', 'evaluate', or 'verification' for specialized agents. See ## Agent Tool in system prompt for details."
     },
     "description": {
       "type": "string",

@@ -47,6 +47,7 @@ type AgentTool struct {
 	LLMClient       llm.Client
 	Settings        SettingsProvider
 	DefaultModel    string // 主模型名
+	DefaultSubModel string // explore 等轻量 agent 的默认模型
 	WorkspaceDir    string // 工作目录,用于分类器路径检查
 
 	// subagent JSONL 持久化
@@ -145,14 +146,18 @@ func (a *AgentTool) ConcurrentSafe() bool      { return true }
 // 子 agent 内部有多轮 LLM 调用 + 工具执行,需要比普通工具更充裕的时间。
 func (a *AgentTool) ToolTimeout() time.Duration { return 30 * time.Minute }
 
-// resolveModel 将模型名映射到实际模型。所有子代理统一使用主模型。
+// resolveModel 将 pro/flash 映射到实际模型名。
+// "pro"/"" → 主模型;"flash" → SubModel(为空时 fallback 主模型)
 func (a *AgentTool) resolveModel(m string) string {
-	if a.Settings != nil {
-		if s, err := a.Settings.LoadLLM(); err == nil && s.Model != "" {
-			return s.Model
+	switch m {
+	case "flash":
+		if a.DefaultSubModel != "" {
+			return a.DefaultSubModel
 		}
+		return a.DefaultModel
+	default:
+		return a.DefaultModel
 	}
-	return a.DefaultModel
 }
 
 func (a *AgentTool) Description() string {
@@ -204,6 +209,15 @@ const (
 // agent system prompts
 // ---------------------------------------------------------------------------
 
+const coldAgentPreamble = `You are READ-ONLY for the project directory. You CANNOT use write_file or edit_file.
+bash_subagent is for READ-ONLY operations: running tests, compiling, reading files,
+searching code, checking git history — anything that does not modify project files.
+Use web_fetch and web_search for online documentation and research.
+NEVER use bash_subagent for: mkdir, touch, rm, cp, mv, chmod, chown, echo > (redirect),
+tee, sed -i, git add, git commit, npm install, pip install, or any filesystem modification
+inside the project directory.
+`
+
 func exploreSystemPrompt() string {
 	return `You are a read-only file exploration agent. Search, read, and locate patterns in existing code.
 You are a discovery tool — find where things are, not whether they are correct.
@@ -224,20 +238,14 @@ OUTPUT RULES:
   Scope: <one sentence>
   Findings: <key facts or answers>
   Key files: <paths, line ranges>
-  Issues: <only if something is wrong>`
+  Issues: <only if something is wrong>
+- When investigating bugs: report the call chain (function → function with file:line) and the conditions under which the bug triggers. Do NOT fix the bug — only report findings.`
 }
 
 func verificationSystemPrompt() string {
-	return `You are a verification specialist. Your job is NOT to confirm the implementation works — 
+	return coldAgentPreamble + `You are a verification specialist. Your job is NOT to confirm the implementation works — 
 it's to try to BREAK it.
 
-You are a READ-ONLY agent for the project directory. You CANNOT use write_file or edit_file.
-bash_subagent is for READ-ONLY operations: running tests, compiling, checking git history —
-anything that does not modify project files.
-Use web_fetch and web_search for online documentation and research.
-NEVER use bash_subagent for: mkdir, touch, rm, cp, mv, chmod, chown, echo > (redirect),
-tee, sed -i, git add, git commit, npm install, pip install, or any filesystem modification
-inside the project directory.
 However, you MAY create ephemeral test scripts in /tmp via bash_subagent when inline commands
 aren't sufficient (e.g., a multi-step test harness). Clean up ONLY the specific files you created in /tmp when done. Do NOT delete directories or files you did not create.
 
@@ -282,16 +290,9 @@ Before reporting FAIL, verify:
 }
 
 func evaluateSystemPrompt() string {
-	return `You are an independent evaluation agent. Your role is to assess correctness, quality, and security — 
+	return coldAgentPreamble + `You are an independent evaluation agent. Your role is to assess correctness, quality, and security — 
 not to implement changes.
 
-You are READ-ONLY for the project directory. You CANNOT use write_file or edit_file.
-bash_subagent is for READ-ONLY operations: running tests, compiling, checking git history —
-anything that does not modify project files.
-Use web_fetch and web_search for online documentation and research.
-NEVER use bash_subagent for: mkdir, touch, rm, cp, mv, chmod, chown, echo > (redirect),
-tee, sed -i, git add, git commit, npm install, pip install, or any filesystem modification
-inside the project directory.
 You MAY create ephemeral test scripts in /tmp via bash_subagent when you need to test behavior.
 Clean up ONLY the specific files you created in /tmp when done. Do NOT delete directories or files you did not create.
 
@@ -554,25 +555,7 @@ var allAgentDisallowed = map[string]bool{
 	"todo_create":          true,
 	"todo_update":          true,
 }
-var exploreDisallowed = map[string]bool{
-	"write_file": true,
-	"write":      true,
-	"edit_file":  true,
-	"edit":       true,
-}
-
-// verificationDisallowed 与 exploreDisallowed 相同:审查 agent 只读项目文件,
-// 但可通过 bash_subagent 在 /tmp 创建临时脚本。
-var verificationDisallowed = map[string]bool{
-	"write_file": true,
-	"write":      true,
-	"edit_file":  true,
-	"edit":       true,
-}
-
-// evaluateDisallowed 与 explore/verification 相同:评估 agent 只读项目文件,
-// 但可通过 bash_subagent 在 /tmp 创建临时脚本来测试行为。
-var evaluateDisallowed = map[string]bool{
+var coldDisallowed = map[string]bool{
 	"write_file": true,
 	"write":      true,
 	"edit_file":  true,
@@ -582,17 +565,17 @@ var evaluateDisallowed = map[string]bool{
 func agentConfig(agentType string) (systemPrompt string, extraDisallowed map[string]bool) {
 	switch agentType {
 	case "explore":
-		return exploreSystemPrompt(), exploreDisallowed
+		return exploreSystemPrompt(), coldDisallowed
 	case "evaluate":
-		return evaluateSystemPrompt(), evaluateDisallowed
+		return evaluateSystemPrompt(), coldDisallowed
 	case "verification":
-		return verificationSystemPrompt(), verificationDisallowed
+		return verificationSystemPrompt(), coldDisallowed
 	default:
 		// Unknown type: fall back to evaluate (safe default, read-only).
 		// This path is reachable if the schema adds a new type before the
 		// code is deployed — not a silent data-loss risk.
 		slog.Warn("unknown subagent type, falling back to evaluate", "type", agentType)
-		return evaluateSystemPrompt(), evaluateDisallowed
+		return evaluateSystemPrompt(), coldDisallowed
 	}
 }
 

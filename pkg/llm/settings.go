@@ -16,6 +16,7 @@ type LLMSettings struct {
 	APIKey      string                  `json:"api_key,omitempty"` // API Key;为空时回退到 LLM_API_KEY 环境变量
 	Provider    string                  `json:"provider"`          // "openai" / "deepseek" / "kimi",默认 "deepseek"
 	Model       string                  `json:"model,omitempty"`   // 模型名称
+	SubModel    string                  `json:"sub_model,omitempty"`    // 子代理默认模型(explore 等轻量任务)
 	BaseURL     string                  `json:"base_url,omitempty"`     // API 端点,留空使用默认
 	Timeout     string                  `json:"timeout,omitempty"`      // 单次请求超时,Go Duration 格式(如 "600s"),默认 600s
 	Retry       *RetrySettings          `json:"retry,omitempty"`        // 重试策略,留空使用默认
@@ -44,6 +45,9 @@ func (s *LLMSettings) ResolveProfile() {
 	}
 	if p.Model != "" {
 		s.Model = p.Model
+	}
+	if p.SubModel != "" {
+		s.SubModel = p.SubModel
 	}
 	if p.BaseURL != "" {
 		s.BaseURL = p.BaseURL

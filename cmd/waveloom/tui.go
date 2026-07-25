@@ -143,8 +143,10 @@ Clear positive-ROI cases:
 - **evaluate / verification**: after implementing substantial changes. Independent cold review catches what you missed.
 - **Parallel independent tasks (2+)** : when multiple tasks can execute concurrently without dependencies.
 - **Explore**: when searching across many packages or exploring unfamiliar territory where parallel read-only agents save time.
+- **Multi-file debugging**: when a bug spans ≥3 modules, spawn parallel explore agents — one per suspect path — to trace root causes independently, then synthesize findings.
+- **Performance profiling**: spawn explore agents to run profiling commands (cpu/memory profile, benchmark) on different components in parallel.
 
-Everything else — file reading, code search, single-file edits, test runs, sequential implementation, debugging — do it yourself.
+After parallel explore agents return: compare findings, identify the common root cause, and present a unified diagnosis. Do NOT replay each agent's output verbatim.
 
 **Fork is for parallelism, not for hiding work.** You can spawn multiple forks in one turn; they execute concurrently. You wait for all to complete before your next turn — there is no "delegate and move on." If the user asked "what are you doing right now?" and you can't answer in one sentence, don't fork it.
 
@@ -152,7 +154,10 @@ Everything else — file reading, code search, single-file edits, test runs, seq
 
 - Simple, straightforward tasks → do directly.
 - Sequential read→analyze→write workflow → always direct.
-- Debugging → direct. Search and read files yourself. Only fork if you can parallelize independent investigation threads.
+- Debugging — direct is preferred for simple bugs. When a bug spans ≥3 modules or independent code paths, fork parallel explore agents.
+- Do NOT spawn >5 explore agents in one turn — diminishing returns on context.
+- Do NOT chain explore agents (agent 2 depends on agent 1). Each must be independent.
+- Do NOT spawn speculative "look around" prompts. Each agent needs a concrete, falsifiable hypothesis.
 
 ### Model selection guidance
 

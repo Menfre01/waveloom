@@ -25,14 +25,12 @@ Waveloom 首次运行在 `.waveloom/settings.json` 生成默认配置。配置�
 | `api_key` | DeepSeek API Key，为空时回退 `LLM_API_KEY` 环境变量 | — |
 | `provider` | `deepseek`、`kimi` 或 `openai` | `deepseek` |
 | `model` | 模型名 | `deepseek-v4-pro` |
-| `sub_model` | 子代理默认模型，仅 DeepSeek 下自动配对（pro → flash） | 自动配对 |
 | `base_url` | API 地址 | `https://api.deepseek.com` |
 | `timeout` | 请求超时 | `600s` |
 | `extra_params` | 额外参数（thinking、reasoning_effort 等） | 思考模式默认开启 |
 | `retry` | 重试策略 `{"max_retries":3, "initial_backoff":"1s", "max_backoff":"30s", "multiplier":2.0}` | 默认重试策略 |
-| `mode` | `"normal"` 或 `"advisor"`。Advisor 模式下主 Agent 默认用 `sub_model`（次模型）以降低 token 成本，仅在 plan mode 内临时切换为 `model`（主模型）深度推理。仅在 `sub_model` 非空且不等于 `model` 时生效。**启动时生效，运行时无法通过 `/model` 切换** | `"normal"` |
-| `headers` | 自定义 HTTP 请求头 `{"X-Custom": "value"}` | — |
-| `profiles` | 多 Provider 配置，以 provider 名为键（如 `"kimi"`、`"openai"`）。每个 profile 可包含 `api_key`、`model`、`sub_model`、`base_url`、`extra_params`。配合 `--provider` CLI 参数切换。Provider 无关字段（`timeout`、`retry`、`headers`、`mode`）从顶层继承 | — |
+| `sub_model` | 子代理默认模型(exporer 子代理使用此模型执行代码搜索和发现,约 2 倍便宜) | 自动配对(pro → flash) |
+| `profiles` | 多 Provider 配置,以 provider 名为键(如 `"kimi"`、`"openai"`)。每个 profile 可包含 `api_key`、`model`、`sub_model`、`base_url`、`extra_params`。配合 `--provider` CLI 参数切换。Provider 无关字段(`timeout`、`retry`、`headers`)从顶层继承 | — |
 
 ```json
 {

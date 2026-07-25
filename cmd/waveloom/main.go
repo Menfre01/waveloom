@@ -130,7 +130,7 @@ func main() {
 	registry := tool.NewRegistry()
 	settingsProvider := &fileSettingsProvider{projectPath: projectPath, globalPath: globalPath}
  
-	agentTool := registerBuiltinTools(registry, skillLoader, llmClient, llmSettings.Model, cwd, settingsProvider)
+	agentTool := registerBuiltinTools(registry, skillLoader, llmClient, llmSettings.Model, llmSettings.SubModel, cwd, settingsProvider)
 	// 8.5 启动 MCP Manager — 连接配置的 MCP Server，注册工具代理
 	mcpManager := mcp.NewManager(registry)
 	mcpManager.Start(context.Background(), mcp.LoadConfigs(cwd, homeDir))
@@ -309,7 +309,7 @@ waitLoop:
 
 
 // registerBuiltinTools 注册内置工具。
- func registerBuiltinTools(r tool.Registry, skillLoader *skill.Loader, llmClient llm.Client, defaultModel string, cwd string, settings subagent.SettingsProvider) *subagent.AgentTool {
+ func registerBuiltinTools(r tool.Registry, skillLoader *skill.Loader, llmClient llm.Client, defaultModel, subModel string, cwd string, settings subagent.SettingsProvider) *subagent.AgentTool {
 	r.Register(tool.Wrap(&tool.ReadFileHashline{}))
 	r.Register(tool.Wrap(&tool.EditFileHashline{}))
 	r.Register(tool.Wrap(&tool.WriteFile{}))
@@ -337,6 +337,7 @@ waitLoop:
  		LLMClient:    llmClient,
  		Settings:     settings,
  		DefaultModel: defaultModel,
+ 		DefaultSubModel: subModel,
  		WorkspaceDir: cwd,
  	}
 	r.Register(tool.Wrap(at))

@@ -78,7 +78,7 @@ waveloom
 | Cache design | DeepSeek prefix matching: 4-tier watermark (Snip → Prune → Summarize), compaction bytes never change | Anthropic `cache_control`: `cache_edits` API, dynamic system prompt sections | DeepSeek prefix matching: 4-tier (notice → snip → compact → force), `session.Replace()` bumps rewrite version |
 | Compaction | Monotonic — `compactionDecisionSet` + triple cursor, each message compacted once | Per-turn independent, no durability guarantee | Prefix bytes preserved across compact, but no per-message decision tracking |
 | Plan mode | Guard restricts writes to plan file only; build tools auto-allowed | Write restricted to plan file only; rich exit UI | `planmode.Policy` with trust gates for bash/MCP; Marker string injected; no plan file |
-| Sub-agents | Fork (inherits context) / Cold: Evaluate (code review) • Explore (read-only) • Verification (adversarial) • Advisor (deep analysis) | Fork + Cold + In-process + Coordinator | `task` tool with nested agent, background via job manager |
+| Sub-agents | Fork (inherits context) / Cold: Evaluate (code review) • Explore (read-only) • Verification (adversarial) | Fork + Cold + In-process + Coordinator | `task` tool with nested agent, background via job manager |
 | Runtime | Go binary ~20MB, zero deps | Node.js | Go binary + Desktop app, external plugin host |
 | MCP | Full client (config, transport, tool proxy), registered alongside built-in tools | Native MCP support | Native MCP support |
 | Permission | 7-step pipeline, 5-layer tool output security (Unicode cleaning → injection scan → boundary markers → risk grading → safe truncation), 4-tier command safety (RiskNone/RiskLow/RiskMedium/RiskHigh) | 8-source rule merge + LLM classifier auto-approval | Policy + Approver, 9-stage execute pipeline, shellsafe readOnly detect |
@@ -105,7 +105,7 @@ waveloom
 - **Session persistence** — Close the terminal, come back days later with `waveloom --continue`. The agent remembers all prior context.
 - **Checkpoint/Rewind** — Rewind to any previous message with full file state restoration. Fork mode preserves original session intact — history never lost.
 - **Plan Mode** — Two-stage workflow: explore & design first, implement after approval. `Shift+Tab` to enter/exit, Guard-enforced write protection.
-- **Advisor Mode** — Price-optimized dual-model routing: flash handles routine coding, pro auto-activates for plan mode and code review. Enable with `"mode": "advisor"` in settings.
+- **Sub_model configuration** — Set `"sub_model": "deepseek-v4-flash"` in `settings.json` to assign a lightweight model for explore subagents. Explore uses flash (~2× cheaper) for code search and discovery; evaluate/verification subagents use pro for full reasoning. LLM auto-selects between pro/flash based on task complexity. Saves ~50% on subagent token cost.
 - **14 built-in tools** — `read` / `write` / `edit` / `bash` / `web_fetch` / `web_search` / `ask_user_question` / `enter_plan_mode` / `exit_plan_mode` / `skill` / `agent` / `kill_background_task` / `todo_create` / `todo_update`.
 - **i18n multilingual** — Full zh-CN / en-US bilingual UI. `--locale` CLI flag, `/locale` command, auto-detect from LANG.
 
@@ -125,8 +125,8 @@ Stored locally at `~/.waveloom/`. Keys connect directly to DeepSeek / Kimi / Ope
 **Q: How do I switch languages?**  
 Type `/locale` to toggle between Chinese and English, or `waveloom --locale zh-CN`. The setting persists automatically in `settings.json`.
 
-**Q: How do I enable advisor mode?**  
-Add `"mode": "advisor"` to the `llm` section in `settings.json`. In advisor mode, the agent uses the secondary model (`sub_model`, e.g. `deepseek-v4-flash`) for routine coding and auto-switches to the primary model (`model`, e.g. `deepseek-v4-pro`) inside plan mode and for code review — cutting token costs by ~50%.
+**Q: How do I configure a lightweight model for explore subagents?**  
+Add `"sub_model": "deepseek-v4-flash"` to the `llm` section in `settings.json`. The explore subagent uses this model for code search and discovery tasks — ~2× cheaper than the primary model. For evaluate/verification subagents, the primary model (`model`, e.g. `deepseek-v4-pro`) is used for full reasoning quality. No runtime switching needed.
 
 **Q: What languages are supported?**  
 Waveloom works with any text-based project. Code verification uses each language's native build tools (`go build`, `npx tsc`, `cargo build`, `make`, etc.) — no LSP server required.
@@ -138,8 +138,7 @@ Waveloom works with any text-based project. Code verification uses each language
 | Document | Content |
 |----------|---------|
 | [`usage`](./docs/usage.en.md) | Interactive mode, shortcuts, Skill system |
-| [`install`](./docs/install.en.md) | Homebrew / curl / source / shell completions |
-| [`settings`](./docs/settings.en.md) | API key, model, timeout, compaction, advisor mode |
+| [`settings`](./docs/settings.en.md) | API key, model, timeout, compaction, sub_model |
 | [`prefix-cache`](./docs/prefix-cache.en.md) | DeepSeek caching, four-tier compaction |
 | [`environment`](./docs/environment.en.md) | Toolchain probing |
 | [`mcp`](./docs/mcp.en.md) | MCP client, config sources, CLI management |

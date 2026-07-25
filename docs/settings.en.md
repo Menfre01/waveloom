@@ -25,14 +25,12 @@ Minimal config:
 | `api_key` | DeepSeek API Key, falls back to `LLM_API_KEY` env var when empty | — |
 | `provider` | `deepseek`, `kimi`, or `openai` | `deepseek` |
 | `model` | Model name | `deepseek-v4-pro` |
-| `sub_model` | Sub-agent default model, auto-paired for DeepSeek (pro → flash) | Auto-paired |
 | `base_url` | API endpoint | `https://api.deepseek.com` |
 | `timeout` | Request timeout | `600s` |
 | `extra_params` | Extra parameters (thinking, reasoning_effort, etc.) | Thinking mode on by default |
 | `retry` | Retry policy `{"max_retries":3, "initial_backoff":"1s", "max_backoff":"30s", "multiplier":2.0}` | Default retry policy |
-| `mode` | `"normal"` or `"advisor"`. In advisor mode the main Agent defaults to `sub_model` (secondary model) to reduce token costs, temporarily switching to `model` (primary model) inside plan mode for deep reasoning. Only effective when `sub_model` is non-empty and differs from `model`. **Startup-only, cannot be changed at runtime via `/model`** | `"normal"` |
-| `headers` | Custom HTTP headers `{"X-Custom": "value"}` | — |
-| `profiles` | Multi-provider configuration, keyed by provider name (e.g., `"kimi"`, `"openai"`). Each profile may contain `api_key`, `model`, `sub_model`, `base_url`, `extra_params`. Used with `--provider` CLI flag. Provider-independent fields (`timeout`, `retry`, `headers`, `mode`) are inherited from the top level | — |
+| `sub_model` | Sub-agent default model (explore subagent uses this model for code search and discovery, ~2x cheaper) | Auto-paired (pro → flash) |
+| `profiles` | Multi-provider configuration, keyed by provider name (e.g., `"kimi"`, `"openai"`). Each profile may contain `api_key`, `model`, `sub_model`, `base_url`, `extra_params`. Used with `--provider` CLI flag. Provider-independent fields (`timeout`, `retry`, `headers`) are inherited from the top level | — |
 
 ```json
 {

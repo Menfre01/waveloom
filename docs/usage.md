@@ -112,39 +112,13 @@ Plan 模式是"先规划后执行"的二阶段工作流。适合 3 个以上文�
 
 输入框左侧 `▌Plan` 标记表示当前处于 Plan 模式。
 
-## Advisor 模式
-
-Advisor 模式是成本优化的双模型路由策略——次模型处理日常任务，主模型负责深度推理。在 `settings.json` 中开启：
-
-```json
-{
-  "llm": {
-    "provider": "deepseek",
-    "model": "deepseek-v4-pro",
-    "sub_model": "deepseek-v4-flash",
-    "mode": "advisor"
-  }
-}
-```
-
-**工作原理**：
-
-- **默认**：Agent 使用次模型（`sub_model`，如 `deepseek-v4-flash`）——约 2 倍便宜，擅长阅读、搜索和实现明确的变更。
-- **Plan 模式**：进入 plan mode 自动切换为主模型（`model`，如 `deepseek-v4-pro`）进行深度架构推理。退出 plan mode 自动切回。
-- **Advisor 子代理**：当次模型遇到无法自信决策的问题时，派发 advisor 子代理（主模型，只读）分析方案权衡并给出建议。
-- **代码审查**：`evaluate` 和 `verification` 子代理始终使用主模型——审查质量不降级。
-
-**前置条件**：`sub_model` 必须非空且不等于 `model`。DeepSeek provider 下 `sub_model` 自动配对为 `deepseek-v4-flash`；其他 provider 需显式设置。
-
-不设置 `mode` 或设为 `"normal"` 则保持全程使用主模型（默认行为）。
-
 ### AGENTS.md 自动加载
 
-Waveloom 启动时会自动发现并加载 `AGENTS.md`（查找路径：`~/.waveloom/AGENTS.md` → 项目根 `.git` 所在目录 → CWD），按"由外到内"顺序拼接，作为第一条 user 消息注入上下文。Agent 在对话中自动遵循其中的项目约定、编码规范和操作流程。
+Waveloom 启动时会自动发现并加载 `AGENTS.md`(查找路径:`~/.waveloom/AGENTS.md` → 项目根 `.git` 所在目录 → CWD),按"由外到内"顺序拼接,作为第一条 user 消息注入上下文。Agent 在对话中自动遵循其中的项目约定、编码规范和操作流程。
 
 ### AGENTS.md 内 @ 展开
 
-`AGENTS.md` 内部同样支持 `@` 引用语法，可用于将大型约定文档拆分为多个文件：
+`AGENTS.md` 内部同样支持 `@` 引用语法,可用于将大型约定文档拆分为多个文件:
 
 ```
 # AGENTS.md
@@ -152,4 +126,5 @@ Waveloom 启动时会自动发现并加载 `AGENTS.md`（查找路径：`~/.wave
 @docs/release-process.md
 ```
 
-Waveloom 在加载 AGENTS.md 后会自动展开其中的 `@` 引用，多个引用按出现顺序展开，同一文件自动去重。
+Waveloom 在加载 AGENTS.md 后会自动展开其中的 `@` 引用,多个引用按出现顺序展开,同一文件自动去重。
+

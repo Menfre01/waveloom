@@ -76,7 +76,7 @@ waveloom
 | 缓存设计 | DeepSeek 前缀匹配：四级水位线（Snip → Prune → Summarize），压缩后字节永不变化 | Anthropic `cache_control`：`cache_edits` API，System Prompt 含动态段 | DeepSeek 前缀匹配：四级（notice → snip → compact → force），`session.Replace()` 触发 rewrite 版本号 |
 | 上下文压缩 | 单调不变式 — `compactionDecisionSet` + 三游标，每条消息只压缩一次 | 每轮独立压缩，无持久性保证 | 前缀字节跨压缩保留，但无逐消息决策追踪 |
 | Plan 模式 | Guard 限制只写 plan 文件，构建工具自动放行 | 仅 plan 文件可写，富交互审批 UI | `planmode.Policy` + bash/MCP 信任门；注入 Marker 字符串；无 plan 文件 |
-| 子代理 | Fork（继承上下文）/ Cold：Evaluate（代码评审）• Explore（只读）• Verification（对抗验证）• Advisor（深度分析） | Fork + Cold + In-process + Coordinator | `task` 工具嵌套 agent，后台任务通过 job manager |
+| 子代理 | Fork(继承上下文)/ Cold:Evaluate(代码评审)• Explore(只读)• Verification(对抗验证) | Fork + Cold + In-process + Coordinator | `task` 工具嵌套 agent,后台任务通过 job manager |
 | 运行时 | Go 单二进制 ~20MB，零依赖 | Node.js | Go 二进制 + Desktop 应用，外部 plugin 宿主 |
 | MCP | 完整客户端（配置、传输、工具代理），与内置工具统一注册 | 原生 MCP 支持 | 原生 MCP 支持 |
 | 权限模型 | 7 步决策管线,5 层工具输出安全(Unicode 清洗 → 注入扫描 → 边界标记 → 风险分级 → 安全截断),4 级命令安全分类(RiskNone/RiskLow/RiskMedium/RiskHigh) | 8 源规则合并 + LLM 分类器自动审批 | Policy + Approver,9 阶段执行管线,shellsafe readOnly 检测 |
@@ -102,7 +102,7 @@ waveloom
 - **会话持久恢复** — 关闭终端几天后 `waveloom --continue` 回来,Agent 记得所有上下文接着工作
 - **Checkpoint/Rewind 时间旅行** — 回退到任意历史消息,同时恢复所有文件变更。Fork 模式原 session 完整保留,历史永不丢失
 - **Plan 模式** — 先规划后执行的二阶段工作流:探索设计 → 审批 → 编码。`Shift+Tab` 一键进入/退出,Guard 写保护拦截。
-- **Advisor 模式** — 成本优化的双模型路由:flash 处理日常编码,plan mode 和代码审查时自动切换 pro。在 settings 中设置 `"mode": "advisor"` 开启。
+- **子代理模型配置** — 在 `settings.json` 中设置 `"sub_model": "deepseek-v4-flash"`,explorer 子代理使用此轻量模型执行代码搜索和发现(约 2 倍便宜);evaluate 和 verification 子代理始终使用主模型保证审查质量。LLM 根据任务自主选择 pro/flash。
 - **14 个内置工具** — `read` / `write` / `edit` / `bash` / `web_fetch` / `web_search` / `ask_user_question` / `enter_plan_mode` / `exit_plan_mode` / `skill` / `agent` / `kill_background_task` / `todo_create` / `todo_update`
 - **i18n 多语言** — 完整中英双语界面,`--locale` CLI 参数 / `/locale` 命令,LANG 环境变量自动检测
 ---
@@ -121,8 +121,8 @@ Key 存储在本地 `~/.waveloom/`，直连 DeepSeek / Kimi / OpenAI，不经过
 **Q: 怎么切换语言？**  
 输入 `/locale` 切换中英文界面，或 `waveloom --locale en-US`。设置自动保存到 `settings.json`。
 
-**Q: 怎么开启 Advisor 模式？**  
-在 `settings.json` 的 `llm` 段中添加 `"mode": "advisor"`。Advisor 模式下 Agent 默认使用次模型（`sub_model`，如 `deepseek-v4-flash`）处理日常编码，进入 plan mode 和代码审查时自动切换为主模型（`model`，如 `deepseek-v4-pro`），token 成本降低约 50%。
+**Q: 怎么为 explorer 子代理配置轻量模型?**  
+在 `settings.json` 的 `llm` 段中添加 `"sub_model": "deepseek-v4-flash"`。Explorer 子代理使用此模型执行代码搜索和发现任务——约 2 倍便宜。evaluate 和 verification 子代理始终使用主模型(`model`,如 `deepseek-v4-pro`)保证审查质量。无需运行时切换。
 
 **Q: 支持哪些语言？**  
 Waveloom 适用于任何文本项目。代码验证使用各语言原生构建工具（`go build`、`npx tsc`、`cargo build`、`make` 等），无需安装 LSP Server。
@@ -135,7 +135,7 @@ Waveloom 适用于任何文本项目。代码验证使用各语言原生构建�
 |------|------|
 | [`usage`](./usage.md) | 交互模式、快捷键、Skill 系统 |
 | [`install`](./install.md) | Homebrew / curl / 源码构建 / Shell 补全 |
-| [`settings`](./settings.md) | API Key、模型、超时、压缩水位线、Advisor 模式 |
+| [`settings`](./settings.md) | API Key、模型、超时、压缩水位线、子代理模型 |
 | [`prefix-cache`](./prefix-cache.md) | DeepSeek 缓存原理、四级水位线 |
 | [`environment`](./environment.md) | 工具链探测 |
 | [`mcp`](./mcp.md) | MCP 客户端、配置源、CLI 管理 |
