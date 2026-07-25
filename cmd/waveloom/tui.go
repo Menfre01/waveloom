@@ -513,6 +513,7 @@ type model struct {
 	planExitPending       bool                           // 用户快捷键退出 plan，下轮需注入 [plan:end]
 	planExitPendingPairID string                         // 待注入的配对 ID
 	planStartSent         bool                           // [plan:start] 已注入消息历史（退出时需配对 [plan:end]）
+	pendingPlanRestore    string                         // resume 时推迟到 wireLoop() 后恢复 Loop plan 状态
 	cancelRun             context.CancelFunc             // 取消当前运行的 agent loop（nil 表示无运行中 loop）
 	runGeneration         int                            // 每次 doTurn 递增，闭包捕获后用于 LoopDone 去重
 	themeMode             string                         // 当前主题模式: auto / dark / light
@@ -4884,9 +4885,10 @@ func runTUI(llmClient llm.Client, registry tool.Registry, guard permission.Guard
 			m.planStartSent = true // 消息历史中已有 [plan:start],避免 doTurn 重复注入
 			m.planPairID = extractPlanPairID(ctxMgr.Messages()) // 从消息历史中提取配对 ID
 			m.input.Placeholder = m.msg().InputPlanModePlaceholder
-			// 恢复 Guard 和 Loop 的 plan 模式状态(权限守门人 + 工具拦截)
+			// 恢复 Guard 的 plan 模式状态(权限守门人)
 			m.guard.EnterPlanMode(planFile)
-			m.loop.RestorePlanMode(planFile)
+			// Loop 状态推迟到 wireLoop() 之后恢复(此时 m.loop 尚为 nil)
+			m.pendingPlanRestore = planFile
 		} else if hasOpenPlan(ctxMgr.Messages()) {
 			// plan mode 已退出但上下文中有未闭合的 [plan:start] → 注入 [plan:end]
 			ctxMgr.InjectUserInstructions("[plan:end #resume] Plan mode was exited before session ended.")
@@ -4906,7 +4908,14 @@ func runTUI(llmClient llm.Client, registry tool.Registry, guard permission.Guard
 
 	p := tea.NewProgram(m)
 	m.program = p
-	m.wireLoop()  // 注入 tuiUserResponder，此时 program 已就绪
+	m.wireLoop()  // 注入 tuiUserResponder,此时 program 已就绪
+
+	// 延迟恢复 Loop plan 模式状态(wireLoop 完成后 m.loop 才非 nil)
+	if m.pendingPlanRestore != "" {
+		m.loop.RestorePlanMode(m.pendingPlanRestore)
+		m.pendingPlanRestore = ""
+	}
+
 	m.initTheme() // 根据 themeMode + 终端背景自动检测并应用主题
 
 	if _, err := p.Run(); err != nil {
