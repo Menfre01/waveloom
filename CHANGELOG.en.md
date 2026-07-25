@@ -1,3 +1,33 @@
+## [v0.3.2] — 2026-07-25
+
+### New Features
+- **IDE MCP Server integration**: LLM prioritizes IDE index (workspace symbols, find references) over shell commands, reducing search overhead
+- **read pattern parameter**: read tool supports pattern for single-step file content navigation, eliminating grep→read round trips; summary shows params for visibility
+- **System prompt refinements**: read-first search strategy, tool error self-check guidance, nearest-diff-first bug investigation strategy
+- **UX improvements**: input history now Ctrl+P/N (↑↓ back to pure scroll), Ctrl+C double-tap quit protection
+- **Subagent parallel debugging**: preserve model config per agent type, deduplication, improved parallel execution
+- **Setup context window config**: setup wizard now includes context window configuration step
+
+### Fixes
+- **Permission ALLOW bypass**: allow rules incorrectly short-circuited by safety ALLOW bit, causing silent allowance after user denial
+- **Plan mode resume recovery**: fixed Guard/Loop state loss after resume, nil loop panic, and doTurn fallback recovery
+- **Streaming OOM protection**: single-line byte truncation in truncateToolStreamOutput prevents large JSON lines from exhausting memory
+- **JSON escaped quotes**: extractField correctly handles \\\" to fix display truncation of bash commands with quotes in permission panel
+- **Multi-line continuation folding**: fixed \\ line continuation being collapsed to space in streaming output
+- **Skill tool summary truncation**: adaptive width truncation prevents layout overflow from long skill names
+- **Resume HTML entities**: fixed `&amp;quot;` causing incorrect symbol rendering and missing cwd prefix after resume
+- **Edit partial success misreporting**: multi-file edit no longer reports overall failure on partial success
+- **Multi-edit consolidation**: same-file multiple edits now merged into single edit call, preventing tag conflicts
+
+### Refactoring
+- **Input device rollback**: restored mouse tracking for wheel scrolling, ↑↓ idle history navigation / scroll at boundary; removed overlay scroll passthrough and boundary scrolling
+- **System prompt slimming**: removed tool lock-in restoring LLM autonomy, restructured three-zone layout, added Tier3 summary notification
+- **Removed advisor mode / tool description cleanup**: simplified model config and setup flow
+
+---
+
+📝 [Changelog (简体中文)](https://github.com/Menfre01/waveloom/blob/dev/CHANGELOG.md)
+
 # Changelog
 
 ## [v0.3.1] — 2026-07-23

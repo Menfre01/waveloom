@@ -1,3 +1,33 @@
+## [v0.3.2] — 2026-07-25
+
+### 新增功能
+- **IDE MCP Server 能力注入**:LLM 优先使用 IDE 索引替代 shell 命令,减少搜索开销
+- **read pattern 参数**:read 工具新增 pattern 参数,一步定位消除 grep→read 串行回合;摘要展示参数提高调用透明度
+- **系统提示持续优化**:工具箱引导改为 read-first 搜索策略、工具错误处理自检引导、就近对比优先的 bug 查找策略
+- **输入体验改进**:输入历史快捷键 Ctrl+P/N(↑↓ 回归纯滚动)、Ctrl+C 双击防误触退出
+- **subagent 并行调试提升**:保留大小模型配置、子 agent 去重、提升并行执行能力
+- **setup 上下文窗口配置**:setup 向导新增上下文窗口配置步骤
+
+### 修复
+- **permission 安全 ALLOW 短路**:allow 规则被安全 ALLOW 位短路,用户拒绝后静默放行
+- **plan 模式 resume 恢复**:修复 Guard/Loop 状态丢失、m.loop 为 nil 导致 panic、doTurn 兜底恢复三个关联问题
+- **流式超长行 OOM**:truncateToolStreamOutput 增加单行字节截断,防止流式输出超大 JSON 行撑爆内存
+- **JSON 转义双引号截断**:extractField 正确处理转义双引号,修复含引号 bash 命令参数显示截断
+- **多行命令续行符折叠**:修复 \\ 续行符在流式输出中被折叠为空格
+- **skill 工具摘要截断**:摘要行增加宽度自适应截断,防止超长 skill 名撑破布局
+- **resume HTML 转义**:修复 resume 后 `&amp;quot;` 导致符号渲染错误及 cwd 前缀未隐藏
+- **edit 部分成功误报**:多文件 edit 部分成功时不再误报为整体失败
+- **同文件多处编辑合并**:强制合并为单次 edit 调用,避免批量修改时标签冲突
+
+### 重构
+- **输入设备方案回归**:恢复鼠标追踪支持滚轮滚动,↑↓ 空闲态导航历史/到头后滚动对话;移除 overlay 滚动穿透和边界滚动
+- **system prompt 瘦身**:解除工具锁定恢复 LLM 自主选择、重组三区结构消除重复、补全 Tier3 摘要通知
+- **删除 advisor mode / tool Description 瘦身**:简化模型配置和 setup 流程
+
+---
+
+📝 [Changelog (English)](https://github.com/Menfre01/waveloom/blob/dev/CHANGELOG.en.md)
+
 # Changelog
 
 ## [v0.3.1] — 2026-07-23
