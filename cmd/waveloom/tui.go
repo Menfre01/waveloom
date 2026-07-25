@@ -56,6 +56,7 @@ import (
 	"github.com/Menfre01/waveloom/pkg/mcp"
 	"github.com/Menfre01/waveloom/pkg/pathutil"
 	"github.com/Menfre01/waveloom/pkg/permission"
+	"github.com/Menfre01/waveloom/pkg/pricing"
 	"github.com/Menfre01/waveloom/pkg/reference"
 	"github.com/Menfre01/waveloom/pkg/session"
 	"github.com/Menfre01/waveloom/pkg/skill"
@@ -129,11 +130,7 @@ Call enter_plan_mode ONLY for complex features or refactoring (3+ files, archite
 
 ## File Operations
 
-Use ` + "`read`" + ` to get a TAG and line-numbered content for hash-anchored editing. Always read before editing. Key rules:
-- read + pattern centers the window on the match; use context_lines=30 for editing.
-- edit is for 1-2 surgical changes; for larger changes: ≤200 lines use write, 200-500 lines use edit multi-section, >500 lines use edit multi-step.
-- After editing, skim the edit delta or post-edit context to confirm the outcome — ` + "`✓ SUCCESS`" + ` means the tool executed, not that your intent was correct.
-- Chain edits without re-read when target lines are in the post-edit context window.
+Use ` + "`read`" + ` to get a TAG and line-numbered content for hash-anchored editing. Always read before editing. Detailed rules are in each tool's description — prefer the tool-specific guidance over this summary.
 
 ## Coding Scenarios
 
@@ -442,11 +439,15 @@ type model struct {
 	// HUD 会话级累积（footer 显示用，跨 loop 不归零）
 	hudModel          string
 	hudThinkingEffort string // thinking 档位，空表示关闭
+	hudPromptTokens   int
+	hudComplTokens    int
 	hudTurns          int
 	hudMessages       int
 	hudCacheHit       int
 	hudCacheMiss      int
 	hudLatMs          int64
+	hudCost          float64 // 会话级累计费用(元),每次 token 增量到达时按当时模型计价累加
+	hudCurrency      pricing.Currency // 当前币种,随 locale 切换
 	turnStartTime     time.Time // 本轮启动时间，用于计算延迟
 
 	// loop 级增量（透传给 CompleteRun → cm.stats，loop 结束归零）
@@ -1033,8 +1034,12 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.loopCacheHit += msg.CacheHitTokens
 		m.loopCacheMiss += msg.CacheMissTokens
 		m.loopReasoning += msg.ReasoningTokens
-		m.hudCacheHit += msg.CacheHitTokens // 会话级累积 → footer
-		m.hudCacheMiss += msg.CacheMissTokens
+	m.hudCacheHit += msg.CacheHitTokens // 会话级累积 → footer
+	m.hudCacheMiss += msg.CacheMissTokens
+	m.hudPromptTokens += msg.PromptTokens
+	m.hudComplTokens += msg.CompletionTokens
+	// 按本轮实际模型累加费用(TurnStats.Model 非空时优先,否则用当前 hudModel)
+	m.addCost(msg.Model, msg.PromptTokens, msg.CacheHitTokens, msg.CacheMissTokens, msg.CompletionTokens)
 
 		// ctx bar：有压缩 → 用估算值（PromptTokens - TokensSaved）；无压缩 → 用 API 真实值
 		if msg.PromptTokens > 0 {
@@ -2206,9 +2211,13 @@ func (m *model) handleSubagentEnd(ev subagent.SubagentEnd) {
 			m.loopCompl += ev.CompletionTokens
 			m.loopCacheHit += ev.CacheHitTokens
 			m.loopCacheMiss += ev.CacheMissTokens
-			m.hudCacheHit += ev.CacheHitTokens
-			m.hudCacheMiss += ev.CacheMissTokens
-			return
+	m.hudCacheHit += ev.CacheHitTokens
+	m.hudCacheMiss += ev.CacheMissTokens
+	m.hudPromptTokens += ev.PromptTokens
+	m.hudComplTokens += ev.CompletionTokens
+	// 按子 agent 实际模型累加费用(空 = 继承主模型)
+	m.addCost(ev.Model, ev.PromptTokens, ev.CacheHitTokens, ev.CacheMissTokens, ev.CompletionTokens)
+	return
 		}
 	}
 }
@@ -3463,14 +3472,16 @@ func (m *model) renderFooter() string {
 	line1Parts := []string{modelPart, ctxPart}
 	line1 := styleFooter.Width(contentWidth).Render(strings.Join(line1Parts, sep))
 
-	// Line 2: cache + turns + messages + latency + balance
+	// Line 2: cache + tok + turns + messages + latency + balance
 	compactingPart := m.renderCacheRate()
+	tokensPart := styleFooterLabel.Render("tok") + " " + styleFooterValue.Render(shortTokens(m.hudPromptTokens)+"/"+shortTokens(m.hudComplTokens))
 	turnsPart := styleFooterLabel.Render("Loop") + " " + styleFooterValue.Render(fmt.Sprintf("%d", m.hudTurns))
 	messagesPart := styleFooterLabel.Render("M") + " " + styleFooterValue.Render(fmt.Sprintf("%d", m.hudMessages))
 	latencyPart := m.renderLatency()
 	balancePart := m.renderBalance()
+	costPart := m.renderCost()
 
-	line2Parts := []string{compactingPart, turnsPart, messagesPart, latencyPart, balancePart}
+	line2Parts := []string{compactingPart, tokensPart, costPart, turnsPart, messagesPart, latencyPart, balancePart}
 	if m.noticeBanner != "" {
 		bannerText := m.noticeBanner
 		if m.updating {
@@ -3569,11 +3580,36 @@ func (m *model) renderCacheRate() string {
 	return label + " " + valStyle.Render(fmt.Sprintf("%d%%", pct))
 }
 
-// renderLatency 渲染最近一次 loop 耗时（运行中实时计时，结束后显示最终值）。
+
+// addCost 根据模型和 token 增量计算费用并累加到 hudCost。
+// model 为空时回退到当前 hudModel(子 agent 继承主模型场景)。
+// addCost 根据模型、币种和 token 增量计算费用并累加到 hudCost。
+// model 为空时回退到当前 hudModel(子 agent 继承主模型场景)。
+func (m *model) addCost(model string, prompt, cacheHit, cacheMiss, completion int) {
+	if model == "" {
+		model = m.hudModel
+	}
+	provider := pricing.InferProvider(model)
+	price := pricing.LookupCurrency(provider, model, m.hudCurrency)
+	m.hudCost += pricing.CalculateCost(price, prompt, cacheHit, cacheMiss, completion)
+}
+// renderCost 渲染会话累计费用(在 token 增量到达时按实际模型计价累加,而非渲染时反算)。
+func (m *model) renderCost() string {
+	symbol := pricing.CurrencySymbol(m.hudCurrency)
+	label := styleFooterLabel.Render(symbol)
+	if m.hudCost == 0 {
+		return label + styleFooterValueMuted.Render("--")
+	}
+	if m.hudCost < 0.01 {
+		return label + styleFooterValueMuted.Render("<0.01")
+	}
+	return label + styleFooterValue.Render(fmt.Sprintf("%.2f", m.hudCost))
+}
+
+// renderLatency 渲染最近一次 loop 耗时(运行中实时计时,结束后显示最终值)。
 func (m *model) renderLatency() string {
 	label := styleFooterLabel.Render("elap")
 
-	// 运行中：实时计算 time.Since(turnStartTime)
 	var elapsed int64
 	if m.running && !m.turnStartTime.IsZero() {
 		elapsed = time.Since(m.turnStartTime).Milliseconds()
@@ -4327,9 +4363,11 @@ func (m *model) handleSlashCommand(input string) tea.Cmd {
 			m.paras = nil
 			m.hudTurns = 0
 			m.hudMessages = 0
-			m.hudCacheHit = 0
-			m.hudCacheMiss = 0
-			m.hudLatMs = 0
+	m.hudCacheHit = 0
+	m.hudCacheMiss = 0
+	m.hudPromptTokens = 0
+	m.hudComplTokens = 0
+	m.hudCost = 0
 			m.lastPromptTokens = 0
 			m.focusIndex = -1
 			// 重新注册技能命令，确保技能列表刷新
@@ -4833,6 +4871,7 @@ func runTUI(llmClient llm.Client, registry tool.Registry, guard permission.Guard
 	// 构造 slash command registry（TUI 侧依赖实现）
 	store := &tuiSettingsStore{projectPath: projectPath, globalPath: globalPath}
 	m.settingsStore = store
+	m.hudCurrency = currencyForLocale(loc) // 初始币种,后续 locale 切换时 applyLocale 同步更新
 
 	// 从 settings.json 恢复上次保存的主题（优先级高于 CLI 默认值）
 	if savedTheme := store.LoadTheme(); savedTheme != "" {
@@ -4858,6 +4897,8 @@ func runTUI(llmClient llm.Client, registry tool.Registry, guard permission.Guard
 	// 恢复会话级 HUD 累积值
 	m.hudCacheHit = ctxMgr.Stats().TotalCacheHitTokens
 	m.hudCacheMiss = ctxMgr.Stats().TotalCacheMissTokens
+	m.hudPromptTokens = ctxMgr.Stats().TotalPromptTokens
+	m.hudComplTokens = ctxMgr.Stats().TotalCompletionTokens
 	// REGRESSION: --resume 后 hudTurns 未从 Stats.TotalTurns 恢复，状态栏计数从 0 开始。
 	// 无法单测：runTUI 依赖 Bubble Tea Program 实例。
 	m.hudTurns = ctxMgr.Stats().TotalTurns

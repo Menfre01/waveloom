@@ -58,10 +58,10 @@ func (SubagentEvent) TurnEvent() {}
 // SubagentEnd — 子 agent 执行完毕
 // ---------------------------------------------------------------------------
 
-// SubagentEnd 表示子 agent 执行完毕。
 type SubagentEnd struct {
 	Turn             int
 	ToolCallID       string
+	Model            string // 子 agent 实际使用的模型（空 = 继承主模型）
 	TotalTurns       int
 	PromptTokens     int // ↑ 输入 token
 	CompletionTokens int // ↓ 输出 token
@@ -69,8 +69,8 @@ type SubagentEnd struct {
 	CacheMissTokens  int // 子 agent 累计缓存未命中 token
 	DurationMs       int64
 	Error            string // 非空表示异常终止
-}
 
+}
 func (SubagentEnd) TurnEvent() {}
 
 // Compile-time check: these types implement agentloop.TurnEvent.

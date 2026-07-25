@@ -386,7 +386,7 @@ func (a *AgentTool) executeFork(ctx context.Context, p AgentParams) (*tool.ToolR
 	lastTurnText, totalTurns, promptTok, complTok, cacheHitTok, cacheMissTok, events, err := forwardEvents(subCtx, subLoop.Run(subCtx, messages), cb, toolCallID)
 	if err != nil {
 		if cb != nil {
-			cb(SubagentEnd{ToolCallID: toolCallID, DurationMs: time.Since(startTime).Milliseconds(), Error: err.Error()})
+			cb(SubagentEnd{ToolCallID: toolCallID, Model: model, DurationMs: time.Since(startTime).Milliseconds(), Error: err.Error()})
 		}
 		return &tool.ToolResult{
 			Content: fmt.Sprintf("Fork subagent failed: %s", err),
@@ -398,7 +398,7 @@ func (a *AgentTool) executeFork(ctx context.Context, p AgentParams) (*tool.ToolR
 	classified := classify(events, a.WorkspaceDir)
 
 	if cb != nil {
-		cb(SubagentEnd{ToolCallID: toolCallID, TotalTurns: totalTurns, PromptTokens: promptTok, CompletionTokens: complTok, CacheHitTokens: cacheHitTok, CacheMissTokens: cacheMissTok, DurationMs: time.Since(startTime).Milliseconds()})
+		cb(SubagentEnd{ToolCallID: toolCallID, Model: model, TotalTurns: totalTurns, PromptTokens: promptTok, CompletionTokens: complTok, CacheHitTokens: cacheHitTok, CacheMissTokens: cacheMissTok, DurationMs: time.Since(startTime).Milliseconds()})
 	}
 	// 持久化 subagent JSONL
 	a.saveSubagentTranscript(toolCallID, agentType, p.Description, model, totalTurns, promptTok, complTok, events)
@@ -479,7 +479,7 @@ func (a *AgentTool) executeCold(ctx context.Context, p AgentParams) (*tool.ToolR
 	lastTurnText, totalTurns, promptTok, complTok, cacheHitTok, cacheMissTok, events, err := forwardEvents(subCtx, subLoop.Run(subCtx, messages), cb, toolCallID)
 	if err != nil {
 		if cb != nil {
-			cb(SubagentEnd{ToolCallID: toolCallID, DurationMs: time.Since(startTime).Milliseconds(), Error: err.Error()})
+			cb(SubagentEnd{ToolCallID: toolCallID, Model: model, DurationMs: time.Since(startTime).Milliseconds(), Error: err.Error()})
 		}
 		return &tool.ToolResult{
 			Content: fmt.Sprintf("Subagent [%s] failed: %s", p.SubagentType, err),
@@ -491,7 +491,7 @@ func (a *AgentTool) executeCold(ctx context.Context, p AgentParams) (*tool.ToolR
 	classified := classify(events, a.WorkspaceDir)
 
 	if cb != nil {
-		cb(SubagentEnd{ToolCallID: toolCallID, TotalTurns: totalTurns, PromptTokens: promptTok, CompletionTokens: complTok, CacheHitTokens: cacheHitTok, CacheMissTokens: cacheMissTok, DurationMs: time.Since(startTime).Milliseconds()})
+		cb(SubagentEnd{ToolCallID: toolCallID, Model: model, TotalTurns: totalTurns, PromptTokens: promptTok, CompletionTokens: complTok, CacheHitTokens: cacheHitTok, CacheMissTokens: cacheMissTok, DurationMs: time.Since(startTime).Milliseconds()})
 	}
 	// 持久化 subagent JSONL
 	a.saveSubagentTranscript(toolCallID, p.SubagentType, p.Description, model, totalTurns, promptTok, complTok, events)

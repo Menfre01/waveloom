@@ -12,6 +12,7 @@ import (
 	"charm.land/lipgloss/v2"
 
 	"github.com/Menfre01/waveloom/pkg/llm"
+	"github.com/Menfre01/waveloom/pkg/pricing"
 	"github.com/Menfre01/waveloom/pkg/slashcommand"
 )
 
@@ -573,6 +574,18 @@ func (m *model) applyLocale(loc Locale) {
 		if err := m.settingsStore.SaveLocale(string(loc)); err != nil {
 			slog.Warn("failed to save locale", "err", err)
 		}
+	// 同步币种(zh-CN → CNY, en-US → USD)
+	m.hudCurrency = currencyForLocale(loc)
+	}
+}
+
+// currencyForLocale 返回 locale 对应的计费币种。
+func currencyForLocale(loc Locale) pricing.Currency {
+	switch loc {
+	case LocaleEnUS:
+		return pricing.USD
+	default:
+		return pricing.CNY
 	}
 }
 

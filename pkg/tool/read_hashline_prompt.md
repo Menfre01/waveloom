@@ -1,6 +1,6 @@
-## File Operations — Read
+## Read File (Hashline)
 
-Use `read` to get a TAG and line-numbered content for hash-anchored editing. Always read before editing.
+Use `read` to get a TAG and line-numbered content for hash-anchored editing. **Always read before editing** — the TAG is required for `edit` to target lines precisely.
 
 - **Multi-edit session** (≥2 locations same file): read the FULL file — omit `pattern`, `offset`, `limit`. One call = complete file + TAG.
 - **Single-target edit**: use `pattern` + `context_lines=30`. The centered window usually covers everything needed.
