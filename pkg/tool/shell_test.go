@@ -1185,7 +1185,7 @@ func TestShell_Description_WithAndWithoutBackground(t *testing.T) {
 	if bgDesc != noBgDesc {
 		t.Errorf("Description should be static regardless of AllowBg; bg=%q noBg=%q", bgDesc, noBgDesc)
 	}
-	if !strings.Contains(bgDesc, "Shell Usage") {
-		t.Error("Description should reference C1 Shell Usage section")
+	if !strings.Contains(bgDesc, "Tool Selection") {
+		t.Error("Description should reference C1 Tool Selection section")
 	}
 }
