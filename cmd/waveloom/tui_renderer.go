@@ -1583,14 +1583,16 @@ func renderToolPara(sb *strings.Builder, p *Paragraph, ctx ViewportCtx) {
 	// 摘要行：仅首行有 prefixStr，后续内容行用 indentStr 对齐
 	sb.WriteString(prefixStr)
 
-	// tool 名颜色：成功绿色，recoverable 错误金色，fatal 错误红色
-	toolNameStyle := styleToolPrefixDone
+	// tool 名颜色:执行中灰色,成功绿色,recoverable 错误金色,fatal 错误红色
+	toolNameStyle := styleToolPrefixPending
 	if toolState == stateError {
 		if p.ToolFatal {
 			toolNameStyle = styleToolPrefixErr
 		} else {
 			toolNameStyle = styleToolPrefixWarn
 		}
+	} else if toolState == stateDone || toolState == stateExpanded || toolState == stateCollapsed {
+		toolNameStyle = styleToolPrefixDone
 	}
 
 	// 构造摘要行并做宽度自适应截断
@@ -2292,15 +2294,17 @@ func renderSubagentPara(sb *strings.Builder, p *Paragraph, ctx ViewportCtx) {
 	if textWidth < 1 {
 		textWidth = 1
 	}
+	// agent 类型标签颜色:执行中灰色,成功绿色,错误红/金
 
-	// ── tool 名颜色 ──
-	toolNameStyle := styleToolPrefixDone
+	toolNameStyle := styleToolPrefixPending
 	if subState == stateError {
 		if p.ToolFatal {
 			toolNameStyle = styleToolPrefixErr
 		} else {
 			toolNameStyle = styleToolPrefixWarn
 		}
+	} else if subState == stateDone || subState == stateExpanded || subState == stateCollapsed {
+		toolNameStyle = styleToolPrefixDone
 	}
 	toolNameRendered := toolNameStyle.Render("agent")
 

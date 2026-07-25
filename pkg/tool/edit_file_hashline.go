@@ -227,7 +227,7 @@ func formatLocalDiffExcerpt(hunks []hashline.EditHunk, maxLines int) string {
 				fmt.Fprintf(&b, "+%d:%s\n", l.NewNum, l.Content)
 				written++
 			case hashline.LineCtx:
-				fmt.Fprintf(&b, " %d:%s\n", l.OldNum, l.Content)
+				fmt.Fprintf(&b, "  :%s\n", l.Content)
 				written++
 			default:
 				// LineHeader 等不计入行数，但也不消耗 maxLines 配额
@@ -380,7 +380,7 @@ func formatPostEditContext(fs hashline.FileSystem, results []hashline.SectionRes
 			}
 
 			omitted := suffixStart - prefixEnd
-			fmt.Fprintf(&b, "... [%d lines in edit region omitted]\n", omitted)
+			fmt.Fprintf(&b, "... [lines %d-%d omitted, %d lines]\n", prefixEnd+1, suffixStart, omitted)
 
 			// 编辑区后 5 行 + 下文
 			for i := suffixStart; i < showEnd; i++ {

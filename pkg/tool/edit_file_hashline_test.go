@@ -636,8 +636,8 @@ func TestFormatLocalDiffExcerpt_ContextLines(t *testing.T) {
 		},
 	}
 	got := formatLocalDiffExcerpt(hunks, 12)
-	if !strings.Contains(got, " 3:  unchanged") {
-		t.Errorf("missing context line with line number, got:\n%s", got)
+	if !strings.Contains(got, "  :  unchanged") {
+		t.Errorf("missing context line (without line number), got:\n%s", got)
 	}
 }
 

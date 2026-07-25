@@ -230,8 +230,9 @@ var (
 	styleThoughtCollapsed  lipgloss.Style
 	styleThoughtContent    lipgloss.Style
 	styleThoughtExpandHint lipgloss.Style
-	styleToolPrefixDone    lipgloss.Style
+	styleToolPrefixPending lipgloss.Style
 	styleToolPrefixWarn    lipgloss.Style
+	styleToolPrefixDone    lipgloss.Style
 	styleToolPrefixErr     lipgloss.Style
 	styleHeader            lipgloss.Style
 	styleHeaderAccent      lipgloss.Style
@@ -327,6 +328,7 @@ func applyTheme(p palette) {
 	styleThoughtCollapsed = lipgloss.NewStyle().Foreground(colorGray).Italic(true)
 	styleThoughtContent = lipgloss.NewStyle().Foreground(colorMuted).Italic(true)
 	styleThoughtExpandHint = lipgloss.NewStyle().Foreground(colorGray).Italic(true)
+	styleToolPrefixPending = lipgloss.NewStyle().Foreground(colorGray).Bold(true)
 	styleToolPrefixDone = lipgloss.NewStyle().Foreground(colorOK).Bold(true)
 	styleToolPrefixWarn = lipgloss.NewStyle().Foreground(colorAccentGold).Bold(true)
 	styleToolPrefixErr = lipgloss.NewStyle().Foreground(colorErr).Bold(true)
