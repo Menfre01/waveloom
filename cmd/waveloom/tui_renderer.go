@@ -324,24 +324,34 @@ func truncateStr(s string, maxLen int) string {
 	return string(runes[:maxLen])
 }
 // collapseMultilineCommand 将多行 shell 命令拼接为单行。
-// JSON 中的 \n 转义序列经 extractField 提取后为字面量 \n,
-// 此处连同实际换行符统一替换为 &&,同时清理行尾的 \ 续行符。
+// extractField 返回原始 JSON 子串(不含 JSON 反转义),因此需要对 JSON 转义序列
+// 做特殊处理: \\\n(JSON \\\n = shell \<newline\> 续行)、\\n(JSON \\n = 字面量 \n)、
+// \n(JSON \n = 换行 = 命令分隔)。使用占位符分两趟处理,避免替换后产生的新 \n
+// 被后续规则误匹配。
 func collapseMultilineCommand(cmd string) string {
-	// 1a. 替换 shell 续行符 \\\n(JSON: \\\n → shell: \<newline>),先于 \\n 处理避免遗留孤立的 \
-	s := strings.ReplaceAll(cmd, `\\\n`, " ")
-	// 1b. 替换 shell 续行符剩余模式 \\n(JSON 中 \\n = 字面量 \ + 换行)
-	s = strings.ReplaceAll(s, `\\n`, " ")
-	// 2. 替换 JSON 字面量 \n(extractField 不会做 JSON 反转义)
-	s = strings.ReplaceAll(s, `\n`, " && ")
-	// 3. 替换实际换行符
-	s = strings.ReplaceAll(s, "\n", " && ")
-	// 4. 压缩多余空白(多个空格 → 单个)
+	const markerLineCont = "\x00LC" // shell 续行符压缩为空格
+	const markerLitN = "\x00LN"     // 字面量 \n 原样保留
+
+	s := cmd
+	// Pass 1: 标记 JSON 转义序列(最长匹配优先)
+	s = strings.ReplaceAll(s, `\\\n`, markerLineCont) // JSON \\\n → shell \<newline\> → space
+	s = strings.ReplaceAll(s, `\\n`, markerLitN)      // JSON \\n → shell \n(字面量)
+	// 防御:处理实际 \<newline\>(extractField 不应产生,但容错)
+	s = strings.ReplaceAll(s, "\\\n", markerLineCont)
+
+	// Pass 2: 转换剩余转义序列
+	s = strings.ReplaceAll(s, `\n`, " && ") // JSON \n → 命令分隔
+	s = strings.ReplaceAll(s, "\n", " && ") // 实际换行 → 命令分隔
+
+	// Pass 3: 还原标记
+	s = strings.ReplaceAll(s, markerLineCont, " ")
+	s = strings.ReplaceAll(s, markerLitN, `\n`)
+
+	// Pass 4: 清理
 	s = strings.Join(strings.Fields(s), " ")
-	// 5. 压缩多余的 &&
 	for strings.Contains(s, " &&  && ") {
 		s = strings.ReplaceAll(s, " &&  && ", " && ")
 	}
-	// 6. 去除首尾残留的连接符
 	s = strings.TrimSpace(s)
 	s = strings.TrimPrefix(s, "&& ")
 	s = strings.TrimSuffix(s, " &&")

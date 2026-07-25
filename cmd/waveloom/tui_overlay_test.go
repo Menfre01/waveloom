@@ -217,14 +217,44 @@ func TestCollapseMultilineCommand(t *testing.T) {
 			want:  "go build ./... && go test ./... && go vet ./...",
 		},
 		{
-			name:  "shell line continuation ( \\n in JSON source)",
-			input: `go build ./... \\n    && go test ./...`,
+			name:  "literal backslash-n preserved (JSON \\\\n → shell \\n)",
+			input: `sed 's/\\n/ /g'`,
+			want:  `sed 's/\n/ /g'`,
+		},
+		{
+			name:  "shell line continuation with spaces (JSON \\\\\\n → shell \\<newline>)",
+			input: `go build ./... \\\n    && go test ./...`,
 			want:  "go build ./... && go test ./...",
 		},
 		{
-			name:  "shell line continuation with backslash-newline (JSON \\\\\\n → shell \\<newline>)",
+			name:  "simple backslash-newline continuation",
 			input: `echo hello\\\nworld`,
 			want:  "echo hello world",
+		},
+		{
+			name:  "grep with backslash continuation",
+			input: `grep \\\n"pattern" file`,
+			want:  `grep "pattern" file`,
+		},
+		{
+			name:  "rg with backslash continuation and spaces",
+			input: `rg -n \\\n  'pattern'`,
+			want:  `rg -n 'pattern'`,
+		},
+		{
+			name:  "multiple continuations",
+			input: `echo \\\nhello \\\nworld`,
+			want:  "echo hello world",
+		},
+		{
+			name:  "mixed continuation and newline",
+			input: `echo \\\nhello\ngo test`,
+			want:  "echo hello && go test",
+		},
+		{
+			name:  "actual backslash newline (defensive)",
+			input: "echo \\\nhello",
+			want:  "echo hello",
 		},
 		{
 			name:  "cd prefix already stripped",
