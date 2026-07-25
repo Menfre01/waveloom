@@ -75,7 +75,7 @@ func (t *WebSearch) Schema() json.RawMessage { return webSearchSchema }
 func (t *WebSearch) ConcurrentSafe() bool    { return true }
 
 func (t *WebSearch) Description() string {
-	return "Search the web and return a list of results (title, URL, snippet). Backends: DuckDuckGo (default) or Brave Search. Rules: see system prompt ## Web Search."
+	return "Search the web and return a list of results (title, URL, snippet). Backends: DuckDuckGo (default) or Brave Search. Rules: see system prompt ## Information Sources."
 }
 
 // Prompt 返回 web_search 使用指南和跨工具引用，由 Registry.FormatToolPrompts() 注入 C1。

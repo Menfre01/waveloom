@@ -186,7 +186,7 @@ func (l *Loop) executeToolCalls(ctx context.Context, calls []llm.ToolCall, state
 					} else if hookResult != nil && hookResult.Denied {
 						content := fmt.Sprintf("Tool %q execution denied by PreToolUse hook: %s", tc.Name, hookResult.DenyReason)
 						for _, w := range hookWarnings {
-							content += "\n[system] Hook warning: " + w
+				content += "\n[system:hook] Hook warning: " + w
 						}
 						safeSend(resultsCh, execResult{tc: tc, result: &tool.ToolResult{
 							Content: content,
@@ -228,7 +228,7 @@ func (l *Loop) executeToolCalls(ctx context.Context, calls []llm.ToolCall, state
 				// 注入累计的 hook 警告到工具结果，让用户即时感知
 				if result != nil && len(hookWarnings) > 0 {
 					for _, w := range hookWarnings {
-						result.Content += "\n[system] Hook warning: " + w
+				result.Content += "\n[system:hook] Hook warning: " + w
 					}
 				}
 				safeSend(resultsCh, execResult{tc: tc, result: result, err: execErr, start: start})
@@ -483,7 +483,7 @@ func (l *Loop) executeToolCalls(ctx context.Context, calls []llm.ToolCall, state
 			} else if hookResult != nil && hookResult.Denied {
 				content := fmt.Sprintf("Tool %q execution denied by PreToolUse hook: %s", tc.Name, hookResult.DenyReason)
 				for _, w := range hookWarnings {
-					content += "\n[system] Hook warning: " + w
+					content += "\n[system:hook] Hook warning: " + w
 				}
 				results[tc.ID] = &tool.ToolResult{
 					Content: content,
@@ -524,7 +524,7 @@ func (l *Loop) executeToolCalls(ctx context.Context, calls []llm.ToolCall, state
 		// 注入累计的 hook 警告
 		if result != nil && len(hookWarnings) > 0 {
 			for _, w := range hookWarnings {
-				result.Content += "\n[system] Hook warning: " + w
+				result.Content += "\n[system:hook] Hook warning: " + w
 			}
 		}
 		if execErr != nil {
@@ -733,7 +733,7 @@ func (l *Loop) buildToolMessages(
 		// (count=1 正常调用,count=2 试错不警告)
 		if warnThresholds[l.consecutiveSameError] {
 			warnContent := fmt.Sprintf(
-				"[system] You have received %d consecutive %q errors on the %q tool. Reassess your approach — try a different tool, different parameters, or re-examine the task. Do not repeat the same call pattern. If the root cause remains unclear, consider delegating analysis to a subagent for a fresh perspective.",
+				"[system:backoff] You have received %d consecutive %q errors on the %q tool. Reassess your approach — try a different tool, different parameters, or re-examine the task. Do not repeat the same call pattern. If the root cause remains unclear, consider delegating analysis to a subagent for a fresh perspective.",
 				l.consecutiveSameError, firstRecoverableKind, firstRecoverableTool,
 			)
 			warnMsg := llm.Message{

@@ -111,7 +111,7 @@ func (t *Shell) ToolTimeout() time.Duration {
 // Description 仅描述 API 契约。行为约束(使用规则、策略)见 Prompt(),
 // 由 Registry.FormatToolPrompts() 注入 C1 system prompt。
 func (t *Shell) Description() string {
-	return "Execute a shell command in a subprocess. Rules: see system prompt ## Shell Usage."
+	return "Execute a shell command in a subprocess. Rules: see system prompt ## Tool Selection."
 }
 
 // Prompt 返回 shell 使用行为约束，由 Registry.FormatToolPrompts() 注入 C1 system prompt。

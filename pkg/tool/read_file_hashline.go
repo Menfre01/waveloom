@@ -34,11 +34,9 @@ type ReadFileHashline struct{}
 func (t *ReadFileHashline) Name() string { return "read" }
 
 func (t *ReadFileHashline) Description() string {
-	return "Read a file with TAG and line numbers for hash-anchored editing. Rules: see system prompt ## Read File (Hashline)."
+	return "Read a file with TAG and line numbers for hash-anchored editing. Rules: see system prompt ## File Operations."
 }
 
-// Prompt 返回 read 工具使用指南，由 Registry.FormatToolPrompts() 注入 system prompt。
-func (t *ReadFileHashline) Prompt() string { return readHashlinePrompt }
 var readFileHashlineSchema = json.RawMessage(`{
   "type": "object",
   "properties": {

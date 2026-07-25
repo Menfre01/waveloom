@@ -194,13 +194,9 @@ waitLoop:
 		systemPrompt += skillListing
 	}
 
-	// 注入 subagent 模型选择指导(始终注入,agent 工具 schema 引用 pro/flash 语义)。
-	systemPrompt += buildModelSelectionSection()
-	// 注入工具错误处理指导(始终注入,适配所有模式)
-	systemPrompt += buildToolErrorGuidance()
-
 	// 注入工具使用指南：ToolWithPrompt.Prompt() → C1 system prompt。
 	// 按需组装 — 仅已注册且实现了 ToolWithPrompt 的工具会贡献内容。
+	// 放在 system prompt 最后（TAIL 末尾），Coding Scenarios / Agent Tool 等关键决策内容在前。
 	if toolPrompts := registry.FormatToolPrompts(); toolPrompts != "" {
 		systemPrompt += "\n\n" + toolPrompts
 	}

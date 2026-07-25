@@ -28,11 +28,9 @@ type EditFileHashline struct{}
 func (t *EditFileHashline) Name() string { return "edit" }
 
 func (t *EditFileHashline) Description() string {
-	return "Edit files using hash-anchored patches. Rules: see system prompt ## Edit File (Hashline)."
+	return "Edit files using hash-anchored patches. Rules: see system prompt ## File Operations."
 }
 
-// Prompt 返回 hashline 使用指南，由 Registry.FormatToolPrompts() 注入 C1 system prompt。
-func (t *EditFileHashline) Prompt() string { return editHashlinePrompt }
 
 
 var editFileHashlineSchema = json.RawMessage(`{

@@ -1,4 +1,4 @@
-## Read File (Hashline)
+## File Operations — Read
 
 Use `read` to get a TAG and line-numbered content for hash-anchored editing.
 Always read a file before editing it — the TAG certifies the file snapshot

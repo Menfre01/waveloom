@@ -38,7 +38,7 @@ func (t *KillBackgroundTask) ConcurrentSafe() bool       { return true }
 func (t *KillBackgroundTask) SupportsStreaming() bool    { return false }
 
 func (t *KillBackgroundTask) Description() string {
-	return "Kill a running background task by its task ID. Rules: see system prompt ## Shell Usage."
+	return "Kill a running background task by its task ID. Rules: see system prompt ## Tool Selection."
 }
 
 func (t *KillBackgroundTask) Execute(ctx context.Context, p KillBackgroundTaskParams) (*ToolResult, error) {

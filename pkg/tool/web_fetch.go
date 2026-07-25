@@ -65,7 +65,7 @@ func (t *WebFetch) Schema() json.RawMessage { return webFetchSchema }
 func (t *WebFetch) ConcurrentSafe() bool { return true }
 
 func (t *WebFetch) Description() string {
-	return "Fetch content from a URL and return text (HTML stripped to plain text). Only text/*, JSON, XML, JavaScript. Rules: see system prompt ## Web Fetch."
+	return "Fetch content from a URL and return text (HTML stripped to plain text). Only text/*, JSON, XML, JavaScript. Rules: see system prompt ## Information Sources."
 }
 
 // Prompt 返回 web_fetch 使用指南和跨工具引用，由 Registry.FormatToolPrompts() 注入 C1。

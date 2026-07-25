@@ -508,7 +508,7 @@ func (l *Loop) Run(ctx context.Context, messages []llm.Message) <-chan TurnEvent
 				warnMsg := llm.Message{
 					Role: llm.RoleUser,
 					Content: fmt.Sprintf(
-						"[system] You have produced %d consecutive responses with thinking (reasoning) but no visible content or tool calls. Your last response was empty — the user cannot see your thoughts, only your output. On this turn, produce actual content or use a tool immediately.",
+						"[system:empty] You have produced %d consecutive responses with thinking (reasoning) but no visible content or tool calls. Your last response was empty — the user cannot see your thoughts, only your output. On this turn, produce actual content or use a tool immediately.",
 						state.ConsecutiveEmpty,
 					),
 				}
@@ -757,7 +757,7 @@ func sendEvent(ctx context.Context, ch chan<- TurnEvent, ev TurnEvent) bool {
 // todoLastChanceText 构造最后机会提醒文本：告知 LLM 即将终止但有残留任务。
 func todoLastChanceText(summary string) string {
 	return summary + "\n\n" +
-		"[system] You are about to finish, but your todo list still has incomplete tasks. " +
+		"[system:todo] You are about to finish, but your todo list still has incomplete tasks. " +
 		"If all work is actually done, call todo_update to mark them as 'completed' before giving your final answer. " +
 		"If work remains, continue working. This is your last automatic reminder."
 }
@@ -787,7 +787,7 @@ func todoStatusText(summary string) string {
 // todoReminderText 构造 todo 提醒消息文本：状态摘要 + 提醒引导。
 func todoReminderText(summary string, turnsSince int) string {
 	return summary + "\n\n" +
-		fmt.Sprintf("[system] %d turns since last todo_update. Your todo list is stale — call todo_update NOW to update task statuses. Mark completed tasks as 'completed' and set the next pending task to 'in_progress'.", turnsSince)
+		fmt.Sprintf("[system:todo] %d turns since last todo_update. Your todo list is stale — call todo_update NOW to update task statuses. Mark completed tasks as 'completed' and set the next pending task to 'in_progress'.", turnsSince)
 }
 
 
