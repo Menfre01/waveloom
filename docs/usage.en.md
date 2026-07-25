@@ -36,7 +36,7 @@ The prefix character at the beginning of each line tells you **who is speaking**
 | `Enter` | Send message; type `exit` and Enter to quit |
 | `Esc` | Interrupt running agent |
 | `Esc+Esc` | Clear the input |
-| `↑` `↓` / `PgUp` `PgDn` | Scroll conversation history |
+| `↑` `↓` | Idle: navigate input history; running / end of history: scroll conversation |
 | `Ctrl+E` / `End` | Jump to bottom |
 | `Tab` | Focus next interactive paragraph (thought / tool output) |
 | `Shift+Tab` | Focus previous interactive paragraph; when idle, enter/exit Plan Mode |
