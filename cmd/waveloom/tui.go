@@ -1956,16 +1956,41 @@ func truncateToolResult(result string) string {
 }
 
 // maxToolStreamLines 是流式输出在 TUI 中保留的最大行数。
-// 超过此数时从头部丢弃旧行，防止长时间命令撑爆内存。
+// 超过此数时从头部丢弃旧行,防止长时间命令撑爆内存。
 const maxToolStreamLines = 2000
 
+// maxToolStreamLineBytes 是流式输出单行最大字节数,超长行截断以避免 wrapLineStable
+// 处理海量单行数据时 OOM。与 pkg/tool/shell.go 的 MaxLineBytes 保持一致。
+const maxToolStreamLineBytes = 4096
+
 // truncateToolStreamOutput 对累积的流式输出做滚动窗口截断。
+// 同时截断超长单行: wrapLineStable 会对整行做 []rune 转换,
+// 若不限制单行长度,命令产生无换行的海量输出时每次渲染 tick 都会 O(N) 处理全部内容。
 func truncateToolStreamOutput(s string) string {
 	lines := strings.Split(s, "\n")
-	if len(lines) <= maxToolStreamLines {
-		return s
+
+	// 单行截断:防止超长单行撑爆内存,沿 rune 边界截断
+	for i, line := range lines {
+		if len(line) > maxToolStreamLineBytes {
+			truncateAt := 0
+			for _, r := range line {
+				next := truncateAt + len(string(r))
+				if next > maxToolStreamLineBytes {
+					break
+				}
+				truncateAt = next
+			}
+			if truncateAt == 0 {
+				truncateAt = maxToolStreamLineBytes
+			}
+			lines[i] = line[:truncateAt] + "..."
+		}
 	}
-	// 保留尾部行，用截断标记替换头部
+
+	if len(lines) <= maxToolStreamLines {
+		return strings.Join(lines, "\n")
+	}
+	// 保留尾部行,用截断标记替换头部
 	head := fmt.Sprintf("... (stream truncated, showing last %d lines)\n", maxToolStreamLines)
 	tail := lines[len(lines)-maxToolStreamLines:]
 	return head + strings.Join(tail, "\n")
