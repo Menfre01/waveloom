@@ -232,19 +232,34 @@ func (g *GuardImpl) Check(ctx context.Context, toolName string, input json.RawMe
 		}
 	}
 
-	// Step 3: 工具特有安全检查（硬拦截，在 allow 规则之前执行）
+	// Step 3: 工具特有安全检查(硬拦截,在 allow 规则之前执行)
+	// DENY/ASK 立即返回,ALLOW 暂存后继续检查 allow 规则,
+	// 避免安全 ALLOW 短路用户配置的 allow 规则。
+	var safetyAllowResult *DecisionResult
 	if safetyResult := g.toolSafetyCheck(toolName, input); safetyResult.Decision != "" {
 		if safetyResult.Decision == DecisionDeny {
 			slog.Info("perm step3 security deny", "tool", toolName, "message", safetyResult.Message)
 			g.denialTracker.RecordDenial()
+			return safetyResult
 		}
-		return safetyResult
+		if safetyResult.Decision == DecisionAsk {
+			return safetyResult
+		}
+		// DecisionAllow:暂存,继续检查 allow 规则
+		cached := safetyResult
+		safetyAllowResult = &cached
 	}
 
-	// Step 4: allow 规则检查（工具级 + 内容级）
+	// Step 4: allow 规则检查(工具级 + 内容级)
 	if result, found := g.ruleEngine.CheckAllow(toolName, input); found {
 		g.denialTracker.RecordAllow()
 		return result
+	}
+
+	// 安全 ALLOW 兜底:allow 规则未命中但安全判断为安全时使用
+	if safetyAllowResult != nil {
+		g.denialTracker.RecordAllow()
+		return *safetyAllowResult
 	}
 
 

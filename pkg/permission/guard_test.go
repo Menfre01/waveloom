@@ -1333,3 +1333,115 @@ func TestGuardPlanMode_BuiltinAllowStillWorks(t *testing.T) {
 		t.Errorf("expected ReasonBuiltinAllow, got %s", result.Reason)
 	}
 }
+
+// =============================================================================
+// REGRESSION: allow 规则不被 Step 3 安全 ALLOW 短路
+// =============================================================================
+
+func TestGuard_Check_AllowRuleOverridesSafetyAllow_RiskNone(t *testing.T) {
+	// REGRESSION: shell(find *) allow 规则被 Step 3 的 RiskNone ALLOW 短路,
+	// 导致 allow 规则静默失效。修复后 allow 规则应优先于安全 ALLOW。
+	dir := testGuardDir(t)
+	g := NewGuard(
+		WithWorkingDirs(dir),
+		WithRules([]RuleEntry{
+			{Rule: Rule{Behavior: RuleAllow, ToolName: "bash", Pattern: "find *"}, Source: SourceConfig, Scope: ScopeConfig},
+		}),
+	)
+
+	result := g.Check(context.Background(), "bash", json.RawMessage(`{"command": "find . -name '*.go'"}`))
+
+	if result.Decision != DecisionAllow {
+		t.Errorf("Decision = %s, want %s", result.Decision, DecisionAllow)
+	}
+	if result.Reason != ReasonRule {
+		t.Errorf("Reason = %s, want %s (allow rule should take precedence over safety ALLOW)", result.Reason, ReasonRule)
+	}
+	if result.Rule != "bash(find *)" {
+		t.Errorf("Rule = %q, want 'bash(find *)'", result.Rule)
+	}
+}
+
+func TestGuard_Check_AllowRuleOverridesSafetyAllow_PlanMode(t *testing.T) {
+	// REGRESSION: plan 模式下 RiskLow 命令(git/go/npm 等)被 Step 3 安全 ALLOW
+	// 短路,导致 allow 规则静默失效。
+	dir := testGuardDir(t)
+	g := NewGuard(
+		WithWorkingDirs(dir),
+		WithRules([]RuleEntry{
+			{Rule: Rule{Behavior: RuleAllow, ToolName: "bash", Pattern: "git *"}, Source: SourceConfig, Scope: ScopeConfig},
+		}),
+	)
+	g.EnterPlanMode("/tmp/test-plan.md")
+
+	result := g.Check(context.Background(), "bash", json.RawMessage(`{"command": "git status"}`))
+
+	if result.Decision != DecisionAllow {
+		t.Errorf("Decision = %s, want %s", result.Decision, DecisionAllow)
+	}
+	if result.Reason != ReasonRule {
+		t.Errorf("Reason = %s, want %s (allow rule should take precedence)", result.Reason, ReasonRule)
+	}
+	if result.Rule != "bash(git *)" {
+		t.Errorf("Rule = %q, want 'bash(git *)'", result.Rule)
+	}
+}
+
+func TestGuard_Check_SafetyDenyStillBlocksAfterAllowRule(t *testing.T) {
+	// REGRESSION: 修复后安全 DENY 仍然优先于 allow 规则,硬拦截不可绕过。
+	dir := testGuardDir(t)
+	g := NewGuard(
+		WithWorkingDirs(dir),
+		WithRules([]RuleEntry{
+			{Rule: Rule{Behavior: RuleAllow, ToolName: "bash", Pattern: "rm *"}, Source: SourceConfig, Scope: ScopeConfig},
+		}),
+	)
+
+	// rm -rf / 是 RiskHigh,安全 DENY 应在 Step 3 立即拦截
+	result := g.Check(context.Background(), "bash", json.RawMessage(`{"command": "rm -rf /"}`))
+
+	if result.Decision != DecisionDeny {
+		t.Errorf("Decision = %s, want %s", result.Decision, DecisionDeny)
+	}
+	if result.Reason != ReasonSafety {
+		t.Errorf("Reason = %s, want %s (safety deny is hard block)", result.Reason, ReasonSafety)
+	}
+}
+
+func TestGuard_Check_SafetyAllowFallsThroughWhenNoAllowRule(t *testing.T) {
+	// REGRESSION: 无 allow 规则时,安全 ALLOW(RiskNone)应正确兜底,
+	// 不能因为没有规则就退回默认 ASK。
+	dir := testGuardDir(t)
+	g := NewGuard(WithWorkingDirs(dir))
+
+	result := g.Check(context.Background(), "bash", json.RawMessage(`{"command": "find . -name '*.go'"}`))
+
+	if result.Decision != DecisionAllow {
+		t.Errorf("Decision = %s, want %s", result.Decision, DecisionAllow)
+	}
+	if result.Reason != ReasonSafety {
+		t.Errorf("Reason = %s, want %s (safety fallback for RiskNone)", result.Reason, ReasonSafety)
+	}
+}
+
+func TestGuard_Check_SafetyAskStillReturnsBeforeAllowRule(t *testing.T) {
+	// REGRESSION: 安全 ASK(如路径越界)仍应在 allow 规则之前返回,
+	// 不能被 allow 规则静默覆盖。
+	dir := testGuardDir(t)
+	g := NewGuard(
+		WithWorkingDirs(dir),
+		WithRules([]RuleEntry{
+			{Rule: Rule{Behavior: RuleAllow, ToolName: "bash", Pattern: "ls *"}, Source: SourceConfig, Scope: ScopeConfig},
+		}),
+	)
+
+	// ls /etc 路径在工作目录外 → 应触发 path validation ASK
+	result := g.Check(context.Background(), "bash", json.RawMessage(`{"command": "ls /etc"}`))
+
+	if result.Decision != DecisionAsk {
+		t.Errorf("Decision = %s, want %s (path safety should still ask)", result.Decision, DecisionAsk)
+	}
+	if result.Reason != ReasonSafety {
+		t.Errorf("Reason = %s, want %s", result.Reason, ReasonSafety)
+	}
+}
