@@ -1,3 +1,16 @@
+## [v0.3.3] — 2026-07-25
+
+### 修复
+- **hashline 标记误判**:扫描器对非 hashline 内容错误触发标记检测,增强标记匹配精度避免 read 输出异常
+- **diff 双参照系精度混淆**:工具名引入灰色 pending 状态,消除 diff 行号与实际文件行号两个参照系之间的精度混淆
+
+### 重构
+- **staticcheck QF1003**:tui_renderer 中 if-else 链改写为 switch 语句,符合 Go 代码规范
+
+---
+
+📝 [Changelog (English)](https://github.com/Menfre01/waveloom/blob/dev/CHANGELOG.en.md)
+
 ## [v0.3.2] — 2026-07-25
 
 ### 新增功能

@@ -1,3 +1,16 @@
+## [v0.3.3] — 2026-07-25
+
+### Fixed
+- **Hashline marker false positive**: scanner incorrectly triggered marker detection on non-hashline content; enhanced matching precision prevents read output anomalies
+- **Diff dual coordinate confusion**: tool name now shows gray pending state, resolving precision confusion between diff line numbers and actual file line numbers
+
+### Changed
+- **staticcheck QF1003**: if-else chain in tui_renderer rewritten as switch statement per Go conventions
+
+---
+
+📝 [Changelog (简体中文)](https://github.com/Menfre01/waveloom/blob/dev/CHANGELOG.md)
+
 ## [v0.3.2] — 2026-07-25
 
 ### New Features
