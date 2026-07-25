@@ -292,8 +292,6 @@ type keyMap struct {
 	Picker      key.Binding
 	Paste       key.Binding
 	Help        key.Binding
-	HistoryUp   key.Binding
-	HistoryDown key.Binding
 }
 
 // permKeyBindings / questionSingleKeyBindings 等已移至 tui_overlay.go，// 作为接受 *Messages 的函数实现，支持国际化。
@@ -313,10 +311,7 @@ var defaultKeys = keyMap{
 	Picker:      key.NewBinding(key.WithKeys("@"), key.WithHelp("@", "Pick file/directory")),
 	Paste:       key.NewBinding(key.WithKeys("ctrl+v"), key.WithHelp("Ctrl+V", "Paste")),
 	Help:        key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "Shortcuts")),
-	HistoryUp:   key.NewBinding(key.WithKeys("ctrl+p"), key.WithHelp("Ctrl+P", "Navigate input history up")),
-	HistoryDown: key.NewBinding(key.WithKeys("ctrl+n"), key.WithHelp("Ctrl+N", "Navigate input history down")),
 }
-
 // makeKeyMap 根据 locale 生成带翻译帮助文本的 keyMap。
 func makeKeyMap(lc *Messages) keyMap {
 	return keyMap{
@@ -334,8 +329,6 @@ func makeKeyMap(lc *Messages) keyMap {
 		Picker:      key.NewBinding(key.WithKeys("@"), key.WithHelp("@", lc.KeyPicker)),
 		Paste:       key.NewBinding(key.WithKeys("ctrl+v"), key.WithHelp("Ctrl+V", lc.KeyPaste)),
 		Help:        key.NewBinding(key.WithKeys("?"), key.WithHelp("?", lc.KeyHelp)),
-		HistoryUp:   key.NewBinding(key.WithKeys("ctrl+p"), key.WithHelp("Ctrl+P", lc.KeyHistoryUp)),
-		HistoryDown: key.NewBinding(key.WithKeys("ctrl+n"), key.WithHelp("Ctrl+N", lc.KeyHistoryDown)),
 	}
 }
 
@@ -1408,31 +1401,9 @@ func (m *model) handleKeyPress(msg tea.KeyPressMsg) (bool, tea.Cmd) {
 	// 3. 权限面板活跃时路由
 	// =====================================================================
 	if m.overlay == overlayPermission {
-		// 滚动键:允许用户滚动查看权限请求的上下文
-		switch {
-		case key.Matches(msg, m.keys.PageUp):
-			m.scrollUp(m.bodyHeight)
-			return true, nil
-		case key.Matches(msg, m.keys.PageDown):
-			m.scrollDown(m.bodyHeight)
-			return true, nil
-		case key.Matches(msg, m.keys.JumpBottom):
-			m.scrollToBottom()
-			return true, nil
-		}
 		keyStr := msg.String()
+		// ↑↓ 仅导航权限列表,不透传给 viewport
 		if keyStr == "up" || keyStr == "down" {
-			// ↑↓ 在列表边界时转为 body 滚动,否则导航列表项。
-			// 解决 macOS 终端触控板滚动产生键盘 ↑↓ 导致 body 无法滚动的问题。
-			idx := m.permList.Index()
-			if keyStr == "up" && idx <= 0 {
-				m.scrollUp(1)
-				return true, nil
-			}
-			if keyStr == "down" && idx >= 2 {
-				m.scrollDown(1)
-				return true, nil
-			}
 			var cmd tea.Cmd
 			m.permList, cmd = m.permList.Update(msg)
 			return true, cmd
@@ -1484,28 +1455,7 @@ func (m *model) handleKeyPress(msg tea.KeyPressMsg) (bool, tea.Cmd) {
 		return m.handleProviderPickerKey(msg)
 	}
 
-	// =====================================================================
-	// 3e. Plan 进入确认活跃时路由
-	// =====================================================================
 	if m.overlay == overlayPlanEnter {
-		// 滚动键:允许用户滚动查看之前的对话内容
-		switch {
-		case key.Matches(msg, m.keys.Up):
-			m.scrollUp(1)
-			return true, nil
-		case key.Matches(msg, m.keys.Down):
-			m.scrollDown(1)
-			return true, nil
-		case key.Matches(msg, m.keys.PageUp):
-			m.scrollUp(m.bodyHeight)
-			return true, nil
-		case key.Matches(msg, m.keys.PageDown):
-			m.scrollDown(m.bodyHeight)
-			return true, nil
-		case key.Matches(msg, m.keys.JumpBottom):
-			m.scrollToBottom()
-			return true, nil
-		}
 		keyStr := msg.String()
 		switch keyStr {
 		case "enter":
@@ -1532,28 +1482,7 @@ func (m *model) handleKeyPress(msg tea.KeyPressMsg) (bool, tea.Cmd) {
 		return false, nil
 	}
 
-	// =====================================================================
-	// 3f. Plan 退出审批活跃时路由
-	// =====================================================================
 	if m.overlay == overlayPlanExit {
-		// 滚动键:允许用户滚动查看 plan 内容及之前的对话
-		switch {
-		case key.Matches(msg, m.keys.Up):
-			m.scrollUp(1)
-			return true, nil
-		case key.Matches(msg, m.keys.Down):
-			m.scrollDown(1)
-			return true, nil
-		case key.Matches(msg, m.keys.PageUp):
-			m.scrollUp(m.bodyHeight)
-			return true, nil
-		case key.Matches(msg, m.keys.PageDown):
-			m.scrollDown(m.bodyHeight)
-			return true, nil
-		case key.Matches(msg, m.keys.JumpBottom):
-			m.scrollToBottom()
-			return true, nil
-		}
 		keyStr := msg.String()
 		switch keyStr {
 		case "enter":
@@ -1580,8 +1509,6 @@ func (m *model) handleKeyPress(msg tea.KeyPressMsg) (bool, tea.Cmd) {
 		}
 		return false, nil
 	}
-
-	// =====================================================================
 	// 3g. Rewind 选择覆盖层活跃时路由
 	// =====================================================================
 	if m.overlay == overlayRewindSelect {
@@ -1719,7 +1646,15 @@ func (m *model) handleKeyPress(msg tea.KeyPressMsg) (bool, tea.Cmd) {
 		if m.focusIndex >= 0 {
 			return true, m.focusPrev()
 		}
-		// 向上滚动页面
+		// 空闲态 ↑ → 输入历史导航(仅在未处于历史导航中时尝试)
+		if !m.running && m.overlay == overlayNone && !m.pickerVisible {
+			if m.historyPos == -1 || m.historyPos < len(m.inputHistory)-1 {
+				if m.navigateHistoryUp() {
+					return true, nil
+				}
+			}
+		}
+		// 未消费 → 向上滚动
 		m.scrollUp(1)
 		return true, nil
 
@@ -1728,31 +1663,16 @@ func (m *model) handleKeyPress(msg tea.KeyPressMsg) (bool, tea.Cmd) {
 		if m.focusIndex >= 0 {
 			return true, m.focusNext()
 		}
-		// 向下滚动页面
-		m.scrollDown(1)
-		return true, nil
-
-	case key.Matches(msg, m.keys.HistoryUp):
-		// 空闲态 Ctrl+P → 输入历史导航
-		if !m.running && m.overlay == overlayNone && !m.pickerVisible {
-			if m.historyPos == -1 || m.historyPos < len(m.inputHistory)-1 {
-				if m.navigateHistoryUp() {
-					return true, nil
-				}
-			}
-		}
-		// 未消费 → 传给 textarea(用于多行光标移动)
-		return false, nil
-
-	case key.Matches(msg, m.keys.HistoryDown):
-		// 空闲态 Ctrl+N → 输入历史导航
+		// 空闲态 ↓ → 输入历史导航
 		if !m.running && m.overlay == overlayNone && !m.pickerVisible {
 			if m.navigateHistoryDown() {
 				return true, nil
 			}
 		}
-		// 未消费 → 传给 textarea
-		return false, nil
+		// 未消费 → 向下滚动
+		m.scrollDown(1)
+		return true, nil
+
 
 	case key.Matches(msg, m.keys.PageUp):
 		m.scrollUp(m.bodyHeight)
@@ -3298,6 +3218,7 @@ func (m *model) View() tea.View {
 
 	v := tea.NewView(mainContent)
 	v.AltScreen = true
+	v.MouseMode = tea.MouseModeCellMotion
 
 	// real cursor 模式：定位输入光标
 	if m.overlay == overlayNone {
@@ -4042,15 +3963,11 @@ func (m *model) handleRewindSelectKey(keyStr string) tea.Cmd {
 		if m.rewindSelectedIdx > 0 {
 			m.rewindSelectedIdx--
 			m.rewindScrollToVisible()
-		} else {
-			m.scrollUp(1)
 		}
 	case "down":
 		if m.rewindSelectedIdx < len(m.rewindMessages)-1 {
 			m.rewindSelectedIdx++
 			m.rewindScrollToVisible()
-		} else {
-			m.scrollDown(1)
 		}
 	case "enter":
 		if m.rewindSelectedIdx >= 0 && m.rewindSelectedIdx < len(m.rewindMessages) {
@@ -4100,20 +4017,15 @@ func (m *model) rewindScrollToVisible() {
 	}
 }
 
-// handleRewindConfirmKey 处理 rewind 确认覆盖层的键盘事件。
 func (m *model) handleRewindConfirmKey(keyStr string) tea.Cmd {
 	switch keyStr {
 	case "up":
 		if m.rewindSelectedIdx > 0 {
 			m.rewindSelectedIdx--
-		} else {
-			m.scrollUp(1)
 		}
 	case "down":
 		if m.rewindSelectedIdx < 3 {
 			m.rewindSelectedIdx++
-		} else {
-			m.scrollDown(1)
 		}
 	case "enter":
 		return m.executeRewind(rewindOption(m.rewindSelectedIdx))

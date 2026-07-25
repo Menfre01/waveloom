@@ -356,8 +356,7 @@ func TestRenderRewindConfirmOverlay_ProducesOutput(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// 回归测试:overlay ↑↓ 边界穿透 body 滚动
-// macOS 终端将触控板/鼠标滚轮转为键盘 ↑↓,列表到边界时应转为 body 滚动。
+// 权限面板 ↑↓ 导航测试:↑↓ 仅导航列表项,不透传给 viewport。
 // ---------------------------------------------------------------------------
 
 func newTestModelForPermissionOverlay() *model {
@@ -369,42 +368,41 @@ func newTestModelForPermissionOverlay() *model {
 	return m
 }
 
-func TestHandleKeyPress_PermissionBoundary_UpScrollsBody(t *testing.T) {
+func TestHandleKeyPress_PermissionBoundary_UpStaysAtTop(t *testing.T) {
 	m := newTestModelForPermissionOverlay()
-	// 设 body 有足够内容可滚动
 	m.scrollTop = 5
 	m.bodyHeight = 10
 
-	// 列表选中第一项(index 0),按 ↑ 应转为 body 上滚
+	// 列表选中第一项(index 0),按 ↑ 应停留在顶部,不滚动 body
 	m.permList.Select(0)
 	handled, _ := m.handleKeyPress(tea.KeyPressMsg{Text: "up", Code: 'u'})
 	if !handled {
-		t.Error("up at boundary should be handled (scroll body)")
+		t.Error("up at boundary should be handled (navigate list)")
 	}
-	// body 应向上滚动
-	if m.scrollTop != 4 {
-		t.Errorf("scrollTop should decrease from 5 to 4, got %d", m.scrollTop)
+	// body 不滚动
+	if m.scrollTop != 5 {
+		t.Errorf("scrollTop should stay at 5, got %d", m.scrollTop)
 	}
-	// 列表选中项不应变化
+	// 列表选中项应保持
 	if m.permList.Index() != 0 {
 		t.Errorf("permList index should stay at 0, got %d", m.permList.Index())
 	}
 }
 
-func TestHandleKeyPress_PermissionBoundary_DownScrollsBody(t *testing.T) {
+func TestHandleKeyPress_PermissionBoundary_DownStaysAtBottom(t *testing.T) {
 	m := newTestModelForPermissionOverlay()
 
 	m.scrollTop = 5
 	m.bodyHeight = 10
 
-	// 列表选中最后一项(index 2 = Deny),按 ↓ 应转为 body 下滚
+	// 列表选中最后一项(index 2 = Deny),按 ↓ 应停留在底部,不滚动 body
 	m.permList.Select(2)
 	handled, _ := m.handleKeyPress(tea.KeyPressMsg{Text: "down", Code: 'd'})
 	if !handled {
-		t.Error("down at boundary should be handled (scroll body)")
+		t.Error("down at boundary should be handled (navigate list)")
 	}
-	if m.scrollTop != 6 {
-		t.Errorf("scrollTop should increase from 5 to 6, got %d", m.scrollTop)
+	if m.scrollTop != 5 {
+		t.Errorf("scrollTop should stay at 5, got %d", m.scrollTop)
 	}
 	if m.permList.Index() != 2 {
 		t.Errorf("permList index should stay at 2, got %d", m.permList.Index())

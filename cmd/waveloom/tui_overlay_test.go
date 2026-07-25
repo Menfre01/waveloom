@@ -984,8 +984,8 @@ func TestKeyMapToGroups_AllBindingsPresent(t *testing.T) {
 	km := makeKeyMap(lc)
 
 	groups := keyMapToGroups(km)
-	if len(groups) != 4 {
-		t.Fatalf("expected 4 groups, got %d", len(groups))
+	if len(groups) != 3 {
+		t.Fatalf("expected 3 groups, got %d", len(groups))
 	}
 
 	// 收集所有 binding，验证 14 个快捷键齐全
@@ -1011,8 +1011,8 @@ func TestKeyMapToGroups_AllBindingsPresent(t *testing.T) {
 		}
 	}
 
-	if total != 16 {
-		t.Errorf("expected 16 total bindings across all groups, got %d", total)
+	if total != 14 {
+		t.Errorf("expected 14 total bindings across all groups, got %d", total)
 	}
 
 	// 验证 Tab 和 Shift+Tab 在 groups 中
