@@ -183,3 +183,20 @@ SWAP 5.=5:
 ❌ WRONG: `+ DEL 5` — the `+` makes it literal body text, the file gets a line containing "DEL 5" instead of deleting line 5.
 
 ✅ RIGHT: `DEL 5` — operation lines never start with `+`. Only body content lines start with `+`.
+
+**10. SWAP across block boundaries — count braces**
+
+❌ WRONG: replacing an if/for/func body but SWAP range ends one line early, leaving a stray `}` that closes the outer block:
+```
+SWAP 5.=9:
++    // new body
+```
+Original lines 5–9 include the opening `{` and body, but line 10 (the closing `}`) is left behind — now unpaired, breaking the file structure.
+
+✅ RIGHT: before writing the patch, count `{` and `}` in the SWAP range from the `read` output. If they're unbalanced, the range is wrong:
+```
+SWAP 5.=10:
++    // new body
++}
+```
+Rule: the SWAP body MUST include a closing `}` for every opening `{` in the replaced range. If you only see `{` lines being replaced but no `}` lines, extend the range.
