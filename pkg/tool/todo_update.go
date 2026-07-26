@@ -25,7 +25,7 @@ var todoUpdateSchema = json.RawMessage(`{
           },
           "status": {
             "type": "string",
-            "enum": ["in_progress", "completed"],
+            "enum": ["pending", "in_progress", "completed"],
             "description": "New status. Only ONE task in_progress at a time."
           }
         },
@@ -42,7 +42,7 @@ func (t *TodoUpdate) Name() string                 { return "todo_update" }
 func (t *TodoUpdate) ConcurrentSafe() bool          { return false }
 func (t *TodoUpdate) RequiresUserInteraction() bool { return false }
 func (t *TodoUpdate) Description() string {
-	return "Update task status in the todo list. Use to mark tasks as in_progress (start working) or completed (done)."
+	return "Update task status in the todo list. Use to mark tasks as in_progress (start working), completed (done), or pending (revert)."
 }
 func (t *TodoUpdate) Prompt() string          { return todoUpdatePrompt }
 func (t *TodoUpdate) Schema() json.RawMessage { return todoUpdateSchema }
