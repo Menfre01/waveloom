@@ -4,4 +4,4 @@ Create tasks with status `pending`. Each needs a `content` (imperative form, mea
 
 - Use for: multi-step work, new instructions, user provides task list.
 - Don't use for: status updates (use `todo_update`), trivial single-command tasks, tasks completable in <3 steps.
-- Only ONE task `in_progress` at a time. Complete current before starting new.
+- Only ONE task `in_progress` at a time. Complete current before starting new. Exception: when spawning parallel subagents, you may mark ALL as in_progress.

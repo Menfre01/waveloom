@@ -889,9 +889,18 @@ func (l *Loop) executeTodoMutate(ctx context.Context, tc llm.ToolCall, state *Lo
 		msg += "\n⚠️ Some IDs were not found in the current task list. To update an existing task, use a valid ID from the list above. To create a new task, use todo_create instead."
 	}
 
-	// Soft warning: multiple in_progress
+	// multiple in_progress: inject [system:todo] user message to force LLM
+	// to confront the warning in the next turn (same pattern as [system:backoff]).
 	if result.InProgressCount > 1 {
-		msg += fmt.Sprintf("\n⚠️ %d tasks are in_progress. Only ONE should be in_progress at a time. Complete the current task before starting a new one.", result.InProgressCount)
+		msg += fmt.Sprintf("\n⚠️ %d tasks are now in_progress.", result.InProgressCount)
+		state.Messages = append(state.Messages, llm.Message{
+			Role: llm.RoleUser,
+			Content: fmt.Sprintf(
+				"[system:todo] ⚠️ %d tasks are now in_progress — only ONE should be in_progress unless you are spawning parallel subagents right now. "+
+					"If this was unintentional, call todo_update immediately to fix the extra items back to 'pending'.",
+				result.InProgressCount,
+			),
+		})
 	}
 
 	// 检测无状态变更的 no-op 调用：无创建且无更新时追加提示（仅当也没有 UnmatchedIDs 时）
