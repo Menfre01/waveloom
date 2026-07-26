@@ -105,7 +105,7 @@ var rolePlayRe = regexp.MustCompile(
 var fakeContextRe = regexp.MustCompile(
 	`(?i)\{\s*"role"\s*:\s*"system"` +
 		`|` +
-		`(?i)\[system\]\s*` +
+		`(?i)\[system\](?:\s|$)` +
 		`|` +
 		`(?i)\[system\s+message\]` +
 		`|` +

@@ -2280,7 +2280,7 @@ func transcriptEntryToParagraph(e session.TranscriptEntry, paras *[]Paragraph) {
 
 	switch msg.Role {
 	case llm.RoleUser:
-		if strings.HasPrefix(strings.TrimSpace(msg.Content), "[system]") {
+		if strings.HasPrefix(strings.TrimSpace(msg.Content), "[system:") {
 			return
 		}
 		if strings.HasPrefix(strings.TrimSpace(msg.Content), "<background-") {
@@ -4237,7 +4237,7 @@ func (m *model) rebuildParasFromMessages() {
 		switch msg.Role {
 		case llm.RoleSystem:
 		case llm.RoleUser:
-			if strings.HasPrefix(strings.TrimSpace(msg.Content), "[system]") {
+			if strings.HasPrefix(strings.TrimSpace(msg.Content), "[system:") {
 				continue
 			}
 			if strings.HasPrefix(strings.TrimSpace(msg.Content), "<background-") {
