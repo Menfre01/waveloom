@@ -17,6 +17,7 @@ import (
 	"github.com/Menfre01/waveloom/pkg/environment"
 	"github.com/Menfre01/waveloom/pkg/llm"
 	"github.com/Menfre01/waveloom/pkg/logging"
+	"github.com/Menfre01/waveloom/pkg/lsp"
 	"github.com/Menfre01/waveloom/pkg/mcp"
 	"github.com/Menfre01/waveloom/pkg/memory"
 	"github.com/Menfre01/waveloom/pkg/permission"
@@ -146,6 +147,30 @@ waitLoop:
 		}
 	}
 	defer func() { _ = mcpManager.Stop() }()
+
+	// 8.6 Create LSP Manager for post-edit diagnostics
+	lspProbeMap := make(map[string]bool)
+	for _, r := range probeResults {
+		switch r.Binary {
+		case "gopls", "rust-analyzer", "typescript-language-server", "clangd":
+			lspProbeMap[r.Binary] = r.Found
+		}
+	}
+	userLSPServers := make(map[string]lsp.ServerConfig)
+	for k, v := range lsp.LoadUserServers(projectPath) {
+		userLSPServers[k] = v
+	}
+	for k, v := range lsp.LoadUserServers(globalPath) {
+		if _, ok := userLSPServers[k]; !ok {
+			userLSPServers[k] = v
+		}
+	}
+	lspManager := lsp.NewManager(
+		lsp.WithUserServers(userLSPServers),
+		lsp.WithIdleTimeout(5*time.Minute),
+	)
+	lspManager.SetProbeMap(lspProbeMap)
+	defer lspManager.Shutdown()
 
 	// 9. 创建 @ 引用展开器（用于 AGENTS.md 和用户输入中的 @ 引用展开）
 	expander := reference.New(guard)
@@ -294,13 +319,13 @@ waitLoop:
 	if cfg.OneShot == "" {
 		// 16.5 加载 Hook Runner（RTK 等 hooks）
 		hookRunner := loadHookRunner()
- 		runTUI(llmClient, registry, guard, expander, llmSettings.Model, cfg.Theme, cfg.ContextLimit, cfg.MaxTurns, cfg.ToolTimeout, cfg.ToolTimeoutSource, cfg.BypassPerm, ctxMgr, isResume, sessionDir, globalPath, projectPath, agentsMdText, loc, todoState, hookRunner, agentTool, mcpManager)
+ 		runTUI(llmClient, registry, guard, expander, llmSettings.Model, cfg.Theme, cfg.ContextLimit, cfg.MaxTurns, cfg.ToolTimeout, cfg.ToolTimeoutSource, cfg.BypassPerm, ctxMgr, isResume, sessionDir, globalPath, projectPath, agentsMdText, loc, todoState, hookRunner, agentTool, mcpManager, lspManager)
 		return
 	}
 
 	// 16.5 加载 Hook Runner（RTK 等 hooks）
 	hookRunner := loadHookRunner()
- 	runOneShot(cfg, llmClient, registry, guard, expander, cwd, ctxMgr, agentsMdText, loc, todoState, llmSettings.Model, hookRunner, agentTool, mcpManager)
+ 	runOneShot(cfg, llmClient, registry, guard, expander, cwd, ctxMgr, agentsMdText, loc, todoState, llmSettings.Model, hookRunner, agentTool, mcpManager, lspManager)
 }
 
 

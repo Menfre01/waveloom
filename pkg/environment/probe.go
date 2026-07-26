@@ -73,6 +73,11 @@ func DefaultProbes() []string {
 		"make --version",
 		// 容器
 		"docker --version",
+		// LSP servers
+		"gopls version",
+		"rust-analyzer --version",
+		"typescript-language-server --version",
+		"clangd --version",
 	}
 }
 

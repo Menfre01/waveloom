@@ -12,6 +12,7 @@ import (
 	"github.com/Menfre01/waveloom/pkg/agentloop"
 	"github.com/Menfre01/waveloom/pkg/hook"
 	"github.com/Menfre01/waveloom/pkg/llm"
+	"github.com/Menfre01/waveloom/pkg/lsp"
 	"github.com/Menfre01/waveloom/pkg/permission"
 	"github.com/Menfre01/waveloom/pkg/mcp"
 	"github.com/Menfre01/waveloom/pkg/reference"
@@ -22,7 +23,7 @@ import (
 )
 
 // runOneShot 执行单次/管道模式（无 TUI，纯文本输出）。
-func runOneShot(cfg CLIConfig, llmClient llm.Client, registry tool.Registry, guard permission.Guard, expander *reference.Expander, cwd string, cm *session.ContextManager, agentsMdText string, loc Locale, todoState *todo.TodoState, model string, hookRunner *hook.Runner, agentTool *subagent.AgentTool, mcpManager *mcp.Manager) {
+func runOneShot(cfg CLIConfig, llmClient llm.Client, registry tool.Registry, guard permission.Guard, expander *reference.Expander, cwd string, cm *session.ContextManager, agentsMdText string, loc Locale, todoState *todo.TodoState, model string, hookRunner *hook.Runner, agentTool *subagent.AgentTool, mcpManager *mcp.Manager, lspManager *lsp.Manager) {
 	lc := messagesFor(loc)
 	// Context Manager 已管理 system prompt，Loop 无需重复注入
 	loopCfg := agentloop.Config{
@@ -32,6 +33,7 @@ func runOneShot(cfg CLIConfig, llmClient llm.Client, registry tool.Registry, gua
 		AgentsMD:     agentsMdText,
 		TodoState:    todoState,
 		Model:        model,
+		LSPManager:   lspManager,
 	}
 
 	// bypass 模式：覆盖 guard 为全放行模式

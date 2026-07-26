@@ -16,6 +16,7 @@ import (
 
 	"github.com/Menfre01/waveloom/pkg/compaction"
 	"github.com/Menfre01/waveloom/pkg/hashline"
+	"github.com/Menfre01/waveloom/pkg/lsp"
 	"github.com/Menfre01/waveloom/pkg/hook"
 	"github.com/Menfre01/waveloom/pkg/llm"
 	"github.com/Menfre01/waveloom/pkg/permission"
@@ -73,6 +74,9 @@ type Config struct {
 	// Model 覆盖 LLM Client 的默认 model。空 = 使用 Client 默认。
 	// 用于 subagent 按任务复杂度选择不同模型。
 	Model string
+
+	// LSPManager LSP diagnostic manager
+	LSPManager *lsp.Manager
 }
 
 // DefaultToolTimeout 是单个工具执行的推荐超时时间（5 分钟）。

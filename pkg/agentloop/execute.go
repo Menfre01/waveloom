@@ -1,5 +1,4 @@
 package agentloop
-
 import (
 	"context"
 	"crypto/rand"
@@ -9,12 +8,14 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/Menfre01/waveloom/pkg/hashline"
 	"github.com/Menfre01/waveloom/pkg/llm"
+	"github.com/Menfre01/waveloom/pkg/lsp"
 	"github.com/Menfre01/waveloom/pkg/permission"
 	"github.com/Menfre01/waveloom/pkg/todo"
 	"github.com/Menfre01/waveloom/pkg/tool"
@@ -689,9 +690,15 @@ func (l *Loop) buildToolMessages(
 		if warning := tool.ScanToolOutput(content); warning != "" {
 			content = warning + "\n" + content
 		}
-
 		// Layer 3: 外部数据边界标记 — 所有工具输出均标记为不可信外部数据
 		content = "[tool_result from " + tc.Name + "]\n" + content
+
+		// ── LSP 诊断注入（Layer 3 之后，Layer 4-5 之前）──
+		if l.config.LSPManager != nil && (tc.Name == "edit" || tc.Name == "write") {
+			if lspText := l.collectLSPDiagnostics(result); lspText != "" {
+				content += lspText
+			}
+		}
 
 		// Layer 4: 外部源风险分级 — 对高风险来源叠加额外警告
 		if isHighRiskTool(tc.Name) {
@@ -1315,5 +1322,121 @@ func isHighRiskTool(name string) bool {
 		return true
 	default:
 		return false
+	}
+}
+
+// ── LSP 诊断收集 ──
+
+// lspDiagEntry 收集单个文件的诊断信息。
+type lspDiagEntry struct {
+	path      string
+	diags     []lsp.Diagnostic
+	truncated bool
+	total     int
+}
+
+// collectLSPDiagnostics 对 edit/write 变更的文件运行 LSP 诊断，
+// 返回格式化后的诊断文本（已 sanitize + scan）。
+func (l *Loop) collectLSPDiagnostics(result *tool.ToolResult) string {
+	if l.config.LSPManager == nil || result == nil {
+		return ""
+	}
+
+	var files []string
+	seen := make(map[string]bool)
+
+	if result.Meta.FilePath != "" && lsp.IsCodeFile(result.Meta.FilePath) {
+		files = append(files, result.Meta.FilePath)
+		seen[result.Meta.FilePath] = true
+	}
+	for _, h := range result.Meta.DiffHunks {
+		if h.FilePath != "" && !seen[h.FilePath] && lsp.IsCodeFile(h.FilePath) {
+			files = append(files, h.FilePath)
+			seen[h.FilePath] = true
+		}
+	}
+
+	if len(files) == 0 {
+		return ""
+	}
+
+	const maxDiagsPerFile = 20
+	var b strings.Builder
+	var diagnostics []lspDiagEntry
+
+	for _, f := range files {
+		inst, err := l.config.LSPManager.GetOrCreate(f)
+		if err != nil || inst == nil {
+			continue
+		}
+		if err := l.config.LSPManager.SyncFile(inst, f); err != nil {
+			continue
+		}
+
+		uri := lsp.PathToURI(f)
+		diags := l.config.LSPManager.Diagnostics(uri)
+		if len(diags) == 0 {
+			continue
+		}
+
+		sort.Slice(diags, func(i, j int) bool {
+			return diags[i].Severity < diags[j].Severity
+		})
+
+		if len(diags) > maxDiagsPerFile {
+			truncated := make([]lsp.Diagnostic, maxDiagsPerFile)
+			copy(truncated, diags[:maxDiagsPerFile])
+			diagnostics = append(diagnostics, lspDiagEntry{
+				path: f, diags: truncated,
+				truncated: true, total: len(diags),
+			})
+		} else {
+			diagnostics = append(diagnostics, lspDiagEntry{
+				path: f, diags: diags,
+			})
+		}
+	}
+
+	if len(diagnostics) == 0 {
+		return ""
+	}
+
+	b.WriteString("\n\n## LSP Diagnostics\n\n")
+	for _, entry := range diagnostics {
+		fmt.Fprintf(&b, "### `%s`\n", entry.path)
+		for _, d := range entry.diags {
+			fmt.Fprintf(&b, "L%d:%d: %s: %s\n",
+				d.Range.Start.Line+1,
+				d.Range.Start.Character+1,
+				severityLabel(d.Severity),
+				d.Message,
+			)
+		}
+		if entry.truncated {
+			fmt.Fprintf(&b, "... (%d more diagnostics truncated)\n", entry.total-maxDiagsPerFile)
+		}
+		b.WriteString("\n")
+	}
+
+	raw := b.String()
+	sanitized := tool.SanitizeToolOutput(raw)
+	if warning := tool.ScanToolOutput(sanitized); warning != "" {
+		sanitized = warning + "\n" + sanitized
+	}
+	return sanitized
+}
+
+func severityLabel(s lsp.DiagnosticSeverity) string {
+	switch s {
+	case lsp.SeverityError:
+		return "error"
+	case lsp.SeverityWarning:
+		return "warning"
+	case lsp.SeverityInformation:
+		return "info"
+	case lsp.SeverityHint:
+		return "hint"
+	default:
+		return "diagnostic"
 	}
 }

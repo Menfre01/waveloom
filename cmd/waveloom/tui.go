@@ -50,6 +50,7 @@ import (
 
 	"github.com/Menfre01/waveloom/pkg/agentloop"
 	"github.com/Menfre01/waveloom/pkg/hook"
+	"github.com/Menfre01/waveloom/pkg/lsp"
 	"github.com/Menfre01/waveloom/pkg/environment"
 	"github.com/Menfre01/waveloom/pkg/filehistory"
 	"github.com/Menfre01/waveloom/pkg/llm"
@@ -357,7 +358,8 @@ type model struct {
 	cwd           string
 	loop          *agentloop.Loop
 	hookRunner    *hook.Runner // hooks 系统(RTK 等)
-	mcpManager *mcp.Manager // IDE MCP Server 上下文提供者
+	mcpManager *mcp.Manager // IDE MCP Server
+	lspManager *lsp.Manager // LSP diagnostics 上下文提供者
 
 	// Todo 任务列表
 
@@ -805,6 +807,7 @@ func (m *model) wireLoop() {
 		},
 		TodoState:   m.todoState,
 		Model:       m.hudModel,
+		LSPManager:  m.lspManager,
 	})
 	m.loop.SetHookRunner(m.hookRunner)
 }
@@ -4885,9 +4888,10 @@ func newSlashRegistry(creator slashcommand.SessionCreator, store slashcommand.Se
 // ---------------------------------------------------------------------------
 
 // runTUI 启动交互式 TUI 模式。依赖由 main() 统一初始化后传入，无需重复创建。
-func runTUI(llmClient llm.Client, registry tool.Registry, guard permission.Guard, expander *reference.Expander, modelName string, theme string, contextLimit int, maxTurns int, toolTimeout time.Duration, toolTimeoutSource string, bypassPerm bool, ctxMgr *session.ContextManager, isResume bool, sessionDir string, globalPath string, projectPath string, agentsMdText string, loc Locale, todoState *todo.TodoState, hookRunner *hook.Runner, agentTool *subagent.AgentTool, mcpManager *mcp.Manager) {
+func runTUI(llmClient llm.Client, registry tool.Registry, guard permission.Guard, expander *reference.Expander, modelName string, theme string, contextLimit int, maxTurns int, toolTimeout time.Duration, toolTimeoutSource string, bypassPerm bool, ctxMgr *session.ContextManager, isResume bool, sessionDir string, globalPath string, projectPath string, agentsMdText string, loc Locale, todoState *todo.TodoState, hookRunner *hook.Runner, agentTool *subagent.AgentTool, mcpManager *mcp.Manager, lspManager *lsp.Manager) {
 	m := newTUIModel(llmClient, registry, guard, expander, modelName, theme, contextLimit, maxTurns, toolTimeout, toolTimeoutSource, loc, todoState, hookRunner)
 	m.mcpManager = mcpManager
+	m.lspManager = lspManager
 	m.sessionDir = sessionDir
 	m.agentsMdText = agentsMdText
 

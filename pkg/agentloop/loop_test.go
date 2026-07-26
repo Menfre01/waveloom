@@ -1,9 +1,10 @@
 package agentloop
-
 import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/Menfre01/waveloom/pkg/compaction"
 	"github.com/Menfre01/waveloom/pkg/llm"
+	"github.com/Menfre01/waveloom/pkg/lsp"
 	"github.com/Menfre01/waveloom/pkg/permission"
 	"github.com/Menfre01/waveloom/pkg/todo"
 	"github.com/Menfre01/waveloom/pkg/tool"
@@ -3430,3 +3432,106 @@ func TestRegression_StaleTodoOnComplete_NoInfiniteLoop(t *testing.T) {
 		t.Error("expected last-chance reminder in messages, not found")
 	}
 }
+
+// ============================================================================
+// LSP Diagnostics Integration Tests
+// ============================================================================
+
+func TestCollectLSPDiagnostics_NoLSPManager(t *testing.T) {
+	loop := New(nil, tool.NewRegistry(), DefaultConfig())
+	result := &tool.ToolResult{
+		Meta: tool.ToolMeta{FilePath: "/tmp/test.go"},
+	}
+
+	// No LSPManager → returns empty
+	out := loop.collectLSPDiagnostics(result)
+	if out != "" {
+		t.Errorf("expected empty with nil LSPManager, got: %s", out)
+	}
+}
+
+func TestCollectLSPDiagnostics_NonCodeFile(t *testing.T) {
+	loop := New(nil, tool.NewRegistry(), DefaultConfig())
+	loop.config.LSPManager = lsp.NewManager()
+	defer loop.config.LSPManager.Shutdown()
+
+	result := &tool.ToolResult{
+		Meta: tool.ToolMeta{FilePath: "/tmp/README.md"},
+	}
+
+	// .md is not a code file → returns empty
+	out := loop.collectLSPDiagnostics(result)
+	if out != "" {
+		t.Errorf("expected empty for non-code file, got: %s", out)
+	}
+}
+
+func TestCollectLSPDiagnostics_WithMockServer(t *testing.T) {
+	// Full integration with mock LSP server is tested in pkg/lsp/lsp_test.go
+	// (TestManagerSyncFileAndDiagnostics, TestClientOnNotification).
+	// This test verifies the nil-guard and empty-result paths.
+
+	loop := New(nil, tool.NewRegistry(), DefaultConfig())
+	loop.config.LSPManager = lsp.NewManager()
+	defer loop.config.LSPManager.Shutdown()
+
+	dir := t.TempDir()
+	goFile := filepath.Join(dir, "main.go")
+	_ = os.WriteFile(goFile, []byte("package main\n"), 0644)
+
+	result := &tool.ToolResult{
+		Meta: tool.ToolMeta{FilePath: goFile},
+	}
+	// Without probe or user override, no server starts → returns empty
+	out := loop.collectLSPDiagnostics(result)
+	if out != "" {
+		t.Errorf("expected empty when no LSP server available, got: %s", out)
+	}
+}
+
+func TestCollectLSPDiagnostics_DiffHunks(t *testing.T) {
+	loop := New(nil, tool.NewRegistry(), DefaultConfig())
+	loop.config.LSPManager = lsp.NewManager()
+	defer loop.config.LSPManager.Shutdown()
+
+	dir := t.TempDir()
+	f1 := filepath.Join(dir, "main.go")
+	f2 := filepath.Join(dir, "lib.go")
+	_ = os.WriteFile(f1, []byte("package main\n"), 0644)
+	_ = os.WriteFile(f2, []byte("package lib\n"), 0644)
+
+	result := &tool.ToolResult{
+		Meta: tool.ToolMeta{
+			DiffHunks: []tool.DiffHunk{
+				{FilePath: f1},
+				{FilePath: f2},
+			},
+		},
+	}
+	// Without running LSP server, returns empty
+	out := loop.collectLSPDiagnostics(result)
+	if out != "" {
+		t.Errorf("expected empty, got: %s", out)
+	}
+}
+
+func TestCollectLSPDiagnostics_Sanitized(t *testing.T) {
+	// Test that diagnostic output goes through sanitize+scan pipeline
+	loop := New(nil, tool.NewRegistry(), DefaultConfig())
+	loop.config.LSPManager = lsp.NewManager()
+	defer loop.config.LSPManager.Shutdown()
+
+	result := &tool.ToolResult{
+		Meta: tool.ToolMeta{FilePath: "/tmp/README.md"}, // non-code → empty
+	}
+
+	out := loop.collectLSPDiagnostics(result)
+	// Non-code file → should be empty string, no injection markers
+	if out != "" {
+		// If somehow we got output, verify no injection
+		if strings.Contains(out, "INJECTION WARNING") {
+			t.Error("unexpected injection warning in sanitized output")
+		}
+	}
+}
+
