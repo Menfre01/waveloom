@@ -15,6 +15,8 @@ const (
 	OpSWAP OpKind = iota
 	OpDEL
 	OpINS
+	OpREM // deprecated
+	OpMV  // deprecated
 )
 
 func (k OpKind) String() string {
@@ -25,6 +27,10 @@ func (k OpKind) String() string {
 		return "DEL"
 	case OpINS:
 		return "INS"
+	case OpREM:
+		return "REM"
+	case OpMV:
+		return "MV"
 	default:
 		return "UNKNOWN"
 	}
@@ -34,8 +40,10 @@ type Op struct {
 	Kind       OpKind
 	LineStart  int
 	LineEnd    int
+	Position   string // INS position: "head"/"tail"/"pre"/"post"
 	RefLine    int
 	Body       []string
+	DestPath   string // MV target path (deprecated)
 	OldString  string
 	ReplaceAll bool
 }
