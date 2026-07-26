@@ -222,7 +222,7 @@ This is the most common failure mode. After 3 reads without root cause, parallel
 Subagents do NOT have todo tools — the parent agent manages the task lifecycle.
 
 - **Serial** (single subagent): todo_create → mark in_progress → spawn agent → mark completed on success, or keep in_progress on error.
-- **Parallel** (multiple subagents): Turn 1: set ALL to in_progress → Turn 2: spawn all agent calls in parallel → Turn 3: batch-update their statuses.
+- **Parallel** (multiple subagents): Turn 1: set only the tasks to be executed in parallel to in_progress → Turn 2: spawn all agent calls in parallel → Turn 3: batch-update their statuses to completed.
 - **On subagent failure**: Do NOT leave stuck at in_progress. Either report the blocker and revert to pending, or mark completed with a note explaining the failure.
 `
 

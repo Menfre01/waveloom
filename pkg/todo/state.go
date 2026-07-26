@@ -217,6 +217,7 @@ func (s *TodoState) Restore(items []TodoItem) {
 }
 
 // StatusSummary 格式化为 LLM 上下文摘要。
+// 当存在多个 in_progress 项时,追加醒目警告,确保 LLM 每轮都能看到规则提醒。
 func (s *TodoState) StatusSummary() string {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -225,9 +226,20 @@ func (s *TodoState) StatusSummary() string {
 		return ""
 	}
 
+	// 统计 in_progress 数量
+	inProgressCount := 0
+	for _, item := range s.items {
+		if item.Status == "in_progress" {
+			inProgressCount++
+		}
+	}
+
 	var b strings.Builder
 	b.WriteString("## Current Todo Status\n")
 	b.WriteString("→ Verify status accuracy before taking action. Update via todo_create / todo_update if any status is wrong.\n")
+	if inProgressCount > 1 {
+		fmt.Fprintf(&b, "→ ⚠️ %d tasks are in_progress — only ONE should be in_progress (exception: spawning parallel subagents right now).\n", inProgressCount)
+	}
 	for _, t := range s.items {
 		b.WriteString(formatTodoLine(t))
 		b.WriteByte('\n')

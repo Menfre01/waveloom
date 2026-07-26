@@ -40,6 +40,18 @@ type Op struct {
 	ReplaceAll bool
 }
 
+// effectiveLine returns the effective insertion line for INS ops.
+// Prefers LineStart (set by normalizeInsOps) and falls back to RefLine.
+// Returns the line number, or -1 for INS.TAIL (no conflict possible),
+// or 0 for INS.HEAD / unset.
+func (op Op) effectiveLine() int {
+	line := op.LineStart
+	if line == 0 {
+		line = op.RefLine
+	}
+	return line
+}
+
 type Section struct {
 	Path string
 	TAG  string
@@ -542,10 +554,10 @@ func (s *patchScanner) readBodyInContext(inSentinel bool) ([]string, error) {
 			s.pos++
 			continue
 		}
-		// \+ escape: body content that looks like an operation (SWAP/DEL/INS).
-		// Strips only the backslash, preserving indentation and the + character.
-		if idx := strings.Index(raw, `\+`); idx >= 0 {
-			unescaped := raw[:idx] + raw[idx+1:] // remove just the \
+		// \+ escape at line start: body content that needs a literal leading '+'.
+		// Strips only the backslash, preserving the '+' character.
+		if strings.HasPrefix(raw, `\+`) {
+			unescaped := raw[1:] // remove just the \
 			bodyLines = append(bodyLines, unescaped)
 			s.pos++
 			continue

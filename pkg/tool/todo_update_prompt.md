@@ -6,3 +6,5 @@ Change task status: `in_progress` (before starting) or `completed` (immediately 
 - Mark complete ONLY when fully done — not for partial or failing work.
 - Multiple parallel completions → update all in one call.
 - Non-existent IDs are silently ignored. Auto-clears when all tasks completed.
+
+- Only ONE task `in_progress` at a time — complete current before starting new. Exception: when you are about to spawn 2+ parallel agent() calls in the same turn, you may update those specific tasks to in_progress together.

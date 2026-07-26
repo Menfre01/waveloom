@@ -131,8 +131,10 @@ func (t *EditFileHashline) Execute(ctx context.Context, p EditFileHashlineParams
 		sectionContent += fmt.Sprintf("\n⚠ PARTIAL FAILURE: %d/%d sections failed — the ✗ files below were NOT modified. Only the ✓ files were written.\n", failed, failed+succeeded)
 	}
 
-	content := sectionContent
-	content += formatPostEditContext(fs, results)
+	// Post-edit context (TAG + line numbers) first for chain editing.
+	// Summary (warning/success lines) after — less critical, can scroll past.
+	content := formatPostEditContext(fs, results)
+	content += sectionContent
 
 	// ── 构造 DiffHunks ──
 	var allHunks []DiffHunk
