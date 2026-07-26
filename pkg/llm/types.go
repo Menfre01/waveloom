@@ -3,11 +3,12 @@ package llm
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"net/http"
 	"time"
 )
-
 // Role 表示对话中的消息角色，映射 OpenAI Chat Completions 协议。
 type Role string
 
@@ -208,7 +209,8 @@ const (
 	RepairSkipEmptyAssistant RepairAction = "skip_empty_assistant"  // assistant 消息无 content 且无 tool_calls
 	RepairStripToolCall      RepairAction = "strip_tool_call"       // ToolCall 缺少 ID / Name
 	RepairStripOrphanCall    RepairAction = "strip_orphan_call"     // ToolCall 无对应 tool 结果消息
-	RepairSkipOrphanTool     RepairAction = "skip_orphan_tool"      // tool 消息无对应 assistant tool_call
+	RepairSkipOrphanTool     RepairAction = "skip_orphan_tool"       // tool 消息无对应 assistant tool_call
+	RepairSkipDupSystem      RepairAction = "skip_dup_system"        // 重复的 system 消息(保留第一条)
 )
 
 // RepairEntry 描述单条校验/修复操作。
@@ -234,9 +236,9 @@ var validRoles = map[Role]bool{
 //  3. 空 assistant — 无 content 且无 tool_calls 的 assistant 消息跳过
 //  4. tool_calls 配对 — 无对应 tool 结果的 tool_calls 剔除
 //  5. tool 消息配对 — 无对应 assistant tool_call 的 tool 消息跳过
+//  6. 重复 system 消息 — 保留第一条 system,后续的跳过
 //
 // 返回修复后的消息切片和修复报告。
-// 调用方可通过 len(report) > 0 判断是否有数据被修复。
 func ValidateMessages(msgs []Message) ([]Message, []RepairEntry) {
 	if len(msgs) == 0 {
 		return nil, nil
@@ -257,7 +259,8 @@ func ValidateMessages(msgs []Message) ([]Message, []RepairEntry) {
 	// --- Pass 2: 逐条清洗 ---
 	clean := make([]Message, 0, len(msgs))
 	var report []RepairEntry
-	origIdx := 0 // 原始消息索引（始终递增，因为可能跳过消息）
+	origIdx := 0    // 原始消息索引(始终递增,因为可能跳过消息)
+	seenSystem := false // 第一条 system 保留,后续的跳过
 
 	for _, msg := range msgs {
 		idx := origIdx
@@ -340,6 +343,18 @@ func ValidateMessages(msgs []Message) ([]Message, []RepairEntry) {
 			continue
 		}
 
+		// 6. 重复 system 消息 — 保留第一条,后续的跳过
+		if msg.Role == RoleSystem {
+			if seenSystem {
+				report = append(report, RepairEntry{
+					Index: idx, Role: msg.Role, Action: RepairSkipDupSystem,
+					Detail: "duplicate system message",
+				})
+				continue
+			}
+			seenSystem = true
+		}
+
 		clean = append(clean, msg)
 	}
 
@@ -398,3 +413,17 @@ type ModelInfo struct {
 	OwnedBy string `json:"owned_by"` // 拥有该模型的组织
 }
 
+
+// ---------------------------------------------------------------------------
+// NewMessageID — 消息 ID 生成
+// ---------------------------------------------------------------------------
+
+// NewMessageID 生成 8 字节随机十六进制消息标识符。
+// 格式:16 个十六进制字符,如 "a1b2c3d4e5f6a7b8"。
+func NewMessageID() string {
+	b := make([]byte, 8)
+	if _, err := rand.Read(b); err != nil {
+		panic("crypto/rand.Read failed: " + err.Error())
+	}
+	return hex.EncodeToString(b)
+}

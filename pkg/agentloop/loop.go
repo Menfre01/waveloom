@@ -499,6 +499,7 @@ func (l *Loop) Run(ctx context.Context, messages []llm.Message) <-chan TurnEvent
 			// reasoning_content 仅在 tool_calls 场景保留（跨轮延续 DeepSeek 协议要求）。
 			// 空响应时注入的占位消息不含 reasoning_content，使模型从干净上下文重新推理。
 			assistantMsg := llm.Message{
+				ID:        llm.NewMessageID(),
 				Role:      llm.RoleAssistant,
 				Content:   contentBuf,
 				ToolCalls: toolCalls,

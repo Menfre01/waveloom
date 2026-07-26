@@ -715,6 +715,7 @@ func (l *Loop) buildToolMessages(
 		}
 
 		messages = append(messages, llm.Message{
+			ID:         llm.NewMessageID(),
 			Role:       llm.RoleTool,
 			Content:    content,
 			ToolCallID: tc.ID,
