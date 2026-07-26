@@ -591,6 +591,17 @@ func (l *Loop) executeToolCalls(ctx context.Context, calls []llm.ToolCall, state
 		}
 	}
 
+	// todo_update / todo_create 检测到多个 in_progress 时，
+	// 在 tool 消息之后注入 [system:todo] user 消息。
+	// 确保消息序列: assistant(tool_calls) → tool(result) → user([system:todo])
+	if l.todoMultiInProgressMsg != "" {
+		messages = append(messages, llm.Message{
+			Role:    llm.RoleUser,
+			Content: l.todoMultiInProgressMsg,
+		})
+		l.todoMultiInProgressMsg = ""
+	}
+
 	return messages, reason, execErr
 }
 
@@ -889,18 +900,17 @@ func (l *Loop) executeTodoMutate(ctx context.Context, tc llm.ToolCall, state *Lo
 		msg += "\n⚠️ Some IDs were not found in the current task list. To update an existing task, use a valid ID from the list above. To create a new task, use todo_create instead."
 	}
 
-	// multiple in_progress: inject [system:todo] user message to force LLM
-	// to confront the warning in the next turn (same pattern as [system:backoff]).
+	// multiple in_progress: 不在此时注入 user 消息（消息序列尚未构建完整，
+	// tool 消息还未追加）。改为设置 Loop 字段，由 executeToolCalls 在
+	// buildToolMessages 之后注入，确保消息序列:
+	// assistant(tool_calls) → tool(result) → user([system:todo])
 	if result.InProgressCount > 1 {
 		msg += fmt.Sprintf("\n⚠️ %d tasks are now in_progress.", result.InProgressCount)
-		state.Messages = append(state.Messages, llm.Message{
-			Role: llm.RoleUser,
-			Content: fmt.Sprintf(
-				"[system:todo] ⚠️ %d tasks are now in_progress — only ONE should be in_progress unless you are spawning parallel subagents right now. "+
-					"If this was unintentional, call todo_update immediately to fix the extra items back to 'pending'.",
-				result.InProgressCount,
-			),
-		})
+		l.todoMultiInProgressMsg = fmt.Sprintf(
+			"[system:todo] ⚠️ %d tasks are now in_progress — only ONE should be in_progress unless you are spawning parallel subagents right now. "+
+				"If this was unintentional, call todo_update immediately to fix the extra items back to 'pending'.",
+			result.InProgressCount,
+		)
 	}
 
 	// 检测无状态变更的 no-op 调用：无创建且无更新时追加提示（仅当也没有 UnmatchedIDs 时）

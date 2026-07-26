@@ -141,7 +141,7 @@ func mapOp(op Op, mappings []LineMapping) (Op, error) {
 		}
 
 	case OpINS:
-		if op.Position == "head" || op.Position == "tail" {
+		if op.RefLine == 0 || op.RefLine == -1 {
 			return mapped, nil
 		}
 
@@ -425,7 +425,7 @@ func collectAddrs(orig, mapped Op) []addrPair {
 			pairs = append(pairs, addrPair{orig.LineEnd, mapped.LineEnd})
 		}
 	case OpINS:
-		if orig.Position != "head" && orig.Position != "tail" {
+		if orig.RefLine != 0 && orig.RefLine != -1 {
 			pairs = append(pairs, addrPair{orig.RefLine, mapped.RefLine})
 		}
 	}

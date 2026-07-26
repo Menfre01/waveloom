@@ -3,6 +3,7 @@ package agentloop
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,6 +12,7 @@ import (
 	"github.com/Menfre01/waveloom/pkg/llm"
 	"github.com/Menfre01/waveloom/pkg/permission"
 	"github.com/Menfre01/waveloom/pkg/tool"
+	"github.com/Menfre01/waveloom/pkg/todo"
 )
 
 // ============================================================================
@@ -1120,3 +1122,141 @@ func TestGeneratePlanFilePath_Unique(t *testing.T) {
 	}
 }
 
+
+// ============================================================================
+// REGRESSION: todo_update 多 in_progress → user 消息必须在 tool 消息之后
+// ============================================================================
+
+// TestExecuteToolCalls_TodoMultiInProgressMessageOrder 验证当 todo_update
+// 一次将多个任务设为 in_progress 时，[system:todo] user 消息注入位置正确：
+// tool(result) → user([system:todo])，而非 user → tool。
+//
+// 违反此顺序会导致 LLM API 400:
+// "Messages with role 'tool' must be a response to a preceding message with 'tool_calls'"
+func TestExecuteToolCalls_TodoMultiInProgressMessageOrder(t *testing.T) {
+	registry := tool.NewRegistry()
+	registry.Register(tool.Wrap(&tool.TodoCreate{}))
+	registry.Register(tool.Wrap(&tool.TodoUpdate{}))
+
+	ts := todo.NewTodoState()
+	// 预创建两个 pending 任务
+	ts.Apply(todo.TodoWriteParams{
+		Todos: []todo.TodoItem{
+			{Content: "task 1", Status: "pending"},
+			{Content: "task 2", Status: "pending"},
+		},
+	})
+
+	l := New(nil, registry, Config{TodoState: ts})
+
+	snapshot := ts.Snapshot()
+	if len(snapshot) < 2 {
+		t.Fatal("expected at least 2 tasks in snapshot")
+	}
+	id1, id2 := snapshot[0].ID, snapshot[1].ID
+
+	state := &LoopState{
+		Messages: []llm.Message{
+			{Role: llm.RoleUser, Content: "test"},
+		},
+	}
+
+	args := fmt.Sprintf(
+		`{"todos": [{"id": "%s", "status": "in_progress"}, {"id": "%s", "status": "in_progress"}]}`,
+		id1, id2,
+	)
+	calls := []llm.ToolCall{
+		makeToolCall("tc1", "todo_update", args),
+	}
+
+	ch := make(chan TurnEvent, 16)
+	go func() { for range ch {} }()
+
+	msgs, reason, err := l.executeToolCalls(context.Background(), calls, state, ch)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if reason != "" {
+		t.Errorf("expected empty reason, got %s", reason)
+	}
+
+	// 应返回 2 条消息: tool(result) + user([system:todo])
+	if len(msgs) != 2 {
+		t.Fatalf("expected 2 messages (tool + [system:todo]), got %d", len(msgs))
+	}
+
+	// 第一条必须是 tool 消息 (result 在前，warning 在后)
+	if msgs[0].Role != llm.RoleTool {
+		t.Errorf("msg[0].Role = %s, want tool (tool result must come before user warning)", msgs[0].Role)
+	}
+
+	// 第二条必须是 user 消息，包含 [system:todo]
+	if msgs[1].Role != llm.RoleUser {
+		t.Errorf("msg[1].Role = %s, want user", msgs[1].Role)
+	}
+	if !strings.Contains(msgs[1].Content, "[system:todo]") {
+		t.Errorf("msg[1] must contain [system:todo], got: %s", msgs[1].Content)
+	}
+	if !strings.Contains(msgs[1].Content, "2 tasks are now in_progress") {
+		t.Errorf("msg[1] must mention 2 in_progress tasks, got: %s", msgs[1].Content)
+	}
+
+	// 验证 l.todoMultiInProgressMsg 已被消费（注入后清除）
+	if l.todoMultiInProgressMsg != "" {
+		t.Errorf("expected todoMultiInProgressMsg to be cleared after injection, got: %s", l.todoMultiInProgressMsg)
+	}
+
+	// 单 in_progress 时不注入 user 消息
+}
+
+// TestExecuteToolCalls_TodoSingleInProgressNoWarning 验证只有一个任务
+// in_progress 时不会注入 [system:todo] user 消息。
+func TestExecuteToolCalls_TodoSingleInProgressNoWarning(t *testing.T) {
+	registry := tool.NewRegistry()
+	registry.Register(tool.Wrap(&tool.TodoCreate{}))
+	registry.Register(tool.Wrap(&tool.TodoUpdate{}))
+
+	ts := todo.NewTodoState()
+	ts.Apply(todo.TodoWriteParams{
+		Todos: []todo.TodoItem{
+			{Content: "task 1", Status: "pending"},
+		},
+	})
+
+	l := New(nil, registry, Config{TodoState: ts})
+	snapshot := ts.Snapshot()
+	id1 := snapshot[0].ID
+
+	state := &LoopState{
+		Messages: []llm.Message{
+			{Role: llm.RoleUser, Content: "test"},
+		},
+	}
+
+	args := fmt.Sprintf(`{"todos": [{"id": "%s", "status": "in_progress"}]}`, id1)
+	calls := []llm.ToolCall{
+		makeToolCall("tc1", "todo_update", args),
+	}
+
+	ch := make(chan TurnEvent, 16)
+	go func() { for range ch {} }()
+
+	msgs, reason, err := l.executeToolCalls(context.Background(), calls, state, ch)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if reason != "" {
+		t.Errorf("expected empty reason, got %s", reason)
+	}
+
+	// 只有一个 tool 消息，无 user 警告
+	if len(msgs) != 1 {
+		t.Fatalf("expected 1 message (tool only), got %d", len(msgs))
+	}
+	if msgs[0].Role != llm.RoleTool {
+		t.Errorf("msg[0].Role = %s, want tool", msgs[0].Role)
+	}
+	if l.todoMultiInProgressMsg != "" {
+		t.Errorf("expected todoMultiInProgressMsg to be empty, got: %s", l.todoMultiInProgressMsg)
+	}
+}

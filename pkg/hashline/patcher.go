@@ -568,7 +568,12 @@ func (s *patchScanner) readBodyInContext(inSentinel bool) ([]string, error) {
 		if isBodyTerminator(trimmed) {
 			break
 		}
-		// Raw line preserves original indentation (tabs/spaces)
+		// Strip leading '+' body marker (patch format convention).
+		// + escape at column 0 is handled above (lines 547–552) and
+		// preserves literal '+' — those lines won't reach here.
+		if len(raw) > 0 && raw[0] == '+' {
+			raw = raw[1:]
+		}
 		bodyLines = append(bodyLines, raw)
 		s.pos++
 	}
@@ -919,6 +924,10 @@ func normalizeInsOps(lines []string, ops *[]Op) {
 		}
 		if (*ops)[i].RefLine == -1 {
 			(*ops)[i].LineStart = len(lines)
+			// Empty file: INS.TAIL is identical to INS.HEAD (avoids leading newline).
+			if len(lines) == 1 && lines[0] == "" {
+				(*ops)[i].LineStart = 0
+			}
 		} else {
 			(*ops)[i].LineStart = (*ops)[i].RefLine
 			// Clamp: INS N 超过文件行数 → 插入到文件末尾 (len(lines) 是去除尾空行的行数)
@@ -1282,7 +1291,17 @@ func opRange(op Op) *lineRange {
 	case OpDEL:
 		return &lineRange{start: op.LineStart - 1, end: op.LineEnd}
 	case OpINS:
-		return &lineRange{start: op.LineStart, end: op.LineStart}
+		// INS ops may have LineStart set (after normalizeInsOps) or only RefLine (raw).
+		// Fall back to RefLine when LineStart is unset.
+		line := op.LineStart
+		if line == 0 {
+			line = op.RefLine
+		}
+		// INS.TAIL (RefLine=-1) can't overlap with known line numbers.
+		if line < 0 {
+			return nil
+		}
+		return &lineRange{start: line, end: line}
 	default:
 		return nil
 	}
@@ -1365,7 +1384,14 @@ func opToSpan(op Op, lines []string, hasTrailingNewline bool) editSpan {
 	case OpSWAP:
 		return editSpan{op: op, start: op.LineStart - 1, end: op.LineEnd}
 	case OpINS:
-		return editSpan{op: op, start: op.LineStart, end: op.LineStart}
+		start := op.LineStart
+		// Fall back to RefLine only when it's a positive (non-special) value.
+		// normalizeInsOps may set LineStart=0 for INS.TAIL on empty files;
+		// RefLine=-1 / 0 are INS.TAIL / INS.HEAD specials that shouldn't override.
+		if start == 0 && op.RefLine > 0 {
+			start = op.RefLine
+		}
+		return editSpan{op: op, start: start, end: start}
 	}
 	return editSpan{}
 }

@@ -198,6 +198,12 @@ type Loop struct {
 	snapshotStore *hashline.SnapshotStore
 
 	// hookRunner 执行 hooks。nil → 跳过 hooks。
+	// todoMultiInProgressMsg 由 executeTodoMutate 在检测到多个 in_progress 时设置，
+	// 由 executeToolCalls 在 buildToolMessages 之后消费并注入 user 消息。
+	// 确保 user 消息位于 tool 消息之后，满足 API 消息序列要求:
+	// assistant(tool_calls) → tool(result) → user([system:todo])
+	todoMultiInProgressMsg string
+
 	hookRunner *hook.Runner
 }
 
