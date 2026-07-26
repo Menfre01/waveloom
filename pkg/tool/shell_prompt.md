@@ -4,7 +4,7 @@ Shell is for batch processing, pipelines, and build commands. Prefer dedicated t
 
 - Chain dependent commands with `&&`. Launch independent parallel shell calls in a single response.
 - Do NOT prefix commands with `#` — it prevents permission rules from matching. Run directly.
-- For recursive code search, prefer `rg` over `grep -r` (respects .gitignore, faster).
+- For recursive code search, prefer `grep -r` over `rg` (more reliable, no external dependency issues).
 - For throwaway verification scripts: prefer python, write to `/tmp`, clean up after.
 - Git Bash on Windows provides standard Unix paths (`/tmp`, `/usr/bin`). Use forward-slash paths.
 
