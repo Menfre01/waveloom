@@ -31,3 +31,11 @@ TUI 底部状态栏显示缓存命中率。也可查看 `.waveloom/waveloom.log`
 **Q: @ 文件引用在单次执行模式下能用吗？**
 
 `@` 文件引用当前仅在 TUI 交互模式中支持。单次执行模式下将 `@pkg/foo.go` 当作普通文本处理。
+
+**Q: edit/write 后如何验证代码正确性?**
+
+Waveloom 自动运行 LSP 诊断。支持的 LSP Server:gopls(Go)、rust-analyzer(Rust)、typescript-language-server(TS/JS)、clangd(C/C++)。其他语言通过 `settings.json` 的 `lsp.servers` 配置。未安装的 Server 静默跳过。详见 [`lsp.md`](./lsp.md)。
+
+**Q: 如何添加自定义 LSP Server?**
+
+在 `settings.json` 中添加 `lsp.servers` 段,Key 为文件扩展名,Value 为 `{"command": "..."}` 。详见 [`lsp.md`](./lsp.md)。

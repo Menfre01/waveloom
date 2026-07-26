@@ -161,9 +161,30 @@ Hook 脚本通过 stdin 接收 JSON 事件上下文，通过 stdout 返回 JSON 
 
 ### environment 环境工具配置
 
-Agent 启动时自动探测可用工具链。若工具不在 PATH 中或需指定版本，可通过 `environment.tools` 配置路径，详见 [`environment.md`](./environment.md)。
+Agent 启动时自动探测可用工具链。若工具不在 PATH 中或需指定版本,可通过 `environment.tools` 配置路径,详见 [`environment.md`](./environment.md)。
 
-### web_search 搜索配置
+### lsp LSP 诊断配置
+
+`edit` / `write` 操作后自动运行 LSP 诊断,详见 [`lsp.md`](./lsp.md)。
+
+| 字段 | 说明 | 默认值 |
+|------|------|--------|
+| `lsp.servers` | 文件扩展名 → LSP Server 配置。Key 为扩展名(如 `".py"`),Value 为 `{"command": "...", "args": ["..."]}`。用户自定义覆盖内置默认 | — |
+| `lsp.idle_timeout_ms` | Server 空闲回收超时(毫秒) | `300000`(5 分钟) |
+
+示例:添加 Python 和 Java 的 LSP Server:
+
+```json
+{
+  "lsp": {
+    "servers": {
+      ".py": { "command": "pyright-langserver", "args": ["--stdio"] },
+      ".java": { "command": "jdtls" }
+    }
+  }
+}
+```
+
 
 `web_search` 工具默认使用 DuckDuckGo 搜索引擎，无需任何配置。如需更好的搜索结果质量，通过环境变量切换到 Brave Search API：
 
