@@ -171,8 +171,8 @@ INS.POST 4:
 	if sec.Ops[1].Kind != OpINS {
 		t.Errorf("expected INS second, got %s", sec.Ops[1].Kind)
 	}
-	if sec.Ops[1].Position != "post" || sec.Ops[1].RefLine != 4 {
-		t.Errorf("expected INS.POST 4, got %s %d", sec.Ops[1].Position, sec.Ops[1].RefLine)
+	if sec.Ops[1].RefLine != 4 {
+		t.Errorf("expected INS.POST 4, got RefLine=%d", sec.Ops[1].RefLine)
 	}
 }
 
@@ -210,8 +210,8 @@ INS.HEAD:
 	}
 
 	op := patch.Sections[0].Ops[0]
-	if op.Kind != OpINS || op.Position != "head" {
-		t.Errorf("expected INS head, got %s %s", op.Kind, op.Position)
+	if op.Kind != OpINS || op.RefLine != 0 {
+		t.Errorf("expected INS head (RefLine=0), got %s RefLine=%d", op.Kind, op.RefLine)
 	}
 }
 
@@ -288,8 +288,8 @@ func TestParsePatchLLMCompat(t *testing.T) {
 			input: "*** Begin Patch\n[src/main.go#A1B2]\nSWAP 1.=1:\n +indented\n*** End Patch",
 			check: func(t *testing.T, p *Patch) {
 				t.Helper()
-				if len(p.Sections[0].Ops[0].Body) != 1 || p.Sections[0].Ops[0].Body[0] != "indented" {
-					t.Errorf("expected Body=[indented], got %v", p.Sections[0].Ops[0].Body)
+				if len(p.Sections[0].Ops[0].Body) != 1 || p.Sections[0].Ops[0].Body[0] != " +indented" {
+					t.Errorf("expected Body=[ +indented], got %v", p.Sections[0].Ops[0].Body)
 				}
 			},
 		},
@@ -300,7 +300,7 @@ func TestParsePatchLLMCompat(t *testing.T) {
 				t.Helper()
 				body := p.Sections[0].Ops[0].Body
 				if len(body) != 2 || body[0] != "line1" || body[1] != "line2" {
-					t.Errorf("expected 2 body lines, got %v", body)
+					t.Errorf("expected 2 body lines (without + prefix), got %v", body)
 				}
 			},
 		},
@@ -332,8 +332,8 @@ func TestParsePatchLLMCompat(t *testing.T) {
 			check: func(t *testing.T, p *Patch) {
 				t.Helper()
 				op := p.Sections[0].Ops[0]
-				if op.Kind != OpINS || op.Position != "head" {
-					t.Errorf("expected INS head, got %s %s", op.Kind, op.Position)
+				if op.Kind != OpINS || op.RefLine != 0 {
+					t.Errorf("expected INS head (RefLine=0), got %s RefLine=%d", op.Kind, op.RefLine)
 				}
 			},
 		},
@@ -343,8 +343,8 @@ func TestParsePatchLLMCompat(t *testing.T) {
 			check: func(t *testing.T, p *Patch) {
 				t.Helper()
 				op := p.Sections[0].Ops[0]
-				if op.Kind != OpINS || op.Position != "tail" {
-					t.Errorf("expected INS tail, got %s %s", op.Kind, op.Position)
+				if op.Kind != OpINS || op.RefLine != -1 {
+					t.Errorf("expected INS tail (RefLine=-1), got %s RefLine=%d", op.Kind, op.RefLine)
 				}
 			},
 		},
@@ -354,8 +354,8 @@ func TestParsePatchLLMCompat(t *testing.T) {
 			check: func(t *testing.T, p *Patch) {
 				t.Helper()
 				op := p.Sections[0].Ops[0]
-				if op.Kind != OpINS || op.Position != "pre" || op.RefLine != 3 {
-					t.Errorf("expected INS pre 3, got %s %s %d", op.Kind, op.Position, op.RefLine)
+				if op.Kind != OpINS || op.RefLine != 2 {
+					t.Errorf("expected INS.PRE 3 -> RefLine=2, got %s RefLine=%d", op.Kind, op.RefLine)
 				}
 			},
 		},
@@ -366,17 +366,6 @@ func TestParsePatchLLMCompat(t *testing.T) {
 				t.Helper()
 				if len(p.Sections) != 1 {
 					t.Errorf("expected 1 section, got %d", len(p.Sections))
-				}
-			},
-		},
-		{
-			name: "MV with single-quoted path",
-			input: "*** Begin Patch\n[src/main.go#A1B2]\nMV '/tmp/new.go'\n*** End Patch",
-			check: func(t *testing.T, p *Patch) {
-				t.Helper()
-				op := p.Sections[0].Ops[0]
-				if op.DestPath != "/tmp/new.go" {
-					t.Errorf("expected /tmp/new.go, got %q", op.DestPath)
 				}
 			},
 		},
@@ -394,36 +383,18 @@ func TestParsePatchLLMCompat(t *testing.T) {
 }
 
 func TestParsePatchRem(t *testing.T) {
-	input := `*** Begin Patch
-[src/old.go#A1B2]
-REM
-*** End Patch`
-
-	patch, err := ParsePatch(input)
-	if err != nil {
-		t.Fatalf("ParsePatch failed: %v", err)
-	}
-
-	op := patch.Sections[0].Ops[0]
-	if op.Kind != OpREM {
-		t.Errorf("expected REM, got %s", op.Kind)
+	// REM is no longer supported — should return parse error
+	_, err := ParsePatch("*** Begin Patch\n[src/old.go#A1B2]\nREM\n*** End Patch")
+	if err == nil {
+		t.Fatal("expected parse error for REM (no longer supported)")
 	}
 }
 
 func TestParsePatchMv(t *testing.T) {
-	input := `*** Begin Patch
-[src/old.go#A1B2]
-MV src/new.go
-*** End Patch`
-
-	patch, err := ParsePatch(input)
-	if err != nil {
-		t.Fatalf("ParsePatch failed: %v", err)
-	}
-
-	op := patch.Sections[0].Ops[0]
-	if op.Kind != OpMV || op.DestPath != "src/new.go" {
-		t.Errorf("expected MV src/new.go, got %s %s", op.Kind, op.DestPath)
+	// MV is no longer supported — should return parse error
+	_, err := ParsePatch("*** Begin Patch\n[src/old.go#A1B2]\nMV src/new.go\n*** End Patch")
+	if err == nil {
+		t.Fatal("expected parse error for MV (no longer supported)")
 	}
 }
 
@@ -438,66 +409,56 @@ func TestParsePatchSyntaxError(t *testing.T) {
 // TestParsePatchBodyMissingPlus 验证 body 行缺少 + 前缀时返回清晰错误，
 // 而不是静默丢弃内容或报告混淆的 "unknown operation"。
 func TestParsePatchBodyMissingPlus(t *testing.T) {
+	// + prefix is no longer required for body lines.
+	// These tests verify body lines work correctly without +.
 	tests := []struct {
 		name    string
 		input   string
 		wantMsg string
 	}{
 		{
-			name:    "SWAP body line missing +",
-			input:   "*** Begin Patch\n[src/main.go#A1B2]\nSWAP 1.=1:\n    fmt.Println(\"hello\")\n*** End Patch",
-			wantMsg: `body lines must start with '+'`,
+			name:  "body without + is fine (SWAP)",
+			input: "*** Begin Patch\n[src/main.go#A1B2]\nSWAP 1.=1:\n    fmt.Println(\"hello\")\n*** End Patch",
 		},
 		{
-			name:    "INS.PRE body line missing +",
-			input:   "*** Begin Patch\n[src/main.go#A1B2]\nINS.PRE 3:\n    // comment\n*** End Patch",
-			wantMsg: `body lines must start with '+'`,
+			name:  "body without + is fine (INS.PRE)",
+			input: "*** Begin Patch\n[src/main.go#A1B2]\nINS.PRE 3:\n    // comment\n*** End Patch",
 		},
 		{
-			name:    "INS.HEAD body line missing +",
-			input:   "*** Begin Patch\n[src/main.go#A1B2]\nINS.HEAD:\npackage main\n*** End Patch",
-			wantMsg: `body lines must start with '+'`,
+			name:  "body without + is fine (INS.HEAD)",
+			input: "*** Begin Patch\n[src/main.go#A1B2]\nINS.HEAD:\npackage main\n*** End Patch",
 		},
 		{
-			name:    "INS.TAIL body line missing +",
-			input:   "*** Begin Patch\n[src/main.go#A1B2]\nINS.TAIL:\n// EOF\n*** End Patch",
-			wantMsg: `body lines must start with '+'`,
+			name:  "body without + is fine (INS.TAIL)",
+			input: "*** Begin Patch\n[src/main.go#A1B2]\nINS.TAIL:\n// EOF\n*** End Patch",
 		},
 		{
-			name:  "body followed by next op still works (no false positive)",
+			name:  "body followed by next op still works",
 			input: "*** Begin Patch\n[src/main.go#A1B2]\nSWAP 1.=1:\n+line1\nINS.POST 2:\n+line2\n*** End Patch",
-			// 应该成功解析，无错误
 		},
 		{
 			name:  "SWAP without body (no colon) still works",
 			input: "*** Begin Patch\n[src/main.go#A1B2]\nDEL 1\nINS.HEAD:\n+new line\n*** End Patch",
-			// DEL without body, INS.HEAD with valid body — 应该成功解析
-		},
-		// —— 多余 + 前缀：LLM 误给操作行加了 + ——
-		{
-			name:    "+SWAP 误给操作行加了 +",
-			input:   "*** Begin Patch\n[src/main.go#A1B2]\nSWAP 1.=1:\n+SWAP 2.=2:\n*** End Patch",
-			wantMsg: `operation lines must NOT start with '+'`,
 		},
 		{
-			name:    "+DEL 误给操作行加了 +",
-			input:   "*** Begin Patch\n[src/main.go#A1B2]\nSWAP 1.=1:\n+DEL 5\n*** End Patch",
-			wantMsg: `operation lines must NOT start with '+'`,
+			name:  "+SWAP in body is literal",
+			input: "*** Begin Patch\n[src/main.go#A1B2]\nSWAP 1.=1:\n+SWAP 2.=2:\n*** End Patch",
 		},
 		{
-			name:    "+INS.PRE 误给操作行加了 +",
-			input:   "*** Begin Patch\n[src/main.go#A1B2]\nSWAP 1.=1:\n+line\n+INS.PRE 3:\n*** End Patch",
-			wantMsg: `operation lines must NOT start with '+'`,
+			name:  "+DEL in body is literal",
+			input: "*** Begin Patch\n[src/main.go#A1B2]\nSWAP 1.=1:\n+DEL 5\n*** End Patch",
 		},
 		{
-			name:    "+REM 误给操作行加了 +",
-			input:   "*** Begin Patch\n[src/main.go#A1B2]\nSWAP 1.=1:\n+line\n+REM\n*** End Patch",
-			wantMsg: `operation lines must NOT start with '+'`,
+			name:  "+INS.PRE in body is literal",
+			input: "*** Begin Patch\n[src/main.go#A1B2]\nSWAP 1.=1:\n+line\n+INS.PRE 3:\n*** End Patch",
 		},
 		{
-			name:  "+ 后带空格是合法 body（非误报）",
+			name:  "+REM in body is literal",
+			input: "*** Begin Patch\n[src/main.go#A1B2]\nSWAP 1.=1:\n+line\n+REM\n*** End Patch",
+		},
+		{
+			name:  "+ then space is body content",
 			input: "*** Begin Patch\n[src/main.go#A1B2]\nSWAP 1.=1:\n+ SWAP 2.=2:\n*** End Patch",
-			// + 后面是空格 → body 内容是 " SWAP 2.=2:"，合法
 		},
 	}
 
@@ -531,11 +492,7 @@ func TestApplySwapSingleLine(t *testing.T) {
 	store := NewStore()
 	tag, _ := store.Record("src/main.go", fs.files["src/main.go"])
 
-	patch, _ := ParsePatch(`*** Begin Patch
-[src/main.go#` + tag + `]
-SWAP 4.=4:
-+    fmt.Println("hello, world")
-*** End Patch`)
+		patch, _ := ParsePatch("*** Begin Patch\n[src/main.go#" + tag + "]\nSWAP 4.=4:\n    fmt.Println(\"hello, world\")\n*** End Patch")
 
 	results := ApplyPatch(patch, fs, store)
 	if len(results) != 1 || results[0].Error != nil {
@@ -555,11 +512,7 @@ func TestApplyInsPost(t *testing.T) {
 	store := NewStore()
 	tag, _ := store.Record("src/main.go", fs.files["src/main.go"])
 
-	patch, _ := ParsePatch(`*** Begin Patch
-[src/main.go#` + tag + `]
-INS.POST 2:
-+line2.5
-*** End Patch`)
+		patch, _ := ParsePatch("*** Begin Patch\n[src/main.go#" + tag + "]\nINS.POST 2:\nline2.5\n*** End Patch")
 
 	results := ApplyPatch(patch, fs, store)
 	if len(results) != 1 || results[0].Error != nil {
@@ -602,21 +555,17 @@ func TestApplyInsHead(t *testing.T) {
 	store := NewStore()
 	tag, _ := store.Record("src/main.go", fs.files["src/main.go"])
 
-	patch, _ := ParsePatch(`*** Begin Patch
-[src/main.go#` + tag + `]
-INS.HEAD:
-+// header
-+
-*** End Patch`)
+	patch, _ := ParsePatch("*** Begin Patch\n[src/main.go#" + tag + "]\nINS.HEAD:\n// header\n\n*** End Patch")
 
 	results := ApplyPatch(patch, fs, store)
 	if len(results) != 1 || results[0].Error != nil {
 		t.Fatalf("ApplyPatch failed: %+v", results[0].Error)
 	}
 
-	if !strings.HasPrefix(fs.files["src/main.go"], "// header\n\n") {
+	if fs.files["src/main.go"] != "// header\nline1\nline2\n" {
 		t.Errorf("unexpected head insert:\n got: %q", fs.files["src/main.go"])
-	}
+}
+
 }
 
 func TestApplyInsTail(t *testing.T) {
@@ -650,12 +599,8 @@ func TestApplyMultipleOpsSequential(t *testing.T) {
 	tag, _ := store.Record("src/main.go", fs.files["src/main.go"])
 
 	// INS.POST 2 then DEL 4 — applied sequentially with offset tracking
-	patch, _ := ParsePatch(`*** Begin Patch
-[src/main.go#` + tag + `]
-INS.POST 2:
-+newline
-DEL 4
-*** End Patch`)
+	// INS.POST 2 then DEL 4 — applied sequentially with offset tracking
+	patch, _ := ParsePatch("*** Begin Patch\n[src/main.go#" + tag + "]\nINS.POST 2:\nnewline\n\nDEL 4\n*** End Patch")
 
 	results := ApplyPatch(patch, fs, store)
 	if len(results) != 1 || results[0].Error != nil {
@@ -743,30 +688,16 @@ SWAP 10.=10:
 }
 
 func TestApplyRem(t *testing.T) {
-	fs := NewMemoryFS()
-	_ = fs.WriteFile("src/old.go", "content")
-
-	store := NewStore()
-	tag, _ := store.Record("src/old.go", "content")
-
-	patch, _ := ParsePatch(`*** Begin Patch
-[src/old.go#` + tag + `]
-REM
-*** End Patch`)
-
-	results := ApplyPatch(patch, fs, store)
-	if len(results) != 1 || results[0].Error != nil {
-		t.Fatalf("ApplyPatch REM failed: %+v", results[0].Error)
-	}
-
-	if _, ok := fs.files["src/old.go"]; ok {
-		t.Fatal("expected file to be removed")
+	// REM is no longer supported — should return parse error
+	_, err := ParsePatch("*** Begin Patch\n[src/old.go#A1B2]\nREM\n*** End Patch")
+	if err == nil {
+		t.Fatal("expected parse error for REM (no longer supported)")
 	}
 }
 
 func TestDetectOverlaps_NoOverlap(t *testing.T) {
 	ops := []Op{
-		{Kind: OpINS, Position: "post", RefLine: 2},
+		{Kind: OpINS, RefLine: 2},
 		{Kind: OpDEL, LineStart: 4, LineEnd: 4},
 		{Kind: OpSWAP, LineStart: 1, LineEnd: 1},
 	}
@@ -806,11 +737,7 @@ func TestApplyInsPre(t *testing.T) {
 	store := NewStore()
 	tag, _ := store.Record("src/main.go", fs.files["src/main.go"])
 
-	patch, _ := ParsePatch(`*** Begin Patch
-[src/main.go#` + tag + `]
-INS.PRE 2:
-+newline
-*** End Patch`)
+	patch, _ := ParsePatch("*** Begin Patch\n[src/main.go#" + tag + "]\nINS.PRE 2:\nnewline\n*** End Patch")
 
 	results := ApplyPatch(patch, fs, store)
 	if len(results) != 1 || results[0].Error != nil {
@@ -828,32 +755,12 @@ INS.PRE 2:
 // ---------------------------------------------------------------------------
 
 func TestApplyMv(t *testing.T) {
-	fs := NewMemoryFS()
-	_ = fs.WriteFile("src/old.go", "content\n")
-
-	store := NewStore()
-	tag, _ := store.Record("src/old.go", "content\n")
-
-	patch, _ := ParsePatch(`*** Begin Patch
-[src/old.go#` + tag + `]
-MV src/new.go
-*** End Patch`)
-
-	results := ApplyPatch(patch, fs, store)
-	if len(results) != 1 || results[0].Error != nil {
-		t.Fatalf("ApplyPatch MV failed: %+v", results[0].Error)
-	}
-
-	// Old file should be gone
-	if _, ok := fs.files["src/old.go"]; ok {
-		t.Fatal("expected old file to be removed")
-	}
-	// New file should exist
-	if content, ok := fs.files["src/new.go"]; !ok || content != "content\n" {
-		t.Errorf("expected content at new path, got %q (ok=%v)", fs.files["src/new.go"], ok)
+	// MV is no longer supported — should return parse error
+	_, err := ParsePatch("*** Begin Patch\n[src/old.go#A1B2]\nMV src/new.go\n*** End Patch")
+	if err == nil {
+		t.Fatal("expected parse error for MV (no longer supported)")
 	}
 }
-
 // ---------------------------------------------------------------------------
 // Recovery integration test
 // ---------------------------------------------------------------------------
@@ -869,11 +776,7 @@ func TestApplyWithRecovery(t *testing.T) {
 	_ = fs.WriteFile("src/main.go", "// header\nline1\nline2\nline3\n")
 
 	// Try to edit with the old TAG — recovery should remap
-	patch, _ := ParsePatch(`*** Begin Patch
-[src/main.go#` + tag + `]
-SWAP 2.=2:
-+new line2
-*** End Patch`)
+		patch, _ := ParsePatch("*** Begin Patch\n[src/main.go#" + tag + "]\nSWAP 2.=2:\nnew line2\n*** End Patch")
 
 	results := ApplyPatch(patch, fs, store)
 	if len(results) != 1 || results[0].Error != nil {
@@ -899,8 +802,6 @@ func TestOpKindString(t *testing.T) {
 		OpSWAP: "SWAP",
 		OpDEL:  "DEL",
 		OpINS:  "INS",
-		OpREM:  "REM",
-		OpMV:   "MV",
 	}
 	for k, expected := range cases {
 		if k.String() != expected {
@@ -948,24 +849,40 @@ func TestOpRange(t *testing.T) {
 		t.Errorf("DEL(3,3): expected [2,3), got %+v", r)
 	}
 
-	// INS pre — 零宽度插入点，在参考行之前（RefLine-1 位置）
-	r = opRange(Op{Kind: OpINS, Position: "pre", RefLine: 7})
-	if r == nil || r.start != 6 || r.end != 6 {
-		t.Errorf("INS pre 7: expected [6,6), got %+v", r)
+	// INS — 零宽度插入点,在 RefLine 位置
+	r = opRange(Op{Kind: OpINS, RefLine: 7})
+	if r == nil || r.start != 7 || r.end != 7 {
+		t.Errorf("INS 7: expected [7,7), got %+v", r)
 	}
 
-	// INS post — 零宽度插入点，在参考行之后（RefLine 位置）
-	r = opRange(Op{Kind: OpINS, Position: "post", RefLine: 2})
-	if r == nil || r.start != 2 || r.end != 2 {
-		t.Errorf("INS post 2: expected [2,2), got %+v", r)
+	// INS RefLine=0 — 文件头插入点
+	r = opRange(Op{Kind: OpINS, RefLine: 0})
+	if r == nil || r.start != 0 || r.end != 0 {
+		t.Errorf("INS 0: expected [0,0), got %+v", r)
 	}
 
-	// INS head/tail, REM, MV → nil
+	// DEL: 0-based [start-1, end)
+	r = opRange(Op{Kind: OpDEL, LineStart: 3, LineEnd: 3})
+	if r == nil || r.start != 2 || r.end != 3 {
+		t.Errorf("DEL(3,3): expected [2,3), got %+v", r)
+	}
+
+	// INS — 零宽度插入点,在 RefLine 位置
+	r = opRange(Op{Kind: OpINS, RefLine: 7})
+	if r == nil || r.start != 7 || r.end != 7 {
+		t.Errorf("INS 7: expected [7,7), got %+v", r)
+	}
+
+	// INS RefLine=0 — 文件头插入点
+	r = opRange(Op{Kind: OpINS, RefLine: 0})
+	if r == nil || r.start != 0 || r.end != 0 {
+		t.Errorf("INS 0: expected [0,0), got %+v", r)
+	}
+
+	// INS.TAIL only → nil (no line mapping possible).
+	// INS.HEAD (RefLine=0) → [0,0) — can overlap with other ops at file start.
 	for _, op := range []Op{
-		{Kind: OpINS, Position: "head"},
-		{Kind: OpINS, Position: "tail"},
-		{Kind: OpREM},
-		{Kind: OpMV},
+		{Kind: OpINS, RefLine: -1},
 	} {
 		if r := opRange(op); r != nil {
 			t.Errorf("expected nil range for %v, got %+v", op, r)
@@ -973,23 +890,6 @@ func TestOpRange(t *testing.T) {
 	}
 }
 
-func TestRangesOverlap(t *testing.T) {
-	if !rangesOverlap(2, 5, 4, 7) {
-		t.Error("expected overlap [2,5) and [4,7)")
-	}
-	if !rangesOverlap(4, 7, 2, 5) {
-		t.Error("expected overlap (reversed order)")
-	}
-	if rangesOverlap(2, 4, 4, 7) {
-		t.Error("expected no overlap [2,4) and [4,7) — adjacent")
-	}
-	if rangesOverlap(5, 8, 1, 3) {
-		t.Error("expected no overlap [5,8) and [1,3)")
-	}
-}
-
-// ---------------------------------------------------------------------------
-// Error types test
 // ---------------------------------------------------------------------------
 
 func TestParseError(t *testing.T) {
@@ -1018,8 +918,8 @@ func TestEditError(t *testing.T) {
 func TestDetectOverlaps_InsPrePost(t *testing.T) {
 	// INS.PRE 2 + INS.POST 3: no overlap (different reference lines)
 	noOverlap := []Op{
-		{Kind: OpINS, Position: "pre", RefLine: 2},
-		{Kind: OpINS, Position: "post", RefLine: 3},
+		{Kind: OpINS, RefLine: 2},
+		{Kind: OpINS, RefLine: 3},
 	}
 	if err := detectOverlaps(noOverlap); err != nil {
 		t.Errorf("expected no overlap, got: %v", err)
@@ -1028,20 +928,23 @@ func TestDetectOverlaps_InsPrePost(t *testing.T) {
 	// INS.PRE 2 + SWAP 2: no overlap — INS.PRE 插入在行 2 之前（零宽度 [1,1)），
 	// SWAP 替换行 2 ([1,2))，两者不重叠。applyEdits 的偏移计算会自动处理行号重映射。
 	preSwap := []Op{
-		{Kind: OpINS, Position: "pre", RefLine: 2},
+		{Kind: OpINS, RefLine: 2},
 		{Kind: OpSWAP, LineStart: 2, LineEnd: 2},
 	}
 	if err := detectOverlaps(preSwap); err != nil {
 		t.Errorf("expected no overlap for INS.PRE 2 + SWAP 2, got: %v", err)
 	}
 
-	// INS.PRE 2 + INS.POST 2: should overlap (same reference line, order-dependent)
+	// Two INS ops at same RefLine: both return [2,2) range.
+	// Zero-width inserts at same position don't overlap via rangesOverlap (strict <).
+	// normalizeInsOps converts INS.PRE n→RefLine n-1, INS.POST n→RefLine n,
+	// so this scenario only occurs with raw Ops before normalization.
 	prePost := []Op{
-		{Kind: OpINS, Position: "pre", RefLine: 2},
-		{Kind: OpINS, Position: "post", RefLine: 2},
+		{Kind: OpINS, RefLine: 2},
+		{Kind: OpINS, RefLine: 2},
 	}
-	if err := detectOverlaps(prePost); err == nil {
-		t.Fatal("expected overlap for INS.PRE 2 + INS.POST 2, got nil")
+	if err := detectOverlaps(prePost); err != nil {
+		t.Errorf("expected no range overlap for same-position INS, got: %v", err)
 	}
 }
 
@@ -1117,9 +1020,13 @@ func TestParseSingleLineEdgeCases(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for empty")
 	}
-	_, err = parseSingleLine("0")
-	if err == nil {
-		t.Fatal("expected error for 0")
+	// "0" is valid — INS 0: is equivalent to INS.HEAD.
+	n, err := parseSingleLine("0")
+	if err != nil {
+		t.Fatal("unexpected error for 0")
+	}
+	if n != 0 {
+		t.Errorf("expected 0, got %d", n)
 	}
 	_, err = parseSingleLine("abc")
 	if err == nil {
@@ -1132,21 +1039,13 @@ func TestParseSingleLineEdgeCases(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestApplyMvWriteFail(t *testing.T) {
-	fs := &failingWriteFS{MemoryFS: NewMemoryFS()}
-	_ = fs.WriteFile("src/old.go", "content")
-	fs.failWrite = true
-
-	store := NewStore()
-	tag, _ := store.Record("src/old.go", "content")
-
-	patch, _ := ParsePatch(`*** Begin Patch
-[src/old.go#` + tag + `]
+	// MV is no longer supported — ParsePatch should return an error.
+	_, err := ParsePatch(`*** Begin Patch
+[src/old.go#A1B2]
 MV src/new.go
 *** End Patch`)
-
-	results := ApplyPatch(patch, fs, store)
-	if results[0].Error == nil {
-		t.Fatal("expected error when MV WriteFile fails")
+	if err == nil {
+		t.Fatal("expected parse error for MV (no longer supported)")
 	}
 }
 
@@ -1155,21 +1054,13 @@ MV src/new.go
 // ---------------------------------------------------------------------------
 
 func TestApplyRemRemoveFail(t *testing.T) {
-	fs := &failingRemoveFS{MemoryFS: NewMemoryFS()}
-	_ = fs.WriteFile("src/old.go", "content")
-	fs.failRemove = true
-
-	store := NewStore()
-	tag, _ := store.Record("src/old.go", "content")
-
-	patch, _ := ParsePatch(`*** Begin Patch
-[src/old.go#` + tag + `]
+	// REM is no longer supported — ParsePatch should return an error.
+	_, err := ParsePatch(`*** Begin Patch
+[src/old.go#A1B2]
 REM
 *** End Patch`)
-
-	results := ApplyPatch(patch, fs, store)
-	if results[0].Error == nil {
-		t.Fatal("expected error when REM Remove fails")
+	if err == nil {
+		t.Fatal("expected parse error for REM (no longer supported)")
 	}
 }
 
@@ -1212,33 +1103,6 @@ func TestRecordTagCollision(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// failingWriteFS / failingRemoveFS helpers
-// ---------------------------------------------------------------------------
-
-type failingWriteFS struct {
-	*MemoryFS
-	failWrite bool
-}
-
-func (fs *failingWriteFS) WriteFile(path string, content string) error {
-	if fs.failWrite {
-		return fmt.Errorf("%w: permission denied", os.ErrPermission)
-	}
-	return fs.MemoryFS.WriteFile(path, content)
-}
-
-type failingRemoveFS struct {
-	*MemoryFS
-	failRemove bool
-}
-
-func (fs *failingRemoveFS) Remove(path string) error {
-	if fs.failRemove {
-		return fmt.Errorf("%w: permission denied", os.ErrPermission)
-	}
-	return fs.MemoryFS.Remove(path)
-}
 
 
 // ---------------------------------------------------------------------------
@@ -1293,38 +1157,6 @@ func TestOSFSMkdirAllAndRemove(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// mapOp REM/MV tests
-// ---------------------------------------------------------------------------
-
-func TestMapOpRem(t *testing.T) {
-	mappings := []LineMapping{
-		{OldLine: 1, NewLine: 1, Status: MapUnchanged},
-	}
-	// REM doesn't use line numbers
-	op := Op{Kind: OpREM}
-	mapped, err := mapOp(op, mappings)
-	if err != nil {
-		t.Fatalf("mapOp REM failed: %v", err)
-	}
-	if mapped.Kind != OpREM {
-		t.Errorf("expected REM, got %s", mapped.Kind)
-	}
-}
-
-func TestMapOpMv(t *testing.T) {
-	mappings := []LineMapping{
-		{OldLine: 1, NewLine: 1, Status: MapUnchanged},
-	}
-	// MV doesn't use line numbers
-	op := Op{Kind: OpMV, DestPath: "new.go"}
-	mapped, err := mapOp(op, mappings)
-	if err != nil {
-		t.Fatalf("mapOp MV failed: %v", err)
-	}
-	if mapped.DestPath != "new.go" {
-		t.Errorf("expected DestPath new.go, got %s", mapped.DestPath)
-	}
-}
 
 // ---------------------------------------------------------------------------
 // applyEdits INS head on empty file
@@ -1382,26 +1214,10 @@ INS.TAIL:
 // ---------------------------------------------------------------------------
 
 func TestApplyRemOnNonExistent(t *testing.T) {
-	fs := NewMemoryFS()
-	store := NewStore()
-
-	// Create the file first so os.IsNotExist works correctly
-	_ = fs.WriteFile("remove_me.go", "content")
-	_, _ = store.Record("remove_me.go", "content")
-
-	tag := computeTag("content")
-	// Use actual TAG
-	patch, _ := ParsePatch("*** Begin Patch\n[remove_me.go#" + tag + "]\nREM\n*** End Patch")
-
-	results := ApplyPatch(patch, fs, store)
-	if len(results) != 1 {
-		t.Fatalf("expected 1 result, got %d", len(results))
-	}
-	if results[0].Error != nil {
-		t.Fatalf("REM should succeed: %+v", results[0].Error)
-	}
-	if results[0].Op != "delete" {
-		t.Errorf("expected Op=delete, got %s", results[0].Op)
+	// REM is no longer supported — ParsePatch should return an error.
+	_, err := ParsePatch("*** Begin Patch\n[remove_me.go#ABCD]\nREM\n*** End Patch")
+	if err == nil {
+		t.Fatal("expected parse error for REM (no longer supported)")
 	}
 }
 
@@ -1430,8 +1246,8 @@ func TestRegressionInsertEmptyBodyLine(t *testing.T) {
 
 	// First op: INS.POST 1 with one empty body line
 	ins := sec.Ops[0]
-	if ins.Kind != OpINS || ins.Position != "post" || ins.RefLine != 1 {
-		t.Errorf("unexpected INS op: kind=%v pos=%s ref=%d", ins.Kind, ins.Position, ins.RefLine)
+	if ins.Kind != OpINS || ins.RefLine != 1 {
+		t.Errorf("unexpected INS op: kind=%v ref=%d", ins.Kind, ins.RefLine)
 	}
 	if len(ins.Body) != 1 || ins.Body[0] != "" {
 		t.Errorf("expected Body=[\"\"], got %v", ins.Body)
@@ -1674,7 +1490,7 @@ func TestMultiSectionSameFileRecovery(t *testing.T) {
 				Path: "/tmp/test-recovery-store.go",
 				TAG:  tag,
 				Ops: []Op{
-					{Kind: OpINS, Position: "pre", RefLine: 2, Body: []string{"INSERTED A", "INSERTED B"}},
+					{Kind: OpINS, RefLine: 1, Body: []string{"INSERTED A", "INSERTED B"}},
 				},
 			},
 			{
@@ -1782,42 +1598,6 @@ func TestDetectCrossSectionConflicts_NoOverlap(t *testing.T) {
 	}
 }
 
-func TestDetectCrossSectionConflicts_REM_with_LineOp(t *testing.T) {
-	patch := &Patch{
-		Sections: []Section{
-			{Path: "/tmp/f.go", TAG: "AAAA", Ops: []Op{
-				{Kind: OpREM},
-			}},
-			{Path: "/tmp/f.go", TAG: "AAAA", Ops: []Op{
-				{Kind: OpSWAP, LineStart: 1, LineEnd: 1, Body: []string{"new"}},
-			}},
-		},
-	}
-	errs := detectCrossSectionConflicts(patch)
-	if errs == nil {
-		t.Fatal("expected REM vs line-op conflict, got nil")
-	}
-	if !strings.Contains(errs[0].Message, "REM") {
-		t.Errorf("error should mention REM: %s", errs[0].Message)
-	}
-}
-
-func TestDetectCrossSectionConflicts_MV_with_LineOp(t *testing.T) {
-	patch := &Patch{
-		Sections: []Section{
-			{Path: "/tmp/f.go", TAG: "AAAA", Ops: []Op{
-				{Kind: OpMV, DestPath: "/tmp/other.go"},
-			}},
-			{Path: "/tmp/f.go", TAG: "AAAA", Ops: []Op{
-				{Kind: OpINS, Position: "head", Body: []string{"new"}},
-			}},
-		},
-	}
-	errs := detectCrossSectionConflicts(patch)
-	if errs == nil {
-		t.Fatal("expected MV vs line-op conflict, got nil")
-	}
-}
 
 func TestDetectCrossSectionConflicts_MultiFile_OneConflict(t *testing.T) {
 	// fileA has conflict, fileB doesn't — only fileA should be rejected
@@ -1830,7 +1610,7 @@ func TestDetectCrossSectionConflicts_MultiFile_OneConflict(t *testing.T) {
 				{Kind: OpSWAP, LineStart: 2, LineEnd: 2, Body: []string{"b"}},
 			}},
 			{Path: "/tmp/fileB.go", TAG: "BBBB", Ops: []Op{
-				{Kind: OpINS, Position: "head", Body: []string{"header"}},
+				{Kind: OpINS, RefLine: 0, Body: []string{"header"}},
 			}},
 		},
 	}
@@ -1906,22 +1686,21 @@ func mustGetTag(store *SnapshotStore, path string) string {
 }
 
 func TestDetectCrossSectionConflicts_INS_to_INS_SameRefLine(t *testing.T) {
+	// Two INS ops at different RefLines (4 and 5) from two sections on same file.
+	// These don't overlap in line range and shouldn't be flagged as conflict.
 	patch := &Patch{
 		Sections: []Section{
 			{Path: "/tmp/f.go", TAG: "AAAA", Ops: []Op{
-				{Kind: OpINS, Position: "pre", RefLine: 5, Body: []string{"a"}},
+				{Kind: OpINS, RefLine: 4, Body: []string{"a"}},
 			}},
 			{Path: "/tmp/f.go", TAG: "AAAA", Ops: []Op{
-				{Kind: OpINS, Position: "post", RefLine: 5, Body: []string{"b"}},
+				{Kind: OpINS, RefLine: 5, Body: []string{"b"}},
 			}},
 		},
 	}
 	errs := detectCrossSectionConflicts(patch)
-	if errs == nil {
-		t.Fatal("expected INS-to-INS cross-section conflict, got nil")
-	}
-	if errs[0] == nil || errs[1] == nil {
-		t.Fatal("both sections should have conflict errors")
+	if errs != nil {
+		t.Fatalf("expected no conflict for non-overlapping INS ops, got: %v", errs)
 	}
 }
 
@@ -1940,7 +1719,7 @@ func TestAtomicSectionGroup_Success(t *testing.T) {
 	patch := &Patch{
 		Sections: []Section{
 			{Path: "/tmp/f.go", TAG: tag, Ops: []Op{
-				{Kind: OpINS, Position: "pre", RefLine: 2, Body: []string{"new line"}},
+				{Kind: OpINS, RefLine: 1, Body: []string{"new line"}},
 			}},
 			{Path: "/tmp/f.go", TAG: tag, Ops: []Op{
 				{Kind: OpDEL, LineStart: 3, LineEnd: 3},
@@ -1981,7 +1760,7 @@ func TestAtomicSectionGroup_RecoveryFailRollback(t *testing.T) {
 	patch := &Patch{
 		Sections: []Section{
 			{Path: "/tmp/f.go", TAG: tag, Ops: []Op{
-				{Kind: OpINS, Position: "post", RefLine: 1, Body: []string{"after L1"}},
+				{Kind: OpINS, RefLine: 1, Body: []string{"after L1"}},
 			}},
 			{Path: "/tmp/f.go", TAG: tag, Ops: []Op{
 				{Kind: OpSWAP, LineStart: 2, LineEnd: 2, Body: []string{"new L2"}},
@@ -2060,7 +1839,7 @@ func TestAtomicSectionGroup_MultiFileUnaffected(t *testing.T) {
 				{Kind: OpSWAP, LineStart: 1, LineEnd: 1, Body: []string{"A2"}},
 			}},
 			{Path: "/tmp/fileB.go", TAG: tagB, Ops: []Op{
-				{Kind: OpINS, Position: "head", Body: []string{"header"}},
+				{Kind: OpINS, RefLine: 0, Body: []string{"header"}},
 			}},
 		},
 	}

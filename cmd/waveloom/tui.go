@@ -50,6 +50,7 @@ import (
 
 	"github.com/Menfre01/waveloom/pkg/agentloop"
 	"github.com/Menfre01/waveloom/pkg/hook"
+	"github.com/Menfre01/waveloom/pkg/lsp"
 	"github.com/Menfre01/waveloom/pkg/environment"
 	"github.com/Menfre01/waveloom/pkg/filehistory"
 	"github.com/Menfre01/waveloom/pkg/llm"
@@ -100,7 +101,7 @@ var defaultSystemPrompt = `You are Waveloom, a coding agent. You help users writ
 5. **Do NOT execute irreversible operations.** Without explicit per-operation user confirmation, do NOT execute: rm, git push --force, git reset --hard, git rebase, chmod, chown, docker rm -f, database deletion, permission changes.
 
 6. **Do NOT auto-install dependencies or download/execute external code.** pip install / npm install / curl | bash are supply chain attack vectors. Wait for explicit user instruction.
-7. **Do NOT bypass edit with sed/python when edit fails.** When ` + "`edit`" + ` fails, its error output contains precise correction clues (line offsets, content diffs). Fix the patch and retry ` + "`edit`" + ` — do NOT fall back to sed, awk, python, or any other direct file modification. Those bypass SnapshotStore and rewind, leaving no backup or recovery trace. If ` + "`edit`" + ` repeatedly fails on Unicode content with ` + "`content mismatch`" + ` but the quoted strings look identical, the file likely has Unicode normalization differences (NFC vs NFD). In that case, use ` + "`DEL`" + ` + ` + "`INS`" + ` to bypass the content verification for the affected lines only.
+7. **Do NOT bypass edit with other tools when edit fails.** When ` + "`edit`" + ` fails, its error output contains precise correction clues (line offsets, content diffs). Fix the patch and retry ` + "`edit`" + ` — do NOT fall back to other file modification approaches. Those bypass SnapshotStore and rewind, leaving no backup or recovery trace. If ` + "`edit`" + ` repeatedly fails on Unicode content with ` + "`content mismatch`" + ` but the quoted strings look identical, the file likely has Unicode normalization differences (NFC vs NFD). In that case, use ` + "`DEL`" + ` + ` + "`INS`" + ` to bypass the content verification for the affected lines only.
 8. **Do NOT hide or prettify error messages.** Stack traces and raw errors are critical signals for the user. Report them verbatim and in full.
 
 ## Quality Gates
@@ -115,7 +116,7 @@ var defaultSystemPrompt = `You are Waveloom, a coding agent. You help users writ
 
 ## Tool Selection
 
-Check tool availability before calling any binary (` + "`which`" + ` / ` + "`--version`" + `). Prefer dedicated tools: read over cat/head/tail, edit/write over sed/awk. Use ` + "`bash ls`" + ` to explore directories before reading files — paths without a file extension are likely directories. Use shell for batch processing, pipelines, and build commands. Launch independent parallel shell calls in a single response. When connected to an IDE: prefer IDE tools for semantic operations (symbol lookup → ` + "`mcp__vscode__get_workspace_symbols`" + `, reference tracing → ` + "`mcp__vscode__find_references`" + `), use ` + "`bash rg`" + ` for bulk text search. Verify the CWD project is open in the IDE before using IDE tools.
+Check tool availability before calling any binary (` + "`which`" + ` / ` + "`--version`" + `). Prefer dedicated tools: read over cat/head/tail, edit/write for file editing. Use ` + "`bash ls`" + ` to explore directories before reading files — paths without a file extension are likely directories. Use shell for batch processing, pipelines, and build commands. Launch independent parallel shell calls in a single response. When connected to an IDE: prefer IDE tools for semantic operations (symbol lookup → ` + "`mcp__vscode__get_workspace_symbols`" + `, reference tracing → ` + "`mcp__vscode__find_references`" + `), use ` + "`bash grep`" + ` for bulk text search. Verify the CWD project is open in the IDE before using IDE tools.
 
 ## Coding standards
 
@@ -136,14 +137,14 @@ Use ` + "`read`" + ` to get a TAG and line-numbered content for hash-anchored ed
 
 Before acting, identify which scenario you are in and apply the corresponding strategy:
 
-- **A. Code Exploration**: Understand functions → read + pattern + context_lines=30 (NOT rg first). Multi-module architecture → parallel ls all candidate dirs → parallel agent(Explore) each subsystem (NOT serial read). Find definitions/references → IDE semantic tools first, bash rg as fallback. Code review → agent(evaluate) cold review (NOT reading file-by-file yourself).
+- **A. Code Exploration**: Understand functions → read + pattern + context_lines=30 (NOT grep first). Multi-module architecture → parallel ls all candidate dirs → parallel agent(Explore) each subsystem (NOT serial read). Find definitions/references → IDE semantic tools first, bash grep as fallback. Code review → agent(evaluate) cold review (NOT reading file-by-file yourself).
 - **B. Code Modification**: Single change → read + pattern → TAG → edit. Multiple changes ≤200 lines → write. 200-500 lines → edit multi-section. ≥3 files + architecture → enter_plan_mode first. After any edit → verify via project build/test. Writing tests → read the code under test first.
 - **C. Bug Investigation**: Known crash site → read crash point → parallel read callers → fix → bash verify (NOT unnecessary Explore agents). Unknown root cause → read input + output points → 3-read rule → parallel agent(Explore) each hypothesis. Regression → bash git log/diff first → parallel read changed files.
 - **D. Information Gathering**: Known URL → web_fetch directly. Unknown → web_search → parallel web_fetch results. Check tool availability → parallel bash which. Explain internal code → read the files first.
 - **E. Project Operations**: Build/test → bash command → read errors → fix → repeat. Git operations → bash git log/diff/status → read involved files.
 - **F. Complex Workflows**: Multi-step with dependencies → todo_create with deps noted → agent(fork) parallel independent → sequential dependent. Design-first → enter_plan_mode → design + write plan → exit_plan_mode → implement. Long-running → bash(run_in_background=true) → read log → auto-notified on completion.
 
-- **IDE tools when connected**: Symbol lookup → mcp__vscode__get_workspace_symbols. Reference tracing → mcp__vscode__find_references. Error checking → mcp__vscode__get_diagnostics. Bulk text search → bash rg. Verify project is open via mcp__vscode__get_workspace_folders first.
+- **IDE tools when connected**: Symbol lookup → mcp__vscode__get_workspace_symbols. Reference tracing → mcp__vscode__find_references. Error checking → mcp__vscode__get_diagnostics. Bulk text search → bash grep. Verify project is open via mcp__vscode__get_workspace_folders first.
 
 ## Agent Tool
 
@@ -222,7 +223,7 @@ This is the most common failure mode. After 3 reads without root cause, parallel
 Subagents do NOT have todo tools — the parent agent manages the task lifecycle.
 
 - **Serial** (single subagent): todo_create → mark in_progress → spawn agent → mark completed on success, or keep in_progress on error.
-- **Parallel** (multiple subagents): Turn 1: set ALL to in_progress → Turn 2: spawn all agent calls in parallel → Turn 3: batch-update their statuses.
+- **Parallel** (multiple subagents): Turn 1: set only the tasks to be executed in parallel to in_progress → Turn 2: spawn all agent calls in parallel → Turn 3: batch-update their statuses to completed.
 - **On subagent failure**: Do NOT leave stuck at in_progress. Either report the blocker and revert to pending, or mark completed with a note explaining the failure.
 `
 
@@ -357,7 +358,8 @@ type model struct {
 	cwd           string
 	loop          *agentloop.Loop
 	hookRunner    *hook.Runner // hooks 系统(RTK 等)
-	mcpManager *mcp.Manager // IDE MCP Server 上下文提供者
+	mcpManager *mcp.Manager // IDE MCP Server
+	lspManager *lsp.Manager // LSP diagnostics 上下文提供者
 
 	// Todo 任务列表
 
@@ -805,6 +807,7 @@ func (m *model) wireLoop() {
 		},
 		TodoState:   m.todoState,
 		Model:       m.hudModel,
+		LSPManager:  m.lspManager,
 	})
 	m.loop.SetHookRunner(m.hookRunner)
 }
@@ -2280,7 +2283,7 @@ func transcriptEntryToParagraph(e session.TranscriptEntry, paras *[]Paragraph) {
 
 	switch msg.Role {
 	case llm.RoleUser:
-		if strings.HasPrefix(strings.TrimSpace(msg.Content), "[system]") {
+		if strings.HasPrefix(strings.TrimSpace(msg.Content), "[system:") {
 			return
 		}
 		if strings.HasPrefix(strings.TrimSpace(msg.Content), "<background-") {
@@ -4237,7 +4240,7 @@ func (m *model) rebuildParasFromMessages() {
 		switch msg.Role {
 		case llm.RoleSystem:
 		case llm.RoleUser:
-			if strings.HasPrefix(strings.TrimSpace(msg.Content), "[system]") {
+			if strings.HasPrefix(strings.TrimSpace(msg.Content), "[system:") {
 				continue
 			}
 			if strings.HasPrefix(strings.TrimSpace(msg.Content), "<background-") {
@@ -4885,9 +4888,10 @@ func newSlashRegistry(creator slashcommand.SessionCreator, store slashcommand.Se
 // ---------------------------------------------------------------------------
 
 // runTUI 启动交互式 TUI 模式。依赖由 main() 统一初始化后传入，无需重复创建。
-func runTUI(llmClient llm.Client, registry tool.Registry, guard permission.Guard, expander *reference.Expander, modelName string, theme string, contextLimit int, maxTurns int, toolTimeout time.Duration, toolTimeoutSource string, bypassPerm bool, ctxMgr *session.ContextManager, isResume bool, sessionDir string, globalPath string, projectPath string, agentsMdText string, loc Locale, todoState *todo.TodoState, hookRunner *hook.Runner, agentTool *subagent.AgentTool, mcpManager *mcp.Manager) {
+func runTUI(llmClient llm.Client, registry tool.Registry, guard permission.Guard, expander *reference.Expander, modelName string, theme string, contextLimit int, maxTurns int, toolTimeout time.Duration, toolTimeoutSource string, bypassPerm bool, ctxMgr *session.ContextManager, isResume bool, sessionDir string, globalPath string, projectPath string, agentsMdText string, loc Locale, todoState *todo.TodoState, hookRunner *hook.Runner, agentTool *subagent.AgentTool, mcpManager *mcp.Manager, lspManager *lsp.Manager) {
 	m := newTUIModel(llmClient, registry, guard, expander, modelName, theme, contextLimit, maxTurns, toolTimeout, toolTimeoutSource, loc, todoState, hookRunner)
 	m.mcpManager = mcpManager
+	m.lspManager = lspManager
 	m.sessionDir = sessionDir
 	m.agentsMdText = agentsMdText
 

@@ -250,6 +250,7 @@ func TestEditFileHashline_DEL_MultiLine(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestEditFileHashline_REM(t *testing.T) {
+	// REM is no longer supported — should return parse error.
 	ctx, dir, filePath, tag := setupEditTest(t, "unused.go", "package main\n")
 
 	patch := makePatch(makeSection(filePath, tag, "REM"))
@@ -259,11 +260,12 @@ func TestEditFileHashline_REM(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Execute() error = %v", err)
 	}
-	if result.Error != nil {
-		t.Fatalf("unexpected error: %s", result.Error.Message)
+	if result.Error == nil {
+		t.Fatal("expected parse error in result for REM (no longer supported)")
 	}
-	if _, statErr := os.Stat(filePath); !os.IsNotExist(statErr) {
-		t.Error("file should have been removed")
+	// File should still exist (operation was rejected at parse time)
+	if _, statErr := os.Stat(filePath); os.IsNotExist(statErr) {
+		t.Error("file should not have been removed")
 	}
 }
 
@@ -272,6 +274,7 @@ func TestEditFileHashline_REM(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestEditFileHashline_MV(t *testing.T) {
+	// MV is no longer supported — should return parse error.
 	ctx, dir, filePath, tag := setupEditTest(t, "old.go", "package main\n")
 
 	newPath := filepath.Join(dir, "new.go")
@@ -282,14 +285,12 @@ func TestEditFileHashline_MV(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Execute() error = %v", err)
 	}
-	if result.Error != nil {
-		t.Fatalf("unexpected error: %s", result.Error.Message)
+	if result.Error == nil {
+		t.Fatal("expected parse error in result for MV (no longer supported)")
 	}
-	if _, statErr := os.Stat(filePath); !os.IsNotExist(statErr) {
-		t.Error("old file should have been removed")
-	}
-	if _, statErr := os.Stat(newPath); statErr != nil {
-		t.Errorf("new file should exist: %v", statErr)
+	// Old file should still exist
+	if _, statErr := os.Stat(filePath); os.IsNotExist(statErr) {
+		t.Error("old file should not have been moved")
 	}
 }
 

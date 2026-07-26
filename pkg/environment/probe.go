@@ -73,8 +73,11 @@ func DefaultProbes() []string {
 		"make --version",
 		// 容器
 		"docker --version",
-		// 搜索增强（rg 比 grep 更快，LLM 在探测到可用时优先使用）
-		"rg --version",
+		// LSP servers
+		"gopls version",
+		"rust-analyzer --version",
+		"typescript-language-server --version",
+		"clangd --version",
 	}
 }
 

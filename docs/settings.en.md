@@ -163,6 +163,28 @@ Hook scripts receive JSON event context via stdin and return JSON results via st
 
 The agent auto-detects available toolchains at startup. For tools not in PATH or to pin a specific version, configure via `environment.tools`. See [`environment.en.md`](./environment.en.md) for details.
 
+### lsp LSP Diagnostics Configuration
+
+After every `edit` / `write`, LSP diagnostics run automatically. See [`lsp.en.md`](./lsp.en.md).
+
+| Field | Description | Default |
+|------|-------------|--------|
+| `lsp.servers` | File extension → LSP Server config. Key is extension (e.g. `".py"`), value is `{"command": "...", "args": ["..."]}`. User-defined entries override built-in defaults | — |
+| `lsp.idle_timeout_ms` | Idle timeout before server is reaped (ms) | `300000` (5 min) |
+
+Example: adding Python and Java LSP Servers:
+
+```json
+{
+  "lsp": {
+    "servers": {
+      ".py": { "command": "pyright-langserver", "args": ["--stdio"] },
+      ".java": { "command": "jdtls" }
+    }
+  }
+}
+```
+
 ### web_search Configuration
 
 The `web_search` tool defaults to DuckDuckGo — no configuration required. For better result quality, switch to the Brave Search API via an environment variable:

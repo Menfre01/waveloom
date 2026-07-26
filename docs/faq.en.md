@@ -31,3 +31,11 @@ The TUI footer status bar shows the cache hit rate. You can also check `.waveloo
 **Q: Do @ file references work in one-shot mode?**
 
 `@` file references are currently only supported in TUI interactive mode. In one-shot mode, `@pkg/foo.go` is treated as plain text.
+
+**Q: How does Waveloom verify code after edit/write?**
+
+Waveloom automatically runs LSP diagnostics. Supported LSP servers: gopls (Go), rust-analyzer (Rust), typescript-language-server (TS/JS), clangd (C/C++). Other languages via `lsp.servers` in `settings.json`. Uninstalled servers are silently skipped. See [`lsp.en.md`](./lsp.en.md).
+
+**Q: How do I add a custom LSP Server?**
+
+Add an `lsp.servers` section to `settings.json`, keyed by file extension with `{"command": "..."}` . See [`lsp.en.md`](./lsp.en.md).

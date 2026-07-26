@@ -88,7 +88,7 @@ func TestRecoverOpsInsPost(t *testing.T) {
 	// 当前: 头部插入
 	current := "// header\nline1\nline2\nline3\n"
 
-	ops := []Op{{Kind: OpINS, Position: "post", RefLine: 2, Body: []string{"new line"}}}
+	ops := []Op{{Kind: OpINS, RefLine: 2, Body: []string{"new line"}}}
 
 	result := RecoverOps(snapshot, current, ops)
 	if !result.Success {
@@ -107,8 +107,8 @@ func TestRecoverOpsInsHeadTailUnaffected(t *testing.T) {
 	current := "// new\nline1\nline2\n// end\n"
 
 	ops := []Op{
-		{Kind: OpINS, Position: "head", Body: []string{"header"}},
-		{Kind: OpINS, Position: "tail", Body: []string{"footer"}},
+		{Kind: OpINS, RefLine: 0, Body: []string{"header"}},
+		{Kind: OpINS, RefLine: -1, Body: []string{"footer"}},
 	}
 
 	result := RecoverOps(snapshot, current, ops)
@@ -174,7 +174,7 @@ func TestRecoverOpsEmptyFile(t *testing.T) {
 	snapshot := ""
 	current := "new line\n"
 
-	ops := []Op{{Kind: OpINS, Position: "tail", Body: []string{"appended"}}}
+	ops := []Op{{Kind: OpINS, RefLine: -1, Body: []string{"appended"}}}
 
 	result := RecoverOps(snapshot, current, ops)
 	if !result.Success {
@@ -186,7 +186,7 @@ func TestRecoverOpsInsRefDeleted(t *testing.T) {
 	snapshot := "line1\nline2\nline3\n"
 	current := "line1\nline3\n" // line2 deleted
 
-	ops := []Op{{Kind: OpINS, Position: "post", RefLine: 2, Body: []string{"new"}}}
+	ops := []Op{{Kind: OpINS, RefLine: 2, Body: []string{"new"}}}
 
 	result := RecoverOps(snapshot, current, ops)
 	if result.Success {

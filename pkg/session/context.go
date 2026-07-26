@@ -9,7 +9,6 @@ package session
 
 import (
 	"crypto/rand"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -164,13 +163,10 @@ func mustReadRandom(b []byte) {
 	}
 }
 
-// newMessageID 生成 8 字节随机十六进制消息标识符。
-// 格式：16 个十六进制字符，如 "a1b2c3d4e5f6a7b8"。
-// 足以为每个消息提供唯一标识（64 位随机空间，冲突概率可忽略），// 比 UUID v4 更紧凑，在 JSONL 序列化中节省空间。
+// NewMessageID is a wrapper around llm.NewMessageID for package-local use.
+// DEPRECATED: use llm.NewMessageID directly.
 func newMessageID() string {
-	b := make([]byte, 8)
-	mustReadRandom(b)
-	return hex.EncodeToString(b)
+	return llm.NewMessageID()
 }
 
 // checkBackgroundTasksLocked 检查后台任务状态，返回应注入的通知文本。
