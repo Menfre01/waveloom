@@ -3608,8 +3608,8 @@ func (m *model) addCost(model string, prompt, cacheHit, cacheMiss, completion in
 	provider := pricing.InferProvider(model)
 	price := pricing.LookupCurrency(provider, model, m.hudCurrency)
 	m.hudCost += pricing.CalculateCost(price, prompt, cacheHit, cacheMiss, completion)
+	m.cm.SetTotalCost(m.hudCost) // 同步到持久化层,确保 --resume 恢复
 }
-// renderCost 渲染会话累计费用(在 token 增量到达时按实际模型计价累加,而非渲染时反算)。
 func (m *model) renderCost() string {
 	symbol := pricing.CurrencySymbol(m.hudCurrency)
 	label := styleFooterLabel.Render(symbol)
@@ -4929,6 +4929,7 @@ func runTUI(llmClient llm.Client, registry tool.Registry, guard permission.Guard
 	// REGRESSION: --resume 后 hudTurns 未从 Stats.TotalTurns 恢复，状态栏计数从 0 开始。
 	// 无法单测：runTUI 依赖 Bubble Tea Program 实例。
 	m.hudTurns = ctxMgr.Stats().TotalTurns
+	m.hudCost = ctxMgr.Stats().TotalCost // REGRESSION: --resume 后 hudCost 未从 Stats 恢复,状态栏费用从 0 开始。
 	// ctx bar 初始为 0，首个 TurnStats 会用 API 精确值更新
 	m.lastPromptTokens = 0
 

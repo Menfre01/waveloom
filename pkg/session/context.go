@@ -25,16 +25,16 @@ import (
 
 // Stats 记录跨轮次的累计统计。
 type Stats struct {
-	MessageCount          int   // 当前累积的消息数
-	TotalTurns            int   // 累计完成的 loop 数
-	TotalPromptTokens     int   // 累计输入 token
-	TotalCompletionTokens int   // 累计输出 token
-	TotalCacheHitTokens   int   // 累计缓存命中 token
-	TotalCacheMissTokens  int   // 累计缓存未命中 token
-	TotalReasoningTokens  int   // 累计思考链 token
-	TotalDurationMs       int64 // 累计耗时（毫秒）
+	MessageCount          int     // 当前累积的消息数
+	TotalTurns            int     // 累计完成的 loop 数
+	TotalPromptTokens     int     // 累计输入 token
+	TotalCompletionTokens int     // 累计输出 token
+	TotalCacheHitTokens   int     // 累计缓存命中 token
+	TotalCacheMissTokens  int     // 累计缓存未命中 token
+	TotalReasoningTokens  int     // 累计思考链 token
+	TotalDurationMs       int64   // 累计耗时(毫秒)
+	TotalCost             float64 // 累计费用(TUI 层同步写入,非 CompleteRun 计算)
 }
-
 // ContextManager 跨 Agent Loop 调用累积消息历史。
 // 所有公开方法受 RWMutex 保护，并发安全。
 type ContextManager struct {
@@ -729,4 +729,11 @@ func (cm *ContextManager) FileHistory() *filehistory.SnapshotData {
 	cm.mu.RLock()
 	defer cm.mu.RUnlock()
 	return cm.fhData
+}
+
+// SetTotalCost 更新累计费用(由 TUI 层在 addCost 后同步写入,确保 --resume 恢复)。
+func (cm *ContextManager) SetTotalCost(cost float64) {
+	cm.mu.Lock()
+	defer cm.mu.Unlock()
+	cm.stats.TotalCost = cost
 }
