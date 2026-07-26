@@ -873,37 +873,31 @@ func CompactMessages(
 // 摘要格式化工具
 // ---------------------------------------------------------------------------
 
-// FormatSummaryPrompt 返回 Tier 3 摘要的系统提示词。
+// FormatSummaryPrompt returns the Tier 3 summarization system prompt.
 func FormatSummaryPrompt() string {
-	return `你是一个专业的开发会话交班记录员。你的任务是基于已有的摘要链和最新的对话增量，
-产出一份结构化的 JSON 摘要，供接手同事快速了解当前进展。
-
-## 输出格式
-
-严格输出以下 JSON 结构（不要包含其他文本）：
-
+	return `You are a development session handoff recorder. Your task is to produce a structured JSON summary based on the existing summary chain and the latest conversation increment, so the next colleague can quickly understand the current progress.
+## Output Format
+Output the following JSON structure exactly (no other text):
 {
   "progress": {
-    "summary": "<200 字的中文进展概述>",
+    "summary": "<200 chars summarizing what was accomplished this round, focusing on key decisions>",
     "files": [
-      {"path": "相对路径", "action": "created|modified|deleted|read", "why": "变更意图（一句话）"}
+      {"path": "relative path", "action": "created|modified|deleted|read", "why": "intent of the change (one sentence)"}
     ]
   },
-  "pending": ["未完成任务 1", "未完成任务 2"],
+  "pending": ["unfinished task 1", "unfinished task 2"],
   "pitfalls": [
-    {"problem": "遇到的问题", "solution": "解决方案"}
+    {"problem": "problem encountered", "solution": "how it was resolved"}
   ],
-  "constraints": "接下来必须遵守的约束（用户偏好、禁止事项、环境限制）"
+  "constraints": "constraints that must be respected going forward (user preferences, prohibitions, environment limits)"
 }
-
-## 规则
-
-- progress.summary：用 <200 字描述本轮做了什么，聚焦关键决策。
-- progress.files：列出涉及的每个文件，用 "why" 说明变更意图而非文件内容（内容可以通过 read_file 获取）。
-- pending：列出明确未完成的任务，空数组写 []。
-- pitfalls：从失败中提炼的经验，空数组写 []。
-- constraints：继承已有摘要的 constraints，追加本轮发现的新约束。
-- 不要重写已有摘要的内容，仅产出本阶段的增量进展。`
+## Rules
+- progress.summary: Describe what was accomplished this round in <200 chars, focusing on key decisions.
+- progress.files: List each file involved; use "why" to explain the change intent, not file contents (contents can be retrieved via read_file).
+- pending: List explicitly unfinished tasks. Use [] if none.
+- pitfalls: Lessons learned from failures. Use [] if none.
+- constraints: Inherit existing summary constraints, append new constraints discovered this round.
+- Do NOT rewrite content from existing summaries — only produce the incremental progress for this stage.`
 }
 
 // FormatSummaryUserMessage 构造 Tier 3 摘要请求的 user 消息。
@@ -911,14 +905,14 @@ func FormatSummaryUserMessage(existingSummaries []string, deltaMessages []llm.Me
 	var b strings.Builder
 
 	if len(existingSummaries) > 0 {
-		b.WriteString("## 已有摘要链（不可修改）\n\n")
+		b.WriteString("## Existing Summary Chain (immutable)\n\n")
 		for i, s := range existingSummaries {
 			fmt.Fprintf(&b, "### Summary %d\n\n```json\n%s\n```\n\n", i+1, s)
 		}
 		b.WriteString("---\n\n")
 	}
 
-	b.WriteString("## 本轮增量消息\n\n")
+	b.WriteString("## Incremental Messages (this round)\n\n")
 	for _, msg := range deltaMessages {
 		role := string(msg.Role)
 		content := msg.Content

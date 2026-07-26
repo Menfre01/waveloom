@@ -326,7 +326,7 @@ func TestFormatSummaryUserMessage_WithExisting(t *testing.T) {
 	result := FormatSummaryUserMessage(existing, []llm.Message{
 		{Role: llm.RoleUser, Content: "new message"},
 	})
-	if !strings.Contains(result, "已有摘要链") {
+	if !strings.Contains(result, "Existing Summary Chain") {
 		t.Fatal("should include existing summaries section")
 	}
 	if !strings.Contains(result, "round 1") {

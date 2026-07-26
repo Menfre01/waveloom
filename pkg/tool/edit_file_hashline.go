@@ -31,7 +31,6 @@ func (t *EditFileHashline) Description() string {
 	return "Edit files using hash-anchored patches. Rules: see system prompt ## File Operations."
 }
 
-
 // Prompt 返回 hashline 使用指南，由 Registry.FormatToolPrompts() 注入 system prompt。
 func (t *EditFileHashline) Prompt() string { return editHashlinePrompt }
 
@@ -68,8 +67,14 @@ func (t *EditFileHashline) Execute(ctx context.Context, p EditFileHashlineParams
 		return toolError(ErrorClassRecoverable, ErrKindInvalidArgs,
 			fmt.Sprintf("patch parse error: %v", err), err), nil
 	}
-
-
+	// ── Step 2: 读前哨兵 — 每个文件必须在 edit 前被 read 过 ──
+	for _, sec := range patch.Sections {
+		storePath := (&hashline.OSFS{WorkingDir: p.WorkingDir}).ResolvePath(sec.Path)
+		if _, ok := store.Get(storePath); !ok {
+			return toolError(ErrorClassRecoverable, ErrKindInvalidArgs,
+				fmt.Sprintf("file %q has not been read yet — use the read tool first to get a TAG, then edit", sec.Path), nil), nil
+		}
+	}
 	// ── Step 3: FileHistory 追踪 ──
 	if fh := filehistory.FromContext(ctx); fh != nil {
 		if msgID := filehistory.MessageIDFromContext(ctx); msgID != "" {
@@ -429,6 +434,7 @@ func splitFileLines(content string) []string {
 	}
 	return lines
 }
+
 // formatFileIndex 为大文件生成结构索引（段落首行），
 // 帮助 LLM 在 post-edit context 未覆盖的区域定位编辑目标行号。
 // 基于段落（连续非空行 = 一个段落）提取首行，上限 30 条；

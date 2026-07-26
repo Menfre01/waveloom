@@ -3,26 +3,18 @@ package hashline
 import (
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 	"sync"
-
 	"github.com/Menfre01/waveloom/pkg/pathutil"
+	"golang.org/x/text/unicode/norm"
 )
 
-// ---------------------------------------------------------------------------
-// Patch types
-// ---------------------------------------------------------------------------
-
-// OpKind 表示操作类型。
 type OpKind int
 
 const (
 	OpSWAP OpKind = iota
 	OpDEL
 	OpINS
-	OpREM
-	OpMV
 )
 
 func (k OpKind) String() string {
@@ -33,43 +25,29 @@ func (k OpKind) String() string {
 		return "DEL"
 	case OpINS:
 		return "INS"
-	case OpREM:
-		return "REM"
-	case OpMV:
-		return "MV"
 	default:
 		return "UNKNOWN"
 	}
 }
 
-// Op 表示单个编辑操作。
 type Op struct {
-	Kind      OpKind
-	LineStart int    // 起始行号（1-based，DEL 和 SWAP 必需）
-	LineEnd   int    // 结束行号（SWAP 必需，含；DEL 可选，缺省 = LineStart）
-	Position  string // INS 的插入位置："head" / "tail" / "pre" / "post"
-	RefLine   int    // INS pre/post 的参考行号
-	Body      []string // SWAP/INS 的新内容（已去除 + 前缀的 body 行，nil 表示无 body）
-	DestPath  string // MV 的目标路径
+	Kind       OpKind
+	LineStart  int
+	LineEnd    int
+	RefLine    int
+	Body       []string
+	OldString  string
+	ReplaceAll bool
 }
 
-// Section 表示 patch 中一个文件的编辑指令。
 type Section struct {
 	Path string
 	TAG  string
 	Ops  []Op
 }
 
-// Patch 表示一个完整的 patch 文档。
-type Patch struct {
-	Sections []Section
-}
+type Patch struct{ Sections []Section }
 
-// ---------------------------------------------------------------------------
-// Result types (hashline-local, converted to tool types in edit_file_hashline)
-// ---------------------------------------------------------------------------
-
-// EditLineKind 表示 diff 行的类型（hashline 内部表示）。
 type EditLineKind string
 
 const (
@@ -79,7 +57,6 @@ const (
 	LineHeader EditLineKind = "@"
 )
 
-// EditLine 表示 diff 中的一行。
 type EditLine struct {
 	Kind    EditLineKind
 	Content string
@@ -87,45 +64,31 @@ type EditLine struct {
 	NewNum  int
 }
 
-// EditHunk 表示一个 diff 块。
 type EditHunk struct {
-	OldStart       int
-	OldCount       int
-	NewStart       int
-	NewCount       int
-	Heading        string
-	Lines          []EditLine
-	NoNewlineAtEOF bool
+	OldStart, OldCount, NewStart, NewCount int
+	Heading                                string
+	Lines                                  []EditLine
+	NoNewlineAtEOF                         bool
 }
 
-// SectionResult 表示单个 Section 的应用结果。
 type SectionResult struct {
-	Path       string
-	Op         string // "update" / "delete" / "create" / "rename"
-	OldTAG     string
-	NewTAG     string
-	LinesDelta int
-	DiffHunks  []EditHunk
-	Warning    string
-	Error      *EditError
+	Path, Op, OldTAG, NewTAG string
+	LinesDelta               int
+	DiffHunks                []EditHunk
+	Warning                  string
+	Error                    *EditError
 }
 
-// EditError 表示编辑过程中的错误。
 type EditError struct {
-	Fatal    bool   // true = 不可恢复，false = 可恢复
-	Kind     string // "file_not_found", "tag_mismatch", "invalid_args", "permission_denied" ...
-	Message  string
+	Fatal   bool
+	Kind    string
+	Message string
 }
 
 func (e *EditError) Error() string { return e.Message }
 
-// ---------------------------------------------------------------------------
-// Parse errors
-// ---------------------------------------------------------------------------
-
-// ParseError 表示 patch 解析错误。
 type ParseError struct {
-	Line int    // 出错行号（1-based，0 = 未知）
+	Line int
 	Msg  string
 }
 
@@ -137,15 +100,12 @@ func (e *ParseError) Error() string {
 }
 
 // ---------------------------------------------------------------------------
-// ParsePatch 解析 hashline patch 文本。
+// ParsePatch
 // ---------------------------------------------------------------------------
 
-// ParsePatch 解析 hashline format patch 文本，返回 Patch 结构。
 func ParsePatch(text string) (*Patch, error) {
 	lines := strings.Split(text, "\n")
 	scanner := &patchScanner{lines: lines, pos: 0}
-
-	// 跳过开头的 *** Begin Patch
 	if err := scanner.expectMarker("*** Begin Patch"); err != nil {
 		return nil, err
 	}
@@ -157,38 +117,34 @@ func ParsePatch(text string) (*Patch, error) {
 			scanner.pos++
 			continue
 		}
-
-		// 检查结束标记
 		if strings.EqualFold(line, "*** End Patch") {
 			scanner.pos++
 			break
 		}
-
-		// 期望文件头 [PATH#TAG]
 		section, err := scanner.parseSection()
 		if err != nil {
 			return nil, err
 		}
 		sections = append(sections, section)
 	}
-
 	if len(sections) == 0 {
 		return nil, &ParseError{Msg: "no sections found in patch"}
 	}
-
 	return &Patch{Sections: sections}, nil
 }
 
-// patchScanner 是 patch 文本的行扫描器。
 type patchScanner struct {
 	lines []string
 	pos   int
 }
 
-func (s *patchScanner) currentLine() int {
-	return s.pos + 1
+func (s *patchScanner) currentLine() int { return s.pos + 1 }
+func (s *patchScanner) rawLine() string {
+	if s.pos >= len(s.lines) {
+		return ""
+	}
+	return s.lines[s.pos]
 }
-
 func (s *patchScanner) trimmed() string {
 	for s.pos < len(s.lines) {
 		line := strings.TrimSpace(s.lines[s.pos])
@@ -199,251 +155,367 @@ func (s *patchScanner) trimmed() string {
 	}
 	return ""
 }
-
-func (s *patchScanner) rawLine() string {
-	if s.pos >= len(s.lines) {
-		return ""
-	}
-	return s.lines[s.pos]
-}
-
 func (s *patchScanner) expectMarker(marker string) error {
 	line := s.trimmed()
 	if !strings.EqualFold(line, marker) {
-		return &ParseError{
-			Line: s.currentLine(),
-			Msg:  fmt.Sprintf("expected %q, got %q", marker, line),
-		}
+		return &ParseError{Line: s.currentLine(), Msg: fmt.Sprintf("expected %q, got %q", marker, line)}
 	}
 	s.pos++
 	return nil
 }
 
-// parseSection 解析一个 [PATH#TAG] 块及其后续操作。
 func (s *patchScanner) parseSection() (Section, error) {
 	line := s.trimmed()
 	lineNum := s.currentLine()
-
 	if !strings.HasPrefix(line, "[") || !strings.Contains(line, "#") {
-		return Section{}, &ParseError{
-			Line: lineNum,
-			Msg:  fmt.Sprintf("expected [PATH#TAG], got %q", line),
-		}
+		return Section{}, &ParseError{Line: lineNum, Msg: fmt.Sprintf("expected [PATH#TAG], got %q", line)}
 	}
-
 	idxEnd := strings.IndexByte(line, ']')
 	if idxEnd < 0 {
-		return Section{}, &ParseError{
-			Line: lineNum,
-			Msg:  fmt.Sprintf("unclosed section header: %q", line),
-		}
+		return Section{}, &ParseError{Line: lineNum, Msg: "unclosed section header"}
 	}
-
 	header := line[1:idxEnd]
 	hashIdx := strings.LastIndex(header, "#")
 	if hashIdx < 0 || hashIdx == len(header)-1 {
-		return Section{}, &ParseError{
-			Line: lineNum,
-			Msg:  fmt.Sprintf("invalid section header (missing TAG): %q", line),
-		}
+		return Section{}, &ParseError{Line: lineNum, Msg: "invalid section header (missing TAG)"}
 	}
-
 	path := header[:hashIdx]
 	tag := header[hashIdx+1:]
 	if tag == "" || len(tag) != 4 {
-		return Section{}, &ParseError{
-			Line: lineNum,
-			Msg:  fmt.Sprintf("invalid TAG: %q (must be 4 hex chars)", tag),
-		}
+		return Section{}, &ParseError{Line: lineNum, Msg: fmt.Sprintf("invalid TAG: %q (must be 4 hex chars)", tag)}
 	}
+	s.pos++
 
-	s.pos++ // consume header
-
-	// 解析操作
 	var ops []Op
 	for s.pos < len(s.lines) {
 		trimmed := strings.TrimSpace(s.rawLine())
-
 		if trimmed == "" {
 			s.pos++
 			continue
 		}
-
-		// 下一个 section 或结束标记 → 停止
 		if strings.HasPrefix(trimmed, "[") || strings.EqualFold(trimmed, "*** End Patch") {
 			break
 		}
-
-		// 检查操作头
 		op, err := s.parseOp()
 		if err != nil {
 			return Section{}, err
 		}
 		ops = append(ops, op)
 	}
-
 	if len(ops) == 0 {
-		return Section{}, &ParseError{
-			Line: lineNum,
-			Msg:  fmt.Sprintf("no operations in section [%s#%s]", path, tag),
-		}
+		return Section{}, &ParseError{Line: lineNum, Msg: fmt.Sprintf("no operations in section [%s#%s]", path, tag)}
 	}
-
 	return Section{Path: path, TAG: tag, Ops: ops}, nil
 }
 
-// normalizeOpLine 对操作行做 LLM 兼容性规范化：
-// - 剥离行尾注释（# ... 和 // ...）
-// - 修复 INS. PRE / INS. POST / INS. HEAD / INS. TAIL（dot 后多余空格）
 func normalizeOpLine(line string) string {
-	// 剥离行尾注释（空格 + # 或 // 开始的后缀）
-	line = stripTrailingComment(line)
-
-	// 修复 dot 后多余空格：INS. PRE → INS.PRE 等
-	line = strings.Replace(line, "INS. PRE", "INS.PRE", 1)
-	line = strings.Replace(line, "INS. POST", "INS.POST", 1)
-	line = strings.Replace(line, "INS. HEAD", "INS.HEAD", 1)
-	line = strings.Replace(line, "INS. TAIL", "INS.TAIL", 1)
-
+	// Normalize legacy INS.PRE / INS.POST / INS.HEAD / INS.TAIL spacing variants
+	for _, variant := range []string{"INS. PRE", "INS.  PRE", "INS. POST", "INS.  POST", "INS. HEAD", "INS.  HEAD", "INS. TAIL", "INS.  TAIL"} {
+		canonical := strings.ReplaceAll(variant, " ", "")
+		if idx := strings.Index(line, variant); idx >= 0 {
+			line = line[:idx] + canonical + line[idx+len(variant):]
+			break
+		}
+	}
 	return line
 }
 
-// stripTrailingComment 剥离操作行行尾注释。模式：空格 + # 或 //。
+// stripTrailingComment removes trailing comments (// or #) from an operation line,
+// but only outside of quoted strings to avoid corrupting SWAP old-text content.
 func stripTrailingComment(line string) string {
-	if idx := strings.Index(line, " //"); idx >= 0 {
-		return strings.TrimSpace(line[:idx])
-	}
-	if idx := strings.Index(line, " #"); idx > 0 {
-		return strings.TrimSpace(line[:idx])
+	inQuote := false
+	var quoteChar byte
+	for i := 0; i < len(line); i++ {
+		if !inQuote {
+			if line[i] == '"' || line[i] == '\'' {
+				inQuote = true
+				quoteChar = line[i]
+				continue
+			}
+			if line[i] == '/' && i+1 < len(line) && line[i+1] == '/' {
+				return strings.TrimSpace(line[:i])
+			}
+			if line[i] == '#' && i > 0 {
+				return strings.TrimSpace(line[:i])
+			}
+		} else {
+			if line[i] == '\\' && i+1 < len(line) {
+				i++
+				continue
+			}
+			if line[i] == quoteChar {
+				inQuote = false
+			}
+		}
 	}
 	return line
 }
 
-// parseOp 解析一个操作及可选的 body 行。
-// 对操作行做 LLM 兼容性规范化后再解析。
 func (s *patchScanner) parseOp() (Op, error) {
-	trimmed := strings.TrimSpace(s.rawLine())
-	normalized := normalizeOpLine(trimmed)
+	raw := s.rawLine()
+	trimmed := strings.TrimSpace(raw)
+	// 去除行尾注释（跳过引号内内容）
+	cleaned := stripTrailingComment(trimmed)
+	normalized := normalizeOpLine(cleaned)
 	lineNum := s.currentLine()
-
 	upper := strings.ToUpper(normalized)
 
 	switch {
-	case strings.HasPrefix(upper, "SWAP "):
+	case upper == "SWAP" || strings.HasPrefix(upper, "SWAP "):
 		return s.parseSwapOp(normalized, lineNum)
 	case strings.HasPrefix(upper, "DEL "):
 		return s.parseDelOp(normalized, lineNum)
 	case strings.HasPrefix(upper, "INS.PRE "):
-		return s.parseInsOp(normalized, "pre", lineNum)
+		return s.parseInsLegacy(normalized, "pre", lineNum)
 	case strings.HasPrefix(upper, "INS.POST "):
-		return s.parseInsOp(normalized, "post", lineNum)
+		return s.parseInsLegacy(normalized, "post", lineNum)
 	case strings.HasPrefix(upper, "INS.HEAD"):
-		return s.parseInsHeadTailOp(normalized, "head", lineNum)
-	case strings.HasPrefix(upper, "INS.TAIL"):
-		return s.parseInsHeadTailOp(normalized, "tail", lineNum)
-	case strings.HasPrefix(upper, "REM"):
-		s.pos++ // consume REM line
-		return Op{Kind: OpREM}, nil
-	case strings.HasPrefix(upper, "MV "):
-		return s.parseMvOp(normalized, lineNum)
-	default:
-		return Op{}, &ParseError{
-			Line: lineNum,
-			Msg:  fmt.Sprintf("unknown operation: %q", trimmed),
+		rest := strings.TrimSuffix(strings.TrimSpace(normalized), ":")
+		if rest != "INS.HEAD" {
+			return Op{}, &ParseError{Line: lineNum, Msg: "INS.HEAD does not accept arguments — use INS.HEAD: alone, or INS 0:"}
 		}
+		s.pos++
+		body, err := s.readBodyInContext(false)
+		if err != nil {
+			return Op{}, err
+		}
+		if len(body) == 0 {
+			return Op{}, &ParseError{Line: lineNum, Msg: "INS.HEAD requires body lines — add content after the operation"}
+		}
+		return Op{Kind: OpINS, RefLine: 0, Body: body}, nil
+	case strings.HasPrefix(upper, "INS.TAIL"):
+		rest := strings.TrimSuffix(strings.TrimSpace(normalized), ":")
+		if rest != "INS.TAIL" {
+			return Op{}, &ParseError{Line: lineNum, Msg: "INS.TAIL does not accept arguments — use INS.TAIL: alone, or INS N: with N ≥ file length"}
+		}
+		s.pos++
+		body, err := s.readBodyInContext(false)
+		if err != nil {
+			return Op{}, err
+		}
+		if len(body) == 0 {
+			return Op{}, &ParseError{Line: lineNum, Msg: "INS.TAIL requires body lines — add content after the operation"}
+		}
+		return Op{Kind: OpINS, RefLine: -1, Body: body}, nil
+	case strings.HasPrefix(upper, "INS "):
+		return s.parseInsOp(normalized, lineNum)
+	case strings.HasPrefix(upper, "REM"):
+		return Op{}, &ParseError{Line: lineNum, Msg: "REM is no longer supported — use bash: rm <file>"}
+	case strings.HasPrefix(upper, "MV "):
+		return Op{}, &ParseError{Line: lineNum, Msg: "MV is no longer supported — use bash: mv <src> <dst>"}
+	default:
+		return Op{}, &ParseError{Line: lineNum, Msg: fmt.Sprintf("unknown operation: %q", trimmed)}
 	}
 }
 
 func (s *patchScanner) parseSwapOp(line string, lineNum int) (Op, error) {
-	rest := line[5:] // after "SWAP "
-	hasBody := strings.HasSuffix(strings.TrimSpace(rest), ":")
-
-	rest = strings.TrimSuffix(strings.TrimSpace(rest), ":")
-	rest = strings.TrimSpace(rest)
-
-	start, end, err := parseLineRange(rest)
-	if err != nil {
-		return Op{}, &ParseError{Line: lineNum, Msg: fmt.Sprintf("invalid SWAP range: %v", err)}
+	rest := ""
+	if len(line) > 5 {
+		rest = strings.TrimSpace(line[5:])
 	}
-
-	s.pos++ // consume op header
-
-	var body []string
-	if hasBody {
-		var err error
-		body, err = s.readBody()
-		if err != nil {
-			return Op{}, err
+	upperRest := strings.ToUpper(rest)
+	replaceAll := false
+	if strings.HasPrefix(upperRest, "ALL ") || upperRest == "ALL" {
+		replaceAll = true
+		if len(rest) > 4 {
+			rest = strings.TrimSpace(rest[4:])
+		} else {
+			rest = ""
 		}
 	}
-
-	return Op{Kind: OpSWAP, LineStart: start, LineEnd: end, Body: body}, nil
+	// Legacy: SWAP "text": or SWAP ALL "text": — inline quoted old content
+	if strings.HasPrefix(rest, `"`) || strings.HasPrefix(rest, "'") {
+		quote := rest[0]
+		oldStr, remainder, err := s.readQuotedString(rest[1:], quote, lineNum)
+		if err != nil {
+			return Op{}, &ParseError{Line: lineNum, Msg: fmt.Sprintf("invalid SWAP content: %v", err)}
+		}
+		remainder = strings.TrimSpace(remainder)
+		hasBody := strings.HasPrefix(remainder, ":")
+		s.pos++ // consume closing-quote line
+		var body []string
+		if hasBody {
+			body, err = s.readBody()
+			if err != nil {
+				return Op{}, err
+			}
+		}
+		return Op{Kind: OpSWAP, OldString: oldStr, ReplaceAll: replaceAll, Body: body}, nil
+	}
+	// Parse optional line range: SWAP N.=M ...
+	numEnd := 0
+	for numEnd < len(rest) && (rest[numEnd] >= '0' && rest[numEnd] <= '9' || rest[numEnd] == '.' || rest[numEnd] == '=') {
+		numEnd++
+	}
+	hasLineNumbers := numEnd > 0
+	var start, end int
+	if hasLineNumbers {
+		rangePart := strings.TrimSpace(rest[:numEnd])
+		var err error
+		start, end, err = parseLineRange(rangePart)
+		if err != nil {
+			return Op{}, &ParseError{Line: lineNum, Msg: fmt.Sprintf("invalid SWAP range: %v", err)}
+		}
+		if start < 1 || end < 1 {
+			return Op{}, &ParseError{Line: lineNum, Msg: "SWAP line numbers must be >= 1"}
+		}
+		// Legacy: SWAP N.=M "text": — inline quoted old content with line numbers
+		restAfterRange := strings.TrimSpace(rest[numEnd:])
+		if strings.HasPrefix(restAfterRange, `"`) || strings.HasPrefix(restAfterRange, "'") {
+			quote := restAfterRange[0]
+			oldStr, remainder, err := s.readQuotedString(restAfterRange[1:], quote, lineNum)
+			if err != nil {
+				return Op{}, &ParseError{Line: lineNum, Msg: fmt.Sprintf("invalid SWAP content: %v", err)}
+			}
+			remainder = strings.TrimSpace(remainder)
+			hasBody := strings.HasPrefix(remainder, ":")
+			s.pos++
+			var body []string
+			if hasBody {
+				body, err = s.readBody()
+				if err != nil {
+					return Op{}, err
+				}
+			}
+			return Op{Kind: OpSWAP, LineStart: start, LineEnd: end, OldString: oldStr, ReplaceAll: replaceAll, Body: body}, nil
+		}
+	}
+	// Sentinel mode: %OLD ... %NEW ...  (or body-only for line-number mode without verification)
+	s.pos++ // consume the SWAP line
+	oldStr, body, err := s.readSentinelBlock(lineNum, hasLineNumbers)
+	if err != nil {
+		return Op{}, err
+	}
+	if !hasLineNumbers && oldStr == "" {
+		return Op{}, &ParseError{Line: lineNum, Msg: "SWAP without line numbers requires %OLD — add a sentinel block or use SWAP \"text\":"}
+	}
+	return Op{Kind: OpSWAP, LineStart: start, LineEnd: end, OldString: oldStr, ReplaceAll: replaceAll, Body: body}, nil
 }
 
 func (s *patchScanner) parseDelOp(line string, lineNum int) (Op, error) {
-	rest := line[4:] // after "DEL "
-	rest = strings.TrimSuffix(strings.TrimSpace(rest), ":")
-	rest = strings.TrimSpace(rest)
-
-	start, end, err := parseLineRange(rest)
+	rest := strings.TrimSpace(line[4:])
+	rest = strings.TrimSuffix(rest, ":")
+	start, end, err := parseLineRange(strings.TrimSpace(rest))
 	if err != nil {
 		return Op{}, &ParseError{Line: lineNum, Msg: fmt.Sprintf("invalid DEL range: %v", err)}
 	}
-
-	s.pos++ // consume op header
+	if start < 1 || end < 1 {
+		return Op{}, &ParseError{Line: lineNum, Msg: "DEL line numbers must be >= 1"}
+	}
+	s.pos++
 	return Op{Kind: OpDEL, LineStart: start, LineEnd: end}, nil
 }
 
-func (s *patchScanner) parseInsOp(line string, position string, lineNum int) (Op, error) {
+func (s *patchScanner) parseInsOp(line string, lineNum int) (Op, error) {
+	rest := strings.TrimSpace(line[4:])
+	rest = strings.TrimSuffix(strings.TrimSpace(rest), ":")
+	n, err := parseSingleLine(strings.TrimSpace(rest))
+	if err != nil {
+		return Op{}, &ParseError{Line: lineNum, Msg: fmt.Sprintf("invalid INS line number: %v", err)}
+	}
+	s.pos++
+	body, err := s.readBody()
+	if err != nil {
+		return Op{}, err
+	}
+	if len(body) == 0 {
+		return Op{}, &ParseError{Line: lineNum, Msg: "INS requires body lines — add content after the operation"}
+	}
+	return Op{Kind: OpINS, RefLine: n, Body: body}, nil
+}
+
+func (s *patchScanner) parseInsLegacy(line string, position string, lineNum int) (Op, error) {
 	prefix := "INS." + strings.ToUpper(position) + " "
 	rest := line[len(prefix):]
 	rest = strings.TrimSuffix(strings.TrimSpace(rest), ":")
-	rest = strings.TrimSpace(rest)
-
-	n, err := parseSingleLine(rest)
+	n, err := parseSingleLine(strings.TrimSpace(rest))
 	if err != nil {
 		return Op{}, &ParseError{Line: lineNum, Msg: fmt.Sprintf("invalid INS.%s line number: %v", position, err)}
 	}
-
-	s.pos++ // consume op header
-	body, err := s.readBody()
-	if err != nil {
-		return Op{}, err
-	}
-
-	return Op{Kind: OpINS, Position: position, RefLine: n, Body: body}, nil
-}
-
-func (s *patchScanner) parseInsHeadTailOp(line string, position string, lineNum int) (Op, error) {
-	s.pos++ // consume op header
-	body, err := s.readBody()
-	if err != nil {
-		return Op{}, err
-	}
-	return Op{Kind: OpINS, Position: position, Body: body}, nil
-}
-
-func (s *patchScanner) parseMvOp(line string, lineNum int) (Op, error) {
-	rest := strings.TrimSpace(line[3:])
-	if rest == "" {
-		return Op{}, &ParseError{Line: lineNum, Msg: "MV requires a destination path"}
-	}
-	// 剥离双引号或单引号（LLM 可能使用任一种）
-	if (strings.HasPrefix(rest, `"`) && strings.HasSuffix(rest, `"`)) ||
-		(strings.HasPrefix(rest, "'") && strings.HasSuffix(rest, "'")) {
-		rest = rest[1 : len(rest)-1]
-	}
 	s.pos++
-	return Op{Kind: OpMV, DestPath: rest}, nil
+	body, err := s.readBody()
+	if err != nil {
+		return Op{}, err
+	}
+	if len(body) == 0 {
+		return Op{}, &ParseError{Line: lineNum, Msg: "INS requires body lines — add content after the operation"}
+	}
+	refLine := n
+	if position == "pre" && n > 0 {
+		refLine = n - 1
+	}
+	return Op{Kind: OpINS, RefLine: refLine, Body: body}, nil
 }
 
-// bodyTerminators 定义 body 块的合法终止行前缀（大小写不敏感）。
-var bodyTerminators = []string{
-	"SWAP ", "DEL ", "INS.PRE ", "INS.POST ", "INS.HEAD", "INS.TAIL",
-	"REM", "MV ",
+// readQuotedString 从 patch 中读取可能跨多行的引用字符串。
+// start 是开引号之后的第一行内容。quote 是引号字符。
+// s.pos 应指向开引号所在的行。返回时 s.pos 停在闭引号所在行。
+func (s *patchScanner) readQuotedString(start string, quote byte, startLine int) (string, string, error) {
+	var buf strings.Builder
+	remaining := start
+
+	for {
+		for i := 0; i < len(remaining); i++ {
+			if remaining[i] == '\\' && i+1 < len(remaining) {
+				i++
+				if quote == '\'' {
+					// Single-quote mode: \\ -> \\, \\' -> ', \\t -> tab, \\n -> newline
+					// Everything else stays literal - ideal for copy-paste from read output.
+					switch remaining[i] {
+					case '\\':
+						buf.WriteByte('\\')
+					case '\'':
+						buf.WriteByte('\'')
+					case 't':
+						buf.WriteByte('\t')
+					case 'n':
+						buf.WriteByte('\n')
+					default:
+						buf.WriteByte('\\')
+						buf.WriteByte(remaining[i])
+					}
+				} else {
+					// Double-quote: full escape processing
+					switch remaining[i] {
+					case 'n':
+						buf.WriteByte('\n')
+					case 't':
+						buf.WriteByte('\t')
+					case 'r':
+						buf.WriteByte('\r')
+					case '\\':
+						buf.WriteByte('\\')
+					default:
+						if remaining[i] == quote {
+							buf.WriteByte(quote)
+						} else {
+							buf.WriteByte('\\')
+							buf.WriteByte(remaining[i])
+						}
+					}
+				}
+				continue
+			}
+			if remaining[i] == quote {
+				if buf.Len() == 0 {
+					return "", "", fmt.Errorf("empty quoted string")
+				}
+				return buf.String(), remaining[i+1:], nil
+			}
+			buf.WriteByte(remaining[i])
+		}
+		// 当前行未找到闭引号 → 添加换行，读取下一行
+		buf.WriteByte('\n')
+		s.pos++
+		if s.pos >= len(s.lines) {
+			return "", "", &ParseError{Line: startLine, Msg: fmt.Sprintf("unclosed quoted string — missing closing %c", quote)}
+		}
+		remaining = s.rawLine()
+	}
 }
 
-// isBodyTerminator 判断行是否为 body 块的合法终止符（操作头/段头/结束标记）。
+var bodyTerminators = []string{"SWAP ", "DEL ", "INS.PRE ", "INS.POST ", "INS.HEAD", "INS.TAIL", "INS "}
+
 func isBodyTerminator(line string) bool {
 	upper := strings.ToUpper(strings.TrimSpace(line))
 	for _, prefix := range bodyTerminators {
@@ -451,75 +523,120 @@ func isBodyTerminator(line string) bool {
 			return true
 		}
 	}
-	// 段头 [PATH#TAG] 或结束标记 *** End Patch
-	if strings.HasPrefix(upper, "[") || strings.HasPrefix(upper, "***") {
-		return true
-	}
-	return false
+	return strings.HasPrefix(upper, "[") || strings.HasPrefix(upper, "***")
 }
 
-// readBody 读取以 + 开头的 body 行，返回去除前缀后的行列表和可能的错误。
-// \+ 开头的行会被转义：去掉反斜杠，保留后面的 + 作为字面量内容。
-// 容忍 LLM 在 + 前加空白字符，跳过 body 内部的空行。
-// 当遇到不以 + 开头的非空行时：若该行不属于合法终止符则返回错误，
-// 提示 body 行必须以 + 开头；否则正常终止。
 func (s *patchScanner) readBody() ([]string, error) {
+	return s.readBodyInContext(false)
+}
+
+// readBodyInContext reads body lines. When inSentinel is true, unindented
+// %OLD/%NEW stop reading (they act as sentinel delimiters). When false,
+// %OLD/%NEW are treated as literal content.
+func (s *patchScanner) readBodyInContext(inSentinel bool) ([]string, error) {
 	var bodyLines []string
 	for s.pos < len(s.lines) {
 		raw := s.rawLine()
-		trimmed := strings.TrimLeft(raw, " \t")
-
-		// 跳过空行（LLM 可能在 body 行之间插入空行）
+		trimmed := strings.TrimLeft(raw, " 	")
 		if raw == "" || trimmed == "" {
 			s.pos++
 			continue
 		}
-
-	if strings.HasPrefix(trimmed, `\+`) {
-		// 转义：\+ 开头 → 字面量 + 开头的内容
-		content := trimmed[1:] // 去掉 \，保留 + 及后续内容
-		bodyLines = append(bodyLines, content)
-		s.pos++
-	} else if strings.HasPrefix(trimmed, "+") {
-		content := trimmed[1:]
-		// + 直接后接操作头关键词（如 +SWAP / +DEL）→ LLM 误给操作行加了 +
-		// 仅当 + 后面不是空白时触发：+ SWAP 是合法 body（前导空格），+SWAP 是失误
-		if !strings.HasPrefix(content, " ") && !strings.HasPrefix(content, "\t") && isBodyTerminator(content) {
-			return nil, &ParseError{
-				Line: s.currentLine(),
-				Msg:  fmt.Sprintf("operation lines must NOT start with '+', got: %q", trimmed),
-			}
+		// \+ escape: body content that looks like an operation (SWAP/DEL/INS).
+		// Strips only the backslash, preserving indentation and the + character.
+		if idx := strings.Index(raw, `\+`); idx >= 0 {
+			unescaped := raw[:idx] + raw[idx+1:] // remove just the \
+			bodyLines = append(bodyLines, unescaped)
+			s.pos++
+			continue
 		}
-		bodyLines = append(bodyLines, content)
-		s.pos++
-		} else {
-			// 不以 + 开头 → 判断是正常终止还是 LLM 遗漏 + 前缀
-			if !isBodyTerminator(trimmed) {
-				return nil, &ParseError{
-					Line: s.currentLine(),
-					Msg:  fmt.Sprintf("body lines must start with '+', got: %q (missing '+' prefix?)", trimmed),
-				}
-			}
+		// \%OLD and \%NEW escapes: literal %OLD / %NEW at column 0.
+		// Needed when body content contains unindented sentinel keywords.
+		if strings.HasPrefix(raw, `\%OLD`) {
+			bodyLines = append(bodyLines, "%OLD"+raw[5:])
+			s.pos++
+			continue
+		}
+		if strings.HasPrefix(raw, `\%NEW`) {
+			bodyLines = append(bodyLines, "%NEW"+raw[5:])
+			s.pos++
+			continue
+		}
+		if inSentinel && isSentinel(raw) {
 			break
 		}
+		if isBodyTerminator(trimmed) {
+			break
+		}
+		// Raw line preserves original indentation (tabs/spaces)
+		bodyLines = append(bodyLines, raw)
+		s.pos++
 	}
 	return bodyLines, nil
 }
 
-// parseLineRange 解析 "N.=M" 或 "N" 行号格式。
-func parseLineRange(s string) (start, end int, err error) {
-	s = strings.TrimSpace(s)
+// isSentinel reports whether line is exactly %OLD or %NEW at column 0.
+func isSentinel(line string) bool {
+	return line == "%OLD" || line == "%NEW"
+}
 
+// readSentinelBlock reads optional %OLD ... %NEW ... sentinel content for SWAP.
+// Only unindented %OLD/%NEW act as delimiters; indented ones are literal content.
+// Returns oldStr (joined old lines, "" if no %OLD sentinel) and body.
+func (s *patchScanner) readSentinelBlock(lineNum int, hasLineNumbers bool) (oldStr string, body []string, err error) {
+	for s.pos < len(s.lines) {
+		raw := s.rawLine()
+		if raw == "" {
+			s.pos++
+			continue
+		}
+		if raw == "%OLD" {
+			s.pos++ // consume sentinel
+			var oldLines []string
+			for s.pos < len(s.lines) {
+				raw2 := s.rawLine()
+				if raw2 == "%NEW" {
+					s.pos++ // consume sentinel
+					break
+				}
+				oldLines = append(oldLines, raw2)
+				s.pos++
+			}
+			if len(oldLines) == 0 {
+				oldStr = ""
+			} else {
+				oldStr = strings.Join(oldLines, "\n")
+			}
+			body, err = s.readBodyInContext(true)
+			if err != nil {
+				return "", nil, err
+			}
+			return oldStr, body, nil
+		}
+		// No sentinel — body starts here (line-number mode without verification)
+		if hasLineNumbers {
+			body, err = s.readBodyInContext(false)
+			if err != nil {
+				return "", nil, err
+			}
+			return "", body, nil
+		}
+		// SWAP without line numbers and no sentinel — caller handles error
+		return "", nil, nil
+	}
+	return "", nil, nil
+}
+
+func parseLineRange(s string) (int, int, error) {
+	s = strings.TrimSpace(s)
 	if idx := strings.Index(s, "."); idx >= 0 {
 		after := s[idx+1:]
 		if strings.HasPrefix(after, "=") {
-			startStr := strings.TrimSpace(s[:idx])
-			endStr := strings.TrimSpace(after[1:])
-			start, err = parseSingleLine(startStr)
+			start, err := parseSingleLine(strings.TrimSpace(s[:idx]))
 			if err != nil {
 				return 0, 0, err
 			}
-			end, err = parseSingleLine(endStr)
+			end, err := parseSingleLine(strings.TrimSpace(after[1:]))
 			if err != nil {
 				return 0, 0, err
 			}
@@ -529,15 +646,12 @@ func parseLineRange(s string) (start, end int, err error) {
 			return start, end, nil
 		}
 	}
-
-	// Friendly hint: detect := confusion (用户写了 N:=M 而非 N.=M)
 	if idx := strings.Index(s, ":="); idx >= 0 {
 		left := strings.TrimSpace(s[:idx])
 		right := strings.TrimSuffix(strings.TrimSpace(s[idx+2:]), ":")
-		return 0, 0, fmt.Errorf("invalid range %q: did you mean %s.=%s? (SWAP/DEL ranges use N.=M format, not N:=M)", s, left, right)
+		return 0, 0, fmt.Errorf("invalid range %q: did you mean %s.=%s?", s, left, right)
 	}
-
-	start, err = parseSingleLine(s)
+	start, err := parseSingleLine(s)
 	if err != nil {
 		return 0, 0, err
 	}
@@ -556,29 +670,25 @@ func parseSingleLine(s string) (int, error) {
 		}
 		n = n*10 + int(ch-'0')
 	}
-	if n < 1 {
-		return 0, fmt.Errorf("line number must be >= 1: %q", s)
+	if n < 0 {
+		return 0, fmt.Errorf("line number must be >= 0: %q", s)
 	}
 	return n, nil
 }
 
 // ---------------------------------------------------------------------------
-// FileSystem — 抽象文件读写
+// FileSystem
 // ---------------------------------------------------------------------------
 
-// FileSystem 抽象文件读写，方便测试。
 type FileSystem interface {
-	ReadFile(path string) (string, error)
-	WriteFile(path string, content string) error
-	MkdirAll(path string) error
-	Remove(path string) error
-	ResolvePath(path string) string
+	ReadFile(string) (string, error)
+	WriteFile(string, string) error
+	MkdirAll(string) error
+	Remove(string) error
+	ResolvePath(string) string
 }
 
-// OSFS 是真实文件系统的 FileSystem 实现。
-type OSFS struct {
-	WorkingDir string
-}
+type OSFS struct{ WorkingDir string }
 
 func (fs *OSFS) ReadFile(path string) (string, error) {
 	fullPath, err := pathutil.ResolvePathWithDir(path, fs.WorkingDir)
@@ -625,26 +735,16 @@ func (fs *OSFS) ResolvePath(path string) string {
 }
 
 // ---------------------------------------------------------------------------
-// ApplyPatch 应用 patch 到文件系统。
+// ApplyPatch
 // ---------------------------------------------------------------------------
 
-// ApplyPatch 解析后的 patch 应用到文件系统。
-// store 可为 nil（无 TAG 验证时跳过 Verify，但仍可执行编辑）。
-
-// ApplyPatch 解析后的 patch 应用到文件系统。
-// store 可为 nil（无 TAG 验证时跳过 Verify，但仍可执行编辑）。
-// 不同文件的 Section 并行执行；同一文件的 Section 按声明顺序串行。
 func ApplyPatch(patch *Patch, fs FileSystem, store *SnapshotStore) []SectionResult {
 	n := len(patch.Sections)
 	results := make([]SectionResult, n)
-
-	// ── Step 0: 跨 Section 冲突检测（同文件多 Section）──
 	conflictErrors := detectCrossSectionConflicts(patch)
 	for i, err := range conflictErrors {
 		results[i] = SectionResult{Path: patch.Sections[i].Path, OldTAG: patch.Sections[i].TAG, Error: err}
 	}
-
-	// 预先保存每个文件路径的原始快照内容
 	originalSnapshots := make(map[string]string)
 	if store != nil {
 		for _, sec := range patch.Sections {
@@ -656,15 +756,12 @@ func ApplyPatch(patch *Patch, fs FileSystem, store *SnapshotStore) []SectionResu
 			}
 		}
 	}
-
-	// 按文件路径分组：同一文件的 Section 保持声明顺序，不同文件并行。
 	type fileGroup struct {
-		path     string
-		indices  []int // 该文件中非冲突 Section 的索引
+		path    string
+		indices []int
 	}
 	groupMap := make(map[string]*fileGroup)
 	groupOrder := make([]*fileGroup, 0)
-
 	for i, sec := range patch.Sections {
 		if _, isConflict := conflictErrors[i]; isConflict {
 			continue
@@ -677,14 +774,11 @@ func ApplyPatch(patch *Patch, fs FileSystem, store *SnapshotStore) []SectionResu
 		}
 		fg.indices = append(fg.indices, i)
 	}
-
 	if len(groupOrder) == 0 {
 		return results
 	}
-
 	var wg sync.WaitGroup
 	wg.Add(len(groupOrder))
-
 	for _, fg := range groupOrder {
 		go func(g *fileGroup) {
 			defer wg.Done()
@@ -695,42 +789,157 @@ func ApplyPatch(patch *Patch, fs FileSystem, store *SnapshotStore) []SectionResu
 			}
 		}(fg)
 	}
-
 	wg.Wait()
 	return results
 }
 
+// matchContent applies progressive matching strategies (exact → NFC → rstrip → trim → NFKC).
+// Returns (matched, matchLevel). matchLevel is "exact" or the fallback strategy name.
+func matchContent(actual, expected string) (bool, string) {
+	if actual == expected {
+		return true, "exact"
+	}
+	if norm.NFC.String(actual) == norm.NFC.String(expected) {
+		return true, "nfc"
+	}
+	if rstripLines(actual) == rstripLines(expected) {
+		return true, "rstrip"
+	}
+	if trimLines(actual) == trimLines(expected) {
+		return true, "trim"
+	}
+	if norm.NFKC.String(actual) == norm.NFKC.String(expected) {
+		return true, "nfkc"
+	}
+	return false, ""
+}
+// rstripLines trims trailing whitespace from each line.
+func rstripLines(s string) string {
+	lines := strings.Split(s, "\n")
+	for i, l := range lines {
+		lines[i] = strings.TrimRight(l, " \t\r")
+	}
+	return strings.Join(lines, "\n")
+}
+// trimLines trims leading and trailing whitespace from each line.
+func trimLines(s string) string {
+	lines := strings.Split(s, "\n")
+	for i, l := range lines {
+		lines[i] = strings.TrimSpace(l)
+	}
+	return strings.Join(lines, "\n")
+}
+func resolveContentOps(lines []string, ops *[]Op) error {
+	content := strings.Join(lines, "\n")
+	var resolved []Op
+	for _, op := range *ops {
+		if op.Kind != OpSWAP || op.OldString == "" {
+			resolved = append(resolved, op)
+			continue
+		}
+
+		// 混合模式: 行号内容优先校验
+		if op.LineStart > 0 && op.LineEnd > 0 {
+			if op.LineStart > len(lines) || op.LineEnd > len(lines) {
+				return fmt.Errorf("SWAP: lines %d.=%d out of range (file has %d lines)", op.LineStart, op.LineEnd, len(lines))
+			}
+			// Normalize CRLF in OldString — LLM may paste with Windows line endings.
+			op.OldString = strings.ReplaceAll(op.OldString, "\r\n", "\n")
+			actualLines := strings.Join(lines[op.LineStart-1:op.LineEnd], "\n")
+			matched, _ := matchContent(actualLines, op.OldString)
+			if !matched {
+				fileLines := strings.Split(actualLines, "\n")
+				specLines := strings.Split(op.OldString, "\n")
+				firstDiff := 0
+				for firstDiff < len(fileLines) && firstDiff < len(specLines) && fileLines[firstDiff] == specLines[firstDiff] {
+					firstDiff++
+				}
+				fileLine := ""
+				specLine := ""
+				if firstDiff < len(fileLines) {
+					fileLine = fileLines[firstDiff]
+				}
+				if firstDiff < len(specLines) {
+					specLine = specLines[firstDiff]
+				}
+				// If the lines look identical, show a hex dump so the user can
+				// spot invisible differences (NFC vs NFD, zero-width chars, BOM).
+				hexHint := ""
+				if fileLine == specLine && fileLine != "" {
+					hexHint = fmt.Sprintf("\n  (visually identical — possible encoding difference)\n    file hex:     %x\n    specified hex: %x",
+						[]byte(fileLine), []byte(specLine))
+				}
+				return fmt.Errorf("SWAP: content mismatch at lines %d.=%d\n  file has %d lines, you specified %d lines\n  first diff at line %d:\n    file:     %q\n    specified: %q%s\n  hint: check for leading/trailing newlines, trailing whitespace, or off-by-one",
+					op.LineStart, op.LineEnd,
+					len(fileLines), len(specLines),
+					firstDiff+1, fileLine, specLine, hexHint)
+			}
+			resolved = append(resolved, Op{Kind: OpSWAP, LineStart: op.LineStart, LineEnd: op.LineEnd, Body: op.Body})
+			continue
+		}
+		// 纯内容模式: 唯一匹配→执行, 多个匹配→报错带行号
+		var positions []int
+		searchFrom := 0
+		for {
+			idx := strings.Index(content[searchFrom:], op.OldString)
+			if idx < 0 {
+				break
+			}
+			positions = append(positions, searchFrom+idx)
+			searchFrom += idx + len(op.OldString)
+		}
+		if len(positions) == 0 {
+			return fmt.Errorf("SWAP: %q not found in file — check exact whitespace and spelling", op.OldString)
+		}
+		if !op.ReplaceAll && len(positions) > 1 {
+			var lineHints []string
+			for _, byteOff := range positions {
+				lineHints = append(lineHints, fmt.Sprintf("%d", strings.Count(content[:byteOff], "\n")+1))
+			}
+			return fmt.Errorf("SWAP: %q found %d times at lines %s — add line numbers, e.g. SWAP N.=M %q", op.OldString, len(positions), strings.Join(lineHints, ", "), op.OldString) //nolint:staticcheck
+		}
+		for _, byteOff := range positions {
+			startLine := strings.Count(content[:byteOff], "\n") + 1
+			endLine := startLine + strings.Count(op.OldString, "\n")
+			// Trailing \n in OldString is a line separator, not an extra line.
+			if strings.HasSuffix(op.OldString, "\n") && endLine > startLine {
+				endLine--
+			}
+			resolved = append(resolved, Op{Kind: OpSWAP, LineStart: startLine, LineEnd: endLine, Body: op.Body})
+		}
+	}
+	*ops = resolved
+	return nil
+}
+
+func normalizeInsOps(lines []string, ops *[]Op) {
+	for i := range *ops {
+		if (*ops)[i].Kind != OpINS {
+			continue
+		}
+		if (*ops)[i].RefLine == -1 {
+			(*ops)[i].LineStart = len(lines)
+		} else {
+			(*ops)[i].LineStart = (*ops)[i].RefLine
+			// Clamp: INS N 超过文件行数 → 插入到文件末尾 (len(lines) 是去除尾空行的行数)
+			if (*ops)[i].LineStart > len(lines) {
+				(*ops)[i].LineStart = len(lines)
+			}
+		}
+	}
+}
 func applySection(sec Section, fs FileSystem, store *SnapshotStore, originalSnapshots map[string]string) SectionResult {
 	storePath := fs.ResolvePath(sec.Path)
-
-	result := SectionResult{
-		Path:   sec.Path,
-		OldTAG: sec.TAG,
-	}
-
+	result := SectionResult{Path: sec.Path, OldTAG: sec.TAG}
 	currentContent, err := fs.ReadFile(sec.Path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			if len(sec.Ops) == 1 && sec.Ops[0].Kind == OpREM {
-				result.Op = "delete"
-				result.NewTAG = sec.TAG
-				return result
-			}
-			result.Error = &EditError{
-				Fatal:   false,
-				Kind:    "file_not_found",
-				Message: fmt.Sprintf("file not found: %s (use write_file to create it first)", sec.Path),
-			}
-			return result
-		}
-		result.Error = &EditError{
-			Fatal:   true,
-			Kind:    "permission_denied",
-			Message: fmt.Sprintf("cannot read file: %s: %v", sec.Path, err),
+			result.Error = &EditError{Fatal: false, Kind: "file_not_found", Message: fmt.Sprintf("file not found: %s", sec.Path)}
+		} else {
+			result.Error = &EditError{Fatal: true, Kind: "permission_denied", Message: err.Error()}
 		}
 		return result
 	}
-
 	if store != nil {
 		_, verifyErr := store.Verify(storePath, sec.TAG, currentContent)
 		if verifyErr != nil {
@@ -743,134 +952,81 @@ func applySection(sec Section, fs FileSystem, store *SnapshotStore, originalSnap
 			if snapContent != "" {
 				recovery := RecoverOps(snapContent, currentContent, sec.Ops)
 				if recovery.Success {
-					warning := fmt.Sprintf("TAG expired, auto-recovered: %v", verifyErr)
+					result.Warning = fmt.Sprintf("TAG expired, auto-recovered: %v", verifyErr)
 					if recovery.RemapSummary != "" {
-						warning += " (" + recovery.RemapSummary + ")"
+						result.Warning += " (" + recovery.RemapSummary + ")"
 					}
-					result.Warning = warning
 					sec.Ops = recovery.MappedOps
 				} else {
 					reason := "unknown"
 					if len(recovery.Warnings) > 0 {
 						reason = strings.Join(recovery.Warnings, "; ")
 					}
-					result.Error = &EditError{
-						Fatal:   false,
-						Kind:    "tag_mismatch",
-						Message: fmt.Sprintf("TAG mismatch for %q and recovery failed (%s): the file has been modified since last read. Re-read with read_file_hashline and retry, or rewrite the entire file with write_file. (%v)", sec.Path, reason, verifyErr),
-					}
+					result.Error = &EditError{Fatal: false, Kind: "tag_mismatch", Message: fmt.Sprintf("TAG mismatch + recovery failed (%s): re-read.", reason)}
 					return result
 				}
 			} else {
-				result.Error = &EditError{
-					Fatal:   false,
-					Kind:    "tag_mismatch",
-					Message: fmt.Sprintf("TAG mismatch for %q: the file has been modified since last read. Re-read with read_file_hashline and retry, or rewrite the entire file with write_file. (%v)", sec.Path, verifyErr),
-				}
+				result.Error = &EditError{Fatal: false, Kind: "tag_mismatch", Message: "TAG mismatch: re-read."}
 				return result
 			}
 		}
 	}
-
+		// Normalize Windows line endings before splitting.
+	currentContent = strings.ReplaceAll(currentContent, "\r\n", "\n")
+	lines := strings.Split(currentContent, "\n")
+	if strings.HasSuffix(currentContent, "\n") && len(lines) > 0 && lines[len(lines)-1] == "" {
+		lines = lines[:len(lines)-1]
+	}
+	// Check for missing %OLD before resolveContentOps strips OldString.
+	hasMissingOld := false
 	for _, op := range sec.Ops {
-		if op.Kind == OpMV {
-			if len(sec.Ops) > 1 {
-				result.Error = &EditError{
-					Fatal:   false,
-					Kind:    "invalid_args",
-					Message: "MV cannot be combined with other operations in the same section. Use a separate section for MV.",
-				}
-				return result
-			}
-			return applyMV(sec, op, fs, store, currentContent)
+		if op.Kind == OpSWAP && op.LineStart > 0 && op.OldString == "" {
+			hasMissingOld = true
+			break
 		}
 	}
-
-	for _, op := range sec.Ops {
-		if op.Kind == OpREM {
-			if len(sec.Ops) > 1 {
-				result.Error = &EditError{
-					Fatal:   false,
-					Kind:    "invalid_args",
-					Message: "REM cannot be combined with other operations in the same section. Use a separate section for REM.",
-				}
-				return result
-			}
-			return applyREM(sec, fs, store)
-		}
-	}
-
-	// 检测操作重叠（改进 1：在原始行号上检测，重叠时返回明确错误）
-	if err := detectOverlaps(sec.Ops); err != nil {
-		result.Error = &EditError{
-			Fatal:   false,
-			Kind:    "invalid_args",
-			Message: err.Error(),
-		}
+	if err := resolveContentOps(lines, &sec.Ops); err != nil {
+		result.Error = &EditError{Fatal: false, Kind: "invalid_args", Message: err.Error()}
 		return result
 	}
-
-	// 按声明顺序应用操作，自动计算累计行偏移（改进 2）
+	if hasMissingOld {
+		result.Warning = "No %OLD provided — content verification skipped. TAG-only safety."
+	}
+	normalizeInsOps(lines, &sec.Ops)
+	if err := detectOverlaps(sec.Ops); err != nil {
+		result.Error = &EditError{Fatal: false, Kind: "invalid_args", Message: err.Error()}
+		return result
+	}
 	newContent, hunks, err := applyEdits(currentContent, sec.Ops)
 	if err != nil {
-		result.Error = &EditError{
-			Fatal:   false,
-			Kind:    "invalid_args",
-			Message: err.Error(),
-		}
+		result.Error = &EditError{Fatal: false, Kind: "invalid_args", Message: err.Error()}
 		return result
 	}
-
 	if err := fs.WriteFile(sec.Path, newContent); err != nil {
-		result.Error = &EditError{
-			Fatal:   true,
-			Kind:    "permission_denied",
-			Message: fmt.Sprintf("cannot write file: %s: %v", sec.Path, err),
-		}
+		result.Error = &EditError{Fatal: true, Kind: "permission_denied", Message: err.Error()}
 		return result
 	}
-
 	newTAG := sec.TAG
 	if store != nil {
 		newTAG = store.Update(storePath, newContent)
 	}
-
-	oldLines := countLines(currentContent)
-	newLines := countLines(newContent)
-
 	result.Op = "update"
 	result.NewTAG = newTAG
-	result.LinesDelta = newLines - oldLines
+	result.LinesDelta = countLines(newContent) - countLines(currentContent)
 	result.DiffHunks = hunks
-
 	return result
 }
 
-// applySectionGroupAtomic 对同一文件的多个 Section 执行原子合并：
-// 读取一次 → 所有 TAG 校验 → 合并 Ops → applyEdits 一次 → WriteFile 一次。
-// 全部成功才写盘；任何失败回滚（不写盘）。
 func applySectionGroupAtomic(results []SectionResult, indices []int, sections []Section, fs FileSystem, store *SnapshotStore, originalSnapshots map[string]string) {
 	firstSec := sections[indices[0]]
 	storePath := fs.ResolvePath(firstSec.Path)
-
-	// Step 1: 读取文件一次
 	currentContent, readErr := fs.ReadFile(firstSec.Path)
 	if readErr != nil {
 		for _, idx := range indices {
-			results[idx] = SectionResult{
-				Path:   sections[idx].Path,
-				OldTAG: sections[idx].TAG,
-				Error: &EditError{
-					Fatal:   false,
-					Kind:    "file_not_found",
-					Message: fmt.Sprintf("file not found: %s (use write_file to create it first)", firstSec.Path),
-				},
-			}
+			results[idx] = SectionResult{Path: sections[idx].Path, OldTAG: sections[idx].TAG, Error: &EditError{Fatal: false, Kind: "file_not_found", Message: "file not found"}}
 		}
 		return
 	}
-
-	// Step 2: 校验所有 Section 的 TAG，必要时 Recovery
 	type validatedSection struct {
 		idx     int
 		ops     []Op
@@ -878,156 +1034,93 @@ func applySectionGroupAtomic(results []SectionResult, indices []int, sections []
 	}
 	var validated []validatedSection
 	var allOps []Op
-
 	for _, idx := range indices {
-		sec := sections[idx]
-		mappedOps, warning, err := validateTAGAndRecover(sec, storePath, currentContent, store, originalSnapshots)
+		mappedOps, warning, err := validateTAGAndRecover(sections[idx], storePath, currentContent, store, originalSnapshots)
 		if err != nil {
-			// 任何 Section 校验/Recovery 失败 → 整个 fileGroup 拒绝，不写盘
 			for _, si := range indices {
-				results[si] = SectionResult{
-					Path:   sections[si].Path,
-					OldTAG: sections[si].TAG,
-					Error: &EditError{
-						Fatal:   false,
-						Kind:    "tag_mismatch",
-						Message: fmt.Sprintf("All %d changes to %q were rejected: %s. The file has not been modified. Re-read the file to get a fresh TAG, then retry all changes in one edit call. Or rewrite the entire file with write_file.", len(indices), firstSec.Path, err.Error()),
-					},
-				}
+				results[si] = SectionResult{Path: sections[si].Path, OldTAG: sections[si].TAG, Error: &EditError{Fatal: false, Kind: "tag_mismatch", Message: fmt.Sprintf("All changes to %q rejected: %s. Re-read.", firstSec.Path, err.Error())}}
 			}
 			return
 		}
 		validated = append(validated, validatedSection{idx: idx, ops: mappedOps, warning: warning})
 		allOps = append(allOps, mappedOps...)
 	}
-
-	// 防御：纯 REM/MV 多 Section（detectCrossSectionConflicts 未拦截的全 REM 或全 MV 组）
-	// 合并后无行操作 → 不能进入原子路径，应返回错误而非静默无操作。
 	if len(allOps) == 0 {
 		for _, idx := range indices {
-			results[idx] = SectionResult{
-				Path:   sections[idx].Path,
-				OldTAG: sections[idx].TAG,
-				Error: &EditError{
-					Fatal:   false,
-					Kind:    "invalid_args",
-					Message: fmt.Sprintf("multiple REM/MV sections on the same file %q cannot be combined in one patch. Split them into separate edit calls.", firstSec.Path),
-				},
-			}
+			results[idx] = SectionResult{Path: sections[idx].Path, OldTAG: sections[idx].TAG, Error: &EditError{Fatal: false, Kind: "invalid_args", Message: "no valid ops"}}
 		}
 		return
 	}
-
-	// Step 3: 合并后的 Ops 做重叠检测
+		// Normalize Windows line endings before splitting.
+	currentContent = strings.ReplaceAll(currentContent, "\r\n", "\n")
+	lines := strings.Split(currentContent, "\n")
+	if strings.HasSuffix(currentContent, "\n") && len(lines) > 0 && lines[len(lines)-1] == "" {
+		lines = lines[:len(lines)-1]
+	}
+	if err := resolveContentOps(lines, &allOps); err != nil {
+		for _, idx := range indices {
+			results[idx] = SectionResult{Path: sections[idx].Path, OldTAG: sections[idx].TAG, Error: &EditError{Fatal: false, Kind: "invalid_args", Message: err.Error()}}
+		}
+		return
+	}
+	normalizeInsOps(lines, &allOps)
 	if err := detectOverlaps(allOps); err != nil {
 		for _, idx := range indices {
-			results[idx] = SectionResult{
-				Path:   sections[idx].Path,
-				OldTAG: sections[idx].TAG,
-				Error: &EditError{
-					Fatal:   false,
-					Kind:    "invalid_args",
-					Message: fmt.Sprintf("%s. The file has not been modified.", err.Error()),
-				},
-			}
+			results[idx] = SectionResult{Path: sections[idx].Path, OldTAG: sections[idx].TAG, Error: &EditError{Fatal: false, Kind: "invalid_args", Message: err.Error()}}
 		}
 		return
 	}
-
-	// Step 4: 一次 applyEdits
 	newContent, allHunks, err := applyEdits(currentContent, allOps)
 	if err != nil {
 		for _, idx := range indices {
-			results[idx] = SectionResult{
-				Path:   sections[idx].Path,
-				OldTAG: sections[idx].TAG,
-				Error: &EditError{
-					Fatal:   false,
-					Kind:    "invalid_args",
-					Message: fmt.Sprintf("%s. The file has not been modified.", err.Error()),
-				},
-			}
+			results[idx] = SectionResult{Path: sections[idx].Path, OldTAG: sections[idx].TAG, Error: &EditError{Fatal: false, Kind: "invalid_args", Message: err.Error()}}
 		}
 		return
 	}
-
-	// Step 5: 一次写盘
 	if err := fs.WriteFile(firstSec.Path, newContent); err != nil {
 		for _, idx := range indices {
-			results[idx] = SectionResult{
-				Path:   sections[idx].Path,
-				OldTAG: sections[idx].TAG,
-				Error: &EditError{
-					Fatal:   true,
-					Kind:    "permission_denied",
-					Message: fmt.Sprintf("cannot write file: %s: %v", firstSec.Path, err),
-				},
-			}
+			results[idx] = SectionResult{Path: sections[idx].Path, OldTAG: sections[idx].TAG, Error: &EditError{Fatal: true, Kind: "permission_denied", Message: err.Error()}}
 		}
 		return
 	}
-
-	// Step 6: 更新 store
 	newTAG := sections[indices[0]].TAG
 	if store != nil {
 		newTAG = store.Update(storePath, newContent)
 	}
-
-	oldLines := countLines(currentContent)
-	newLines := countLines(newContent)
-	totalDelta := newLines - oldLines
-
-	// Step 7: 按 Section 边界拆分 hunks
+	totalDelta := countLines(newContent) - countLines(currentContent)
 	opOffset := 0
 	for _, vs := range validated {
 		sectionHunks := extractHunksForOps(allHunks, opOffset, len(vs.ops))
 		opOffset += len(vs.ops)
-
-		results[vs.idx] = SectionResult{
-			Path:       firstSec.Path,
-			OldTAG:     sections[vs.idx].TAG,
-			NewTAG:     newTAG,
-			Op:         "update",
-			LinesDelta: totalDelta,
-			DiffHunks:  sectionHunks,
-			Warning:    vs.warning,
-		}
+		results[vs.idx] = SectionResult{Path: firstSec.Path, OldTAG: sections[vs.idx].TAG, NewTAG: newTAG, Op: "update", LinesDelta: totalDelta, DiffHunks: sectionHunks, Warning: vs.warning}
 	}
 }
 
-// validateTAGAndRecover 校验 Section 的 TAG 是否匹配当前文件内容。
-// 匹配 → 返回原始 Ops；不匹配 → 尝试 Recovery；Recovery 失败 → 返回错误。
-func validateTAGAndRecover(sec Section, storePath string, currentContent string, store *SnapshotStore, originalSnapshots map[string]string) ([]Op, string, error) {
+func validateTAGAndRecover(sec Section, storePath, currentContent string, store *SnapshotStore, originalSnapshots map[string]string) ([]Op, string, error) {
 	if store == nil {
 		return sec.Ops, "", nil
 	}
-
 	_, verifyErr := store.Verify(storePath, sec.TAG, currentContent)
 	if verifyErr == nil {
 		return sec.Ops, "", nil
 	}
-
-	// TAG 不匹配 → 尝试 Recovery
 	snapContent := ""
 	if orig, ok := originalSnapshots[storePath]; ok {
 		snapContent = orig
 	} else if snap, ok := store.Get(storePath); ok && snap.TAG == sec.TAG {
 		snapContent = snap.Content
 	}
-
 	if snapContent == "" {
-		return nil, "", fmt.Errorf("TAG mismatch for %q: no snapshot available. Re-read the file with read_file_hashline and retry, or rewrite the entire file with write_file. (%v)", sec.Path, verifyErr)
+		return nil, "", fmt.Errorf("TAG mismatch: no snapshot")
 	}
-
 	recovery := RecoverOps(snapContent, currentContent, sec.Ops)
 	if !recovery.Success {
 		reason := "unknown"
 		if len(recovery.Warnings) > 0 {
 			reason = strings.Join(recovery.Warnings, "; ")
 		}
-		return nil, "", fmt.Errorf("TAG mismatch for %q and recovery failed (%s). (%v)", sec.Path, reason, verifyErr)
+		return nil, "", fmt.Errorf("recovery failed (%s)", reason)
 	}
-
 	warning := fmt.Sprintf("TAG expired, auto-recovered: %v", verifyErr)
 	if recovery.RemapSummary != "" {
 		warning += " (" + recovery.RemapSummary + ")"
@@ -1035,8 +1128,6 @@ func validateTAGAndRecover(sec Section, storePath string, currentContent string,
 	return recovery.MappedOps, warning, nil
 }
 
-// extractHunksForOps 从合并后的 hunks 中提取指定范围的 hunk。
-// buildEditHunksFromApplied 为每个 op 生成一个 hunk，hunks 顺序与 ops 一致。
 func extractHunksForOps(allHunks []EditHunk, offset, count int) []EditHunk {
 	if offset >= len(allHunks) {
 		return nil
@@ -1048,74 +1139,6 @@ func extractHunksForOps(allHunks []EditHunk, offset, count int) []EditHunk {
 	return allHunks[offset:end]
 }
 
-func applyMV(sec Section, op Op, fs FileSystem, store *SnapshotStore, currentContent string) SectionResult {
-	result := SectionResult{
-		Path:   sec.Path,
-		OldTAG: sec.TAG,
-		Op:     "rename",
-	}
-
-	destPath := op.DestPath
-
-	destDir := filepath.Dir(destPath)
-	if err := fs.MkdirAll(destDir); err != nil {
-		result.Error = &EditError{
-			Fatal:   true,
-			Kind:    "permission_denied",
-			Message: fmt.Sprintf("cannot create directory for rename: %v", err),
-		}
-		return result
-	}
-
-	if err := fs.WriteFile(destPath, currentContent); err != nil {
-		result.Error = &EditError{
-			Fatal:   true,
-			Kind:    "permission_denied",
-			Message: fmt.Sprintf("cannot write destination file: %v", err),
-		}
-		return result
-	}
-
-	if err := fs.Remove(sec.Path); err != nil {
-		result.Error = &EditError{
-			Fatal:   true,
-			Kind:    "permission_denied",
-			Message: fmt.Sprintf("cannot remove source file: %v", err),
-		}
-		return result
-	}
-
-	newTAG := sec.TAG
-	if store != nil {
-		newTAG = store.Update(fs.ResolvePath(destPath), currentContent)
-	}
-
-	result.NewTAG = newTAG
-	result.Path = destPath
-	return result
-}
-
-func applyREM(sec Section, fs FileSystem, store *SnapshotStore) SectionResult {
-	result := SectionResult{
-		Path:   sec.Path,
-		OldTAG: sec.TAG,
-		Op:     "delete",
-	}
-
-	if err := fs.Remove(sec.Path); err != nil {
-		result.Error = &EditError{
-			Fatal:   true,
-			Kind:    "permission_denied",
-			Message: fmt.Sprintf("cannot remove file: %v", err),
-		}
-		return result
-	}
-
-	result.NewTAG = sec.TAG
-	return result
-}
-
-// countLines 统计文本行数。
 func countLines(s string) int {
 	if s == "" {
 		return 0
@@ -1128,75 +1151,54 @@ func countLines(s string) int {
 }
 
 // ---------------------------------------------------------------------------
-// applyEdits — 在内存中按声明顺序应用操作，自动计算累计行偏移
+// applyEdits
 // ---------------------------------------------------------------------------
 
 type editSpan struct {
-	op    Op
-	start int // 0-based start line in original
-	end   int // 0-based end line in original (exclusive)
+	op         Op
+	start, end int
 }
 
-// applyEdits 按声明顺序处理操作。每次操作后自动计算行偏移量并调整
-// 后续操作的行号，LLM 无需手动计算偏移。所有操作的行号均以原始文件为基准，
-// 系统在应用时按顺序累计偏移。
 func applyEdits(content string, ops []Op) (string, []EditHunk, error) {
 	lines := strings.Split(content, "\n")
 	hasTrailingNewline := strings.HasSuffix(content, "\n")
-
-	// 验证原始行号在范围内
 	for _, op := range ops {
-		if op.Kind == OpSWAP || op.Kind == OpDEL {
+		switch op.Kind {
+		case OpSWAP, OpDEL:
 			if op.LineEnd > len(lines) {
 				return "", nil, fmt.Errorf("line %d out of range (file has %d lines)", op.LineEnd, len(lines))
 			}
-		}
-		if op.Kind == OpINS && (op.Position == "pre" || op.Position == "post") {
-			if op.RefLine > len(lines) {
-				return "", nil, fmt.Errorf("INS reference line %d out of range (file has %d lines)", op.RefLine, len(lines))
+		case OpINS:
+			if op.LineStart > len(lines) {
+				return "", nil, fmt.Errorf("INS line %d out of range (file has %d lines)", op.LineStart, len(lines))
 			}
 		}
 	}
-
-	// 构建 editSpan（使用原始行号，用于 diff hunks 的 OldStart）
 	var origSpans []editSpan
 	for _, op := range ops {
-		sp := opToSpan(op, lines, hasTrailingNewline)
-		origSpans = append(origSpans, sp)
+		origSpans = append(origSpans, opToSpan(op, lines, hasTrailingNewline))
 	}
-
-	// 按声明顺序应用操作，使用位置感知的偏移追踪：
-	// 每个操作记录 (applyPos, delta) — 仅当后续操作的操作位置 ≥ applyPos 时才受此 delta 影响。
-	type posDelta struct {
-		pos   int // 操作后的影响起始位置（0-based，仅 ≥pos 的行被偏移）
-		delta int // 行数变化
-	}
+	type posDelta struct{ pos, delta int }
 	var deltas []posDelta
 	var appliedSpans []editSpan
-
 	originalLines := make([]string, len(lines))
 	copy(originalLines, lines)
-
 	for _, sp := range origSpans {
-		// 计算当前操作的有效偏移：仅累加 applyPos ≤ 当前 start 的 delta
 		offset := 0
 		for _, pd := range deltas {
 			if pd.pos <= sp.start {
 				offset += pd.delta
 			}
 		}
-
 		offsetSp := sp
 		offsetSp.start += offset
 		offsetSp.end += offset
-
 		if offsetSp.start < 0 {
 			offsetSp.start = 0
 		}
 		if offsetSp.end < 0 {
 			offsetSp.end = 0
 		}
-
 		switch sp.op.Kind {
 		case OpDEL:
 			if offsetSp.end > len(lines) {
@@ -1205,8 +1207,7 @@ func applyEdits(content string, ops []Op) (string, []EditHunk, error) {
 			if offsetSp.start < offsetSp.end {
 				lines = append(lines[:offsetSp.start], lines[offsetSp.end:]...)
 			}
-			delta := -(offsetSp.end - offsetSp.start)
-			deltas = append(deltas, posDelta{pos: offsetSp.end, delta: delta})
+			deltas = append(deltas, posDelta{pos: offsetSp.end, delta: -(offsetSp.end - offsetSp.start)})
 		case OpSWAP:
 			if offsetSp.end > len(lines) {
 				offsetSp.end = len(lines)
@@ -1234,83 +1235,37 @@ func applyEdits(content string, ops []Op) (string, []EditHunk, error) {
 		}
 		appliedSpans = append(appliedSpans, offsetSp)
 	}
-
-
-	// Normalize lines to preserve trailing newline semantics from the
-	// original file. When hasTrailingNewline is true, lines must end
-	// with "" (Split's marker for trailing \n). When false, lines must
-	// NOT end with "" — unless a SWAP/INS at the end of the file
-	// introduced a real empty last line that needs a trailing newline
-	// to be representable.
+	// Preserve the original file's trailing newline convention:
+	// if the original ended with \n, ensure the result does too;
+	// otherwise, let the edits determine the trailing state.
 	if hasTrailingNewline {
 		if len(lines) == 0 || lines[len(lines)-1] != "" {
 			lines = append(lines, "")
 		}
-	} else {
-		if len(lines) > 0 && lines[len(lines)-1] == "" {
-			// The original file being empty ([""]) creates a
-			// trailing "" artifact — skip, it's not a real
-			// empty line introduced by an operation.
-			isEmptyArtifact := len(originalLines) == 1 && originalLines[0] == ""
-			if !isEmptyArtifact {
-				lines = append(lines, "")
-			}
-		}
 	}
-	result := strings.Join(lines, "\n")
-	hunks := buildEditHunksFromApplied(originalLines, origSpans, appliedSpans)
-	return result, hunks, nil
+	return strings.Join(lines, "\n"), buildEditHunksFromApplied(originalLines, origSpans, appliedSpans), nil
 }
 
-// ApplyEditsForTest 是 applyEdits 的导出包装，仅供测试使用。
 func ApplyEditsForTest(content string, ops []Op) (string, []EditHunk, error) {
 	return applyEdits(content, ops)
 }
 
 // ---------------------------------------------------------------------------
-// detectOverlaps — 操作重叠检测（改进 1）
+// overlap / cross-section
 // ---------------------------------------------------------------------------
 
-// lineRange 表示操作在原始文件中的行范围（0-based）。
-type lineRange struct {
-	start int // 0-based, inclusive
-	end   int // 0-based, exclusive
-}
+type lineRange struct{ start, end int }
 
-// detectOverlaps 检查多个操作是否在原始行号上有重叠范围。
-// 重叠操作意味着 LLM 可能未考虑操作间的交互，应返回错误让其拆分为多个 edit 调用。
-// 
-// INS.PRE 使用零宽度插入点（RefLine-1），INS.POST 使用 RefLine 作为插入点。
-// 这样 INS.PRE N 不会与 SWAP N（范围 N-1..N）重叠，让 applyEdits 的偏移计算
-// 自动处理行号重映射。但 INS-to-INS 冲突（同 RefLine 上的 PRE+PRE/POST+POST/PRE+POST）
-// 通过额外的同位检测捕获。
 func detectOverlaps(ops []Op) error {
 	for i := 0; i < len(ops); i++ {
 		for j := i + 1; j < len(ops); j++ {
-			ri := opRange(ops[i])
-			rj := opRange(ops[j])
-
-			// 额外的 INS-to-INS 同位检测：两个 INS 操作指向同一个 RefLine
-			// 即为冲突（顺序依赖），无论 PRE/POST 组合。
-			if ops[i].Kind == OpINS && ops[j].Kind == OpINS &&
-				ops[i].RefLine > 0 && ops[j].RefLine > 0 &&
-				ops[i].RefLine == ops[j].RefLine {
-				return fmt.Errorf(
-					"overlapping operations on reference line %d: %s (op %d) and %s (op %d) both target the same reference line; split overlapping ops into separate edit calls",
-					ops[i].RefLine,
-					ops[i].Kind, i+1, ops[j].Kind, j+1,
-				)
-			}
-
+			ri, rj := opRange(ops[i]), opRange(ops[j])
 			if ri == nil || rj == nil {
 				continue
 			}
 			if rangesOverlap(ri.start, ri.end, rj.start, rj.end) {
-				return fmt.Errorf(
-					"overlapping operations on lines %d-%d: %s (op %d) and %s (op %d) both touch overlapping ranges; split overlapping ops into separate edit calls",
-					overlapStart(ri.start, rj.start), overlapEnd(ri.end, rj.end),
-					ops[i].Kind, i+1, ops[j].Kind, j+1,
-				)
+				return fmt.Errorf("overlapping operations on lines %d-%d: %s (op %d) and %s (op %d); split",
+					overlapStart(ri.start, rj.start), overlapEnd(ri.end, rj.end), ops[i].Kind, i+1, ops[j].Kind, j+1)
 			}
 		}
 	}
@@ -1319,74 +1274,30 @@ func detectOverlaps(ops []Op) error {
 
 func opRange(op Op) *lineRange {
 	switch op.Kind {
-	case OpSWAP, OpDEL:
-		start := op.LineStart - 1
-		end := op.LineEnd
-		return &lineRange{start: start, end: end}
+	case OpSWAP:
+		if op.LineStart == 0 && op.OldString != "" {
+			return nil
+		} // 纯内容模式,无行号范围
+		return &lineRange{start: op.LineStart - 1, end: op.LineEnd}
+	case OpDEL:
+		return &lineRange{start: op.LineStart - 1, end: op.LineEnd}
 	case OpINS:
-		if op.Position == "pre" {
-			// INS.PRE 在参考行之前插入，不替换参考行本身。
-			// 使用零宽度插入点：{RefLine-1, RefLine-1}，
-			// 这样不会与 SWAP/DEL 在同一参考行上重叠。
-			return &lineRange{start: op.RefLine - 1, end: op.RefLine - 1}
-		}
-		if op.Position == "post" {
-			// INS.POST 在参考行之后插入，使用 {RefLine, RefLine}。
-			return &lineRange{start: op.RefLine, end: op.RefLine}
-		}
-		// head/tail 不与任何行重叠
-		return nil
+		return &lineRange{start: op.LineStart, end: op.LineStart}
 	default:
 		return nil
 	}
 }
 
-// detectCrossSectionConflicts 检测同文件多 Section 之间的操作冲突。
-// 返回冲突 Section 索引到错误信息的映射；若映射非空，ApplyPatch 对这些 Section
-// 返回预构建的错误结果且不修改文件（其他文件不受影响）。无冲突返回 nil。
 func detectCrossSectionConflicts(patch *Patch) map[int]*EditError {
-	groups := make(map[string][]int) // path → section indices
+	groups := make(map[string][]int)
 	for i, sec := range patch.Sections {
 		groups[sec.Path] = append(groups[sec.Path], i)
 	}
-
 	conflicts := make(map[int]*EditError)
-
 	for path, indices := range groups {
 		if len(indices) <= 1 {
 			continue
 		}
-
-		// REM/MV + 其他操作 = 冲突（Section 1 删/移文件 → Section 2 无法操作）
-		hasRemMV := false
-		hasLineOps := false
-		for _, si := range indices {
-			for _, op := range patch.Sections[si].Ops {
-				switch op.Kind {
-				case OpREM, OpMV:
-					hasRemMV = true
-				case OpSWAP, OpDEL, OpINS:
-					hasLineOps = true
-				}
-			}
-		}
-		if hasRemMV && hasLineOps {
-			for _, si := range indices {
-				conflicts[si] = &EditError{
-					Fatal: false,
-					Kind:  "invalid_args",
-					Message: fmt.Sprintf(
-						"cross-section conflict in %q: one section uses REM/MV while another uses line-range operations. "+
-							"REM/MV and line operations on the same file cannot be combined in one patch. "+
-							"Split REM/MV into its own edit call.",
-						path,
-					),
-				}
-			}
-			continue
-		}
-
-		// 合并所有操作检测行范围重叠
 		type opWithSrc struct {
 			op       Op
 			secIndex int
@@ -1394,42 +1305,22 @@ func detectCrossSectionConflicts(patch *Patch) map[int]*EditError {
 		var allOps []opWithSrc
 		for _, si := range indices {
 			for _, op := range patch.Sections[si].Ops {
-				if op.Kind == OpREM || op.Kind == OpMV {
-					continue // 已在上面的 REM/MV 检测中处理
-				}
 				allOps = append(allOps, opWithSrc{op: op, secIndex: si + 1})
 			}
 		}
-
 		hasOverlap := false
-		var overlapDetail string
+		var detail string
 		for i := 0; i < len(allOps); i++ {
 			for j := i + 1; j < len(allOps); j++ {
-				ri := opRange(allOps[i].op)
-				rj := opRange(allOps[j].op)
-
-				// INS-to-INS 同位检测
-				if allOps[i].op.Kind == OpINS && allOps[j].op.Kind == OpINS &&
-					allOps[i].op.RefLine > 0 && allOps[j].op.RefLine > 0 &&
-					allOps[i].op.RefLine == allOps[j].op.RefLine {
-					hasOverlap = true
-					overlapDetail = fmt.Sprintf("%s (section %d) and %s (section %d) both target reference line %d",
-						allOps[i].op.Kind, allOps[i].secIndex,
-						allOps[j].op.Kind, allOps[j].secIndex,
-						allOps[i].op.RefLine)
-					break
-				}
-
+				ri, rj := opRange(allOps[i].op), opRange(allOps[j].op)
 				if ri == nil || rj == nil {
 					continue
 				}
 				if rangesOverlap(ri.start, ri.end, rj.start, rj.end) {
 					hasOverlap = true
-					overlapDetail = fmt.Sprintf("%s (section %d, lines %d-%d) and %s (section %d, lines %d-%d) overlap",
-						allOps[i].op.Kind, allOps[i].secIndex,
-						ri.start+1, ri.end,
-						allOps[j].op.Kind, allOps[j].secIndex,
-						rj.start+1, rj.end)
+					detail = fmt.Sprintf("%s (section %d, lines %d-%d) and %s (section %d, lines %d-%d) overlap",
+						allOps[i].op.Kind, allOps[i].secIndex, ri.start+1, ri.end,
+						allOps[j].op.Kind, allOps[j].secIndex, rj.start+1, rj.end)
 					break
 				}
 			}
@@ -1437,113 +1328,68 @@ func detectCrossSectionConflicts(patch *Patch) map[int]*EditError {
 				break
 			}
 		}
-
 		if hasOverlap {
 			for _, si := range indices {
-				conflicts[si] = &EditError{
-					Fatal: false,
-					Kind:  "invalid_args",
-					Message: fmt.Sprintf(
-						"cross-section conflict in %q: %s. "+
-							"Merge overlapping operations into a single section, or split conflicting changes into separate edit calls.",
-						path, overlapDetail,
-					),
-				}
+				conflicts[si] = &EditError{Fatal: false, Kind: "invalid_args", Message: fmt.Sprintf("cross-section conflict in %q: %s.", path, detail)}
 			}
 		}
 	}
-
 	if len(conflicts) == 0 {
 		return nil
 	}
 	return conflicts
 }
 
-func rangesOverlap(aStart, aEnd, bStart, bEnd int) bool {
-	return aStart < bEnd && bStart < aEnd
-}
-
+func rangesOverlap(aStart, aEnd, bStart, bEnd int) bool { return aStart < bEnd && bStart < aEnd }
 func overlapStart(a, b int) int {
 	if a < b {
-		return a + 1 // 回到 1-based
+		return a + 1
 	}
 	return b + 1
 }
-
 func overlapEnd(a, b int) int {
 	if a > b {
-		return a // 0-based exclusive = 1-based last
+		return a
 	}
 	return b
 }
 
 // ---------------------------------------------------------------------------
-// opToSpan / buildEditHunksFromApplied
+// opToSpan / hunks
 // ---------------------------------------------------------------------------
 
 func opToSpan(op Op, lines []string, hasTrailingNewline bool) editSpan {
 	switch op.Kind {
 	case OpDEL:
-		start := op.LineStart - 1
-		end := op.LineEnd
-		return editSpan{op: op, start: start, end: end}
+		return editSpan{op: op, start: op.LineStart - 1, end: op.LineEnd}
 	case OpSWAP:
-		start := op.LineStart - 1
-		end := op.LineEnd
-		return editSpan{op: op, start: start, end: end}
+		return editSpan{op: op, start: op.LineStart - 1, end: op.LineEnd}
 	case OpINS:
-		switch op.Position {
-		case "head":
-			return editSpan{op: op, start: 0, end: 0}
-		case "tail":
-			// 空文件（split("") → [""]）退化为 head，避免前导换行
-			if len(lines) == 1 && lines[0] == "" && !hasTrailingNewline {
-				return editSpan{op: op, start: 0, end: 0}
-			}
-			end := len(lines)
-			if hasTrailingNewline {
-				end--
-			}
-			return editSpan{op: op, start: end, end: end}
-		case "pre":
-			start := op.RefLine - 1
-			return editSpan{op: op, start: start, end: start}
-		case "post":
-			start := op.RefLine
-			return editSpan{op: op, start: start, end: start}
-		}
+		return editSpan{op: op, start: op.LineStart, end: op.LineStart}
 	}
 	return editSpan{}
 }
 
-// buildEditHunksFromApplied 使用原始和应用后的 span 构建 diff hunks。
-// hunkContextLines 是每个 hunk 变更区域前后附加的上下文行数。
 const hunkContextLines = 2
 
-// appendContextBefore 从 origLines 中提取 span 之前的上下文行，追加到 lines。
 func appendContextBefore(lines []EditLine, origLines []string, spanStart int) []EditLine {
 	ctxStart := spanStart - hunkContextLines
 	if ctxStart < 0 {
 		ctxStart = 0
 	}
 	for j := ctxStart; j < spanStart && j < len(origLines); j++ {
-		lines = append(lines, EditLine{
-			Kind: LineCtx, Content: origLines[j], OldNum: j + 1,
-		})
+		lines = append(lines, EditLine{Kind: LineCtx, Content: origLines[j], OldNum: j + 1})
 	}
 	return lines
 }
 
-// appendContextAfter 从 origLines 中提取 span 之后的上下文行，追加到 lines。
 func appendContextAfter(lines []EditLine, origLines []string, spanEnd int) []EditLine {
 	ctxEnd := spanEnd + hunkContextLines
 	if ctxEnd > len(origLines) {
 		ctxEnd = len(origLines)
 	}
 	for j := spanEnd; j < ctxEnd; j++ {
-		lines = append(lines, EditLine{
-			Kind: LineCtx, Content: origLines[j], OldNum: j + 1,
-		})
+		lines = append(lines, EditLine{Kind: LineCtx, Content: origLines[j], OldNum: j + 1})
 	}
 	return lines
 }
@@ -1551,71 +1397,36 @@ func appendContextAfter(lines []EditLine, origLines []string, spanEnd int) []Edi
 func buildEditHunksFromApplied(origLines []string, origSpans, appliedSpans []editSpan) []EditHunk {
 	var hunks []EditHunk
 	for i := range origSpans {
-		orig := origSpans[i]
-		offset := appliedSpans[i]
-
+		orig, offset := origSpans[i], appliedSpans[i]
 		switch orig.op.Kind {
 		case OpDEL:
-			hunk := EditHunk{
-				OldStart: orig.start + 1,
-				OldCount: orig.end - orig.start,
-				NewStart: offset.start + 1,
-				NewCount: 0,
-			}
+			hunk := EditHunk{OldStart: orig.start + 1, OldCount: orig.end - orig.start, NewStart: offset.start + 1, NewCount: 0}
 			hunk.Lines = appendContextBefore(hunk.Lines, origLines, orig.start)
 			for j := orig.start; j < orig.end && j < len(origLines); j++ {
-				hunk.Lines = append(hunk.Lines, EditLine{
-					Kind:    LineDel,
-					Content: origLines[j],
-					OldNum:  j + 1,
-				})
+				hunk.Lines = append(hunk.Lines, EditLine{Kind: LineDel, Content: origLines[j], OldNum: j + 1})
 			}
 			hunk.Lines = appendContextAfter(hunk.Lines, origLines, orig.end)
 			if len(hunk.Lines) > 0 {
 				hunks = append(hunks, hunk)
 			}
-
 		case OpSWAP:
 			bodyLines := orig.op.Body
-			hunk := EditHunk{
-				OldStart: orig.start + 1,
-				OldCount: orig.end - orig.start,
-				NewStart: offset.start + 1,
-				NewCount: len(bodyLines),
-			}
+			hunk := EditHunk{OldStart: orig.start + 1, OldCount: orig.end - orig.start, NewStart: offset.start + 1, NewCount: len(bodyLines)}
 			hunk.Lines = appendContextBefore(hunk.Lines, origLines, orig.start)
 			for j := orig.start; j < orig.end && j < len(origLines); j++ {
-				hunk.Lines = append(hunk.Lines, EditLine{
-					Kind:    LineDel,
-					Content: origLines[j],
-					OldNum:  j + 1,
-				})
+				hunk.Lines = append(hunk.Lines, EditLine{Kind: LineDel, Content: origLines[j], OldNum: j + 1})
 			}
 			for j, bl := range bodyLines {
-				hunk.Lines = append(hunk.Lines, EditLine{
-					Kind:    LineAdd,
-					Content: bl,
-					NewNum:  offset.start + 1 + j,
-				})
+				hunk.Lines = append(hunk.Lines, EditLine{Kind: LineAdd, Content: bl, NewNum: offset.start + 1 + j})
 			}
 			hunk.Lines = appendContextAfter(hunk.Lines, origLines, orig.end)
 			hunks = append(hunks, hunk)
-
 		case OpINS:
 			bodyLines := orig.op.Body
-			hunk := EditHunk{
-				OldStart: offset.start + 1,
-				OldCount: 0,
-				NewStart: offset.start + 1,
-				NewCount: len(bodyLines),
-			}
+			hunk := EditHunk{OldStart: offset.start + 1, OldCount: 0, NewStart: offset.start + 1, NewCount: len(bodyLines)}
 			hunk.Lines = appendContextBefore(hunk.Lines, origLines, orig.start)
 			for j, bl := range bodyLines {
-				hunk.Lines = append(hunk.Lines, EditLine{
-					Kind:    LineAdd,
-					Content: bl,
-					NewNum:  offset.start + 1 + j,
-				})
+				hunk.Lines = append(hunk.Lines, EditLine{Kind: LineAdd, Content: bl, NewNum: offset.start + 1 + j})
 			}
 			hunk.Lines = appendContextAfter(hunk.Lines, origLines, orig.start)
 			hunks = append(hunks, hunk)
