@@ -1,3 +1,25 @@
+## [v0.4.0] — 2026-07-27
+
+### Added
+- **LSP diagnostic auto-verification**: `edit`/`write` tools automatically run LSP diagnostics on changed files and inject compile errors/warnings into tool output, so the LLM catches syntax and type errors without manual builds
+- **Multi-language support**: built-in configs for gopls (Go), rust-analyzer (Rust), typescript-language-server (TS/JS), clangd (C/C++); custom LSP servers configurable via settings.json
+- **Environment probe integration**: LSP server probes merged into startup detection; silently skipped when not installed
+- **LLM Token pricing**: new `pkg/pricing` module with dual-currency (CNY/USD) and model-level incremental billing; TUI footer shows real-time costs
+
+### Fixed
+- **hashline TAG=0000**: returns "has not been read yet" instead of ambiguous "TAG mismatch"
+- **fakeContextRe false positive**: [system:xx] no longer misidentified as external data
+- **Message ID gaps**: filled missing message IDs, system dedup, NewMessageID made public
+- **TUI subagent resume**: subagent paragraphs no longer misaligned after resume
+- **Multiple in_progress warning**: todo injects [system:todo] user message when multiple items are in_progress
+
+### Changed
+- **Tool simplification**: removed rg preference hints and sed/awk/python suggestions, unified on grep
+- **hashline editing model**: `+` escaping uses HasPrefix detection, INS unified effectiveLine, post-edit context moved before section results
+- **hashline dead code**: removed unused effectiveLine method and test helper types
+
+---
+
 ## [v0.3.3] — 2026-07-25
 
 ### Fixed

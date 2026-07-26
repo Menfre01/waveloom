@@ -1,3 +1,24 @@
+## [v0.4.0] — 2026-07-27
+
+### 新增功能
+- **LSP 诊断自动验证**:`edit`/`write` 工具执行后自动对变更文件运行 LSP diagnostics，将编译错误/警告注入 tool output，LLM 无需手动运行构建即可发现语法和类型错误
+- **多语言支持**：内置 gopls (Go)、rust-analyzer (Rust)、typescript-language-server (TS/JS)、clangd (C/C++) 配置，用户可在 settings.json 中为其他语言配置 LSP server
+- **环境探测联动**：LSP server 探针合并到启动探测中，未安装时静默跳过，不影响编辑操作
+- **LLM Token 计费模块**：新增 `pkg/pricing` 模块，支持双币种（CNY/USD）和模型级增量计价，TUI footer 实时显示累计费用
+### 修复
+- **hashline TAG=0000**：TAG=0000 时返回 "has not been read yet" 替代模糊的 "TAG mismatch"
+- **fakeContextRe 误匹配**：[system:xx] 格式不再被误识别为外部数据
+- **消息序号补全**：补齐消息 ID 缺失，system 消息去重，NewMessageID 公开化
+- **TUI subagent resume**：resume 后 subagent 段落错位到末尾
+- **多 in_progress 提示**：todo 检测到多个 in_progress 时注入 [system:todo] user 消息
+### 重构
+- **工具精简**：移除 rg 优先推荐和 sed/awk/python 暗示，统一使用 grep
+- **hashline 编辑模型增强**：\+ 转义改用 HasPrefix 前缀检测，INS 统一 effectiveLine，post-edit context 前置到 section 结果之前
+- **hashline 未使用代码清理**:移除 effectiveLine 方法和测试辅助类型
+---
+
+📝 [Changelog (English)](https://github.com/Menfre01/waveloom/blob/dev/CHANGELOG.en.md)
+
 ## [v0.3.3] — 2026-07-25
 
 ### 修复
