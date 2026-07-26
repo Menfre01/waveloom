@@ -40,17 +40,6 @@ type Op struct {
 	ReplaceAll bool
 }
 
-// effectiveLine returns the effective insertion line for INS ops.
-// Prefers LineStart (set by normalizeInsOps) and falls back to RefLine.
-// Returns the line number, or -1 for INS.TAIL (no conflict possible),
-// or 0 for INS.HEAD / unset.
-func (op Op) effectiveLine() int {
-	line := op.LineStart
-	if line == 0 {
-		line = op.RefLine
-	}
-	return line
-}
 
 type Section struct {
 	Path string

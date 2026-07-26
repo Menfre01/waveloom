@@ -1103,33 +1103,6 @@ func TestRecordTagCollision(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// failingWriteFS / failingRemoveFS helpers
-// ---------------------------------------------------------------------------
-
-type failingWriteFS struct {
-	*MemoryFS
-	failWrite bool
-}
-
-func (fs *failingWriteFS) WriteFile(path string, content string) error {
-	if fs.failWrite {
-		return fmt.Errorf("%w: permission denied", os.ErrPermission)
-	}
-	return fs.MemoryFS.WriteFile(path, content)
-}
-
-type failingRemoveFS struct {
-	*MemoryFS
-	failRemove bool
-}
-
-func (fs *failingRemoveFS) Remove(path string) error {
-	if fs.failRemove {
-		return fmt.Errorf("%w: permission denied", os.ErrPermission)
-	}
-	return fs.MemoryFS.Remove(path)
-}
 
 
 // ---------------------------------------------------------------------------
