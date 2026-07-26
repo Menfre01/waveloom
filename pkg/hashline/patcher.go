@@ -964,6 +964,11 @@ func applySection(sec Section, fs FileSystem, store *SnapshotStore, originalSnap
 	if store != nil {
 		_, verifyErr := store.Verify(storePath, sec.TAG, currentContent)
 		if verifyErr != nil {
+			// TAG "0000" means the file was never read — give a clear nudge.
+			if sec.TAG == "0000" {
+				result.Error = &EditError{Fatal: false, Kind: "tag_mismatch", Message: "has not been read yet — use read first"}
+				return result
+			}
 			snapContent := ""
 			if orig, ok := originalSnapshots[storePath]; ok {
 				snapContent = orig
@@ -1124,6 +1129,10 @@ func validateTAGAndRecover(sec Section, storePath, currentContent string, store 
 	_, verifyErr := store.Verify(storePath, sec.TAG, currentContent)
 	if verifyErr == nil {
 		return sec.Ops, "", nil
+	}
+	// TAG "0000" means the file was never read — give a clear nudge.
+	if sec.TAG == "0000" {
+		return nil, "", fmt.Errorf("has not been read yet — use read first")
 	}
 	snapContent := ""
 	if orig, ok := originalSnapshots[storePath]; ok {
