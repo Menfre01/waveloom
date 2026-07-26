@@ -94,25 +94,121 @@ func TestReplayTranscriptWithSubagents(t *testing.T) {
 		{Role: llm.RoleAssistant, ID: "a1", ToolCalls: []llm.ToolCall{{ID: "ag1", Name: "agent", Arguments: `{"description":"search"}`}}},
 	}, nil, "sid", "v1", "/cwd", "")
 	if err := session.WriteTranscriptEntries(tp, entries); err != nil { t.Fatal(err) }
-
-	subDir := filepath.Join(dir, "subagents")
-	subPath := filepath.Join(subDir, "agent-ag1.jsonl")
+	cm := session.New("test")
+	cm.SetSessionPath(filepath.Join(dir, "test.json"))
+	sid := cm.SessionID()
+	// 使用正确的路径:sessionDir/<sid>/subagents/ 与 loadSubagentTranscripts 一致
+	subPath := session.SubagentTranscriptPath(dir, sid, "ag1")
 	subEntries := session.MessagesToTranscriptEntries([]llm.Message{
 		{Role: llm.RoleAssistant, ID: "sa1", Content: "Found", ToolCalls: []llm.ToolCall{{ID: "st1", Name: "grep", Arguments: `{"pattern":"func"}`}}},
 		{Role: llm.RoleTool, ID: "st2", Content: "ok", ToolCallID: "st1", Name: "grep"},
 	}, nil, "sid", "v1", "/cwd", "")
 	for i := range subEntries { subEntries[i].IsSidechain = true }
 	if err := session.WriteTranscriptEntries(subPath, subEntries); err != nil { t.Fatal(err) }
-
-	cm := session.New("test")
-	cm.SetSessionPath(filepath.Join(dir, "test.json"))
-	metaPath := filepath.Join(dir, cm.SessionID(), "subagents", "agent-ag1.meta.json")
-	_ = session.SaveAgentMetadata(metaPath, session.AgentMetadata{AgentType: "Explore"})
-
+	metaPath := session.SubagentMetaPath(dir, sid, "ag1")
+	_ = session.SaveAgentMetadata(metaPath, session.AgentMetadata{AgentType: "Explore", Description: "search task"})
 	m := &model{transcriptPath: tp, sessionDir: dir, cm: cm}
 	m.replayTranscript()
 	if len(m.paras) != 2 { t.Fatalf("got %d", len(m.paras)) }
-	// subagent paragraph exists and is deduped
+	// 验证 subagent 段落已被正确去重(原地替换)且包含事件
+	var subPara *Paragraph
+	for i := range m.paras {
+		if m.paras[i].Type == paraSubagent && m.paras[i].SubagentToolCallID == "ag1" {
+			subPara = &m.paras[i]
+			break
+		}
+	}
+	if subPara == nil {
+		t.Fatal("subagent paragraph not found")
+	}
+	if len(subPara.SubagentEvents) == 0 {
+		t.Fatal("subagent paragraph has no events — dedup/replacement likely failed")
+	}
+	if subPara.SubagentType != "Explore" {
+		t.Errorf("SubagentType = %q, want Explore", subPara.SubagentType)
+	}
+	if subPara.SubagentPrompt != "search task" {
+		t.Errorf("SubagentPrompt = %q, want 'search task'", subPara.SubagentPrompt)
+	}
+}
+// TestReplayTranscriptWithSubagentsTruncated 测试 transcript 截断场景:
+// 主 transcript 中 assistant 消息(含 agent tool call)被截断,仅剩 tool_result,
+// 验证 fallback 创建 paraSubagent(而非 paraTool),后续 loadSubagentTranscripts
+// 通过 SubagentToolCallID 匹配并原地替换。
+func TestReplayTranscriptWithSubagentsTruncated(t *testing.T) {
+	dir := t.TempDir()
+	tp := filepath.Join(dir, "test.jsonl")
+	// 模拟截断后的主 transcript:只有 user + tool_result(无 assistant 占位)
+	entries := session.MessagesToTranscriptEntries([]llm.Message{
+		{Role: llm.RoleUser, ID: "u1", Content: "search"},
+		// 注意:没有 assistant 消息(agent tool call 被截断)
+		{Role: llm.RoleTool, ID: "t1", Content: "found result", ToolCallID: "ag1", Name: "agent"},
+	}, nil, "sid", "v1", "/cwd", "")
+	if err := session.WriteTranscriptEntries(tp, entries); err != nil { t.Fatal(err) }
+	cm := session.New("test")
+	cm.SetSessionPath(filepath.Join(dir, "test.json"))
+	sid := cm.SessionID()
+	subPath := session.SubagentTranscriptPath(dir, sid, "ag1")
+	subEntries := session.MessagesToTranscriptEntries([]llm.Message{
+		{Role: llm.RoleAssistant, ID: "sa1", Content: "Found", ToolCalls: []llm.ToolCall{{ID: "st1", Name: "grep", Arguments: `{"pattern":"func"}`}}},
+		{Role: llm.RoleTool, ID: "st2", Content: "ok", ToolCallID: "st1", Name: "grep"},
+	}, nil, "sid", "v1", "/cwd", "")
+	for i := range subEntries { subEntries[i].IsSidechain = true }
+	if err := session.WriteTranscriptEntries(subPath, subEntries); err != nil { t.Fatal(err) }
+	metaPath := session.SubagentMetaPath(dir, sid, "ag1")
+	_ = session.SaveAgentMetadata(metaPath, session.AgentMetadata{AgentType: "fork", Description: "truncated"})
+	m := &model{transcriptPath: tp, sessionDir: dir, cm: cm}
+	m.replayTranscript()
+	// 预期:user + subagent(被 fallback paraSubagent → findSubagentPara 原地替换为 enriched)
+	if len(m.paras) != 2 { t.Fatalf("got %d paras, want 2", len(m.paras)) }
+	var subPara *Paragraph
+	for i := range m.paras {
+		if m.paras[i].Type == paraSubagent && m.paras[i].SubagentToolCallID == "ag1" {
+			subPara = &m.paras[i]
+			break
+		}
+	}
+	if subPara == nil {
+		t.Fatal("subagent paragraph not found in truncated replay")
+	}
+	if len(subPara.SubagentEvents) == 0 {
+		t.Fatal("subagent paragraph has no events — dedup/replacement failed in truncated scenario")
+	}
+	if subPara.SubagentType != "fork" {
+		t.Errorf("SubagentType = %q, want fork", subPara.SubagentType)
+	}
+}
+// TestReplayTranscriptWithSubagentsFullyTruncated 测试完全截断场景:
+// 主 transcript 中既无 assistant(agent tool call)也无 tool_result,
+// subagent transcript 文件存在但找不到任何匹配 → 应静默丢弃,不追加到末尾。
+func TestReplayTranscriptWithSubagentsFullyTruncated(t *testing.T) {
+	dir := t.TempDir()
+	tp := filepath.Join(dir, "test.jsonl")
+	// 主 transcript 只有一条不相关的 user 消息
+	entries := session.MessagesToTranscriptEntries([]llm.Message{
+		{Role: llm.RoleUser, ID: "u1", Content: "something else"},
+		{Role: llm.RoleAssistant, ID: "a1", Content: "ok"},
+	}, nil, "sid", "v1", "/cwd", "")
+	if err := session.WriteTranscriptEntries(tp, entries); err != nil { t.Fatal(err) }
+	cm := session.New("test")
+	cm.SetSessionPath(filepath.Join(dir, "test.json"))
+	sid := cm.SessionID()
+	// 磁盘上有 subagent transcript,但 viewport 中无对应段落
+	subPath := session.SubagentTranscriptPath(dir, sid, "orphan")
+	subEntries := session.MessagesToTranscriptEntries([]llm.Message{
+		{Role: llm.RoleAssistant, ID: "sa1", Content: "orphan output"},
+	}, nil, "sid", "v1", "/cwd", "")
+	for i := range subEntries { subEntries[i].IsSidechain = true }
+	if err := session.WriteTranscriptEntries(subPath, subEntries); err != nil { t.Fatal(err) }
+	m := &model{transcriptPath: tp, sessionDir: dir, cm: cm}
+	m.replayTranscript()
+	// 应只有 user + assistant,无 subagent 段落被追加
+	if len(m.paras) != 2 { t.Fatalf("got %d paras, want 2 (orphan subagent should be discarded)", len(m.paras)) }
+	for _, p := range m.paras {
+		if p.Type == paraSubagent {
+			t.Fatal("orphan subagent paragraph should not appear in viewport")
+		}
+	}
 }
 
 func TestBuildSubagentParagraph(t *testing.T) {
