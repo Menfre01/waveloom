@@ -129,7 +129,7 @@ Type `/locale` to toggle between Chinese and English, or `waveloom --locale zh-C
 Add `"sub_model": "deepseek-v4-flash"` to the `llm` section in `settings.json`. The explore subagent uses this model for code search and discovery tasks — ~2× cheaper than the primary model. For evaluate/verification subagents, the primary model (`model`, e.g. `deepseek-v4-pro`) is used for full reasoning quality. No runtime switching needed.
 
 **Q: What languages are supported?**  
-Waveloom works with any text-based project. Code verification uses each language's native build tools (`go build`, `npx tsc`, `cargo build`, `make`, etc.) — no LSP server required.
+Waveloom works with any text-based project. Post-edit LSP diagnostics automatically verify code correctness for Go, Rust, TypeScript/JavaScript, and C/C++. Other languages use native build tools (`go build`, `npx tsc`, `cargo build`, `make`, etc.).
 
 ---
 
@@ -144,6 +144,7 @@ Waveloom works with any text-based project. Code verification uses each language
 | [`mcp`](./docs/mcp.en.md) | MCP client, config sources, CLI management |
 | [`mcp-ide-setup`](./docs/mcp-ide-setup-en.md) | Connect IntelliJ IDEA / VS Code MCP Server |
 | [`faq`](./docs/faq.en.md) | Frequently asked questions |
+| [`lsp`](./docs/lsp.en.md) | LSP diagnostics, language detection, configuration |
 
 ---
 
@@ -156,15 +157,3 @@ Built with [Bubble Tea](https://github.com/charmbracelet/bubbletea) (TUI framewo
 and [Lip Gloss](https://github.com/charmbracelet/lipgloss) (terminal styling) — part of the [Charm](https://charm.sh) ecosystem.
 
 
-## Recommended Tools
-
-These third-party tools are not required but significantly improve the Waveloom experience:
-
-| Tool | Description |
-|------|-------------|
-| [ripgrep](https://github.com/BurntSushi/ripgrep) (`rg`) | High-performance recursive grep, ~10x faster than `grep -r`. Waveloom prefers `rg` over `grep` for all code searches when available. |
-| [RTK](https://github.com/rtk-ai/rtk) (`rtk`) | Token-optimized CLI proxy — rewrites common commands to compact equivalents, saving 60–90% input tokens. Waveloom loads it via `~/.claude/hooks/rtk-rewrite.sh`. |
-
----
-
-Apache License 2.0 © 2026 Waveloom Contributors

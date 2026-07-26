@@ -124,8 +124,8 @@ Key 存储在本地 `~/.waveloom/`，直连 DeepSeek / Kimi / OpenAI，不经过
 **Q: 怎么为 explorer 子代理配置轻量模型?**  
 在 `settings.json` 的 `llm` 段中添加 `"sub_model": "deepseek-v4-flash"`。Explorer 子代理使用此模型执行代码搜索和发现任务——约 2 倍便宜。evaluate 和 verification 子代理始终使用主模型(`model`,如 `deepseek-v4-pro`)保证审查质量。无需运行时切换。
 
-**Q: 支持哪些语言？**  
-Waveloom 适用于任何文本项目。代码验证使用各语言原生构建工具（`go build`、`npx tsc`、`cargo build`、`make` 等），无需安装 LSP Server。
+**Q: 支持哪些语言?**  
+Waveloom 适用于任何文本项目。编辑后 LSP 诊断自动验证 Go、Rust、TypeScript/JavaScript、C/C++ 代码。其他语言使用原生构建工具(`go build`、`npx tsc`、`cargo build`、`make` 等)。
 
 ---
 
@@ -140,6 +140,7 @@ Waveloom 适用于任何文本项目。代码验证使用各语言原生构建�
 | [`environment`](./environment.md) | 工具链探测 |
 | [`mcp`](./mcp.md) | MCP 客户端、配置源、CLI 管理 |
 | [`faq`](./faq.md) | 常见问题 |
+| [`lsp`](./lsp.md) | LSP 诊断、语言检测、配置 |
 
 ---
 
@@ -152,15 +153,3 @@ Go 1.25+，`make build` / `make test`。项目结构及贡献指南详见 [`CONT
 [Lip Gloss](https://github.com/charmbracelet/lipgloss)（终端样式）构建 — [Charm](https://charm.sh) 生态项目。
 
 
-## 推荐工具
-
-以下第三方工具非必需，但能显著提升 Waveloom 使用体验：
-
-| 工具 | 说明 |
-|------|------|
-| [ripgrep](https://github.com/BurntSushi/ripgrep) (`rg`) | 高性能递归 grep，比 `grep -r` 快约 10 倍。Waveloom 在代码搜索时优先使用 `rg`。 |
-| [RTK](https://github.com/rtk-ai/rtk) (`rtk`) | Token 优化的 CLI 代理——将常用命令改写为紧凑等价形式，节省 60–90% 输入 token。Waveloom 通过 `~/.claude/hooks/rtk-rewrite.sh` 加载。 |
-
----
-
-Apache License 2.0 © 2026 Waveloom Contributors
