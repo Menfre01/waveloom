@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 // ---------------------------------------------------------------------------
@@ -84,27 +85,28 @@ type lspServerEntry struct {
 	Args    []string `json:"args,omitempty"`
 }
 
-// LoadUserServers 从 settings.json 加载用户自定义的 LSP Server 配置。
-// 文件不存在或解析失败返回空 map。
-func LoadUserServers(settingsPath string) map[string]ServerConfig {
+// LoadUserServers 从 settings.json 加载用户自定义的 LSP Server 配置和空闲超时。
+// 文件不存在或解析失败返回 (nil, 0)。返回的 idleTimeout 为 0 表示未配置，调用方应使用默认值。
+func LoadUserServers(settingsPath string) (map[string]ServerConfig, time.Duration) {
 	if settingsPath == "" {
-		return nil
+		return nil, 0
 	}
 	data, err := os.ReadFile(settingsPath)
 	if err != nil {
-		return nil
+		return nil, 0
 	}
 
 	var wrapper struct {
 		LSP *lspSettings `json:"lsp"`
 	}
 	if err := json.Unmarshal(data, &wrapper); err != nil || wrapper.LSP == nil {
-		return nil
+		return nil, 0
 	}
 
 	servers := make(map[string]ServerConfig)
 	for ext, entry := range wrapper.LSP.Servers {
 		servers[ext] = ServerConfig(entry)
 	}
-	return servers
+	idleTimeout := time.Duration(wrapper.LSP.IdleTimeoutMs) * time.Millisecond
+	return servers, idleTimeout
 }

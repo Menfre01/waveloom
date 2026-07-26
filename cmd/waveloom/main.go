@@ -157,17 +157,29 @@ waitLoop:
 		}
 	}
 	userLSPServers := make(map[string]lsp.ServerConfig)
-	for k, v := range lsp.LoadUserServers(projectPath) {
+	var lspIdleTimeout time.Duration
+	projectServers, projectIdle := lsp.LoadUserServers(projectPath)
+	for k, v := range projectServers {
 		userLSPServers[k] = v
 	}
-	for k, v := range lsp.LoadUserServers(globalPath) {
+	if projectIdle > 0 {
+		lspIdleTimeout = projectIdle
+	}
+	globalServers, globalIdle := lsp.LoadUserServers(globalPath)
+	for k, v := range globalServers {
 		if _, ok := userLSPServers[k]; !ok {
 			userLSPServers[k] = v
 		}
 	}
+	if lspIdleTimeout == 0 && globalIdle > 0 {
+		lspIdleTimeout = globalIdle
+	}
+	if lspIdleTimeout == 0 {
+		lspIdleTimeout = 5 * time.Minute
+	}
 	lspManager := lsp.NewManager(
 		lsp.WithUserServers(userLSPServers),
-		lsp.WithIdleTimeout(5*time.Minute),
+		lsp.WithIdleTimeout(lspIdleTimeout),
 	)
 	lspManager.SetProbeMap(lspProbeMap)
 	defer lspManager.Shutdown()

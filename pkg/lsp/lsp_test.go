@@ -384,14 +384,15 @@ func TestLoadUserServers(t *testing.T) {
 			"servers": {
 				".py": {"command": "pyright-langserver", "args": ["--stdio"]},
 				".java": {"command": "jdtls"}
-			}
+			},
+			"idle_timeout_ms": 120000
 		}
 	}`)
 	if err := os.WriteFile(settingsPath, content, 0644); err != nil {
 		t.Fatal(err)
 	}
 
-	servers := LoadUserServers(settingsPath)
+	servers, idleTimeout := LoadUserServers(settingsPath)
 	if len(servers) != 2 {
 		t.Errorf("expected 2 servers, got %d", len(servers))
 	}
@@ -401,19 +402,169 @@ func TestLoadUserServers(t *testing.T) {
 	if _, ok := servers[".java"]; !ok {
 		t.Error("missing .java server")
 	}
+	if idleTimeout != 2*time.Minute {
+		t.Errorf("expected idle timeout 2m, got %v", idleTimeout)
+	}
 
 	// Test empty/missing file
-	servers = LoadUserServers("/nonexistent/path")
+	servers, idleTimeout = LoadUserServers("/nonexistent/path")
 	if servers != nil {
 		t.Error("expected nil for missing file")
+	}
+	if idleTimeout != 0 {
+		t.Errorf("expected zero idle timeout for missing file, got %v", idleTimeout)
 	}
 
 	// Test file without lsp section
 	emptySettings := filepath.Join(dir, "empty.json")
 	_ = os.WriteFile(emptySettings, []byte(`{}`), 0644)
-	servers = LoadUserServers(emptySettings)
+	servers, idleTimeout = LoadUserServers(emptySettings)
 	if servers != nil {
 		t.Error("expected nil for settings without lsp section")
+	}
+	if idleTimeout != 0 {
+		t.Errorf("expected zero idle timeout without lsp section, got %v", idleTimeout)
+	}
+}
+
+func TestLoadUserServers_IdleTimeoutDefault(t *testing.T) {
+	// idle_timeout_ms not set → returns 0
+	dir := t.TempDir()
+	settingsPath := filepath.Join(dir, "settings.json")
+	content := []byte(`{
+		"lsp": {
+			"servers": {
+				".py": {"command": "pyright-langserver"}
+			}
+		}
+	}`)
+	if err := os.WriteFile(settingsPath, content, 0644); err != nil {
+		t.Fatal(err)
+	}
+	servers, idleTimeout := LoadUserServers(settingsPath)
+	if len(servers) != 1 {
+		t.Errorf("expected 1 server, got %d", len(servers))
+	}
+	if idleTimeout != 0 {
+		t.Errorf("expected 0 idle timeout when not configured, got %v", idleTimeout)
+	}
+}
+
+func TestUserServers_PriorityMerge(t *testing.T) {
+	// 模拟 project vs global 合并逻辑: project 优先于 global
+	projectDir := t.TempDir()
+	globalDir := t.TempDir()
+
+	projectSettings := filepath.Join(projectDir, "settings.json")
+	globalSettings := filepath.Join(globalDir, "settings.json")
+
+	_ = os.WriteFile(projectSettings, []byte(`{
+		"lsp": {
+			"servers": {
+				".go": {"command": "custom-gopls"},
+				".py": {"command": "pyright"}
+			},
+			"idle_timeout_ms": 300000
+		}
+	}`), 0644)
+
+	_ = os.WriteFile(globalSettings, []byte(`{
+		"lsp": {
+			"servers": {
+				".go": {"command": "global-gopls"},
+				".java": {"command": "jdtls"}
+			},
+			"idle_timeout_ms": 600000
+		}
+	}`), 0644)
+
+	merged := make(map[string]ServerConfig)
+	var mergedIdle time.Duration
+
+	// Project-level first
+	projectServers, projectIdle := LoadUserServers(projectSettings)
+	for k, v := range projectServers {
+		merged[k] = v
+	}
+	if projectIdle > 0 {
+		mergedIdle = projectIdle
+	}
+
+	// Global-level fills gaps
+	globalServers, globalIdle := LoadUserServers(globalSettings)
+	for k, v := range globalServers {
+		if _, ok := merged[k]; !ok {
+			merged[k] = v
+		}
+	}
+	if mergedIdle == 0 && globalIdle > 0 {
+		mergedIdle = globalIdle
+	}
+
+	// Assertions
+	if merged[".go"].Command != "custom-gopls" {
+		t.Errorf("project should override global: got %s", merged[".go"].Command)
+	}
+	if merged[".py"].Command != "pyright" {
+		t.Errorf("project-only server missing: got %v", merged[".py"])
+	}
+	if merged[".java"].Command != "jdtls" {
+		t.Errorf("global fallback server missing: got %v", merged[".java"])
+	}
+	if mergedIdle != 5*time.Minute {
+		t.Errorf("project idle timeout (5m) should win over global (10m), got %v", mergedIdle)
+	}
+}
+
+func TestUserServers_EndToEnd(t *testing.T) {
+	// settings.json → LoadUserServers → Manager → server 启动的完整链路
+	bin := mockLSPPath(t)
+	defer cleanupMockLSP(t)
+
+	dir := t.TempDir()
+	settingsPath := filepath.Join(dir, "settings.json")
+	content := []byte(`{
+		"lsp": {
+			"servers": {
+				".go": {"command": "` + bin + `"}
+			}
+		}
+	}`)
+	if err := os.WriteFile(settingsPath, content, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Simulate the full main.go pipeline
+	servers, idleTimeout := LoadUserServers(settingsPath)
+	if len(servers) != 1 {
+		t.Fatalf("expected 1 server from settings, got %d", len(servers))
+	}
+
+	// idle_timeout_ms not set → should be 0, manager uses its own default
+	m := NewManager(
+		WithUserServers(servers),
+	)
+	if idleTimeout > 0 {
+		m.idleTimeout = idleTimeout
+	}
+	m.probeMap = map[string]bool{bin: true}
+	defer m.Shutdown()
+
+	// Create a .go file and verify server starts via settings config
+	goMod := filepath.Join(dir, "go.mod")
+	_ = os.WriteFile(goMod, []byte("module test\n"), 0644)
+	goFile := filepath.Join(dir, "main.go")
+	_ = os.WriteFile(goFile, []byte("package main\n"), 0644)
+
+	inst, err := m.GetOrCreate(goFile)
+	if err != nil {
+		t.Fatalf("GetOrCreate: %v", err)
+	}
+	if inst == nil {
+		t.Fatal("expected instance from settings-configured server")
+	}
+	if inst.cfg.Command != bin {
+		t.Errorf("expected command %s from settings, got %s", bin, inst.cfg.Command)
 	}
 }
 
