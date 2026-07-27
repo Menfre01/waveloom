@@ -52,14 +52,15 @@ type sessionPlanMode struct {
 // sessionStats 是 Stats 的序列化形式。
 
 type sessionStats struct {
-	TotalTurns            int   `json:"total_turns"`
-	TotalPromptTokens     int   `json:"total_prompt_tokens"`
-	TotalCompletionTokens int   `json:"total_completion_tokens"`
-	TotalCacheHitTokens   int   `json:"total_cache_hit_tokens"`
-	TotalCacheMissTokens  int   `json:"total_cache_miss_tokens"`
-	TotalReasoningTokens  int   `json:"total_reasoning_tokens"`
-	TotalDurationMs       int64 `json:"total_duration_ms"`
-	MessageCount          int   `json:"message_count"`
+	TotalTurns            int     `json:"total_turns"`
+	TotalPromptTokens     int     `json:"total_prompt_tokens"`
+	TotalCompletionTokens int     `json:"total_completion_tokens"`
+	TotalCacheHitTokens   int     `json:"total_cache_hit_tokens"`
+	TotalCacheMissTokens  int     `json:"total_cache_miss_tokens"`
+	TotalReasoningTokens  int     `json:"total_reasoning_tokens"`
+	TotalDurationMs       int64   `json:"total_duration_ms"`
+	MessageCount          int     `json:"message_count"`
+	TotalCost             float64 `json:"total_cost"`
 }
 
 // SaveSessionToFile 将消息历史、统计信息、plan mode 和文件历史序列化写入指定文件。
@@ -98,6 +99,7 @@ func SaveSessionToFile(path string, messages []llm.Message, stats Stats, compDat
 		TotalReasoningTokens:  stats.TotalReasoningTokens,
 		TotalDurationMs:       stats.TotalDurationMs,
 		MessageCount:          stats.MessageCount,
+		TotalCost:             stats.TotalCost,
 	}
 
 	if compData != nil {
@@ -196,6 +198,7 @@ func LoadSessionFromFile(path string) ([]llm.Message, Stats, *compaction.Compact
 		TotalReasoningTokens:  sf.Stats.TotalReasoningTokens,
 		TotalDurationMs:       sf.Stats.TotalDurationMs,
 		MessageCount:          sf.Stats.MessageCount,
+		TotalCost:             sf.Stats.TotalCost,
 	}
 
 	var compData *compaction.CompactionData

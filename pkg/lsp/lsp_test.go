@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -14,10 +15,16 @@ import (
 
 // mockLSPPath returns the path to the mock LSP server binary.
 // If not built yet, builds it using 'go build'.
+// mockLSPPath returns the path to the mock LSP server binary.
+// If not built yet, builds it using 'go build'.
 func mockLSPPath(t *testing.T) string {
 	t.Helper()
 	testdataDir := filepath.Join("testdata", "mock_lsp")
-	bin := filepath.Join(os.TempDir(), "waveloom-mock-lsp")
+	name := "waveloom-mock-lsp"
+	if runtime.GOOS == "windows" {
+		name += ".exe"
+	}
+	bin := filepath.Join(os.TempDir(), name)
 
 	// Check if already built
 	if _, err := os.Stat(bin); err == nil {
@@ -35,7 +42,11 @@ func mockLSPPath(t *testing.T) string {
 // cleanupMockLSP removes the mock binary.
 func cleanupMockLSP(t *testing.T) {
 	t.Helper()
-	bin := filepath.Join(os.TempDir(), "waveloom-mock-lsp")
+	name := "waveloom-mock-lsp"
+	if runtime.GOOS == "windows" {
+		name += ".exe"
+	}
+	bin := filepath.Join(os.TempDir(), name)
 	_ = os.Remove(bin)
 }
 

@@ -1,3 +1,19 @@
+## [v0.4.1] — 2026-07-27
+
+### 新增功能
+- **read outline 模式**:read 工具新增 `outline` 参数,基于 LSP document symbols 快速浏览文件结构;regex fallback 覆盖 Shell/Makefile/Markdown/Ruby/YAML 等非 LSP 文件类型
+- **流式层安全补齐**:流式输出层增加安全边界,防止异常流式数据影响 TUI 渲染
+
+### 修复
+- **rewind HUD 累计值丢失**:rewind 后会话级 HUD 累计 tokens/stats 被重置,修复为保留值
+- **LSP Windows 兼容性**:mockLSPPath 在 Windows 平台未处理 .exe 扩展名导致测试失败
+- **计费兜底**:Prompt 缓存缺失时模型定价回退到兜底值,防止免费计费;hudCost 支持 session 持久化恢复
+- **LSP idle_timeout_ms**:LoadUserServers 现正确返回 settings 中配置的 idle_timeout_ms
+
+---
+
+📝 [Changelog (English)](https://github.com/Menfre01/waveloom/blob/dev/CHANGELOG.en.md)
+
 ## [v0.4.0] — 2026-07-27
 
 ### 新增功能

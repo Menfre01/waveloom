@@ -17,6 +17,7 @@ import (
 	"github.com/Menfre01/waveloom/pkg/llm"
 	"github.com/Menfre01/waveloom/pkg/session"
 	"github.com/Menfre01/waveloom/pkg/skill"
+	"github.com/Menfre01/waveloom/pkg/pricing"
 	"github.com/Menfre01/waveloom/pkg/slashcommand"
 )
 // newTestCM 创建一个用于测试的 ContextManager（无 hard limit）。
@@ -1248,5 +1249,23 @@ func TestExtractPlanPairID_ContentWithNewlineAfterID(t *testing.T) {
 	id := extractPlanPairID(messages)
 	if id != "f1a2" {
 		t.Errorf("expected 'f1a2', got %q", id)
+	}
+}
+
+func TestCurrencyForLocale(t *testing.T) {
+	tests := []struct {
+		loc  Locale
+		want pricing.Currency
+	}{
+		{LocaleEnUS, pricing.USD},
+		{LocaleZhCN, pricing.CNY},
+		{Locale("auto"), pricing.CNY},
+		{Locale(""), pricing.CNY},
+	}
+	for _, tt := range tests {
+		got := currencyForLocale(tt.loc)
+		if got != tt.want {
+			t.Errorf("currencyForLocale(%q) = %q, want %q", tt.loc, got, tt.want)
+		}
 	}
 }

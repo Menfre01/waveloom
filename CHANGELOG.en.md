@@ -1,3 +1,17 @@
+## [v0.4.1] — 2026-07-27
+
+### Added
+- **read outline mode**: read tool now supports `outline` parameter for quick file structure browsing via LSP document symbols; regex fallback covers Shell/Makefile/Markdown/Ruby/YAML files
+- **Stream layer safety**: added safety boundaries in streaming output layer to prevent malformed stream data from affecting TUI rendering
+
+### Fixed
+- **rewind HUD values lost**: session-level cumulative HUD tokens/stats were reset after rewind; now preserved
+- **LSP Windows compatibility**: mockLSPPath now handles .exe extension on Windows, fixing test failures
+- **Pricing fallback**: model pricing falls back to safe defaults when prompt cache is missing, preventing zero-cost billing; hudCost supports session persistence recovery
+- **LSP idle_timeout_ms**: LoadUserServers now correctly returns idle_timeout_ms from settings
+
+---
+
 ## [v0.4.0] — 2026-07-27
 
 ### Added

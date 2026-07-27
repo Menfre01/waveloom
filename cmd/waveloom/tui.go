@@ -137,7 +137,7 @@ Use ` + "`read`" + ` to get a TAG and line-numbered content for hash-anchored ed
 
 Before acting, identify which scenario you are in and apply the corresponding strategy:
 
-- **A. Code Exploration**: Understand functions → read + pattern + context_lines=30 (NOT grep first). Multi-module architecture → parallel ls all candidate dirs → parallel agent(Explore) each subsystem (NOT serial read). Find definitions/references → IDE semantic tools first, bash grep as fallback. Code review → agent(evaluate) cold review (NOT reading file-by-file yourself).
+- **A. Code Exploration**: Understand functions → read + pattern + context_lines=30 (NOT grep first). Unfamiliar large files (>200 lines) → read(outline=true) first for symbol index, then pattern + context_lines for targeted reading. Multi-module architecture → parallel ls all candidate dirs → parallel agent(Explore) each subsystem (NOT serial read). Find definitions/references → IDE semantic tools first, bash grep as fallback. Code review → agent(evaluate) cold review (NOT reading file-by-file yourself).
 - **B. Code Modification**: Single change → read + pattern → TAG → edit. Multiple changes ≤200 lines → write. 200-500 lines → edit multi-section. ≥3 files + architecture → enter_plan_mode first. After any edit → verify via project build/test. Writing tests → read the code under test first.
 - **C. Bug Investigation**: Known crash site → read crash point → parallel read callers → fix → bash verify (NOT unnecessary Explore agents). Unknown root cause → read input + output points → 3-read rule → parallel agent(Explore) each hypothesis. Regression → bash git log/diff first → parallel read changed files.
 - **D. Information Gathering**: Known URL → web_fetch directly. Unknown → web_search → parallel web_fetch results. Check tool availability → parallel bash which. Explain internal code → read the files first.
@@ -159,22 +159,24 @@ Before acting, identify which scenario you are in and apply the corresponding st
 
 ### When to use
 
-Default posture: direct execution for implementation, parallelize early for multi-module investigation. Clear positive-ROI cases:
-- evaluate / verification: after implementing substantial changes.
-- Parallel independent tasks (2+): tasks that can execute concurrently.
-- Explore: searching across many packages or exploring unfamiliar territory.
-- Bug investigation (3-read rule): after 3 reads without root cause, spawn parallel explore agents — see Bug Investigation below.
-- Performance profiling: run profiling commands on different components in parallel.
+Default posture: direct execution for implementation, parallelize early for multi-module investigation.
 
-Fork is for parallelism, not for hiding work. If asked "what are you doing right now?" and you can't answer in one sentence, don't fork it.
+### When to use (positive triggers)
+
+- **Multi-module investigation**: need to check how 3+ packages handle the same concern → spawn 3 parallel Explore agents.
+- **After implementing substantial changes** → spawn evaluate AND verification agents together.
+- **Bug with 2+ competing hypotheses** → one Explore agent per hypothesis path.
+- **Searching for usages/definitions across packages** → parallel explore beats serial grep+read.
+- **Performance profiling**: run profiling commands on different components in parallel.
+
+Fork when you have 2+ independent tasks that benefit from parallel execution. Don't wrap single-threaded work in a fork — do it directly.
 
 ### When NOT to use
 
-- Simple, straightforward tasks → do directly.
+- Single straightforward step → do directly.
 - Sequential read→analyze→write workflow → always direct.
-- Do NOT spawn >5 explore agents in one turn.
-- Do NOT chain explore agents (agent 2 depends on agent 1). Each must be independent.
-- Do NOT spawn speculative "look around" prompts without a concrete hypothesis.
+- Do NOT chain explore agents (agent 2 depends on agent 1) — each must be independent.
+- Limit to 5 concurrent explore agents.
 
 ### Model selection guidance
 
@@ -183,10 +185,7 @@ Fork is for parallelism, not for hiding work. If asked "what are you doing right
 - Cold agents: brief like a smart colleague — explain what you're doing, what you've learned, why it matters.
 - Fork prompts: be specific about scope; the fork inherits your context. Include file paths, line numbers, and precise changes.
 
-### Output cost
-
 Output tokens are 240x the cost of cached input tokens. Constrain subagent output within word limits. Subagent final output is returned as tool_result and permanently added to your context — exclude irrelevant detail.
-
 ## Bug Investigation
 
 ### 3-read rule
@@ -223,7 +222,7 @@ This is the most common failure mode. After 3 reads without root cause, parallel
 Subagents do NOT have todo tools — the parent agent manages the task lifecycle.
 
 - **Serial** (single subagent): todo_create → mark in_progress → spawn agent → mark completed on success, or keep in_progress on error.
-- **Parallel** (multiple subagents): Turn 1: set only the tasks to be executed in parallel to in_progress → Turn 2: spawn all agent calls in parallel → Turn 3: batch-update their statuses to completed.
+- **Parallel** (multiple subagents): spawn all agent calls in one response, then batch-update their statuses. Todo tracking is recommended for multi-step work, optional for quick lookups.
 - **On subagent failure**: Do NOT leave stuck at in_progress. Either report the blocker and revert to pending, or mark completed with a note explaining the failure.
 `
 
@@ -3608,8 +3607,8 @@ func (m *model) addCost(model string, prompt, cacheHit, cacheMiss, completion in
 	provider := pricing.InferProvider(model)
 	price := pricing.LookupCurrency(provider, model, m.hudCurrency)
 	m.hudCost += pricing.CalculateCost(price, prompt, cacheHit, cacheMiss, completion)
+	m.cm.SetTotalCost(m.hudCost) // 同步到持久化层,确保 --resume 恢复
 }
-// renderCost 渲染会话累计费用(在 token 增量到达时按实际模型计价累加,而非渲染时反算)。
 func (m *model) renderCost() string {
 	symbol := pricing.CurrencySymbol(m.hudCurrency)
 	label := styleFooterLabel.Render(symbol)
@@ -4233,7 +4232,6 @@ func (m *model) rebuildParasFromMessages() {
 	msgs := m.cm.Messages()
 	m.paras = make([]Paragraph, 0, len(msgs))
 	m.focusIndex = -1
-	m.hudTurns = 0
 	m.lastPromptTokens = 0
 
 	for _, msg := range msgs {
@@ -4929,6 +4927,7 @@ func runTUI(llmClient llm.Client, registry tool.Registry, guard permission.Guard
 	// REGRESSION: --resume 后 hudTurns 未从 Stats.TotalTurns 恢复，状态栏计数从 0 开始。
 	// 无法单测：runTUI 依赖 Bubble Tea Program 实例。
 	m.hudTurns = ctxMgr.Stats().TotalTurns
+	m.hudCost = ctxMgr.Stats().TotalCost // REGRESSION: --resume 后 hudCost 未从 Stats 恢复,状态栏费用从 0 开始。
 	// ctx bar 初始为 0，首个 TurnStats 会用 API 精确值更新
 	m.lastPromptTokens = 0
 

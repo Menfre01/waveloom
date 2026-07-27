@@ -21,15 +21,16 @@ type Price struct {
 }
 
 // cnyTable 中文价格(元/1M tokens,来自官方中文定价页)。
+// 官方页面: https://api-docs.deepseek.com/zh-cn/quick_start/pricing
 var cnyTable = map[string]Price{
 	// DeepSeek
-	"deepseek/deepseek-v4-flash": {CacheHit: 0.02, CacheMiss: 1.0, Output: 2.0},
-	"deepseek/deepseek-v4-pro":   {CacheHit: 0.025, CacheMiss: 3.0, Output: 6.0},
-	"deepseek/":                  {CacheHit: 0.02, CacheMiss: 1.0, Output: 2.0},
+	"deepseek/deepseek-v4-flash":  {CacheHit: 0.02, CacheMiss: 1.0, Prompt: 1.0, Output: 2.0},
+	"deepseek/deepseek-v4-pro":    {CacheHit: 0.025, CacheMiss: 3.0, Prompt: 3.0, Output: 6.0},
+	"deepseek/":                   {CacheHit: 0.02, CacheMiss: 1.0, Prompt: 1.0, Output: 2.0},
 
 	// Kimi (Moonshot)
-	"kimi/kimi-k3": {CacheHit: 2.0, CacheMiss: 20.0, Output: 100.0},
-	"kimi/":        {CacheHit: 2.0, CacheMiss: 20.0, Output: 100.0},
+	"kimi/kimi-k3": {CacheHit: 2.0, CacheMiss: 20.0, Prompt: 20.0, Output: 100.0},
+	"kimi/":        {CacheHit: 2.0, CacheMiss: 20.0, Prompt: 20.0, Output: 100.0},
 
 	// OpenAI
 	"openai/gpt-4o":  {Prompt: 17.5, Output: 70.0},
@@ -41,15 +42,16 @@ var cnyTable = map[string]Price{
 }
 
 // usdTable 英文价格($/1M tokens,来自官方英文定价页)。
+// 官方页面: https://api-docs.deepseek.com/quick_start/pricing
 var usdTable = map[string]Price{
 	// DeepSeek
-	"deepseek/deepseek-v4-flash": {CacheHit: 0.0028, CacheMiss: 0.14, Output: 0.28},
-	"deepseek/deepseek-v4-pro":   {CacheHit: 0.003625, CacheMiss: 0.435, Output: 0.87},
-	"deepseek/":                  {CacheHit: 0.0028, CacheMiss: 0.14, Output: 0.28},
+	"deepseek/deepseek-v4-flash":  {CacheHit: 0.0028, CacheMiss: 0.14, Prompt: 0.14, Output: 0.28},
+	"deepseek/deepseek-v4-pro":    {CacheHit: 0.003625, CacheMiss: 0.435, Prompt: 0.435, Output: 0.87},
+	"deepseek/":                   {CacheHit: 0.0028, CacheMiss: 0.14, Prompt: 0.14, Output: 0.28},
 
 	// Kimi (Moonshot)
-	"kimi/kimi-k3": {CacheHit: 0.30, CacheMiss: 3.0, Output: 15.0},
-	"kimi/":        {CacheHit: 0.30, CacheMiss: 3.0, Output: 15.0},
+	"kimi/kimi-k3": {CacheHit: 0.30, CacheMiss: 3.0, Prompt: 3.0, Output: 15.0},
+	"kimi/":        {CacheHit: 0.30, CacheMiss: 3.0, Prompt: 3.0, Output: 15.0},
 
 	// OpenAI
 	"openai/gpt-4o":  {Prompt: 2.50, Output: 10.00},

@@ -72,6 +72,10 @@ func (l *Loop) executeToolCalls(ctx context.Context, calls []llm.ToolCall, state
 
 	// Inject session-level SnapshotStore for hashline read/edit tools (跨 turn 持久化).
 	ctx = hashline.WithStore(ctx, l.snapshotStore)
+	// Inject LSP Manager for tools that need symbol/document out-of-band access (e.g., read outline).
+	if l.config.LSPManager != nil {
+		ctx = lsp.WithLSPManager(ctx, l.config.LSPManager)
+	}
 
 	// 1. 按 ConcurrentSafe 分区
 	var concurrent, serial []llm.ToolCall
@@ -206,12 +210,12 @@ func (l *Loop) executeToolCalls(ctx context.Context, calls []llm.ToolCall, state
 				var result *tool.ToolResult
 				var execErr error
 				if l.toolRegistry.IsStreamable(tc.Name) {
-					result, execErr = l.toolRegistry.ExecuteStreaming(execCtx, tc.Name, toolArgs, func(chunk string) {
-						sendEvent(ctx, ch, ToolCallStream{
-							Turn: state.TurnCount, ToolCallID: tc.ID,
-							ToolCallName: tc.Name, Chunk: chunk,
-						})
+				result, execErr = l.toolRegistry.ExecuteStreaming(execCtx, tc.Name, toolArgs, func(chunk string) {
+					sendEvent(ctx, ch, ToolCallStream{
+						Turn: state.TurnCount, ToolCallID: tc.ID,
+						ToolCallName: tc.Name, Chunk: tool.SanitizeToolOutput(chunk),
 					})
+				})
 				} else {
 					result, execErr = l.toolRegistry.Execute(execCtx, tc.Name, toolArgs)
 				}
@@ -501,12 +505,12 @@ func (l *Loop) executeToolCalls(ctx context.Context, calls []llm.ToolCall, state
 		}
 
 		if l.toolRegistry.IsStreamable(tc.Name) {
-			result, execErr = l.toolRegistry.ExecuteStreaming(execCtx, tc.Name, toolArgs, func(chunk string) {
-				sendEvent(ctx, ch, ToolCallStream{
-					Turn: state.TurnCount, ToolCallID: tc.ID,
-					ToolCallName: tc.Name, Chunk: chunk,
-				})
+		result, execErr = l.toolRegistry.ExecuteStreaming(execCtx, tc.Name, toolArgs, func(chunk string) {
+			sendEvent(ctx, ch, ToolCallStream{
+				Turn: state.TurnCount, ToolCallID: tc.ID,
+				ToolCallName: tc.Name, Chunk: tool.SanitizeToolOutput(chunk),
 			})
+		})
 		} else {
 			result, execErr = l.toolRegistry.Execute(execCtx, tc.Name, toolArgs)
 		}
