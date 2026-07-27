@@ -5,62 +5,54 @@
 ## 项目概要
 
 - **语言**：Go 1.25+
-- **LLM**：DeepSeek V4（默认）/ OpenAI，通过 `llm.Client` 接口适配
+- **LLM**:DeepSeek(默认)/ Kimi / OpenAI,通过 `llm.Client` 接口 + adapter 适配,支持 `/provider` 运行时切换
 - **TUI**：Bubble Tea v2 + Glamour Markdown 渲染 + Lipgloss 样式
-- **LSP**：已移除。代码验证统一通过构建工具（go build / npx tsc / cargo build / make）完成。
+- **LSP**:`edit`/`write` 后自动运行 LSP diagnostics 验证(内置 gopls / rust-analyzer / typescript-language-server / clangd),未安装时静默跳过;构建工具(go build / npx tsc / cargo build / make)兜底
 - **构建**：`make build` / `make test` / `make run`
 
 ```
-cmd/waveloom/    CLI 入口（main, config, runner, tui）
+cmd/waveloom/    CLI 入口(main, config, runner, tui)
 pkg/
-  agentloop/     Think-Act-Observe 循环（Run → <-chan TurnEvent）
-  compaction/    四级水位线上下文压缩（Snip/Prune/Summarize）
+  agentloop/     Think-Act-Observe 循环(Run → <-chan TurnEvent)
+  bash/          Shell 命令 AST 解析与危险命令安全检测
+  compaction/    四级水位线上下文压缩(Snip/Prune/Summarize)
+  environment/   工具链探测
   filehistory/   文件历史备份、快照、回退
   hashline/      Hashline 编辑模型
-  context/       跨轮次消息历史（PrepareRun / CompleteRun）
-  environment/   工具链探测
-  llm/           LLM Client（DeepSeek + OpenAI 适配、流式、重试）
-  mcp/           MCP 客户端（配置、传输、工具代理）
+  hook/          Hook 系统(PreToolUse/PostToolUse 等事件,settings.json 配置外部脚本)
+  llm/           LLM Client(DeepSeek/Kimi/OpenAI adapter、流式、重试)
+  logging/       日志
+  lsp/           LSP 诊断客户端(edit/write 后自动验证)
+  mcp/           MCP 客户端(配置、传输、工具代理)
   memory/        AGENTS.md 层级加载
   pathutil/      路径工具
-  permission/    权限守门人（规则引擎、路径/命令安全）
-  reference/     @ 文件引用展开
-  shellutil/     Shell 工具
+  permission/    权限守门人(规则引擎、路径/命令安全)
   plugin/        插件发现
-  skill/         Skill 系统（.claude/skills/ 加载执行）
+  pricing/       LLM token 计费(CNY/USD 双币种、模型级增量计价)
+  reference/     @ 文件引用展开
+  session/       跨轮次消息历史与持久化(PrepareRun / CompleteRun,JSONL)
+  shellutil/     Shell 命令处理共享实用函数(供 tool/skill 复用)
+  skill/         Skill 系统(.claude/skills/ 与 .waveloom/skills/ 双路径加载)
   slashcommand/  / 命令面板
-  subagent/      子代理（Fork/Cold/Explore）
+  subagent/      子代理(Fork/Cold/Explore)
   task/          后台任务管理
   todo/          Todo 状态管理
-  tool/          工具系统（内置工具，TypedTool[P] 泛型接口）
-specs/           各组件规格书（修改前先阅读；内部文档，不纳入公开仓库）
+  tool/          工具系统(内置工具,TypedTool[P] 泛型接口)
+  tuitest/       TUI 测试辅助(Bubble Tea v2 model 测试)
+specs/           各组件规格书(修改前先阅读;内部文档,不纳入公开仓库)
 ```
 
 ## 编码规范
 
-- 遵循 Go 社区惯例（Effective Go，标准库 project layout），不过度设计，命名清晰避免缩写
-- 错误统一处理,不外泄堆栈到客户端;查询 API 优先查阅官方文档
-- **跨平台兼容**：所有代码必须同时兼容 Windows / Linux / Darwin 三平台：
-  - 文件系统操作优先使用 `filepath.WalkDir`、`os.ReadDir` 等标准库，禁止直接调用外部命令（如 `find`、`ls`、`dir`）
-  - 路径拼接必须使用 `filepath.Join`，分隔符使用 `filepath.Separator`，禁止硬编码 `/` 或 `\`
-  - 外部 API 调用前确认第三方包是否声明了跨平台支持，必要时用 `runtime.GOOS` 条件编译
+- **跨平台兼容**:所有代码必须同时兼容 Windows / Linux / Darwin 三平台:
+  - 文件系统操作优先使用 `filepath.WalkDir`、`os.ReadDir` 等标准库,禁止直接调用外部命令(如 `find`、`ls`、`dir`)
+  - 路径拼接必须使用 `filepath.Join`,分隔符使用 `filepath.Separator`,禁止硬编码 `/` 或 `\`
+  - 外部 API 调用前确认第三方包是否声明了跨平台支持,必要时用 `runtime.GOOS` 条件编译
 
-## Agent 操作规范
-
-### 修改前后检查清单
-
-| 阶段 | 操作 |
-|------|------|
-| 修改前 | 搜索定位 → read 确认行号和 TAG |
-| 修改后 | 根据改动范围和语言选择合适的验证命令（编译、lint、测试），确保构建通过且无回归 |
-| 涉及 bin/ 更新 | 修改 `pkg/` 或 `cmd/` 后，二进制不会自动重载，提醒用户重启 TUI 以生效 |
-| 重构前 | 搜索 → read → 评估影响范围 |
-
-
-### 代码审查
+## 代码审查
 
 - 完成较大的代码改动(涉及 3+ 文件或 50+ 行变更)后,**自动**启动代码审查,审查维度包括:逻辑正确性、跨平台兼容、边界条件、安全风险
-- 审查完成后将结果直接反馈给用户，无需用户主动要求
+- 审查完成后将结果直接反馈给用户,无需用户主动要求
 
 ## 开发流程
 
@@ -68,7 +60,8 @@ specs/           各组件规格书（修改前先阅读；内部文档，不纳
 
 - 任务拆分以单个组件高内聚、组件之间低耦合为原则，每个任务拆为独立 Wave，按"组件开发 → 测试 → 验收 → 组装"推进
 - Wave 开始前产出规格书(文件清单、组件边界/依赖/不变量、集成点),完成后执行测试和 review
-- 主 agent 负责协调 Wave 边界，等待关键依赖完成后才推进；同一 Wave 内不应修改同一文件，子任务完成时列出修改文件路径
+- 相互独立的 Wave 使用 subagent 并行执行;有依赖关系的 Wave 由主 agent 串行推进,等待关键依赖完成
+- 并行安全约束:同一 Wave 内不修改同一文件;子任务完成时列出修改文件路径,供主 agent 汇总
 
 ### TDD
 
@@ -92,9 +85,11 @@ specs/           各组件规格书（修改前先阅读；内部文档，不纳
 | 运行 | `make run` | | 集成测试 | `make test-integration` |
 | 清理 | `make clean` | | | |
 
+修改 `pkg/` 或 `cmd/` 后,运行中的 TUI 不会自动重载新二进制,需重启生效。
+
 ## 文档规范
 
-- 架构/流程/数据模型先用 ASCII 绘制，再转换为 Mermaid
+- 架构/流程/数据模型绘图优先使用 Mermaid
 
 ## 提交策略
 
@@ -109,12 +104,12 @@ specs/           各组件规格书（修改前先阅读；内部文档，不纳
 ```
 
 - `type`: `feat` / `fix` / `refactor` / `test` / `docs` / `chore`
-- `scope`: 包名（`llm` / `loop` / `tool` / `tui` / `context` / `compaction` / …），多 scope 用 `/` 分隔
+- `scope`: 包名(`llm` / `loop` / `tool` / `tui` / `session` / `compaction` / `lsp` / `pricing` / ...),多 scope 用 `/` 分隔
 - `subject`: 中文祈使句，≤72 字符，不以句号结尾
 
 ```
 feat(loop): Run() 增加 VerboseWriter 支持
-fix(context): ToolCall UnmarshalJSON 缺失导致 --resume 加载时 tool_calls 丢失
+fix(session): ToolCall UnmarshalJSON 缺失导致 --resume 加载时 tool_calls 丢失
 ```
 
 ## Release 规范
