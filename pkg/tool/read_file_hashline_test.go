@@ -765,8 +765,8 @@ func TestReadFileHashline_Outline_RegexFallback(t *testing.T) {
 
 func TestReadFileHashline_Outline_UnknownExtension(t *testing.T) {
 	dir := t.TempDir()
-	filePath := filepath.Join(dir, "README.md")
-	content := "# Hello\n\nThis is a readme.\n"
+	filePath := filepath.Join(dir, "README.txt")
+	content := "This is a plain text file.\n"
 	if err := os.WriteFile(filePath, []byte(content), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -782,7 +782,7 @@ func TestReadFileHashline_Outline_UnknownExtension(t *testing.T) {
 	if result.Error != nil {
 		t.Fatalf("Execute() outline result error = %s", result.Error.Message)
 	}
-	// Should gracefully report no symbols
+	// .txt files fall through to generic patterns — should report no symbols
 	if !strings.Contains(result.Content, "No symbols found") {
 		t.Errorf("expected 'No symbols found', got: %s", result.Content)
 	}
@@ -1048,5 +1048,138 @@ func TestReadFileHashline_Outline_BinaryFile(t *testing.T) {
 	}
 	if result.Error.Kind != ErrKindBinaryFile {
 		t.Errorf("expected BinaryFile error, got %s: %s", result.Error.Kind, result.Error.Message)
+	}
+}
+
+func TestReadFileHashline_Outline_MarkdownFallback(t *testing.T) {
+	dir := t.TempDir()
+	filePath := filepath.Join(dir, "README.md")
+	content := "# Hello\n\n## Section\n\ntext\n"
+	if err := os.WriteFile(filePath, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	tool := &ReadFileHashline{}
+	result, err := tool.Execute(context.Background(), ReadFileHashlineParams{
+		FilePath: filePath,
+		Outline:  true,
+	})
+	if err != nil {
+		t.Fatalf("Execute() outline error = %v", err)
+	}
+	if result.Error != nil {
+		t.Fatalf("Execute() outline result error = %s", result.Error.Message)
+	}
+	if !strings.Contains(result.Content, "heading") {
+		t.Errorf("expected heading kind in output, got: %s", result.Content)
+	}
+	if !strings.Contains(result.Content, "Hello") {
+		t.Errorf("expected 'Hello' heading, got: %s", result.Content)
+	}
+}
+
+func TestReadFileHashline_Outline_ShellFallback(t *testing.T) {
+	dir := t.TempDir()
+	filePath := filepath.Join(dir, "script.sh")
+	content := "#!/bin/bash\n\nhello() {\n    echo hi\n}\n\nfunction world {\n    echo there\n}\n"
+	if err := os.WriteFile(filePath, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	tool := &ReadFileHashline{}
+	result, err := tool.Execute(context.Background(), ReadFileHashlineParams{
+		FilePath: filePath,
+		Outline:  true,
+	})
+	if err != nil {
+		t.Fatalf("Execute() outline error = %v", err)
+	}
+	if result.Error != nil {
+		t.Fatalf("Execute() outline result error = %s", result.Error.Message)
+	}
+	if !strings.Contains(result.Content, "hello") {
+		t.Errorf("expected 'hello' function, got: %s", result.Content)
+	}
+	if !strings.Contains(result.Content, "world") {
+		t.Errorf("expected 'world' function, got: %s", result.Content)
+	}
+}
+
+func TestReadFileHashline_Outline_MakefileFallback(t *testing.T) {
+	dir := t.TempDir()
+	filePath := filepath.Join(dir, "Makefile")
+	content := "build:\n\tgo build ./...\n\ntest:\n\tgo test ./...\n\n.PHONY: build test\n"
+	if err := os.WriteFile(filePath, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	tool := &ReadFileHashline{}
+	result, err := tool.Execute(context.Background(), ReadFileHashlineParams{
+		FilePath: filePath,
+		Outline:  true,
+	})
+	if err != nil {
+		t.Fatalf("Execute() outline error = %v", err)
+	}
+	if result.Error != nil {
+		t.Fatalf("Execute() outline result error = %s", result.Error.Message)
+	}
+	if !strings.Contains(result.Content, "build") {
+		t.Errorf("expected 'build' target, got: %s", result.Content)
+	}
+	if !strings.Contains(result.Content, "test") {
+		t.Errorf("expected 'test' target, got: %s", result.Content)
+	}
+}
+
+func TestReadFileHashline_Outline_RubyFallback(t *testing.T) {
+	dir := t.TempDir()
+	filePath := filepath.Join(dir, "hello.rb")
+	content := "def greet\n  puts 'hi'\nend\n\nclass Greeter\n  def hello\n  end\nend\n\nmodule Helper\nend\n"
+	if err := os.WriteFile(filePath, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	tool := &ReadFileHashline{}
+	result, err := tool.Execute(context.Background(), ReadFileHashlineParams{
+		FilePath: filePath,
+		Outline:  true,
+	})
+	if err != nil {
+		t.Fatalf("Execute() outline error = %v", err)
+	}
+	if result.Error != nil {
+		t.Fatalf("Execute() outline result error = %s", result.Error.Message)
+	}
+	if !strings.Contains(result.Content, "greet") {
+		t.Errorf("expected 'greet' function, got: %s", result.Content)
+	}
+	if !strings.Contains(result.Content, "Greeter") {
+		t.Errorf("expected 'Greeter' class, got: %s", result.Content)
+	}
+}
+
+func TestReadFileHashline_Outline_YAMLEmptySymbols(t *testing.T) {
+	dir := t.TempDir()
+	filePath := filepath.Join(dir, "config.yml")
+	content := "name: test\nversion: 1\n"
+	if err := os.WriteFile(filePath, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	tool := &ReadFileHashline{}
+	result, err := tool.Execute(context.Background(), ReadFileHashlineParams{
+		FilePath: filePath,
+		Outline:  true,
+	})
+	if err != nil {
+		t.Fatalf("Execute() outline error = %v", err)
+	}
+	if result.Error != nil {
+		t.Fatalf("Execute() outline result error = %s", result.Error.Message)
+	}
+	// YAML files return nil — should report no symbols gracefully
+	if !strings.Contains(result.Content, "No symbols found") {
+		t.Errorf("expected 'No symbols found' for YAML, got: %s", result.Content)
 	}
 }

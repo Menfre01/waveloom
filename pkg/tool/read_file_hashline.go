@@ -324,14 +324,14 @@ func readFullFile(ctx context.Context, path string) (content string, lineCount i
 // outline regex patterns — compiled once at package init, reused across calls.
 var (
 	outlineGoPatterns = []symbolPattern{
-		{re: regexp.MustCompile(`^func\s+(?:\([^)]*\)\s+)?(\S+)`), kind: "function"},
+		{re: regexp.MustCompile(`^func\s+(?:\([^)]*\)\s+)?([^\s(]+)`), kind: "function"},
 		{re: regexp.MustCompile(`^type\s+(\S+)\s+struct`), kind: "struct"},
 		{re: regexp.MustCompile(`^type\s+(\S+)\s+interface`), kind: "interface"},
 		{re: regexp.MustCompile(`^type\s+(\S+)`), kind: "type"},
 	}
 	outlineRustPatterns = []symbolPattern{
-		{re: regexp.MustCompile(`^pub\s+fn\s+(\S+)`), kind: "function"},
-		{re: regexp.MustCompile(`^fn\s+(\S+)`), kind: "function"},
+		{re: regexp.MustCompile(`^pub\s+fn\s+([^\s(]+)`), kind: "function"},
+		{re: regexp.MustCompile(`^fn\s+([^\s(]+)`), kind: "function"},
 		{re: regexp.MustCompile(`^pub\s+struct\s+(\S+)`), kind: "struct"},
 		{re: regexp.MustCompile(`^struct\s+(\S+)`), kind: "struct"},
 		{re: regexp.MustCompile(`^pub\s+enum\s+(\S+)`), kind: "enum"},
@@ -342,14 +342,14 @@ var (
 		{re: regexp.MustCompile(`^type\s+(\S+)`), kind: "type"},
 	}
 	outlineTSPatterns = []symbolPattern{
-		{re: regexp.MustCompile(`^(?:export\s+)?(?:async\s+)?function\s+(\S+)`), kind: "function"},
+		{re: regexp.MustCompile(`^(?:export\s+)?(?:async\s+)?function\s+([^\s(]+)`), kind: "function"},
 		{re: regexp.MustCompile(`^(?:export\s+)?class\s+(\S+)`), kind: "class"},
 		{re: regexp.MustCompile(`^(?:export\s+)?(?:const|let|var)\s+(\S+)`), kind: "variable"},
 		{re: regexp.MustCompile(`^(?:export\s+)?interface\s+(\S+)`), kind: "interface"},
 		{re: regexp.MustCompile(`^(?:export\s+)?type\s+(\S+)`), kind: "type"},
 	}
 	outlinePyPatterns = []symbolPattern{
-		{re: regexp.MustCompile(`^def\s+(\S+)`), kind: "function"},
+		{re: regexp.MustCompile(`^def\s+([^\s(]+)`), kind: "function"},
 		{re: regexp.MustCompile(`^class\s+(\S+)`), kind: "class"},
 	}
 	outlineCPatterns = []symbolPattern{
@@ -357,8 +357,23 @@ var (
 		{re: regexp.MustCompile(`^(?:struct|class|enum)\s+(\w+)`), kind: "type"},
 	}
 	outlineGenericPatterns = []symbolPattern{
-		{re: regexp.MustCompile(`^(?:func|fn|def)\s+(\S+)`), kind: "function"},
-		{re: regexp.MustCompile(`^(?:class|struct|enum|interface|type)\s+(\S+)`), kind: "type"},
+		{re: regexp.MustCompile(`^(?:func|fn|def)\s+([^\s(]+)`), kind: "function"},
+		{re: regexp.MustCompile(`^(?:class|struct|enum|interface|type|module|trait)\s+(\S+)`), kind: "type"},
+	}
+	outlineShellPatterns = []symbolPattern{
+		{re: regexp.MustCompile(`^(?:function\s+)?(\w+)\s*(?:\(\s*\)|\{)`), kind: "function"},
+	}
+	outlineMakefilePatterns = []symbolPattern{
+		{re: regexp.MustCompile(`^\.PHONY:\s*(.*)`), kind: "phony"},
+		{re: regexp.MustCompile(`^([a-zA-Z_][a-zA-Z0-9_./-]*)\s*:\s*(?:.*;.*)?`), kind: "target"},
+	}
+	outlineMarkdownPatterns = []symbolPattern{
+		{re: regexp.MustCompile(`^(#{1,6})\s+(.+)`), kind: "heading"},
+	}
+	outlineRubyPatterns = []symbolPattern{
+		{re: regexp.MustCompile(`^def\s+([^\s(]+)`), kind: "function"},
+		{re: regexp.MustCompile(`^class\s+(\S+)`), kind: "class"},
+		{re: regexp.MustCompile(`^module\s+(\S+)`), kind: "module"},
 	}
 )
 
@@ -382,7 +397,13 @@ func (t *ReadFileHashline) executeOutline(ctx context.Context, path string) (*To
 	}
 
 	// Fall back to regex
-	symbols := regexOutline(path)
+	symbols, err := regexOutline(path)
+	if err != nil {
+		return &ToolResult{
+			Content: fmt.Sprintf("Failed to read %s: %v", path, err),
+			Meta:    ToolMeta{FilePath: path},
+		}, nil
+	}
 	if len(symbols) == 0 {
 		return &ToolResult{
 			Content: fmt.Sprintf("No symbols found in %s (not a recognized code file or empty).", path),
@@ -427,25 +448,36 @@ func flattenSymbols(symbols []lsp.DocumentSymbol) []outlineSymbol {
 }
 
 // regexOutline extracts symbols using regex patterns based on file extension.
-func regexOutline(path string) []outlineSymbol {
+// Returns an error for I/O failures; returns empty slice for unrecognized or empty files.
+func regexOutline(path string) ([]outlineSymbol, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
-		return nil
+		return nil, err
 	}
 
 	ext := filepath.Ext(path)
 	var patterns []symbolPattern
-	switch ext {
-	case ".go":
+	switch {
+	case ext == ".go":
 		patterns = outlineGoPatterns
-	case ".rs":
+	case ext == ".rs":
 		patterns = outlineRustPatterns
-	case ".ts", ".tsx", ".js", ".jsx":
+	case ext == ".ts" || ext == ".tsx" || ext == ".js" || ext == ".jsx":
 		patterns = outlineTSPatterns
-	case ".py":
+	case ext == ".py":
 		patterns = outlinePyPatterns
-	case ".c", ".cpp", ".cc", ".cxx", ".h", ".hpp":
+	case ext == ".rb":
+		patterns = outlineRubyPatterns
+	case ext == ".sh" || ext == ".bash" || ext == ".zsh":
+		patterns = outlineShellPatterns
+	case ext == ".md" || ext == ".markdown":
+		patterns = outlineMarkdownPatterns
+	case ext == ".yml" || ext == ".yaml" || ext == ".json":
+		return nil, nil // data files — skip scanning
+	case ext == ".c" || ext == ".cpp" || ext == ".cc" || ext == ".cxx" || ext == ".h" || ext == ".hpp":
 		patterns = outlineCPatterns
+	case ext == "" && isMakefileName(filepath.Base(path)):
+		patterns = outlineMakefilePatterns
 	default:
 		patterns = outlineGenericPatterns
 	}
@@ -468,7 +500,7 @@ func regexOutline(path string) []outlineSymbol {
 			break // only match first pattern per line
 		}
 	}
-	return symbols
+	return symbols, nil
 }
 
 type symbolPattern struct {
@@ -476,6 +508,11 @@ type symbolPattern struct {
 	kind string
 }
 
+
+// isMakefileName checks whether a base file name is a Makefile variant.
+func isMakefileName(name string) bool {
+	return name == "Makefile" || name == "makefile" || name == "GNUmakefile"
+}
 // formatOutlineOutput formats the symbol list for display.
 func formatOutlineOutput(path string, symbols []outlineSymbol) string {
 	var b strings.Builder
