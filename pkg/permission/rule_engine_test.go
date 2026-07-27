@@ -570,7 +570,7 @@ func TestRuleEngine_RelativePatternAbsoluteTarget(t *testing.T) {
 	})
 
 	// 绝对路径应匹配相对 pattern "pkg/**"
-	input := json.RawMessage(fmt.Sprintf(`{"file_path": "%s"}`, filepath.Join(cwd, "pkg/tool/foo.go")))
+	input := json.RawMessage(fmt.Sprintf(`{"file_path": "%s"}`, filepath.ToSlash(filepath.Join(cwd, "pkg/tool/foo.go"))))
 	result, found := re.CheckAllow("edit_file", input)
 	if !found {
 		t.Errorf("relative pattern 'pkg/**' should match absolute path '%s/pkg/tool/foo.go'", cwd)

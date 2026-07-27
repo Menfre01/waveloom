@@ -51,6 +51,9 @@ func NormalizeShellCommand(command string) (normalized string, extractedDir stri
 
 // ResolvePath 将路径解析为标准化绝对路径。
 func ResolvePath(path string) (string, error) {
+	if filepath.IsAbs(path) {
+		return filepath.Clean(path), nil
+	}
 	abs, err := filepath.Abs(path)
 	if err != nil {
 		return "", fmt.Errorf("failed to resolve path: %w", err)
