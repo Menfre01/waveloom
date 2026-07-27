@@ -9,10 +9,7 @@ import (
 // PathToURI 将文件系统绝对路径转为 LSP file:// URI。
 // Path segments are URL-escaped to handle spaces and special characters.
 func PathToURI(path string) DocumentURI {
-	abs, err := filepath.Abs(path)
-	if err != nil {
-		abs = path
-	}
+	abs := filepath.Clean(path)
 	abs = filepath.ToSlash(abs)
 
 	// Split into segments and URL-escape each one

@@ -1,3 +1,13 @@
+## [v0.4.2] — 2026-07-27
+
+### 修复
+- **Windows 跨平台路径兼容**:PathToURI/ResolvePath 在 Windows 下将 Unix 风格绝对路径误判为相对路径拼接 CWD,导致 LSP URI 生成错误
+- **@ 引用 JSON 权限检查**:@ 文件引用展开时路径含反斜杠破坏 JSON,导致 Windows 下权限检查失败
+
+---
+
+📝 [Changelog (English)](https://github.com/Menfre01/waveloom/blob/dev/CHANGELOG.en.md)
+
 ## [v0.4.1] — 2026-07-27
 
 ### 新增功能

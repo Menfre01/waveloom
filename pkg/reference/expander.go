@@ -81,7 +81,7 @@ func (e *Expander) expandRefs(ctx context.Context, refs []Ref, cwd string) ([]Re
 			continue
 		}
 		toolName := "read"
-		params := json.RawMessage(fmt.Sprintf(`{"file_path": "%s"}`, ref.Path))
+		params := json.RawMessage(fmt.Sprintf(`{"file_path": "%s"}`, filepath.ToSlash(ref.Path)))
 
 		decision := e.guard.Check(ctx, toolName, params)
 		if decision.Decision == permission.DecisionDeny || decision.Decision == permission.DecisionAsk {

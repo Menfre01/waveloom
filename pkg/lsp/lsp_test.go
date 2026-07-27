@@ -25,6 +25,8 @@ func mockLSPPath(t *testing.T) string {
 		name += ".exe"
 	}
 	bin := filepath.Join(os.TempDir(), name)
+	// Normalize to forward slashes for JSON embedding (Windows backslashes break JSON)
+	bin = filepath.ToSlash(bin)
 
 	// Check if already built
 	if _, err := os.Stat(bin); err == nil {
