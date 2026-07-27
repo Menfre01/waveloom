@@ -589,7 +589,6 @@ func (cm *ContextManager) RewindConversationTo(messageIndex int, sessionDir stri
 	newID := NewSessionID()
 
 	// 重置状态
-	cm.stats = Stats{}
 	cm.jsonlMessageCount = 0
 	cm.instructionsInjected = len(cm.messages) > 1 && cm.messages[1].Role == llm.RoleUser && cm.messages[1].Content != ""
 	cm.stateful().Reset()

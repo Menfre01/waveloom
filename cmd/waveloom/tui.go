@@ -4233,7 +4233,6 @@ func (m *model) rebuildParasFromMessages() {
 	msgs := m.cm.Messages()
 	m.paras = make([]Paragraph, 0, len(msgs))
 	m.focusIndex = -1
-	m.hudTurns = 0
 	m.lastPromptTokens = 0
 
 	for _, msg := range msgs {

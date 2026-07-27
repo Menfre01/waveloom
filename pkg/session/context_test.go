@@ -791,7 +791,10 @@ func TestRewindConversationTo_InvalidIndex(t *testing.T) {
 	}
 }
 
-func TestRewindConversationTo_ResetsStats(t *testing.T) {
+// TestRewindConversationTo_PreservesStats verifies that stats are preserved
+// after rewind, consistent with TUI HUD behavior where token/cache/cost
+// continue to accumulate across rewind boundaries.
+func TestRewindConversationTo_PreservesStats(t *testing.T) {
 	dir := t.TempDir()
 	cm := New("system")
 
@@ -801,8 +804,12 @@ func TestRewindConversationTo_ResetsStats(t *testing.T) {
 		100, 100, 50, 30, 20, 10, "model", 1000, "completed")
 
 	// Verify stats are non-zero
-	if cm.Stats().TotalTurns == 0 {
-		t.Fatal("expected non-zero turn count")
+	statsBefore := cm.Stats()
+	if statsBefore.TotalTurns == 0 {
+		t.Fatal("expected non-zero turn count before rewind")
+	}
+	if statsBefore.TotalPromptTokens == 0 {
+		t.Fatal("expected non-zero prompt tokens before rewind")
 	}
 
 	_, _, err := cm.RewindConversationTo(1, dir)
@@ -810,12 +817,13 @@ func TestRewindConversationTo_ResetsStats(t *testing.T) {
 		t.Fatalf("RewindConversationTo failed: %v", err)
 	}
 
-	// Stats should be reset
-	if cm.Stats().TotalTurns != 0 {
-		t.Fatalf("expected 0 turns after rewind, got %d", cm.Stats().TotalTurns)
+	// Stats should be preserved (not reset)
+	statsAfter := cm.Stats()
+	if statsAfter.TotalTurns != statsBefore.TotalTurns {
+		t.Fatalf("expected %d turns after rewind, got %d", statsBefore.TotalTurns, statsAfter.TotalTurns)
 	}
-	if cm.Stats().TotalPromptTokens != 0 {
-		t.Fatalf("expected 0 prompt tokens after rewind, got %d", cm.Stats().TotalPromptTokens)
+	if statsAfter.TotalPromptTokens != statsBefore.TotalPromptTokens {
+		t.Fatalf("expected %d prompt tokens after rewind, got %d", statsBefore.TotalPromptTokens, statsAfter.TotalPromptTokens)
 	}
 }
 
