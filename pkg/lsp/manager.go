@@ -381,6 +381,37 @@ func (m *Manager) Diagnostics(uri DocumentURI) []Diagnostic {
 	return copied
 }
 
+// DocumentSymbols returns the document symbol outline for a file via LSP.
+// Returns nil if no LSP server is available for this file type or the call fails.
+func (m *Manager) DocumentSymbols(ctx context.Context, filePath string) []DocumentSymbol {
+	inst, err := m.GetOrCreate(filePath)
+	if err != nil || inst == nil {
+		return nil
+	}
+
+	// Sync file so the server can parse it
+	if err := m.SyncFile(inst, filePath); err != nil {
+		return nil
+	}
+
+	inst.stateMu.RLock()
+	ready := inst.state == stateReady
+	cl := inst.client
+	inst.stateMu.RUnlock()
+	if !ready || cl == nil {
+		return nil
+	}
+
+	params := DocumentSymbolParams{
+		TextDocument: TextDocumentIdentifier{URI: PathToURI(filePath)},
+	}
+	var symbols []DocumentSymbol
+	if err := cl.Call(ctx, "textDocument/documentSymbol", params, &symbols); err != nil {
+		return nil
+	}
+	return symbols
+}
+
 // Shutdown 关闭所有 server 进程。
 func (m *Manager) Shutdown() {
 	m.cancel()

@@ -6,9 +6,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/Menfre01/waveloom/pkg/hashline"
+	"github.com/Menfre01/waveloom/pkg/lsp"
 	"github.com/Menfre01/waveloom/pkg/pathutil"
 )
 
@@ -27,6 +30,7 @@ type ReadFileHashlineParams struct {
 	Pattern      string `json:"pattern"`       // 可选:在文件中定位子串,窗口显示第一个匹配 ±context_lines
 	ContextLines int    `json:"context_lines"` // 匹配行上下各显示的行数(默认 5,最大 50)
 	WorkingDir   string `json:"working_dir"`   // 工作目录(可选)
+	Outline      bool   `json:"outline"`       // 返回符号大纲而非文件内容
 }
 
 type ReadFileHashline struct{}
@@ -66,6 +70,10 @@ var readFileHashlineSchema = json.RawMessage(`{
     "working_dir": {
       "type": "string",
       "description": "Working directory (optional)"
+    },
+    "outline": {
+      "type": "boolean",
+      "description": "Set to true to return a symbol outline (function/type/variable names with line numbers) instead of full file content. Uses LSP when available, falls back to regex for unsupported file types. Preferred for exploring unfamiliar files before reading full content."
     }
   },
   "required": ["file_path"]
@@ -157,6 +165,11 @@ func (t *ReadFileHashline) Execute(ctx context.Context, p ReadFileHashlineParams
 	if isBinary {
 		return toolError(ErrorClassRecoverable, ErrKindBinaryFile,
 			fmt.Sprintf("file appears to be binary: %s", path), nil), nil
+	}
+
+	// ── Step 5.5: Outline mode — fetch symbol index via LSP or regex ──
+	if p.Outline {
+		return t.executeOutline(ctx, path)
 	}
 
 	// ── Step 6: 读取文件内容 ──
@@ -306,4 +319,169 @@ func readFullFile(ctx context.Context, path string) (content string, lineCount i
 	totalLines = len(lines)
 
 	return text, totalLines, totalLines, nil
+}
+
+// outline regex patterns — compiled once at package init, reused across calls.
+var (
+	outlineGoPatterns = []symbolPattern{
+		{re: regexp.MustCompile(`^func\s+(?:\([^)]*\)\s+)?(\S+)`), kind: "function"},
+		{re: regexp.MustCompile(`^type\s+(\S+)\s+struct`), kind: "struct"},
+		{re: regexp.MustCompile(`^type\s+(\S+)\s+interface`), kind: "interface"},
+		{re: regexp.MustCompile(`^type\s+(\S+)`), kind: "type"},
+	}
+	outlineRustPatterns = []symbolPattern{
+		{re: regexp.MustCompile(`^pub\s+fn\s+(\S+)`), kind: "function"},
+		{re: regexp.MustCompile(`^fn\s+(\S+)`), kind: "function"},
+		{re: regexp.MustCompile(`^pub\s+struct\s+(\S+)`), kind: "struct"},
+		{re: regexp.MustCompile(`^struct\s+(\S+)`), kind: "struct"},
+		{re: regexp.MustCompile(`^pub\s+enum\s+(\S+)`), kind: "enum"},
+		{re: regexp.MustCompile(`^enum\s+(\S+)`), kind: "enum"},
+		{re: regexp.MustCompile(`^pub\s+trait\s+(\S+)`), kind: "interface"},
+		{re: regexp.MustCompile(`^trait\s+(\S+)`), kind: "interface"},
+		{re: regexp.MustCompile(`^pub\s+type\s+(\S+)`), kind: "type"},
+		{re: regexp.MustCompile(`^type\s+(\S+)`), kind: "type"},
+	}
+	outlineTSPatterns = []symbolPattern{
+		{re: regexp.MustCompile(`^(?:export\s+)?(?:async\s+)?function\s+(\S+)`), kind: "function"},
+		{re: regexp.MustCompile(`^(?:export\s+)?class\s+(\S+)`), kind: "class"},
+		{re: regexp.MustCompile(`^(?:export\s+)?(?:const|let|var)\s+(\S+)`), kind: "variable"},
+		{re: regexp.MustCompile(`^(?:export\s+)?interface\s+(\S+)`), kind: "interface"},
+		{re: regexp.MustCompile(`^(?:export\s+)?type\s+(\S+)`), kind: "type"},
+	}
+	outlinePyPatterns = []symbolPattern{
+		{re: regexp.MustCompile(`^def\s+(\S+)`), kind: "function"},
+		{re: regexp.MustCompile(`^class\s+(\S+)`), kind: "class"},
+	}
+	outlineCPatterns = []symbolPattern{
+		{re: regexp.MustCompile(`^\w[\w:*&<>\s]+\s+(?:(\w+)::)?(\w+)\s*\(`), kind: "function"},
+		{re: regexp.MustCompile(`^(?:struct|class|enum)\s+(\w+)`), kind: "type"},
+	}
+	outlineGenericPatterns = []symbolPattern{
+		{re: regexp.MustCompile(`^(?:func|fn|def)\s+(\S+)`), kind: "function"},
+		{re: regexp.MustCompile(`^(?:class|struct|enum|interface|type)\s+(\S+)`), kind: "type"},
+	}
+)
+
+// outlineSymbol is a single symbol entry for the outline output.
+type outlineSymbol struct {
+	name string
+	kind string
+	line uint32 // 1-based
+}
+
+// executeOutline returns a symbol outline for the given file path.
+// Uses LSP textDocument/documentSymbol when a language server is available,
+// falls back to regex-based symbol extraction.
+func (t *ReadFileHashline) executeOutline(ctx context.Context, path string) (*ToolResult, error) {
+	// Try LSP first
+	if symbols := lspOutline(ctx, path); len(symbols) > 0 {
+		return &ToolResult{
+			Content: formatOutlineOutput(path, symbols),
+			Meta:    ToolMeta{FilePath: path},
+		}, nil
+	}
+
+	// Fall back to regex
+	symbols := regexOutline(path)
+	if len(symbols) == 0 {
+		return &ToolResult{
+			Content: fmt.Sprintf("No symbols found in %s (not a recognized code file or empty).", path),
+			Meta:    ToolMeta{FilePath: path},
+		}, nil
+	}
+	return &ToolResult{
+		Content: formatOutlineOutput(path, symbols),
+		Meta:    ToolMeta{FilePath: path},
+	}, nil
+}
+
+// lspOutline fetches symbols via LSP textDocument/documentSymbol.
+func lspOutline(ctx context.Context, path string) []outlineSymbol {
+	mgr := lsp.LSPManagerFromContext(ctx)
+	if mgr == nil {
+		return nil
+	}
+
+	docSymbols := mgr.DocumentSymbols(ctx, path)
+	if len(docSymbols) == 0 {
+		return nil
+	}
+
+	return flattenSymbols(docSymbols)
+}
+
+// flattenSymbols recursively flattens a DocumentSymbol tree into a flat list.
+func flattenSymbols(symbols []lsp.DocumentSymbol) []outlineSymbol {
+	var result []outlineSymbol
+	for _, s := range symbols {
+		result = append(result, outlineSymbol{
+			name: s.Name,
+			kind: lsp.SymbolKindLabel(s.Kind),
+			line: s.SelectionRange.Start.Line + 1, // LSP 0-based → 1-based
+		})
+		if len(s.Children) > 0 {
+			result = append(result, flattenSymbols(s.Children)...)
+		}
+	}
+	return result
+}
+
+// regexOutline extracts symbols using regex patterns based on file extension.
+func regexOutline(path string) []outlineSymbol {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+
+	ext := filepath.Ext(path)
+	var patterns []symbolPattern
+	switch ext {
+	case ".go":
+		patterns = outlineGoPatterns
+	case ".rs":
+		patterns = outlineRustPatterns
+	case ".ts", ".tsx", ".js", ".jsx":
+		patterns = outlineTSPatterns
+	case ".py":
+		patterns = outlinePyPatterns
+	case ".c", ".cpp", ".cc", ".cxx", ".h", ".hpp":
+		patterns = outlineCPatterns
+	default:
+		patterns = outlineGenericPatterns
+	}
+
+	lines := strings.Split(string(raw), "\n")
+	var symbols []outlineSymbol
+	for lineIdx, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		for _, p := range patterns {
+			m := p.re.FindStringSubmatch(trimmed)
+			if m == nil {
+				continue
+			}
+			name := m[len(m)-1] // last capture group is the symbol name
+			symbols = append(symbols, outlineSymbol{
+				name: name,
+				kind: p.kind,
+				line: uint32(lineIdx + 1), // 1-based
+			})
+			break // only match first pattern per line
+		}
+	}
+	return symbols
+}
+
+type symbolPattern struct {
+	re   *regexp.Regexp
+	kind string
+}
+
+// formatOutlineOutput formats the symbol list for display.
+func formatOutlineOutput(path string, symbols []outlineSymbol) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "%d Symbols in %s:\n", len(symbols), path)
+	for _, s := range symbols {
+		fmt.Fprintf(&b, "  %-24s %-12s L%d\n", s.name, s.kind, s.line)
+	}
+	return b.String()
 }
