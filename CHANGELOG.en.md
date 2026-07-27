@@ -1,3 +1,11 @@
+## [v0.4.2] — 2026-07-27
+
+### Fixed
+- **Windows cross-platform path compatibility**: PathToURI/ResolvePath no longer incorrectly treat Unix-style absolute paths as relative and join with CWD on Windows, fixing LSP URI generation errors
+- **@ reference JSON permission check**: @ file reference expansion now normalizes backslash paths before embedding in JSON, fixing permission check failures on Windows
+
+---
+
 ## [v0.4.1] — 2026-07-27
 
 ### Added
