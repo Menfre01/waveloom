@@ -169,35 +169,55 @@ func (t *EditFileHashline) Execute(ctx context.Context, p EditFileHashlineParams
 func formatSectionResults(results []hashline.SectionResult) string {
 	var b strings.Builder
 	var tagLines []string
+	multiSection := len(results) > 1
+	sectionIdx := 0
 	for _, r := range results {
+		sectionIdx++
 		if r.Error != nil {
 			fmt.Fprintf(&b, "✗ %s: %s\n", r.Path, r.Error.Message)
 			continue
 		}
 		if r.Warning != "" {
 			fmt.Fprintf(&b, "⚠ %s — TAG: %s — %s: %s (%+d lines)\n", r.Path, r.NewTAG, r.Op, r.Warning, r.LinesDelta)
-			tagLines = append(tagLines, fmt.Sprintf("%s#%s", r.Path, r.NewTAG))
+			tagLine := fmt.Sprintf("%s#%s", r.Path, r.NewTAG)
+			tagLines = append(tagLines, tagLine)
 			continue
 		}
 		switch r.Op {
 		case "update":
 			fmt.Fprintf(&b, "✓ %s — TAG: %s — (%+d lines)\n", r.Path, r.NewTAG, r.LinesDelta)
-			tagLines = append(tagLines, fmt.Sprintf("%s#%s", r.Path, r.NewTAG))
+			tagLine := fmt.Sprintf("%s#%s", r.Path, r.NewTAG)
+			tagLines = append(tagLines, tagLine)
 			if len(r.DiffHunks) > 0 {
-				b.WriteString(formatLocalDiffExcerpt(r.DiffHunks, 12))
+				label := "--- edit delta ---"
+				if multiSection {
+					label = fmt.Sprintf("--- edit delta §%d ---", sectionIdx)
+				}
+				b.WriteString(formatLocalDiffExcerpt(r.DiffHunks, 12, label))
 			}
 		case "delete":
 			fmt.Fprintf(&b, "✓ %s deleted (was TAG: %s)\n", r.Path, r.OldTAG)
 		case "rename":
 			fmt.Fprintf(&b, "✓ %s renamed (TAG: %s)\n", r.Path, r.NewTAG)
-			tagLines = append(tagLines, fmt.Sprintf("%s#%s", r.Path, r.NewTAG))
+			tagLine := fmt.Sprintf("%s#%s", r.Path, r.NewTAG)
+			tagLines = append(tagLines, tagLine)
 		default:
 			fmt.Fprintf(&b, "✓ %s — TAG: %s — %s\n", r.Path, r.NewTAG, r.Op)
-			tagLines = append(tagLines, fmt.Sprintf("%s#%s", r.Path, r.NewTAG))
+			tagLine := fmt.Sprintf("%s#%s", r.Path, r.NewTAG)
+			tagLines = append(tagLines, tagLine)
 		}
 	}
 	if len(tagLines) > 0 {
-		fmt.Fprintf(&b, "\n— Next TAGs: %s\n", strings.Join(tagLines, " | "))
+		// Dedup: same-file multi-section shares the same post-edit TAG.
+		seenTags := make(map[string]bool, len(tagLines))
+		deduped := tagLines[:0]
+		for _, t := range tagLines {
+			if !seenTags[t] {
+				deduped = append(deduped, t)
+				seenTags[t] = true
+			}
+		}
+		fmt.Fprintf(&b, "\n— Next TAGs: %s\n", strings.Join(deduped, " | "))
 	}
 	return b.String()
 }
@@ -206,7 +226,7 @@ func formatSectionResults(results []hashline.SectionResult) string {
 // 供 LLM 在不 re-read 整个文件的情况下快速确认变更内容。
 // 行号来自 hunks 的 OldNum/NewNum，与下方 post-edit context 中的行号一致，
 // LLM 可交叉对照确认编辑边界正确。
-func formatLocalDiffExcerpt(hunks []hashline.EditHunk, maxLines int) string {
+func formatLocalDiffExcerpt(hunks []hashline.EditHunk, maxLines int, label string) string {
 	var b strings.Builder
 	var totalOld, totalNew int
 	for _, h := range hunks {
@@ -214,7 +234,7 @@ func formatLocalDiffExcerpt(hunks []hashline.EditHunk, maxLines int) string {
 		totalNew += h.NewCount
 	}
 	delta := totalNew - totalOld
-	fmt.Fprintf(&b, "--- edit delta --- (removed %d lines, added %d lines, delta %+d)\n", totalOld, totalNew, delta)
+	fmt.Fprintf(&b, "%s (removed %d lines, added %d lines, delta %+d)\n", label, totalOld, totalNew, delta)
 	written := 0
 	for _, h := range hunks {
 		if written >= maxLines {
@@ -285,11 +305,17 @@ const smallFileThreshold = 200
 // 注意：TAG 头已由 formatSectionResults 输出，此处不重复。
 func formatPostEditContext(fs hashline.FileSystem, results []hashline.SectionResult) string {
 	var b strings.Builder
+	seenPaths := make(map[string]bool, len(results))
 
 	for _, r := range results {
 		if r.Error != nil || r.Op != "update" || len(r.DiffHunks) == 0 {
 			continue
 		}
+		// 同文件多 section 只输出一次 post-edit context(内容完全相同)
+		if seenPaths[r.Path] {
+			continue
+		}
+		seenPaths[r.Path] = true
 
 		fileContent, err := fs.ReadFile(r.Path)
 		if err != nil {
@@ -305,7 +331,7 @@ func formatPostEditContext(fs hashline.FileSystem, results []hashline.SectionRes
 		// 确定所有 hunk 覆盖的变更区域
 		firstChanged, lastChanged := totalLines+1, 0
 
-		// 小文件（≤200 行）：全量显示，LLM 可编辑任意位置无需 re-read
+		// 小文件(≤200 行):全量显示,LLM 可编辑任意位置无需 re-read
 		if totalLines <= smallFileThreshold {
 			b.WriteString("\n--- post-edit context (full file) ---\n")
 			for i, line := range lines {

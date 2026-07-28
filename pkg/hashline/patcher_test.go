@@ -1497,7 +1497,7 @@ func TestMultiSectionSameFileRecovery(t *testing.T) {
 				Path: "/tmp/test-recovery-store.go",
 				TAG:  tag, // 同一个旧 TAG —— 原子模式下，两个 TAG 都对原始内容校验，均通过
 				Ops: []Op{
-					{Kind: OpSWAP, LineStart: 5, LineEnd: 5, Body: []string{"SHIFTED L5"}},
+					{Kind: OpSWAP, LineStart: 5, LineEnd: 5, OldString: "L5", Body: []string{"SHIFTED L5"}},
 				},
 			},
 		},
@@ -1763,7 +1763,7 @@ func TestAtomicSectionGroup_RecoveryFailRollback(t *testing.T) {
 				{Kind: OpINS, RefLine: 1, Body: []string{"after L1"}},
 			}},
 			{Path: "/tmp/f.go", TAG: tag, Ops: []Op{
-				{Kind: OpSWAP, LineStart: 2, LineEnd: 2, Body: []string{"new L2"}},
+				{Kind: OpSWAP, LineStart: 2, LineEnd: 2, OldString: "line2", Body: []string{"new L2"}},
 			}},
 		},
 	}

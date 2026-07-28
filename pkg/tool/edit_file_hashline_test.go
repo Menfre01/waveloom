@@ -395,8 +395,8 @@ func TestEditFileHashline_DuplicateSection(t *testing.T) {
 	ctx, dir, filePath, tag := setupEditTest(t, "main.go", "package main\n\nvar x = 1\nvar y = 2\n")
 
 	patch := makePatch(
-		makeSection(filePath, tag, "SWAP 3.=3:", "+var x = 10"),
-		makeSection(filePath, tag, "SWAP 4.=4:", "+var y = 20"),
+		makeSection(filePath, tag, "SWAP 3.=3", "%OLD", "var x = 1", "%NEW", "var x = 10"),
+		makeSection(filePath, tag, "SWAP 4.=4", "%OLD", "var y = 2", "%NEW", "var y = 20"),
 	)
 
 	tool := &EditFileHashline{}
@@ -609,7 +609,7 @@ func TestFormatLocalDiffExcerpt_DeleteAndAdd(t *testing.T) {
 			},
 		},
 	}
-	got := formatLocalDiffExcerpt(hunks, 12)
+	got := formatLocalDiffExcerpt(hunks, 12, "--- edit delta ---")
 	if !strings.Contains(got, "--- edit delta ---") {
 		t.Error("missing header")
 	}
@@ -636,7 +636,7 @@ func TestFormatLocalDiffExcerpt_ContextLines(t *testing.T) {
 			},
 		},
 	}
-	got := formatLocalDiffExcerpt(hunks, 12)
+	got := formatLocalDiffExcerpt(hunks, 12, "--- edit delta ---")
 	if !strings.Contains(got, "  :  unchanged") {
 		t.Errorf("missing context line (without line number), got:\n%s", got)
 	}
@@ -652,7 +652,7 @@ func TestFormatLocalDiffExcerpt_MaxLines(t *testing.T) {
 			},
 		},
 	}
-	got := formatLocalDiffExcerpt(hunks, 2)
+	got := formatLocalDiffExcerpt(hunks, 2, "--- edit delta ---")
 	lines := strings.Split(strings.TrimSpace(got), "\n")
 	// header + 2 lines + truncation = 4 lines total
 	if len(lines) < 3 {
@@ -677,7 +677,7 @@ func TestFormatLocalDiffExcerpt_LineHeaderIgnored(t *testing.T) {
 			},
 		},
 	}
-	got := formatLocalDiffExcerpt(hunks, 12)
+	got := formatLocalDiffExcerpt(hunks, 12, "--- edit delta ---")
 	if !strings.Contains(got, "@@ -1,3 +1,3 @@") {
 		t.Error("LineHeader should be present in output (not silently dropped)")
 	}
@@ -693,12 +693,12 @@ func TestFormatLocalDiffExcerpt_LineHeaderIgnored(t *testing.T) {
 func TestFormatLocalDiffExcerpt_EmptyHunks(t *testing.T) {
 	expected := "--- edit delta --- (removed 0 lines, added 0 lines, delta +0)\n"
 
-	got := formatLocalDiffExcerpt(nil, 12)
+	got := formatLocalDiffExcerpt(nil, 12, "--- edit delta ---")
 	if got != expected {
 		t.Errorf("expected only header for nil hunks, got:\n%s", got)
 	}
 
-	got = formatLocalDiffExcerpt([]hashline.EditHunk{}, 12)
+	got = formatLocalDiffExcerpt([]hashline.EditHunk{}, 12, "--- edit delta ---")
 	if got != expected {
 		t.Errorf("expected only header for empty hunks, got:\n%s", got)
 	}
@@ -719,7 +719,7 @@ func TestFormatLocalDiffExcerpt_MultipleLinesPerHunk(t *testing.T) {
 			},
 		},
 	}
-	got := formatLocalDiffExcerpt(hunks, 12)
+	got := formatLocalDiffExcerpt(hunks, 12, "--- edit delta ---")
 	if !strings.Contains(got, "-2:  old1") {
 		t.Errorf("missing first delete, got:\n%s", got)
 	}
@@ -951,6 +951,33 @@ func TestFormatPostEditContext_SkipEmptyHunks(t *testing.T) {
 	got := formatPostEditContext(fs, results)
 	if got != "" {
 		t.Errorf("expected empty for nil hunks, got:\n%s", got)
+	}
+}
+
+func TestFormatPostEditContext_DedupSameFile(t *testing.T) {
+	fs := &testFS{files: map[string]string{"src/main.go": "line1\nline2\n"}}
+	results := []hashline.SectionResult{
+		{
+			Path: "src/main.go", Op: "update",
+			DiffHunks: []hashline.EditHunk{
+				{NewStart: 1, NewCount: 1, Lines: []hashline.EditLine{
+					{Kind: hashline.LineAdd, NewNum: 1},
+				}},
+			},
+		},
+		{
+			Path: "src/main.go", Op: "update",
+			DiffHunks: []hashline.EditHunk{
+				{NewStart: 2, NewCount: 1, Lines: []hashline.EditLine{
+					{Kind: hashline.LineAdd, NewNum: 2},
+				}},
+			},
+		},
+	}
+	got := formatPostEditContext(fs, results)
+	// 同文件多 section 只输出一次 post-edit context(避免重复)
+	if n := strings.Count(got, "--- post-edit context"); n != 1 {
+		t.Errorf("expected 1 post-edit context block for same-file multi-section, got %d", n)
 	}
 }
 // ---------------------------------------------------------------------------

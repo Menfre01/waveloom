@@ -1005,7 +1005,7 @@ func applySection(sec Section, fs FileSystem, store *SnapshotStore, originalSnap
 		return result
 	}
 	if hasMissingOld {
-		result.Warning = "No %OLD provided — content verification skipped. TAG-only safety."
+		result.Warning = "⚠️ SKIPPING VERIFICATION — edit may corrupt file if line numbers are stale. Re-read the file first (missing %OLD content)."
 	}
 	normalizeInsOps(lines, &sec.Ops)
 	if err := detectOverlaps(sec.Ops); err != nil {
@@ -1021,9 +1021,11 @@ func applySection(sec Section, fs FileSystem, store *SnapshotStore, originalSnap
 		result.Error = &EditError{Fatal: true, Kind: "permission_denied", Message: err.Error()}
 		return result
 	}
-	newTAG := sec.TAG
+	newTAG := "0000"
 	if store != nil {
 		newTAG = store.Update(storePath, newContent)
+	} else {
+		newTAG = sec.TAG // store unavailable: reuse old TAG (caller guarantees store != nil)
 	}
 	result.Op = "update"
 	result.NewTAG = newTAG
@@ -1049,6 +1051,20 @@ func applySectionGroupAtomic(results []SectionResult, indices []int, sections []
 	}
 	var validated []validatedSection
 	var allOps []Op
+
+	// 同文件多 section 且任一 SWAP 缺 %OLD → 拒绝(避免声明顺序偏移导致行号漂移损坏文件)
+	if len(indices) > 1 {
+		for _, idx := range indices {
+			for _, op := range sections[idx].Ops {
+				if op.Kind == OpSWAP && op.OldString == "" {
+					for _, si := range indices {
+						results[si] = SectionResult{Path: sections[si].Path, OldTAG: sections[si].TAG, Error: &EditError{Fatal: false, Kind: "invalid_args", Message: "same-file multi-section requires %OLD for every SWAP to prevent line-number drift — re-read each section separately"}}
+					}
+					return
+				}
+			}
+		}
+	}
 	for _, idx := range indices {
 		mappedOps, warning, err := validateTAGAndRecover(sections[idx], storePath, currentContent, store, originalSnapshots)
 		if err != nil {
@@ -1098,9 +1114,11 @@ func applySectionGroupAtomic(results []SectionResult, indices []int, sections []
 		}
 		return
 	}
-	newTAG := sections[indices[0]].TAG
+	newTAG := "0000"
 	if store != nil {
 		newTAG = store.Update(storePath, newContent)
+	} else {
+		newTAG = sections[indices[0]].TAG // store unavailable: reuse old TAG
 	}
 	totalDelta := countLines(newContent) - countLines(currentContent)
 	opOffset := 0
