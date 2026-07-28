@@ -357,8 +357,9 @@ type model struct {
 	cwd           string
 	loop          *agentloop.Loop
 	hookRunner    *hook.Runner // hooks 系统(RTK 等)
-	mcpManager *mcp.Manager // IDE MCP Server
-	lspManager *lsp.Manager // LSP diagnostics 上下文提供者
+	mcpManager  *mcp.Manager // IDE MCP Server
+	lspManager  *lsp.Manager // LSP diagnostics 上下文提供者
+	agentTool   *subagent.AgentTool // subagent 委派工具，provider 切换时同步更新 Client
 
 	// Todo 任务列表
 
@@ -4554,11 +4555,10 @@ func (m *model) reconfigureLLMClient(newModel string) {
 		return
 	}
 	m.llmClient = client
-
 	m.rebuildSlashRegistry()
-
-	m.rebuildSlashRegistry()
-
+	if m.agentTool != nil {
+		m.agentTool.SetClient(client)
+	}
 	if m.loop != nil {
 		m.wireLoop()
 	}
@@ -4611,7 +4611,9 @@ func (m *model) reconfigureLLMClientForProvider(newProvider string, settings *ll
 	}
 
 	m.rebuildSlashRegistry()
-
+	if m.agentTool != nil {
+		m.agentTool.SetClient(client)
+	}
 	if m.loop != nil {
 		m.wireLoop()
 	}
@@ -4890,6 +4892,7 @@ func runTUI(llmClient llm.Client, registry tool.Registry, guard permission.Guard
 	m := newTUIModel(llmClient, registry, guard, expander, modelName, theme, contextLimit, maxTurns, toolTimeout, toolTimeoutSource, loc, todoState, hookRunner)
 	m.mcpManager = mcpManager
 	m.lspManager = lspManager
+	m.agentTool = agentTool
 	m.sessionDir = sessionDir
 	m.agentsMdText = agentsMdText
 

@@ -1,11 +1,11 @@
 package subagent
-
 import (
 	"context"
 	"encoding/json"
 	"fmt"
 	"log/slog"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Menfre01/waveloom/pkg/agentloop"
@@ -50,6 +50,8 @@ type AgentTool struct {
 	DefaultSubModel string // explore 等轻量 agent 的默认模型
 	WorkspaceDir    string // 工作目录,用于分类器路径检查
 
+	mu sync.RWMutex // 保护 LLMClient 的并发读写(SetClient 与 executeFork/executeCold)
+
 	// subagent JSONL 持久化
 	sessionsDir string // session 目录路径
 	sessionID   string // 当前 session ID
@@ -61,6 +63,15 @@ func (a *AgentTool) SetSessionInfo(sessionsDir, sessionID, version string) {
 	a.sessionID = sessionID
 	a.buildVer = version
 
+}
+
+// SetClient 更新 LLM Client 引用,用于 provider 运行时切换后热替换。
+// 父 agent 的 TUI 层在 reconfigureLLMClient / reconfigureLLMClientForProvider 中调用。
+// 线程安全:内部持写锁,与 executeFork/executeCold 的读锁互斥。
+func (a *AgentTool) SetClient(client llm.Client) {
+	a.mu.Lock()
+	a.LLMClient = client
+	a.mu.Unlock()
 }
 
 // saveSubagentTranscript 将 subagent 事件持久化为 JSONL 文件和 metadata。
@@ -358,13 +369,16 @@ func (a *AgentTool) executeFork(ctx context.Context, p AgentParams) (*tool.ToolR
 	// 并注入占位 tool_result 以保证缓存友好的 fork 构造。
 	parentRaw := agentloop.ParentMessagesFromContext(ctx)
 	messages := buildForkMessages(parentRaw, p.Description, p.Prompt)
+	a.mu.RLock()
+	client := a.LLMClient
+	a.mu.RUnlock()
+
+	registry := a.buildForkRegistry()
 
 	subCtx, subCancel := context.WithCancel(ctx)
 	defer subCancel()
 
-	registry := a.buildForkRegistry()
-
-	subLoop := agentloop.New(a.LLMClient, registry, agentloop.Config{
+	subLoop := agentloop.New(client, registry, agentloop.Config{
 		MaxTurns:      forkMaxTurns,
 		SystemPrompt:  "", // messages already contain system prompt
 		Guard:         permission.NewGuard(permission.WithBypassMode(true)),
@@ -452,7 +466,10 @@ func (a *AgentTool) executeCold(ctx context.Context, p AgentParams) (*tool.ToolR
 	subCtx, subCancel := context.WithCancel(ctx)
 	defer subCancel()
 
-	subLoop := agentloop.New(a.LLMClient, subRegistry, agentloop.Config{
+	a.mu.RLock()
+	client := a.LLMClient
+	a.mu.RUnlock()
+	subLoop := agentloop.New(client, subRegistry, agentloop.Config{
 		MaxTurns:      maxTurns,
 		SystemPrompt:  sp,
 		Guard:         permission.NewGuard(permission.WithBypassMode(true)),
