@@ -1,0 +1,7 @@
+# 多文件 patch — 不同文件的 section 相互独立(非原子组),部分成功语义
+
+# M1: 两文件各自成功
+{"name": "multi-file-all-success", "files": {"a.go": "aaa\n", "b.go": "b1\nb2\n"}, "patch": "*** Begin Patch\n[a.go#TAG]\nSWAP 1.=1\n%OLD\naaa\n%NEW\nAAA\n[b.go#TAG]\nDEL 1\n*** End Patch", "expect_files": {"a.go": "AAA\n", "b.go": "b2\n"}}
+
+# M2: a.go 成功 + b.go %OLD 不匹配 → a.go 已修改,b.go 不变并报错(部分成功)
+{"name": "multi-file-partial-failure", "files": {"a.go": "aaa\n", "b.go": "bbb\n"}, "patch": "*** Begin Patch\n[a.go#TAG]\nSWAP 1.=1\n%OLD\naaa\n%NEW\nAAA\n[b.go#TAG]\nSWAP 1.=1\n%OLD\nnonexistent\n%NEW\nBBB\n*** End Patch", "expect_error_kind": "invalid_args", "expect_files": {"a.go": "AAA\n", "b.go": "bbb\n"}}

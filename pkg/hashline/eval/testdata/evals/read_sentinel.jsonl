@@ -1,0 +1,11 @@
+# 读前哨兵 — 固化自 test-newedit skill Part P
+# snapshot_files 控制 store 状态: 缺省 = 全部已 read; {} = 未 read; 显式内容 = read 后被外部修改
+
+# P1: 未 read(无快照)+ TAG=0000 → tag_mismatch "has not been read yet"(patcher.go 专用分支)
+{"name": "sentinel-unread", "files": {"test.go": "content\n"}, "snapshot_files": {}, "patch": "*** Begin Patch\n[test.go#0000]\nSWAP 1.=1\n%OLD\ncontent\n%NEW\nshould fail\n*** End Patch", "expect_error_kind": "tag_mismatch", "expect_files": {"test.go": "content\n"}}
+
+# P2: read 后(默认快照)→ edit 通过
+{"name": "sentinel-read-then-edit", "files": {"test.go": "content\n"}, "patch": "*** Begin Patch\n[test.go#TAG]\nSWAP 1.=1\n%OLD\ncontent\n%NEW\nupdated\n*** End Patch", "expect_files": {"test.go": "updated\n"}}
+
+# P3: read v1 后文件被外部改为 v2 → TAG 对应快照与当前内容不符 → recovery 失败 → tag_mismatch
+{"name": "sentinel-stale-snapshot", "files": {"test.go": "v2\n"}, "snapshot_files": {"test.go": "v1\n"}, "patch": "*** Begin Patch\n[test.go#TAG]\nSWAP 1.=1\n%OLD\nv1\n%NEW\nv3\n*** End Patch", "expect_error_kind": "tag_mismatch", "expect_files": {"test.go": "v2\n"}}

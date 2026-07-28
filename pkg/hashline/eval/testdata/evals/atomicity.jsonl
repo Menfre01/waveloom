@@ -1,0 +1,14 @@
+# 同文件多 section 原子写入 — applySectionGroupAtomic (patcher.go:1035)
+# 语义:同文件的多个 section 合并为原子组,任一失败 → 全部拒绝,文件完全不变
+
+# A1: 同文件 2 section 都成功 → 按声明顺序合并应用
+{"name": "atomic-same-file-two-sections", "files": {"test.go": "one\ntwo\nthree\n"}, "patch": "*** Begin Patch\n[test.go#TAG]\nSWAP 1.=1\n%OLD\none\n%NEW\n1\n[test.go#TAG]\nSWAP 3.=3\n%OLD\nthree\n%NEW\n3\n*** End Patch", "expect_files": {"test.go": "1\ntwo\n3\n"}}
+
+# A2: 同文件 2 section,第二个 %OLD 不匹配 → 全部拒绝,文件保持原样(原子回滚)
+{"name": "atomic-same-file-one-fails", "files": {"test.go": "one\ntwo\nthree\n"}, "patch": "*** Begin Patch\n[test.go#TAG]\nSWAP 1.=1\n%OLD\none\n%NEW\n1\n[test.go#TAG]\nSWAP 3.=3\n%OLD\nnonexistent\n%NEW\n3\n*** End Patch", "expect_error_kind": "invalid_args", "expect_files": {"test.go": "one\ntwo\nthree\n"}}
+
+# A3: 同文件 2 section 行号重叠 → detectOverlaps 拒绝,文件不变
+{"name": "atomic-overlap-sections", "files": {"test.go": "one\ntwo\nthree\n"}, "patch": "*** Begin Patch\n[test.go#TAG]\nSWAP 1.=2\n%OLD\none\ntwo\n%NEW\nX\n[test.go#TAG]\nSWAP 2.=3\n%OLD\ntwo\nthree\n%NEW\nY\n*** End Patch", "expect_error_kind": "invalid_args", "expect_files": {"test.go": "one\ntwo\nthree\n"}}
+
+# A4: 同文件 2 section 且任一 SWAP 缺 %OLD → 直接拒绝(防止行号漂移损坏文件)
+{"name": "atomic-missing-old-rejected", "files": {"test.go": "one\ntwo\nthree\n"}, "patch": "*** Begin Patch\n[test.go#TAG]\nSWAP 1.=1\n%OLD\none\n%NEW\n1\n[test.go#TAG]\nSWAP 3.=3\nb\n*** End Patch", "expect_error_kind": "invalid_args", "expect_files": {"test.go": "one\ntwo\nthree\n"}}

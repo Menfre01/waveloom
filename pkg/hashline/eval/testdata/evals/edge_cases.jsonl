@@ -1,0 +1,19 @@
+# 边界场景 — 位置操作、空文件、全量操作、负向范围
+
+# E1: INS.TAIL 追加到文件末尾
+{"name": "edge-ins-tail", "files": {"test.go": "one\ntwo\n"}, "patch": "*** Begin Patch\n[test.go#TAG]\nINS.TAIL:\nthree\n*** End Patch", "expect_files": {"test.go": "one\ntwo\nthree\n"}}
+
+# E2: DEL 整个文件全部行 → 空文件
+{"name": "edge-del-all-lines", "files": {"test.go": "a\nb\n"}, "patch": "*** Begin Patch\n[test.go#TAG]\nDEL 1.=2\n*** End Patch", "expect_files": {"test.go": ""}}
+
+# E3: SWAP ALL 全局替换重复文本
+{"name": "edge-swap-all", "files": {"test.go": "foo\nx\nfoo\n"}, "patch": "*** Begin Patch\n[test.go#TAG]\nSWAP ALL\n%OLD\nfoo\n%NEW\nbar\n*** End Patch", "expect_files": {"test.go": "bar\nx\nbar\n"}}
+
+# E4: 空文件 INS.HEAD 写入首行
+{"name": "edge-ins-head-empty-file", "files": {"test.go": ""}, "patch": "*** Begin Patch\n[test.go#TAG]\nINS.HEAD:\nfirst\n*** End Patch", "expect_files": {"test.go": "first\n"}}
+
+# E5: DEL 超出文件行数 → invalid_args,文件不变(负向)
+{"name": "edge-del-out-of-range", "files": {"test.go": "only\n"}, "patch": "*** Begin Patch\n[test.go#TAG]\nDEL 99\n*** End Patch", "expect_error_kind": "invalid_args", "expect_files": {"test.go": "only\n"}}
+
+# E6: SWAP 覆盖整个文件(1.=N)
+{"name": "edge-swap-entire-file", "files": {"test.go": "old1\nold2\nold3\n"}, "patch": "*** Begin Patch\n[test.go#TAG]\nSWAP 1.=3\n%OLD\nold1\nold2\nold3\n%NEW\nnew\n*** End Patch", "expect_files": {"test.go": "new\n"}}

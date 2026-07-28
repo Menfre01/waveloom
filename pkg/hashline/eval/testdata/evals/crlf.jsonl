@@ -1,0 +1,7 @@
+# CRLF 归一化 — 固化自 test-newedit skill Part O
+
+# O1: %OLD 使用 Windows CRLF 换行,文件为 Unix LF → 归一化后匹配成功
+{"name": "crlf-oldstring", "files": {"test.go": "line1\nline2\n"}, "patch": "*** Begin Patch\n[test.go#TAG]\nSWAP 1.=2\n%OLD\nline1\r\nline2\n%NEW\nreplaced1\nreplaced2\n*** End Patch", "expect_files": {"test.go": "replaced1\nreplaced2\n"}}
+
+# O2: %OLD 混合 CRLF/LF 换行 → 归一化后匹配成功
+{"name": "crlf-mixed", "files": {"test.go": "a\nb\nc\n"}, "patch": "*** Begin Patch\n[test.go#TAG]\nSWAP 1.=3\n%OLD\na\r\nb\nc\n%NEW\nX\nY\nZ\n*** End Patch", "expect_files": {"test.go": "X\nY\nZ\n"}}

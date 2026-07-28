@@ -1,0 +1,10 @@
+# body 行 + 前缀剥离与 \+ 转义 — 固化自 test-newedit skill Part Q
+
+# Q1: legacy 语法(SWAP N.=M:)body 行首 + 被自动剥离
+{"name": "body-plus-strip", "files": {"test.go": "package main\n\nfunc main() {\n}\n"}, "patch": "*** Begin Patch\n[test.go#TAG]\nSWAP 1.=1:\n+package test\n*** End Patch", "expect_files": {"test.go": "package test\n\nfunc main() {\n}\n"}}
+
+# Q2: \+ 行首转义 → 还原为字面 +(INS.HEAD 插入到文件头)
+{"name": "escape-plus-head", "files": {"test.go": "line1\nline2\n"}, "patch": "*** Begin Patch\n[test.go#TAG]\nINS.HEAD:\n\\+// + 开头的注释\n\\+\n\\+line\n*** End Patch", "expect_files": {"test.go": "+// + 开头的注释\n+\n+line\nline1\nline2\n"}}
+
+# Q3: \+ 不在行首时不被当转义,保留原样
+{"name": "escape-plus-mid", "files": {"test.go": "line1\n"}, "patch": "*** Begin Patch\n[test.go#TAG]\nINS.POST 1:\nsome \\+ text in middle\n*** End Patch", "expect_files": {"test.go": "line1\nsome \\+ text in middle\n"}}
