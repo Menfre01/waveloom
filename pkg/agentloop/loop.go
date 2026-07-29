@@ -195,11 +195,12 @@ type Loop struct {
 	// ── hashline 快照存储（会话级，跨 turn 持久化）──
 	//
 	// SPEC-DRIFT: 规范 §3.2 要求 per-turn 生命周期（turn 结束清空）。
-	// 但 read_file_hashline → edit_file_hashline 工作流必然跨 turn（先读后编），	// per-turn NewStore() 会导致下一 turn 编辑时 TAG 验证失败（"no snapshot for path"）。
+	// 但 read → edit 工作流必然跨 turn（先读后编），	// per-turn NewStore() 会导致下一 turn 编辑时 TAG 验证失败（"no snapshot for path"）。
 	// 因此改为会话级 Store：Loop 创建时初始化，跨 turn 复用，子代理通过 agentloop.New()
 	// 因此改为会话级 Store：Loop 创建时初始化，跨 turn 复用，子代理通过 agentloop.New()
 	// 获得独立 Store 实现隔离。
 	snapshotStore *hashline.SnapshotStore
+	readStateStore *tool.ReadStateStore
 
 	// hookRunner 执行 hooks。nil → 跳过 hooks。
 	// todoMultiInProgressMsg 由 executeTodoMutate 在检测到多个 in_progress 时设置，
@@ -218,6 +219,7 @@ func New(llmClient llm.Client, toolRegistry tool.Registry, config Config) *Loop 
 		toolRegistry: toolRegistry,
 		config:       config,
 		snapshotStore: hashline.NewStore(),
+		readStateStore: tool.NewReadStateStore(),
 	}
 }
 

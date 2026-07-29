@@ -547,9 +547,9 @@ func buildColdRegistry(extraDisallowed map[string]bool) tool.Registry {
 
 func allTools() []tool.Tool {
 	return []tool.Tool{
-		tool.Wrap(&tool.ReadFileHashline{}),
+		tool.Wrap(&tool.ReadFile{}),
+		tool.Wrap(&tool.EditFile{}),
 		tool.Wrap(&tool.WriteFile{}),
-		tool.Wrap(&tool.EditFileHashline{}),
 		tool.Wrap(&tool.WebFetch{}),
 		tool.Wrap(&tool.WebSearch{}),
 		tool.Wrap(&tool.Shell{AllowBg: false}), // bash_subagent

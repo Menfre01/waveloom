@@ -1,0 +1,12 @@
+{
+  "name": "handle-error",
+  "instruction": "readConfig 函数忽略了 os.ReadFile 的错误返回值。请修复它：如果读文件出错就返回空字符串。",
+  "type": "multi-line",
+  "files": {
+    "main.go": "package main\n\nimport \"os\"\n\nfunc readConfig() string {\n\tdata, _ := os.ReadFile(\"config.txt\")\n\treturn string(data)\n}\n"
+  },
+  "gold": {
+    "main.go": "package main\n\nimport \"os\"\n\nfunc readConfig() string {\n\tdata, err := os.ReadFile(\"config.txt\")\n\tif err != nil {\n\t\treturn \"\"\n\t}\n\treturn string(data)\n}\n"
+  },
+  "max_turns": 5
+}

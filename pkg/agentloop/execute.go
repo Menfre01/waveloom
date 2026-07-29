@@ -71,6 +71,7 @@ func (l *Loop) executeToolCalls(ctx context.Context, calls []llm.ToolCall, state
 	}
 
 	// Inject session-level SnapshotStore for hashline read/edit tools (跨 turn 持久化).
+ctx = tool.WithReadState(ctx, l.readStateStore)
 	ctx = hashline.WithStore(ctx, l.snapshotStore)
 	// Inject LSP Manager for tools that need symbol/document out-of-band access (e.g., read outline).
 	if l.config.LSPManager != nil {

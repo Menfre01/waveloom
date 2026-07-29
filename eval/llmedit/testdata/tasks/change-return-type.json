@@ -1,0 +1,12 @@
+{
+  "name": "change-return-type",
+  "instruction": "把 getScore 的返回值从 int 改为 string，并更新所有调用处让它能编译通过且输出 'Score: 100'。",
+  "type": "multi-line",
+  "files": {
+    "main.go": "package main\n\nimport \"fmt\"\n\nfunc getScore() int {\n\treturn 100\n}\n\nfunc main() {\n\ts := getScore()\n\tfmt.Printf(\"Score: %d\\n\", s)\n}\n"
+  },
+  "gold": {
+    "main.go": "package main\n\nimport \"fmt\"\n\nfunc getScore() string {\n\treturn \"100\"\n}\n\nfunc main() {\n\ts := getScore()\n\tfmt.Printf(\"Score: %s\\n\", s)\n}\n"
+  },
+  "max_turns": 5
+}

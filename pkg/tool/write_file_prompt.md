@@ -1,5 +1,14 @@
 ## Write File
 
-Use only for new files or complete overwrites; for partial edits use edit. file_path must be a file, not a directory — use ls to explore directories first.
+Use `write` to create new files or completely overwrite existing ones.
 
-After writing, a TAG is returned — use it for subsequent edits on the file without re-reading.
+### Parameters
+
+- `file_path` — required. Path to write.
+- `content` — required. Full file content.
+
+### Tips
+
+- Use for new files or when rewriting is simpler than multiple edits
+- Prefer `edit` with hunk format for targeted changes
+- File state is tracked internally for subsequent edits

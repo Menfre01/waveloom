@@ -3,9 +3,9 @@ package hashline
 import (
 	"fmt"
 	"math/rand"
+	"path/filepath"
 	"sync"
 	"time"
-
 	xxhash "github.com/cespare/xxhash/v2"
 )
 
@@ -36,6 +36,7 @@ func NewStore() *SnapshotStore {
 // 返回 4-hex TAG。若生成的 TAG 与已有快照碰撞（排除当前路径后），
 // 自动重新哈希（追加随机种子）直到唯一，最多重试 3 次；超过返回错误。
 func (s *SnapshotStore) Record(path string, content string) (string, error) {
+	path = cleanPath(path)
 	// 快速路径：内容未变 → 直接返回已有 TAG
 	s.mu.RLock()
 	existing, ok := s.data[path]
@@ -63,6 +64,7 @@ func (s *SnapshotStore) Record(path string, content string) (string, error) {
 // Verify 验证给定文件的当前内容是否与 TAG 对应快照匹配。
 // 匹配 → 返回快照内容；不匹配 → 返回错误。
 func (s *SnapshotStore) Verify(path string, tag string, currentContent string) (*Snapshot, error) {
+	path = cleanPath(path)
 	s.mu.RLock()
 	snap, ok := s.data[path]
 	s.mu.RUnlock()
@@ -81,6 +83,7 @@ func (s *SnapshotStore) Verify(path string, tag string, currentContent string) (
 
 // Update 编辑成功后更新快照（新内容 + 新 TAG）。
 func (s *SnapshotStore) Update(path string, content string) string {
+	path = cleanPath(path)
 	tag := computeTag(content)
 	// 确保 TAG 唯一性（简化版，不重试 — 调用方保证 Update 时内容不同）
 	s.mu.Lock()
@@ -99,6 +102,7 @@ func (s *SnapshotStore) Update(path string, content string) string {
 
 // Get 返回路径对应的快照（用于恢复模式）。
 func (s *SnapshotStore) Get(path string) (*Snapshot, bool) {
+	path = cleanPath(path)
 	s.mu.RLock()
 	snap, ok := s.data[path]
 	s.mu.RUnlock()
@@ -143,4 +147,19 @@ func computeTag(content string) string {
 	hash := h.Sum64()
 	low16 := uint16(hash & 0xFFFF)
 	return fmt.Sprintf("%04X", low16)
+}
+// cleanPath 归一化路径为规范形式,确保不同表示方式指向同一文件时 key 匹配。
+// 处理: Clean → Abs → EvalSymlinks(macOS /var→/private/var 等符号链接)。
+// EvalSymlinks 失败时(如文件尚不存在)回退到 Clean+Abs 的结果。
+func cleanPath(path string) string {
+	cleaned := filepath.Clean(path)
+	if !filepath.IsAbs(cleaned) {
+		if abs, err := filepath.Abs(cleaned); err == nil {
+			cleaned = abs
+		}
+	}
+	if resolved, err := filepath.EvalSymlinks(cleaned); err == nil {
+		return filepath.Clean(resolved)
+	}
+	return cleaned
 }

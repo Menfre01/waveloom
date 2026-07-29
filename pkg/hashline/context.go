@@ -10,7 +10,7 @@ func WithStore(ctx context.Context, store *SnapshotStore) context.Context {
 }
 
 // StoreFromContext extracts the SnapshotStore from ctx.
-// Returns nil if not found (edit_file_hashline will reject with an error)
+// Returns nil if not found (tools will reject with an error)
 // or if ctx is nil.
 func StoreFromContext(ctx context.Context) *SnapshotStore {
 	if ctx == nil {

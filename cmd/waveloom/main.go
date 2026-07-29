@@ -343,8 +343,8 @@ waitLoop:
 
 // registerBuiltinTools 注册内置工具。
  func registerBuiltinTools(r tool.Registry, skillLoader *skill.Loader, llmClient llm.Client, defaultModel, subModel string, cwd string, settings subagent.SettingsProvider) *subagent.AgentTool {
-	r.Register(tool.Wrap(&tool.ReadFileHashline{}))
-	r.Register(tool.Wrap(&tool.EditFileHashline{}))
+	r.Register(tool.Wrap(&tool.ReadFile{}))
+	r.Register(tool.Wrap(&tool.EditFile{}))
 	r.Register(tool.Wrap(&tool.WriteFile{}))
 	r.Register(tool.Wrap(&tool.Shell{AllowBg: true})) // "bash"
 	r.Register(tool.Wrap(&tool.WebFetch{}))

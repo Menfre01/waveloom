@@ -130,6 +130,10 @@ func (t *WriteFile) Execute(ctx context.Context, p WriteFileParams) (*ToolResult
 	if store := hashline.StoreFromContext(ctx); store != nil {
 		var tagErr error
 		tag, tagErr = store.Record(path, p.Content)
+	// Update readState after write
+	if rs := ReadStateFromContext(ctx); rs != nil {
+		rs.Update(path, p.Content)
+	}
 		if tagErr != nil {
 			tag = "" // TAG 生成失败不阻断写入
 		}

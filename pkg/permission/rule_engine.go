@@ -146,9 +146,9 @@ func (re *RuleEngine) checkRules(rules []RuleEntry, toolName string, input json.
 func compatToolNames(toolName string) []string {
 	switch toolName {
 	case "read":
-		return []string{toolName, "read_file_hashline"}
+		return []string{toolName, "read_file"}
 	case "edit":
-		return []string{toolName, "edit_file_hashline"}
+		return []string{toolName, "edit"}
 	case "write":
 		return []string{toolName, "write_file"}
 	default:
@@ -271,7 +271,7 @@ func matchContent(toolName, pattern string, input json.RawMessage) bool {
 			target = params.Path
 		}
 		if target == "" && params.Patch != "" {
-			// edit_file_hashline: 从 patch 中提取 [PATH#TAG] 的路径
+			// edit: hunk-based file editing
 			target = extractPathFromPatch(params.Patch)
 		}
 		if target == "" {

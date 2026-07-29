@@ -1,0 +1,12 @@
+{
+  "name": "early-return",
+  "instruction": "process 函数嵌套太深了。请用提前返回（early return）重构它，让空字符串的情况在函数开头就处理掉。",
+  "type": "multi-line",
+  "files": {
+    "main.go": "package main\n\nfunc process(name string) string {\n\tif name != \"\" {\n\t\treturn \"Hello, \" + name\n\t} else {\n\t\treturn \"Hello, World\"\n\t}\n}\n"
+  },
+  "gold": {
+    "main.go": "package main\n\nfunc process(name string) string {\n\tif name == \"\" {\n\t\treturn \"Hello, World\"\n\t}\n\treturn \"Hello, \" + name\n}\n"
+  },
+  "max_turns": 5
+}

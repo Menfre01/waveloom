@@ -1,0 +1,12 @@
+{
+  "name": "replace-deprecated",
+  "instruction": "这个文件用了已经废弃的 ioutil.ReadAll，请替换为 io.ReadAll，别忘了更新 import。",
+  "type": "multi-line",
+  "files": {
+    "main.go": "package main\n\nimport (\n\t\"fmt\"\n\t\"io/ioutil\"\n\t\"strings\"\n)\n\nfunc main() {\n\tr := strings.NewReader(\"hello\")\n\tdata, _ := ioutil.ReadAll(r)\n\tfmt.Println(string(data))\n}\n"
+  },
+  "gold": {
+    "main.go": "package main\n\nimport (\n\t\"fmt\"\n\t\"io\"\n\t\"strings\"\n)\n\nfunc main() {\n\tr := strings.NewReader(\"hello\")\n\tdata, _ := io.ReadAll(r)\n\tfmt.Println(string(data))\n}\n"
+  },
+  "max_turns": 5
+}

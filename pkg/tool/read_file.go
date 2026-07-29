@@ -15,15 +15,15 @@ import (
 	"github.com/Menfre01/waveloom/pkg/pathutil"
 )
 
-//go:embed read_hashline_prompt.md
+//go:embed read_file_prompt.md
 var readHashlinePrompt string
 
 // ---------------------------------------------------------------------------
-// ReadFileHashline — 读取文件内容，返回 hashline 格式（TAG + N:CONTENT）
+// ReadFile — 读取文件内容，返回 hashline 格式（TAG + N:CONTENT）
 // ---------------------------------------------------------------------------
 
 
-type ReadFileHashlineParams struct {
+type ReadFileParams struct {
 	FilePath     string `json:"file_path"`     // 与 read_file 一致
 	Offset       int    `json:"offset"`        // 0-based: 0 = 文件第一行
 	Limit        int    `json:"limit"`         // 读取行数(0 = 不限)
@@ -33,16 +33,16 @@ type ReadFileHashlineParams struct {
 	Outline      bool   `json:"outline"`       // 返回符号大纲而非文件内容
 }
 
-type ReadFileHashline struct{}
+type ReadFile struct{}
 
-func (t *ReadFileHashline) Name() string { return "read" }
+func (t *ReadFile) Name() string { return "read" }
 
-func (t *ReadFileHashline) Description() string {
+func (t *ReadFile) Description() string {
 	return "Read a file with TAG and line numbers for hash-anchored editing. Rules: see system prompt ## File Operations."
 }
 
 // Prompt 返回 read 工具使用指南，由 Registry.FormatToolPrompts() 注入 system prompt。
-func (t *ReadFileHashline) Prompt() string { return readHashlinePrompt }
+func (t *ReadFile) Prompt() string { return readHashlinePrompt }
 
 var readFileHashlineSchema = json.RawMessage(`{
   "type": "object",
@@ -79,11 +79,11 @@ var readFileHashlineSchema = json.RawMessage(`{
   "required": ["file_path"]
 }`)
 
-func (t *ReadFileHashline) Schema() json.RawMessage { return readFileHashlineSchema }
+func (t *ReadFile) Schema() json.RawMessage { return readFileHashlineSchema }
 
-func (t *ReadFileHashline) ConcurrentSafe() bool { return true }
+func (t *ReadFile) ConcurrentSafe() bool { return true }
 
-func (t *ReadFileHashline) Execute(ctx context.Context, p ReadFileHashlineParams) (*ToolResult, error) {
+func (t *ReadFile) Execute(ctx context.Context, p ReadFileParams) (*ToolResult, error) {
 	// ── Step 1: 路径解析 ──
 	path, err := pathutil.ResolvePathWithDir(p.FilePath, p.WorkingDir)
 	if err != nil {
@@ -188,6 +188,10 @@ func (t *ReadFileHashline) Execute(ctx context.Context, p ReadFileHashlineParams
 	var tag string
 	if store := hashline.StoreFromContext(ctx); store != nil {
 		tag, err = store.Record(path, fullContent)
+	// Record readState for edit conflict detection
+	if rs := ReadStateFromContext(ctx); rs != nil {
+		rs.Record(path, fullContent)
+	}
 		if err != nil {
 			return toolError(ErrorClassRecoverable, ErrKindCommandFailed,
 				fmt.Sprintf("failed to generate TAG: %v", err), err), nil
@@ -387,7 +391,7 @@ type outlineSymbol struct {
 // executeOutline returns a symbol outline for the given file path.
 // Uses LSP textDocument/documentSymbol when a language server is available,
 // falls back to regex-based symbol extraction.
-func (t *ReadFileHashline) executeOutline(ctx context.Context, path string) (*ToolResult, error) {
+func (t *ReadFile) executeOutline(ctx context.Context, path string) (*ToolResult, error) {
 	// Try LSP first
 	if symbols := lspOutline(ctx, path); len(symbols) > 0 {
 		return &ToolResult{

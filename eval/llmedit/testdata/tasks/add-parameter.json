@@ -1,0 +1,12 @@
+{
+  "name": "add-parameter",
+  "instruction": "给 greet 函数添加 name string 参数,在返回值中使用该参数(拼接问候语),并更新调用处传入 \"world\"",
+  "type": "multi-line",
+  "files": {
+    "main.go": "package main\n\nfunc greet() string {\n\treturn \"hello\"\n}\n\nfunc main() {\n\tmsg := greet()\n\tprintln(msg)\n}\n"
+  },
+  "gold": {
+    "main.go": "package main\n\nfunc greet(name string) string {\n\treturn \"hello, \" + name\n}\n\nfunc main() {\n\tmsg := greet(\"world\")\n\tprintln(msg)\n}\n"
+  },
+  "max_turns": 5
+}

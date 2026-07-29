@@ -14,10 +14,10 @@ import (
 
 
 // ---------------------------------------------------------------------------
-// ReadFileHashline — 正常路径
+// ReadFile — 正常路径
 // ---------------------------------------------------------------------------
 
-func TestReadFileHashline_Success(t *testing.T) {
+func TestReadFile_Success(t *testing.T) {
 	dir := t.TempDir()
 	filePath := filepath.Join(dir, "main.go")
 	content := "package main\n\nimport \"fmt\"\n\nfunc main() {\n\tfmt.Println(\"hello\")\n}\n"
@@ -28,8 +28,8 @@ func TestReadFileHashline_Success(t *testing.T) {
 	store := hashline.NewStore()
 	ctx := hashline.WithStore(context.Background(), store)
 
-	tool := &ReadFileHashline{}
-	result, err := tool.Execute(ctx, ReadFileHashlineParams{FilePath: filePath})
+	tool := &ReadFile{}
+	result, err := tool.Execute(ctx, ReadFileParams{FilePath: filePath})
 	if err != nil {
 		t.Fatalf("Execute() error = %v", err)
 	}
@@ -46,10 +46,10 @@ func TestReadFileHashline_Success(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// ReadFileHashline — offset / limit
+// ReadFile — offset / limit
 // ---------------------------------------------------------------------------
 
-func TestReadFileHashline_OffsetAndLimit(t *testing.T) {
+func TestReadFile_OffsetAndLimit(t *testing.T) {
 	dir := t.TempDir()
 	filePath := filepath.Join(dir, "data.txt")
 	content := ""
@@ -75,8 +75,8 @@ func TestReadFileHashline_OffsetAndLimit(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			tool := &ReadFileHashline{}
-			result, err := tool.Execute(ctx, ReadFileHashlineParams{
+			tool := &ReadFile{}
+			result, err := tool.Execute(ctx, ReadFileParams{
 				FilePath: filePath,
 				Offset:   tt.offset,
 				Limit:    tt.limit,
@@ -95,18 +95,18 @@ func TestReadFileHashline_OffsetAndLimit(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// ReadFileHashline — 文件不存在
+// ReadFile — 文件不存在
 // ---------------------------------------------------------------------------
 
-func TestReadFileHashline_FileNotFound(t *testing.T) {
+func TestReadFile_FileNotFound(t *testing.T) {
 	dir := t.TempDir()
 	missingPath := filepath.Join(dir, "nonexistent.go")
 
 	store := hashline.NewStore()
 	ctx := hashline.WithStore(context.Background(), store)
 
-	tool := &ReadFileHashline{}
-	result, err := tool.Execute(ctx, ReadFileHashlineParams{FilePath: missingPath})
+	tool := &ReadFile{}
+	result, err := tool.Execute(ctx, ReadFileParams{FilePath: missingPath})
 	if err != nil {
 		t.Fatalf("Execute() error = %v", err)
 	}
@@ -119,10 +119,10 @@ func TestReadFileHashline_FileNotFound(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// ReadFileHashline — 父目录存在，文件不存在，相似文件提示
+// ReadFile — 父目录存在，文件不存在，相似文件提示
 // ---------------------------------------------------------------------------
 
-func TestReadFileHashline_FileNotFound_ParentExists(t *testing.T) {
+func TestReadFile_FileNotFound_ParentExists(t *testing.T) {
 	dir := t.TempDir()
 	// 在目录下创建一个类似文件
 	_ = os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main"), 0o644)
@@ -132,8 +132,8 @@ func TestReadFileHashline_FileNotFound_ParentExists(t *testing.T) {
 	store := hashline.NewStore()
 	ctx := hashline.WithStore(context.Background(), store)
 
-	tool := &ReadFileHashline{}
-	result, err := tool.Execute(ctx, ReadFileHashlineParams{FilePath: missingPath})
+	tool := &ReadFile{}
+	result, err := tool.Execute(ctx, ReadFileParams{FilePath: missingPath})
 	if err != nil {
 		t.Fatalf("Execute() error = %v", err)
 	}
@@ -146,17 +146,17 @@ func TestReadFileHashline_FileNotFound_ParentExists(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// ReadFileHashline — 路径是目录
+// ReadFile — 路径是目录
 // ---------------------------------------------------------------------------
 
-func TestReadFileHashline_IsDirectory(t *testing.T) {
+func TestReadFile_IsDirectory(t *testing.T) {
 	dir := t.TempDir()
 
 	store := hashline.NewStore()
 	ctx := hashline.WithStore(context.Background(), store)
 
-	tool := &ReadFileHashline{}
-	result, err := tool.Execute(ctx, ReadFileHashlineParams{FilePath: dir})
+	tool := &ReadFile{}
+	result, err := tool.Execute(ctx, ReadFileParams{FilePath: dir})
 	if err != nil {
 		t.Fatalf("Execute() error = %v", err)
 	}
@@ -169,10 +169,10 @@ func TestReadFileHashline_IsDirectory(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// ReadFileHashline — 目录中有同名文件提示
+// ReadFile — 目录中有同名文件提示
 // ---------------------------------------------------------------------------
 
-func TestReadFileHashline_IsDirectory_SuggestsMatchingFile(t *testing.T) {
+func TestReadFile_IsDirectory_SuggestsMatchingFile(t *testing.T) {
 	dir := t.TempDir()
 	pkgDir := filepath.Join(dir, "skill")
 	if err := os.MkdirAll(pkgDir, 0o755); err != nil {
@@ -184,8 +184,8 @@ func TestReadFileHashline_IsDirectory_SuggestsMatchingFile(t *testing.T) {
 	store := hashline.NewStore()
 	ctx := hashline.WithStore(context.Background(), store)
 
-	tool := &ReadFileHashline{}
-	result, err := tool.Execute(ctx, ReadFileHashlineParams{FilePath: pkgDir})
+	tool := &ReadFile{}
+	result, err := tool.Execute(ctx, ReadFileParams{FilePath: pkgDir})
 	if err != nil {
 		t.Fatalf("Execute() error = %v", err)
 	}
@@ -202,10 +202,10 @@ func TestReadFileHashline_IsDirectory_SuggestsMatchingFile(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// ReadFileHashline — 二进制文件（按扩展名）
+// ReadFile — 二进制文件（按扩展名）
 // ---------------------------------------------------------------------------
 
-func TestReadFileHashline_BinaryByExtension(t *testing.T) {
+func TestReadFile_BinaryByExtension(t *testing.T) {
 	dir := t.TempDir()
 	filePath := filepath.Join(dir, "image.png")
 	// 写入非文本内容
@@ -216,8 +216,8 @@ func TestReadFileHashline_BinaryByExtension(t *testing.T) {
 	store := hashline.NewStore()
 	ctx := hashline.WithStore(context.Background(), store)
 
-	tool := &ReadFileHashline{}
-	result, err := tool.Execute(ctx, ReadFileHashlineParams{FilePath: filePath})
+	tool := &ReadFile{}
+	result, err := tool.Execute(ctx, ReadFileParams{FilePath: filePath})
 	if err != nil {
 		t.Fatalf("Execute() error = %v", err)
 	}
@@ -230,10 +230,10 @@ func TestReadFileHashline_BinaryByExtension(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// ReadFileHashline — 空文件
+// ReadFile — 空文件
 // ---------------------------------------------------------------------------
 
-func TestReadFileHashline_EmptyFile(t *testing.T) {
+func TestReadFile_EmptyFile(t *testing.T) {
 	dir := t.TempDir()
 	filePath := filepath.Join(dir, "empty.txt")
 	if err := os.WriteFile(filePath, []byte{}, 0o644); err != nil {
@@ -243,8 +243,8 @@ func TestReadFileHashline_EmptyFile(t *testing.T) {
 	store := hashline.NewStore()
 	ctx := hashline.WithStore(context.Background(), store)
 
-	tool := &ReadFileHashline{}
-	result, err := tool.Execute(ctx, ReadFileHashlineParams{FilePath: filePath})
+	tool := &ReadFile{}
+	result, err := tool.Execute(ctx, ReadFileParams{FilePath: filePath})
 	if err != nil {
 		t.Fatalf("Execute() error = %v", err)
 	}
@@ -257,10 +257,10 @@ func TestReadFileHashline_EmptyFile(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// ReadFileHashline — 设备文件拦截
+// ReadFile — 设备文件拦截
 // ---------------------------------------------------------------------------
 
-func TestReadFileHashline_DeviceBlocked(t *testing.T) {
+func TestReadFile_DeviceBlocked(t *testing.T) {
 	devicePath := "/dev/zero"
 	if runtime.GOOS == "windows" {
 		devicePath = "NUL"
@@ -269,8 +269,8 @@ func TestReadFileHashline_DeviceBlocked(t *testing.T) {
 	store := hashline.NewStore()
 	ctx := hashline.WithStore(context.Background(), store)
 
-	tool := &ReadFileHashline{}
-	result, err := tool.Execute(ctx, ReadFileHashlineParams{FilePath: devicePath})
+	tool := &ReadFile{}
+	result, err := tool.Execute(ctx, ReadFileParams{FilePath: devicePath})
 	if err != nil {
 		t.Fatalf("Execute() error = %v", err)
 	}
@@ -283,10 +283,10 @@ func TestReadFileHashline_DeviceBlocked(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// ReadFileHashline — 无 Store（fallback TAG）
+// ReadFile — 无 Store（fallback TAG）
 // ---------------------------------------------------------------------------
 
-func TestReadFileHashline_NoStore_StillWorks(t *testing.T) {
+func TestReadFile_NoStore_StillWorks(t *testing.T) {
 	dir := t.TempDir()
 	filePath := filepath.Join(dir, "main.go")
 	content := "package main\n"
@@ -297,8 +297,8 @@ func TestReadFileHashline_NoStore_StillWorks(t *testing.T) {
 	// 不注入 Store
 	ctx := context.Background()
 
-	tool := &ReadFileHashline{}
-	result, err := tool.Execute(ctx, ReadFileHashlineParams{FilePath: filePath})
+	tool := &ReadFile{}
+	result, err := tool.Execute(ctx, ReadFileParams{FilePath: filePath})
 	if err != nil {
 		t.Fatalf("Execute() error = %v", err)
 	}
@@ -311,10 +311,10 @@ func TestReadFileHashline_NoStore_StillWorks(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// ReadFileHashline — WorkingDir 解析
+// ReadFile — WorkingDir 解析
 // ---------------------------------------------------------------------------
 
-func TestReadFileHashline_WorkingDirResolution(t *testing.T) {
+func TestReadFile_WorkingDirResolution(t *testing.T) {
 	dir := t.TempDir()
 	subDir := filepath.Join(dir, "sub")
 	if err := os.MkdirAll(subDir, 0o755); err != nil {
@@ -329,8 +329,8 @@ func TestReadFileHashline_WorkingDirResolution(t *testing.T) {
 	store := hashline.NewStore()
 	ctx := hashline.WithStore(context.Background(), store)
 
-	tool := &ReadFileHashline{}
-	result, err := tool.Execute(ctx, ReadFileHashlineParams{
+	tool := &ReadFile{}
+	result, err := tool.Execute(ctx, ReadFileParams{
 		FilePath:   "file.txt",
 		WorkingDir: subDir,
 	})
@@ -346,10 +346,10 @@ func TestReadFileHashline_WorkingDirResolution(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// ReadFileHashline — context 已取消
+// ReadFile — context 已取消
 // ---------------------------------------------------------------------------
 
-func TestReadFileHashline_ContextAlreadyCancelled(t *testing.T) {
+func TestReadFile_ContextAlreadyCancelled(t *testing.T) {
 	dir := t.TempDir()
 	filePath := filepath.Join(dir, "main.go")
 	content := "package main\n"
@@ -361,23 +361,23 @@ func TestReadFileHashline_ContextAlreadyCancelled(t *testing.T) {
 	ctx, cancel := context.WithCancel(hashline.WithStore(context.Background(), store))
 	cancel()
 
-	tool := &ReadFileHashline{}
-	_, err := tool.Execute(ctx, ReadFileHashlineParams{FilePath: filePath})
+	tool := &ReadFile{}
+	_, err := tool.Execute(ctx, ReadFileParams{FilePath: filePath})
 	if err == nil {
 		t.Fatal("expected context cancellation error")
 	}
 }
 
 // ---------------------------------------------------------------------------
-// ReadFileHashline — invalid path
+// ReadFile — invalid path
 // ---------------------------------------------------------------------------
 
-func TestReadFileHashline_InvalidPath(t *testing.T) {
+func TestReadFile_InvalidPath(t *testing.T) {
 	store := hashline.NewStore()
 	ctx := hashline.WithStore(context.Background(), store)
 
-	tool := &ReadFileHashline{}
-	result, err := tool.Execute(ctx, ReadFileHashlineParams{FilePath: "\x00invalid"})
+	tool := &ReadFile{}
+	result, err := tool.Execute(ctx, ReadFileParams{FilePath: "\x00invalid"})
 	if err != nil {
 		t.Fatalf("Execute() error = %v", err)
 	}
@@ -389,10 +389,10 @@ func TestReadFileHashline_InvalidPath(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// ReadFileHashline — binary detected by content (not extension)
+// ReadFile — binary detected by content (not extension)
 // ---------------------------------------------------------------------------
 
-func TestReadFileHashline_BinaryByContent(t *testing.T) {
+func TestReadFile_BinaryByContent(t *testing.T) {
 	dir := t.TempDir()
 	filePath := filepath.Join(dir, "data.bin")
 	// 写入 null 字节，但扩展名不是已知二进制扩展名
@@ -411,8 +411,8 @@ func TestReadFileHashline_BinaryByContent(t *testing.T) {
 	store := hashline.NewStore()
 	ctx := hashline.WithStore(context.Background(), store)
 
-	tool := &ReadFileHashline{}
-	result, err := tool.Execute(ctx, ReadFileHashlineParams{FilePath: filePath})
+	tool := &ReadFile{}
+	result, err := tool.Execute(ctx, ReadFileParams{FilePath: filePath})
 	if err != nil {
 		t.Fatalf("Execute() error = %v", err)
 	}
@@ -426,10 +426,10 @@ func TestReadFileHashline_BinaryByContent(t *testing.T) {
 
 
 // ---------------------------------------------------------------------------
-// ReadFileHashline — 超大文件拒绝（>10MB）
+// ReadFile — 超大文件拒绝（>10MB）
 // ---------------------------------------------------------------------------
 
-func TestReadFileHashline_LargeFileRejected(t *testing.T) {
+func TestReadFile_LargeFileRejected(t *testing.T) {
 	dir := t.TempDir()
 	filePath := filepath.Join(dir, "large.log")
 	// 创建 11MB 稀疏文件，Size()=11MB 但不占磁盘空间
@@ -443,8 +443,8 @@ func TestReadFileHashline_LargeFileRejected(t *testing.T) {
 	store := hashline.NewStore()
 	ctx := hashline.WithStore(context.Background(), store)
 
-	tool := &ReadFileHashline{}
-	result, err := tool.Execute(ctx, ReadFileHashlineParams{FilePath: filePath})
+	tool := &ReadFile{}
+	result, err := tool.Execute(ctx, ReadFileParams{FilePath: filePath})
 	if err != nil {
 		t.Fatalf("Execute() error = %v", err)
 	}
@@ -457,10 +457,10 @@ func TestReadFileHashline_LargeFileRejected(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// ReadFileHashline — pattern 匹配
+// ReadFile — pattern 匹配
 // ---------------------------------------------------------------------------
 
-func TestReadFileHashline_Pattern_SingleMatch(t *testing.T) {
+func TestReadFile_Pattern_SingleMatch(t *testing.T) {
 	dir := t.TempDir()
 	filePath := filepath.Join(dir, "main.go")
 	content := "package main\n\nimport \"fmt\"\n\n// HandleRequest processes incoming requests\nfunc HandleRequest() {\n\tfmt.Println(\"handling\")\n}\n\nfunc main() {\n\tHandleRequest()\n}\n"
@@ -471,8 +471,8 @@ func TestReadFileHashline_Pattern_SingleMatch(t *testing.T) {
 	store := hashline.NewStore()
 	ctx := hashline.WithStore(context.Background(), store)
 
-	tool := &ReadFileHashline{}
-	result, err := tool.Execute(ctx, ReadFileHashlineParams{FilePath: filePath, Pattern: "HandleRequest"})
+	tool := &ReadFile{}
+	result, err := tool.Execute(ctx, ReadFileParams{FilePath: filePath, Pattern: "HandleRequest"})
 	if err != nil {
 		t.Fatalf("Execute() error = %v", err)
 	}
@@ -489,7 +489,7 @@ func TestReadFileHashline_Pattern_SingleMatch(t *testing.T) {
 	}
 }
 
-func TestReadFileHashline_Pattern_MultipleMatches(t *testing.T) {
+func TestReadFile_Pattern_MultipleMatches(t *testing.T) {
 	dir := t.TempDir()
 	filePath := filepath.Join(dir, "main.go")
 	content := ""
@@ -507,9 +507,9 @@ func TestReadFileHashline_Pattern_MultipleMatches(t *testing.T) {
 	store := hashline.NewStore()
 	ctx := hashline.WithStore(context.Background(), store)
 
-	tool := &ReadFileHashline{}
+	tool := &ReadFile{}
 	// 第一个匹配 (matchIdx=0)
-	result, err := tool.Execute(ctx, ReadFileHashlineParams{FilePath: filePath, Pattern: "TODO"})
+	result, err := tool.Execute(ctx, ReadFileParams{FilePath: filePath, Pattern: "TODO"})
 	if err != nil {
 		t.Fatalf("Execute() error = %v", err)
 	}
@@ -521,7 +521,7 @@ func TestReadFileHashline_Pattern_MultipleMatches(t *testing.T) {
 	}
 
 	// 第三个匹配 (matchIdx=2)
-	result2, err := tool.Execute(ctx, ReadFileHashlineParams{FilePath: filePath, Pattern: "TODO", Offset: 2})
+	result2, err := tool.Execute(ctx, ReadFileParams{FilePath: filePath, Pattern: "TODO", Offset: 2})
 	if err != nil {
 		t.Fatalf("Execute() offset=2 error = %v", err)
 	}
@@ -533,7 +533,7 @@ func TestReadFileHashline_Pattern_MultipleMatches(t *testing.T) {
 	}
 }
 
-func TestReadFileHashline_Pattern_NoMatch(t *testing.T) {
+func TestReadFile_Pattern_NoMatch(t *testing.T) {
 	dir := t.TempDir()
 	filePath := filepath.Join(dir, "main.go")
 	content := "package main\n\nfunc main() {\n\tfmt.Println(\"hello\")\n}\n"
@@ -544,8 +544,8 @@ func TestReadFileHashline_Pattern_NoMatch(t *testing.T) {
 	store := hashline.NewStore()
 	ctx := hashline.WithStore(context.Background(), store)
 
-	tool := &ReadFileHashline{}
-	result, err := tool.Execute(ctx, ReadFileHashlineParams{FilePath: filePath, Pattern: "NotFound"})
+	tool := &ReadFile{}
+	result, err := tool.Execute(ctx, ReadFileParams{FilePath: filePath, Pattern: "NotFound"})
 	if err != nil {
 		t.Fatalf("Execute() error = %v", err)
 	}
@@ -561,7 +561,7 @@ func TestReadFileHashline_Pattern_NoMatch(t *testing.T) {
 	}
 }
 
-func TestReadFileHashline_Pattern_EmptyPattern(t *testing.T) {
+func TestReadFile_Pattern_EmptyPattern(t *testing.T) {
 	dir := t.TempDir()
 	filePath := filepath.Join(dir, "main.go")
 	content := "package main\n\nfunc main() {\n\tfmt.Println(\"hello\")\n}\n"
@@ -572,9 +572,9 @@ func TestReadFileHashline_Pattern_EmptyPattern(t *testing.T) {
 	store := hashline.NewStore()
 	ctx := hashline.WithStore(context.Background(), store)
 
-	tool := &ReadFileHashline{}
+	tool := &ReadFile{}
 	// 空 pattern 等同于不传 pattern — 显示全文件,无 match footer
-	result, err := tool.Execute(ctx, ReadFileHashlineParams{FilePath: filePath, Pattern: ""})
+	result, err := tool.Execute(ctx, ReadFileParams{FilePath: filePath, Pattern: ""})
 	if err != nil {
 		t.Fatalf("Execute() error = %v", err)
 	}
@@ -586,7 +586,7 @@ func TestReadFileHashline_Pattern_EmptyPattern(t *testing.T) {
 	}
 }
 
-func TestReadFileHashline_Pattern_ContextLines(t *testing.T) {
+func TestReadFile_Pattern_ContextLines(t *testing.T) {
 	dir := t.TempDir()
 	filePath := filepath.Join(dir, "main.go")
 	content := ""
@@ -600,9 +600,9 @@ func TestReadFileHashline_Pattern_ContextLines(t *testing.T) {
 	store := hashline.NewStore()
 	ctx := hashline.WithStore(context.Background(), store)
 
-	tool := &ReadFileHashline{}
+	tool := &ReadFile{}
 	// context_lines=2 → 匹配行 ±2 行
-	result, err := tool.Execute(ctx, ReadFileHashlineParams{
+	result, err := tool.Execute(ctx, ReadFileParams{
 		FilePath:     filePath,
 		Pattern:      "line 15",
 		ContextLines: 2,
@@ -627,7 +627,7 @@ func TestReadFileHashline_Pattern_ContextLines(t *testing.T) {
 	}
 }
 
-func TestReadFileHashline_Pattern_WithLimit(t *testing.T) {
+func TestReadFile_Pattern_WithLimit(t *testing.T) {
 	dir := t.TempDir()
 	filePath := filepath.Join(dir, "main.go")
 	content := ""
@@ -641,9 +641,9 @@ func TestReadFileHashline_Pattern_WithLimit(t *testing.T) {
 	store := hashline.NewStore()
 	ctx := hashline.WithStore(context.Background(), store)
 
-	tool := &ReadFileHashline{}
+	tool := &ReadFile{}
 	// limit=3 → 只显示 3 行,即使 context 更大
-	result, err := tool.Execute(ctx, ReadFileHashlineParams{
+	result, err := tool.Execute(ctx, ReadFileParams{
 		FilePath:     filePath,
 		Pattern:      "line 15",
 		ContextLines: 10,
@@ -660,7 +660,7 @@ func TestReadFileHashline_Pattern_WithLimit(t *testing.T) {
 	}
 }
 
-func TestReadFileHashline_Pattern_OffsetOutOfRange(t *testing.T) {
+func TestReadFile_Pattern_OffsetOutOfRange(t *testing.T) {
 	dir := t.TempDir()
 	filePath := filepath.Join(dir, "main.go")
 	content := "package main\n\nfunc main() {\n\tfmt.Println(\"hello\")\n}\n"
@@ -671,9 +671,9 @@ func TestReadFileHashline_Pattern_OffsetOutOfRange(t *testing.T) {
 	store := hashline.NewStore()
 	ctx := hashline.WithStore(context.Background(), store)
 
-	tool := &ReadFileHashline{}
+	tool := &ReadFile{}
 	// offset=99 超出匹配数 → 回退到最后一个匹配
-	result, err := tool.Execute(ctx, ReadFileHashlineParams{FilePath: filePath, Pattern: "main", Offset: 99})
+	result, err := tool.Execute(ctx, ReadFileParams{FilePath: filePath, Pattern: "main", Offset: 99})
 	if err != nil {
 		t.Fatalf("Execute() error = %v", err)
 	}
@@ -686,7 +686,7 @@ func TestReadFileHashline_Pattern_OffsetOutOfRange(t *testing.T) {
 	}
 }
 
-func TestReadFileHashline_Pattern_OffsetAndLimit(t *testing.T) {
+func TestReadFile_Pattern_OffsetAndLimit(t *testing.T) {
 	dir := t.TempDir()
 	filePath := filepath.Join(dir, "main.go")
 	content := ""
@@ -704,9 +704,9 @@ func TestReadFileHashline_Pattern_OffsetAndLimit(t *testing.T) {
 	store := hashline.NewStore()
 	ctx := hashline.WithStore(context.Background(), store)
 
-	tool := &ReadFileHashline{}
+	tool := &ReadFile{}
 	// offset=2(第三个匹配) + limit=3 → 应显示第三个 MARKER ±5 行中的前 3 行
-	result, err := tool.Execute(ctx, ReadFileHashlineParams{
+	result, err := tool.Execute(ctx, ReadFileParams{
 		FilePath:     filePath,
 		Pattern:      "MARKER",
 		Offset:       2,
@@ -729,7 +729,7 @@ func TestReadFileHashline_Pattern_OffsetAndLimit(t *testing.T) {
 
 // ── Outline mode ──
 
-func TestReadFileHashline_Outline_RegexFallback(t *testing.T) {
+func TestReadFile_Outline_RegexFallback(t *testing.T) {
 	dir := t.TempDir()
 	filePath := filepath.Join(dir, "main.go")
 	content := "package main\n\nimport \"fmt\"\n\nfunc main() {\n\tfmt.Println(\"hello\")\n}\n\ntype MyStruct struct {\n\tName string\n}\n"
@@ -737,9 +737,9 @@ func TestReadFileHashline_Outline_RegexFallback(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	tool := &ReadFileHashline{}
+	tool := &ReadFile{}
 	// No LSP manager in context → should fall back to regex
-	result, err := tool.Execute(context.Background(), ReadFileHashlineParams{
+	result, err := tool.Execute(context.Background(), ReadFileParams{
 		FilePath: filePath,
 		Outline:  true,
 	})
@@ -763,7 +763,7 @@ func TestReadFileHashline_Outline_RegexFallback(t *testing.T) {
 	}
 }
 
-func TestReadFileHashline_Outline_UnknownExtension(t *testing.T) {
+func TestReadFile_Outline_UnknownExtension(t *testing.T) {
 	dir := t.TempDir()
 	filePath := filepath.Join(dir, "README.txt")
 	content := "This is a plain text file.\n"
@@ -771,8 +771,8 @@ func TestReadFileHashline_Outline_UnknownExtension(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	tool := &ReadFileHashline{}
-	result, err := tool.Execute(context.Background(), ReadFileHashlineParams{
+	tool := &ReadFile{}
+	result, err := tool.Execute(context.Background(), ReadFileParams{
 		FilePath: filePath,
 		Outline:  true,
 	})
@@ -788,7 +788,7 @@ func TestReadFileHashline_Outline_UnknownExtension(t *testing.T) {
 	}
 }
 
-func TestReadFileHashline_Outline_PythonFallback(t *testing.T) {
+func TestReadFile_Outline_PythonFallback(t *testing.T) {
 	dir := t.TempDir()
 	filePath := filepath.Join(dir, "main.py")
 	content := "def hello():\n    pass\n\nclass Greeter:\n    def greet(self):\n        pass\n"
@@ -796,8 +796,8 @@ func TestReadFileHashline_Outline_PythonFallback(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	tool := &ReadFileHashline{}
-	result, err := tool.Execute(context.Background(), ReadFileHashlineParams{
+	tool := &ReadFile{}
+	result, err := tool.Execute(context.Background(), ReadFileParams{
 		FilePath: filePath,
 		Outline:  true,
 	})
@@ -815,15 +815,15 @@ func TestReadFileHashline_Outline_PythonFallback(t *testing.T) {
 	}
 }
 
-func TestReadFileHashline_Outline_EmptyFile(t *testing.T) {
+func TestReadFile_Outline_EmptyFile(t *testing.T) {
 	dir := t.TempDir()
 	filePath := filepath.Join(dir, "empty.go")
 	if err := os.WriteFile(filePath, []byte(""), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
-	tool := &ReadFileHashline{}
-	result, err := tool.Execute(context.Background(), ReadFileHashlineParams{
+	tool := &ReadFile{}
+	result, err := tool.Execute(context.Background(), ReadFileParams{
 		FilePath: filePath,
 		Outline:  true,
 	})
@@ -838,7 +838,7 @@ func TestReadFileHashline_Outline_EmptyFile(t *testing.T) {
 	}
 }
 
-func TestReadFileHashline_Outline_DefaultFalse(t *testing.T) {
+func TestReadFile_Outline_DefaultFalse(t *testing.T) {
 	dir := t.TempDir()
 	filePath := filepath.Join(dir, "main.go")
 	content := "package main\n\nfunc main() {\n\tprintln(\"ok\")\n}\n"
@@ -848,10 +848,10 @@ func TestReadFileHashline_Outline_DefaultFalse(t *testing.T) {
 
 	store := hashline.NewStore()
 	ctx := hashline.WithStore(context.Background(), store)
-	tool := &ReadFileHashline{}
+	tool := &ReadFile{}
 
 	// outline=false (default) should return normal file content, not outline
-	result, err := tool.Execute(ctx, ReadFileHashlineParams{
+	result, err := tool.Execute(ctx, ReadFileParams{
 		FilePath: filePath,
 		Outline:  false,
 	})
@@ -869,7 +869,7 @@ func TestReadFileHashline_Outline_DefaultFalse(t *testing.T) {
 	}
 }
 
-func TestReadFileHashline_Outline_JSFallback(t *testing.T) {
+func TestReadFile_Outline_JSFallback(t *testing.T) {
 	dir := t.TempDir()
 	filePath := filepath.Join(dir, "app.js")
 	content := "function hello() {\n  return 1;\n}\n\nconst x = 42;\n\nclass Greeter {\n  greet() {}\n}\n"
@@ -877,8 +877,8 @@ func TestReadFileHashline_Outline_JSFallback(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	tool := &ReadFileHashline{}
-	result, err := tool.Execute(context.Background(), ReadFileHashlineParams{
+	tool := &ReadFile{}
+	result, err := tool.Execute(context.Background(), ReadFileParams{
 		FilePath: filePath,
 		Outline:  true,
 	})
@@ -899,7 +899,7 @@ func TestReadFileHashline_Outline_JSFallback(t *testing.T) {
 	}
 }
 
-func TestReadFileHashline_Outline_RustFallback(t *testing.T) {
+func TestReadFile_Outline_RustFallback(t *testing.T) {
 	dir := t.TempDir()
 	filePath := filepath.Join(dir, "main.rs")
 	content := "fn main() {}\n\npub fn public_func() {}\n\nstruct MyStruct {\n    field: i32,\n}\n\npub enum Color {\n    Red,\n    Blue,\n}\n"
@@ -907,8 +907,8 @@ func TestReadFileHashline_Outline_RustFallback(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	tool := &ReadFileHashline{}
-	result, err := tool.Execute(context.Background(), ReadFileHashlineParams{
+	tool := &ReadFile{}
+	result, err := tool.Execute(context.Background(), ReadFileParams{
 		FilePath: filePath,
 		Outline:  true,
 	})
@@ -932,7 +932,7 @@ func TestReadFileHashline_Outline_RustFallback(t *testing.T) {
 	}
 }
 
-func TestReadFileHashline_Outline_GoTypeVariants(t *testing.T) {
+func TestReadFile_Outline_GoTypeVariants(t *testing.T) {
 	dir := t.TempDir()
 	filePath := filepath.Join(dir, "types.go")
 	content := "package main\n\ntype MyStruct struct {\n\tName string\n}\n\ntype MyInterface interface {\n\tDo() error\n}\n\ntype MyAlias = string\n\nfunc (m *MyStruct) Method() {}\n"
@@ -940,8 +940,8 @@ func TestReadFileHashline_Outline_GoTypeVariants(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	tool := &ReadFileHashline{}
-	result, err := tool.Execute(context.Background(), ReadFileHashlineParams{
+	tool := &ReadFile{}
+	result, err := tool.Execute(context.Background(), ReadFileParams{
 		FilePath: filePath,
 		Outline:  true,
 	})
@@ -962,11 +962,11 @@ func TestReadFileHashline_Outline_GoTypeVariants(t *testing.T) {
 	}
 }
 
-func TestReadFileHashline_Outline_Directory(t *testing.T) {
+func TestReadFile_Outline_Directory(t *testing.T) {
 	dir := t.TempDir()
 
-	tool := &ReadFileHashline{}
-	result, err := tool.Execute(context.Background(), ReadFileHashlineParams{
+	tool := &ReadFile{}
+	result, err := tool.Execute(context.Background(), ReadFileParams{
 		FilePath: dir,
 		Outline:  true,
 	})
@@ -981,12 +981,12 @@ func TestReadFileHashline_Outline_Directory(t *testing.T) {
 	}
 }
 
-func TestReadFileHashline_Outline_FileNotFound(t *testing.T) {
+func TestReadFile_Outline_FileNotFound(t *testing.T) {
 	dir := t.TempDir()
 	filePath := filepath.Join(dir, "nonexistent.go")
 
-	tool := &ReadFileHashline{}
-	result, err := tool.Execute(context.Background(), ReadFileHashlineParams{
+	tool := &ReadFile{}
+	result, err := tool.Execute(context.Background(), ReadFileParams{
 		FilePath: filePath,
 		Outline:  true,
 	})
@@ -1000,7 +1000,7 @@ func TestReadFileHashline_Outline_FileNotFound(t *testing.T) {
 		t.Errorf("expected FileNotFound error, got %s: %s", result.Error.Kind, result.Error.Message)
 	}
 }
-func TestReadFileHashline_Outline_LargeFile(t *testing.T) {
+func TestReadFile_Outline_LargeFile(t *testing.T) {
 	dir := t.TempDir()
 	filePath := filepath.Join(dir, "large.go")
 	// Create a sparse file just over 10MB (doesn't allocate disk space)
@@ -1011,8 +1011,8 @@ func TestReadFileHashline_Outline_LargeFile(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	tool := &ReadFileHashline{}
-	result, err := tool.Execute(context.Background(), ReadFileHashlineParams{
+	tool := &ReadFile{}
+	result, err := tool.Execute(context.Background(), ReadFileParams{
 		FilePath: filePath,
 		Outline:  true,
 	})
@@ -1027,7 +1027,7 @@ func TestReadFileHashline_Outline_LargeFile(t *testing.T) {
 	}
 }
 
-func TestReadFileHashline_Outline_BinaryFile(t *testing.T) {
+func TestReadFile_Outline_BinaryFile(t *testing.T) {
 	dir := t.TempDir()
 	filePath := filepath.Join(dir, "binary.so")
 	// Create a file with .so extension (binary extension blacklist)
@@ -1035,8 +1035,8 @@ func TestReadFileHashline_Outline_BinaryFile(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	tool := &ReadFileHashline{}
-	result, err := tool.Execute(context.Background(), ReadFileHashlineParams{
+	tool := &ReadFile{}
+	result, err := tool.Execute(context.Background(), ReadFileParams{
 		FilePath: filePath,
 		Outline:  true,
 	})
@@ -1051,7 +1051,7 @@ func TestReadFileHashline_Outline_BinaryFile(t *testing.T) {
 	}
 }
 
-func TestReadFileHashline_Outline_MarkdownFallback(t *testing.T) {
+func TestReadFile_Outline_MarkdownFallback(t *testing.T) {
 	dir := t.TempDir()
 	filePath := filepath.Join(dir, "README.md")
 	content := "# Hello\n\n## Section\n\ntext\n"
@@ -1059,8 +1059,8 @@ func TestReadFileHashline_Outline_MarkdownFallback(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	tool := &ReadFileHashline{}
-	result, err := tool.Execute(context.Background(), ReadFileHashlineParams{
+	tool := &ReadFile{}
+	result, err := tool.Execute(context.Background(), ReadFileParams{
 		FilePath: filePath,
 		Outline:  true,
 	})
@@ -1078,7 +1078,7 @@ func TestReadFileHashline_Outline_MarkdownFallback(t *testing.T) {
 	}
 }
 
-func TestReadFileHashline_Outline_ShellFallback(t *testing.T) {
+func TestReadFile_Outline_ShellFallback(t *testing.T) {
 	dir := t.TempDir()
 	filePath := filepath.Join(dir, "script.sh")
 	content := "#!/bin/bash\n\nhello() {\n    echo hi\n}\n\nfunction world {\n    echo there\n}\n"
@@ -1086,8 +1086,8 @@ func TestReadFileHashline_Outline_ShellFallback(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	tool := &ReadFileHashline{}
-	result, err := tool.Execute(context.Background(), ReadFileHashlineParams{
+	tool := &ReadFile{}
+	result, err := tool.Execute(context.Background(), ReadFileParams{
 		FilePath: filePath,
 		Outline:  true,
 	})
@@ -1105,7 +1105,7 @@ func TestReadFileHashline_Outline_ShellFallback(t *testing.T) {
 	}
 }
 
-func TestReadFileHashline_Outline_MakefileFallback(t *testing.T) {
+func TestReadFile_Outline_MakefileFallback(t *testing.T) {
 	dir := t.TempDir()
 	filePath := filepath.Join(dir, "Makefile")
 	content := "build:\n\tgo build ./...\n\ntest:\n\tgo test ./...\n\n.PHONY: build test\n"
@@ -1113,8 +1113,8 @@ func TestReadFileHashline_Outline_MakefileFallback(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	tool := &ReadFileHashline{}
-	result, err := tool.Execute(context.Background(), ReadFileHashlineParams{
+	tool := &ReadFile{}
+	result, err := tool.Execute(context.Background(), ReadFileParams{
 		FilePath: filePath,
 		Outline:  true,
 	})
@@ -1132,7 +1132,7 @@ func TestReadFileHashline_Outline_MakefileFallback(t *testing.T) {
 	}
 }
 
-func TestReadFileHashline_Outline_RubyFallback(t *testing.T) {
+func TestReadFile_Outline_RubyFallback(t *testing.T) {
 	dir := t.TempDir()
 	filePath := filepath.Join(dir, "hello.rb")
 	content := "def greet\n  puts 'hi'\nend\n\nclass Greeter\n  def hello\n  end\nend\n\nmodule Helper\nend\n"
@@ -1140,8 +1140,8 @@ func TestReadFileHashline_Outline_RubyFallback(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	tool := &ReadFileHashline{}
-	result, err := tool.Execute(context.Background(), ReadFileHashlineParams{
+	tool := &ReadFile{}
+	result, err := tool.Execute(context.Background(), ReadFileParams{
 		FilePath: filePath,
 		Outline:  true,
 	})
@@ -1159,7 +1159,7 @@ func TestReadFileHashline_Outline_RubyFallback(t *testing.T) {
 	}
 }
 
-func TestReadFileHashline_Outline_YAMLEmptySymbols(t *testing.T) {
+func TestReadFile_Outline_YAMLEmptySymbols(t *testing.T) {
 	dir := t.TempDir()
 	filePath := filepath.Join(dir, "config.yml")
 	content := "name: test\nversion: 1\n"
@@ -1167,8 +1167,8 @@ func TestReadFileHashline_Outline_YAMLEmptySymbols(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	tool := &ReadFileHashline{}
-	result, err := tool.Execute(context.Background(), ReadFileHashlineParams{
+	tool := &ReadFile{}
+	result, err := tool.Execute(context.Background(), ReadFileParams{
 		FilePath: filePath,
 		Outline:  true,
 	})
