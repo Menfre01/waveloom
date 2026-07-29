@@ -1033,7 +1033,7 @@ func applySection(sec Section, fs FileSystem, store *SnapshotStore, originalSnap
 		result.Error = &EditError{Fatal: true, Kind: "permission_denied", Message: err.Error()}
 		return result
 	}
-	newTAG := "0000"
+	var newTAG string
 	if store != nil {
 		newTAG = store.Update(storePath, newContent)
 	} else {
@@ -1126,7 +1126,7 @@ func applySectionGroupAtomic(results []SectionResult, indices []int, sections []
 		}
 		return
 	}
-	newTAG := "0000"
+	var newTAG string
 	if store != nil {
 		newTAG = store.Update(storePath, newContent)
 	} else {

@@ -53,7 +53,7 @@ func (r *Runner) Run(ctx context.Context, task *Task) *RunResult {
 		result.Elapsed = sinceMs(start)
 		return result
 	}
-	defer os.RemoveAll(workDir)
+	defer func() { _ = os.RemoveAll(workDir) }()
 
 	for path, content := range task.Files {
 		fullPath := filepath.Join(workDir, filepath.Base(path))
@@ -138,7 +138,7 @@ func (r *Runner) Run(ctx context.Context, task *Task) *RunResult {
 			if e.ToolCallName == "read" && e.Error == "" {
 				hadRead = true
 			}
-			if e.ToolCallName == "edit" || e.ToolCallName == "multiedit" {
+			if e.ToolCallName == "edit" || e.ToolCallName == "multiedit" { //nolint:staticcheck
 				parseOK, hasOld, hasWarn, hasTag := extractEditMetrics(e.Result, rec.Arguments, e.Error)
 				rec.ParseOK = parseOK
 				tm.ParseOK = parseOK
@@ -277,34 +277,4 @@ func buildSystemPrompt(registry tool.Registry, workDir string) string {
 		return sp
 	}
 	return sp + "\n\n" + toolPrompts
-}
-// hunkOnlyEdit 包装 EditFile,只暴露 hunk 参数,强制使用 diff hunk 格式。
-type hunkOnlyEdit struct {
-	inner *tool.EditFile
-}
-type hunkOnlyParams struct {
-	FilePath string `json:"file_path"`
-	Hunk     string `json:"hunk"`
-}
-func (t *hunkOnlyEdit) Name() string        { return "edit" }
-func (t *hunkOnlyEdit) Description() string {
-	return "Edit a file using unified diff hunks. Format: @@ optional-header\\n context\\n-old\\n+new\\n context. Include 2-3 context lines around each change."
-}
-func (t *hunkOnlyEdit) Prompt() string       { return "" }
-func (t *hunkOnlyEdit) ConcurrentSafe() bool { return false }
-func (t *hunkOnlyEdit) Schema() json.RawMessage {
-	return json.RawMessage(`{
-		"type": "object",
-		"properties": {
-			"file_path": {"type": "string", "description": "Target file path"},
-			"hunk": {"type": "string", "description": "Diff hunk: @@ header, space=context, -=delete, +=insert. Include 2-3 lines of context around each change."}
-		},
-		"required": ["file_path", "hunk"]
-	}`)
-}
-func (t *hunkOnlyEdit) Execute(ctx context.Context, p hunkOnlyParams) (*tool.ToolResult, error) {
-	return t.inner.Execute(ctx, tool.EditFileParams{
-		FilePath: p.FilePath,
-		Hunk:     p.Hunk,
-	})
 }

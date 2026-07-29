@@ -52,13 +52,13 @@ func main() {
 		merged.Model = *model
 	}
 
-	client, _, settings, err := llm.NewClientFromLLMSettings(merged)
+	client, cfg, err := llm.NewClientFromLLMSettings(merged)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "创建 LLM 客户端失败: %v\n", err)
 		os.Exit(1)
 	}
 
-	fmt.Printf("Provider: %s  Model: %s\n\n", settings.Provider, settings.Model)
+	fmt.Printf("Provider: %s  Model: %s\n\n", cfg.Provider, cfg.Model)
 
 	// 2. 注册工具
 	registry := tool.NewRegistry()
@@ -68,7 +68,7 @@ func main() {
 	sysPrompt := buildEditSystemPrompt()
 	runner := llmedit.NewRunner(client, registry, sysPrompt)
 	runner.MaxTurns = 10
-	runner.Model = settings.Model
+	runner.Model = cfg.Model
 
 	// 4. 加载任务
 	tasks, err := llmedit.LoadTasks(*taskDir)

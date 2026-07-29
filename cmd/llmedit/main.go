@@ -212,7 +212,7 @@ func loadDotEnv() {
 	if err != nil {
 		return
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	sc := bufio.NewScanner(f)
 	for sc.Scan() {
@@ -230,7 +230,7 @@ func loadDotEnv() {
 			val = val[1 : len(val)-1]
 		}
 		if os.Getenv(key) == "" {
-			os.Setenv(key, val)
+			_ = os.Setenv(key, val)
 		}
 	}
 }

@@ -86,7 +86,7 @@ func checkCompile(task *Task, gotFiles map[string]string) bool {
 	if err != nil {
 		return false
 	}
-	defer os.RemoveAll(dir)
+	defer func() { _ = os.RemoveAll(dir) }()
 
 	for p, content := range gotFiles {
 		fullPath := filepath.Join(dir, filepath.Base(p))
