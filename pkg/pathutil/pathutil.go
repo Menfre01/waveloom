@@ -121,6 +121,9 @@ func ExtractHunkFilePaths(hunk string, defaultPath string) []string {
 			continue
 		}
 		path := strings.TrimSpace(matches[1])
+		// FromSlash 将 Unix 风格绝对路径（如 /tmp/config.go）转为平台原生格式，
+		// 确保 Windows 上 filepath.IsAbs 能正确识别为绝对路径。
+		path = filepath.FromSlash(path)
 		if !filepath.IsAbs(path) && defaultPath != "" {
 			path = filepath.Join(filepath.Dir(defaultPath), path)
 		}
