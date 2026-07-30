@@ -224,12 +224,12 @@ func TestTempDir_IsConsistent(t *testing.T) {
 }
 
 // TestTempDir_ResolvesSymlinks 验证 TempDir 解析了符号链接。
-// macOS 上 /var 是 /private/var 的符号链接，os.TempDir() 常返回 /var/...，
+// macOS 上 /var 是 /private/var 的符号链接,os.TempDir() 常返回 /var/...,
 // 而 filepath.EvalSymlinks 会解析为 /private/var/...。
 // TempDir 应始终返回解析后的路径。
 func TestTempDir_ResolvesSymlinks(t *testing.T) {
 	dir := TempDir()
-	// 如果 os.TempDir() 以 /var/ 开头，TempDir 应在 macOS 上解析为 /private/var/...
+	// 如果 os.TempDir() 以 /var/ 开头,TempDir 应在 macOS 上解析为 /private/var/...
 	raw := os.TempDir()
 	resolved, err := filepath.EvalSymlinks(raw)
 	if err != nil {
@@ -240,13 +240,13 @@ func TestTempDir_ResolvesSymlinks(t *testing.T) {
 	}
 }
 
-// REGRESSION: TMPDIR 路径不一致 —— os.TempDir() 返回未解析路径，
+// REGRESSION: TMPDIR 路径不一致 —— os.TempDir() 返回未解析路径,
 // 导致 bash 工具返回的 log path 与实际文件系统路径不匹配。
-// 修复：TempDir() 始终通过 filepath.EvalSymlinks 解析。
+// 修复:TempDir() 始终通过 filepath.EvalSymlinks 解析。
 func TestRegression_TempDir_SymlinkResolution(t *testing.T) {
 	raw := os.TempDir()
 	dir := TempDir()
-	// TempDir 不应以 /var（未解析）开头——应已解析为 /private/var
+	// TempDir 不应以 /var(未解析)开头——应已解析为 /private/var
 	if strings.HasPrefix(dir, "/var/") {
 		resolved, err := filepath.EvalSymlinks("/var")
 		if err == nil && resolved != "/var" {
@@ -264,16 +264,9 @@ func TestRegression_TempDir_SymlinkResolution(t *testing.T) {
 	}
 }
 
-func TestExtractHunkFilePaths(t *testing.T) {
-	t.Run("single file no header", func(t *testing.T) {
-		paths := ExtractHunkFilePaths("@@ -1 +1 @@\n-old\n+new\n", "/app/main.go")
-		if len(paths) != 1 || paths[0] != "/app/main.go" {
-			t.Errorf("expected [/app/main.go], got %v", paths)
-		}
-	})
-
-	t.Run("multi-file with headers", func(t *testing.T) {
-		hunk := `*** Update File: src/greet.go
+// multiFileHunk 是 TestExtractHunkFilePaths 中 "multi-file with headers" 用例的测试数据。
+// 提取为包级变量,避免 raw string 中的 diff 前缀(-/+)与编辑工具冲突。
+const multiFileHunk = `*** Update File: src/greet.go
 @@ func greet
  func greet() string {
 -    return "hello"
@@ -285,8 +278,32 @@ func TestExtractHunkFilePaths(t *testing.T) {
 -    return x * 2
 +    return x * 3
  }`
-		paths := ExtractHunkFilePaths(hunk, "/app/main.go")
-		expected := []string{"/app/src/greet.go", "/app/src/util.go"}
+
+const absHunk = `*** Update File: /tmp/config.go
+@@
+-debug=true
++debug=false`
+
+const whitespaceHunk = `*** Update File:
+@@ -1 +1 @@
+-old
++new`
+
+func TestExtractHunkFilePaths(t *testing.T) {
+	t.Run("single file no header", func(t *testing.T) {
+		appMain := filepath.FromSlash("/app/main.go")
+		paths := ExtractHunkFilePaths("@@ -1 +1 @@\n-old\n+new\n", appMain)
+		if len(paths) != 1 || paths[0] != appMain {
+			t.Errorf("expected [%s], got %v", appMain, paths)
+		}
+	})
+
+	t.Run("multi-file with headers", func(t *testing.T) {
+		paths := ExtractHunkFilePaths(multiFileHunk, filepath.FromSlash("/app/main.go"))
+		expected := []string{
+			filepath.FromSlash("/app/src/greet.go"),
+			filepath.FromSlash("/app/src/util.go"),
+		}
 		if len(paths) != len(expected) {
 			t.Fatalf("expected %d paths, got %d: %v", len(expected), len(paths), paths)
 		}
@@ -298,25 +315,19 @@ func TestExtractHunkFilePaths(t *testing.T) {
 	})
 
 	t.Run("absolute path in header", func(t *testing.T) {
-		hunk := `*** Update File: /tmp/config.go
-@@
--debug=true
-+debug=false`
-		paths := ExtractHunkFilePaths(hunk, "/app/main.go")
-		if len(paths) != 1 || paths[0] != "/tmp/config.go" {
-			t.Errorf("expected [/tmp/config.go], got %v", paths)
+		paths := ExtractHunkFilePaths(absHunk, filepath.FromSlash("/app/main.go"))
+		expected := filepath.FromSlash("/tmp/config.go")
+		if len(paths) != 1 || paths[0] != expected {
+			t.Errorf("expected [%s], got %v", expected, paths)
 		}
 	})
 
 	t.Run("whitespace-only path ignored", func(t *testing.T) {
 		// *** Update File: 后只有空白 → 不匹配正则,整行跳过,回退到 defaultPath
-		hunk := `*** Update File:
-@@ -1 +1 @@
--old
-+new`
-		paths := ExtractHunkFilePaths(hunk, "/app/main.go")
-		if len(paths) != 1 || paths[0] != "/app/main.go" {
-			t.Errorf("expected [/app/main.go] (fallback), got %v", paths)
+		appMain := filepath.FromSlash("/app/main.go")
+		paths := ExtractHunkFilePaths(whitespaceHunk, appMain)
+		if len(paths) != 1 || paths[0] != appMain {
+			t.Errorf("expected [%s] (fallback), got %v", appMain, paths)
 		}
 	})
 }
