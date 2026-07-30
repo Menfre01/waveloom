@@ -1,3 +1,18 @@
+## [v0.4.3] — 2026-07-30
+
+### 新增功能
+- **edit 工具**：支持信封格式 + DiffHunks diff 视图，`write` 增加 diff 显示
+
+### 修复
+- `?` 键在输入框非空时不触发帮助 overlay
+- 工具摘要行截断改用 displayWidth 感知截断，修复 CJK 字符宽度问题
+- session UUID 对齐 Claude Code 标准 UUID v4 格式
+- provider 切换后子代理 AgentTool 未同步更新 LLMClient
+
+---
+
+📝 [Changelog (English)](https://github.com/Menfre01/waveloom/blob/dev/CHANGELOG.en.md)
+
 ## [v0.4.2] — 2026-07-27
 
 ### 修复

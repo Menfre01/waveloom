@@ -1,3 +1,16 @@
+## [v0.4.3] — 2026-07-30
+
+### Added
+- **edit tool**: envelope format + DiffHunks diff view; `write` now displays diff output
+
+### Fixed
+- `?` no longer triggers help overlay when input is non-empty
+- Tool summary line truncation now uses displayWidth-aware truncation, fixing CJK character width issues
+- Session UUID now conforms to Claude Code standard UUID v4 format
+- Subagent AgentTool now correctly syncs LLMClient after provider switch
+
+---
+
 ## [v0.4.2] — 2026-07-27
 
 ### Fixed
@@ -127,7 +140,6 @@
 
 ### Fixed
 - **Skill/built-in command name collision causes panic on startup**: When a user has a skill or plugin command named identically to a built-in command (e.g. `help`), `newSlashRegistry` registers built-in commands first then iterates over skills, causing `Register` to panic on duplicate name. Added `HasCommand` collision detection — conflicting skills are skipped while built-in commands are preserved.
-
 
 ## [v0.2.0-beta.2] — 2026-07-20
 

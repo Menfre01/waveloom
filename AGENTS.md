@@ -130,6 +130,8 @@ Release notes 以用户可感知的功能变化为描述单位，分类汇总：
 
 `docs` / `chore` / `test` 类型不列入。
 
+**无需列入 changelog 的情况**：修复/新增功能在上一个正式版中不存在（该特性随当前版本首次发布，无用户受影响），changelog 中无需列出。
+
 **Release body 格式**：主体为中文 changelog 分类汇总，末尾追加英文 changelog 锚点，方便英文用户查看：
 
 ```
