@@ -3,6 +3,7 @@
 ### Fixed
 - **edit hunk empty line matching**: bare empty lines in hunk body are now correctly treated as context lines, fixing hunk match failures caused by trailing empty lines
 - **Unicode punctuation mapping**: normalizeUnicode2 now covers 152 additional Unicode punctuation mappings, improving hunk match tolerance for non-ASCII punctuation
+- **Windows path separator compatibility**: ExtractHunkFilePaths now recognizes Unix-style absolute paths (e.g. /tmp/config.go) in hunk headers on all platforms
 
 ### Changed
 - **Prompt read-first search guidance**: removed residual rg/hashline references, eliminated grep signal contradictions, guiding LLM to use read(pattern=...) for single-file search and grep only for multi-file scanning
