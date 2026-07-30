@@ -164,9 +164,10 @@ func TestEditFile_AllHunksFailed(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestEditFile_EmptyHunk(t *testing.T) {
+	dir := t.TempDir()
 	tool := &EditFile{}
 	result, err := tool.Execute(context.Background(), EditFileParams{
-		FilePath: "/tmp/test.go",
+		FilePath: filepath.Join(dir, "test.go"),
 		Hunk:     "",
 	})
 	if err != nil {

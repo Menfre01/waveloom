@@ -38,7 +38,7 @@ var editFileSchema = json.RawMessage(`{
   "properties": {
     "file_path": {
       "type": "string",
-      "description": "Primary file path. For multi-file patches, use *** Update File: headers in the hunk body."
+      "description": "Default target file. For single-file edits, this is the file being edited. For multi-file patches, relative paths in *** Update File: headers resolve against this file's directory."
     },
     "hunk": {
       "type": "string",

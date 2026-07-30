@@ -18,7 +18,6 @@ pkg/
   compaction/    四级水位线上下文压缩(Snip/Prune/Summarize)
   environment/   工具链探测
   filehistory/   文件历史备份、快照、回退
-  hashline/      Hashline 编辑模型
   hook/          Hook 系统(PreToolUse/PostToolUse 等事件,settings.json 配置外部脚本)
   llm/           LLM Client(DeepSeek/Kimi/OpenAI adapter、流式、重试)
   logging/       日志

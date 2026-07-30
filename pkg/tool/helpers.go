@@ -11,7 +11,7 @@ import (
 	"strings"
 )
 
-// ── 共享辅助函数：从旧 read_file.go 提取，被 hashline 工具和其他工具依赖 ──
+// ── 共享辅助函数 ──
 
 func toolError(class ErrorClass, kind, msg string, cause error) *ToolResult {
 	return &ToolResult{Error: &ToolError{Class: class, Kind: kind, Message: msg, Cause: cause}}

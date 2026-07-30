@@ -1,6 +1,11 @@
 ## Edit File
 
-`edit` — patch format with envelope. Every file section uses `*** Update File:` header.
+`edit` — patch format with envelope.
+
+### Parameters
+
+- `file_path` — default target file. For single-file edits (no `*** Update File:` headers), this is the file being edited. For multi-file patches, relative paths in `*** Update File:` headers resolve against this file's directory.
+- `hunk` — unified diff hunk(s) in the envelope format below.
 
 ### Format
 
@@ -16,11 +21,33 @@
 ```
 
 - Every patch starts with `*** Begin Patch` and ends with `*** End Patch`.
-- Every file MUST have a `*** Update File: <path>` header before its hunks — even single-file edits.
+- Every file MUST have a `*** Update File: <path>` header before its hunks — even single-file edits. Paths in headers are relative to `file_path`'s directory, not the workspace root.
 - `@@ [context label]` is optional (bare `@@` is fine). Use a function name or line hint for readability.
-- Paths are relative to workspace root.
 
 ### Basic usage
+
+**Single file** — omit `*** Update File:` when editing one file; the engine uses `file_path` as the target:
+```
+*** Begin Patch
+@@ func greet
+ func greet() string {
+-    return "hello"
++    return "hello, " + name
+ }
+*** End Patch
+```
+
+**Single file with explicit header** — also valid, path in header must match `file_path`:
+```
+*** Begin Patch
+*** Update File: src/main.go
+@@ func greet
+ func greet() string {
+-    return "hello"
++    return "hello, " + name
+ }
+*** End Patch
+```
 
 **Replace** (change function signature):
 ```
@@ -61,6 +88,8 @@
 ```
 
 ### Multi-file (same call)
+
+Set `file_path` to any file in the target directory — relative paths in `*** Update File:` headers resolve against its directory. E.g., with `file_path="src/main.go"`, a header `*** Update File: util.go` targets `src/util.go`.
 
 ```
 *** Begin Patch

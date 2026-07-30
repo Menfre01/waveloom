@@ -2050,7 +2050,7 @@ func renderDiffView(sb *strings.Builder, hunks []tool.DiffHunk, textWidth int, i
 
 	var lastFilePath string
 	for hi, h := range hunks {
-		// 文件路径变化时（多文件编辑），渲染 hashline 风格的文件头
+		// 文件路径变化时（多文件编辑），渲染 文件头
 		if h.FilePath != "" && h.FilePath != lastFilePath {
 			lastFilePath = h.FilePath
 			if hi > 0 {

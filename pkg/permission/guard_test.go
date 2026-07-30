@@ -695,7 +695,7 @@ func TestLoadRulesFromConfigFiles_ProjectOverridesGlobal(t *testing.T) {
 	globalPath := filepath.Join(dir, "global.json")
 	projectPath := filepath.Join(dir, "project.json")
 
-	// 全局：allow shell(git *) 
+	// 全局：allow shell(git *)
 	_ = os.WriteFile(globalPath, []byte(`{"permissions": {"allow": ["shell(git *)"]}}`), 0o644)
 	// 项目：allow shell(git *) → 同键，覆盖（相同规则无实际变化，但验证合并逻辑不报错）
 	_ = os.WriteFile(projectPath, []byte(`{"permissions": {"allow": ["shell(git *)"], "deny": ["shell(rm *)"]}}`), 0o644)
@@ -1300,6 +1300,107 @@ func TestGuardPlanMode_FileSafetyCheck_AllowsReadOfOtherFiles(t *testing.T) {
 	// read 操作在 plan 模式下不受限制，应 passthrough
 	if result.Decision != "" {
 		t.Errorf("expected passthrough (empty decision) for read in plan mode, got %s", result.Decision)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// extractAllEditPaths / multi-file hunk safety
+// ---------------------------------------------------------------------------
+
+func TestExtractAllEditPaths_EmptyFilepath(t *testing.T) {
+	// 缺少 file_path 应返回 nil
+	paths := extractAllEditPaths(json.RawMessage(`{"hunk": "@@ -1 +1 @@"}`))
+	if paths != nil {
+		t.Errorf("expected nil for empty file_path, got %v", paths)
+	}
+}
+
+func TestExtractAllEditPaths_MalformedJSON(t *testing.T) {
+	// 损坏的 JSON 应返回 nil
+	paths := extractAllEditPaths(json.RawMessage(`{bad json`))
+	if paths != nil {
+		t.Errorf("expected nil for malformed JSON, got %v", paths)
+	}
+}
+
+func TestExtractAllEditPaths_SingleFileNoHunk(t *testing.T) {
+	// 单文件无 hunk → 返回主文件路径
+	paths := extractAllEditPaths(json.RawMessage(`{"file_path":"/app/main.go"}`))
+	if len(paths) != 1 || paths[0] != "/app/main.go" {
+		t.Errorf("expected [/app/main.go], got %v", paths)
+	}
+}
+
+func TestExtractAllEditPaths_MultiFileHunk(t *testing.T) {
+	// 多文件 hunk → 从 *** Update File: 头提取所有路径
+	input := json.RawMessage(`{"file_path":"/app/main.go","hunk":"*** Update File: src/greet.go\n@@ -1 +1 @@\n-old\n+new\n*** Update File: src/util.go\n@@ -1 +1 @@\n-old\n+new"}`)
+	paths := extractAllEditPaths(input)
+	if len(paths) != 2 {
+		t.Fatalf("expected 2 paths, got %d: %v", len(paths), paths)
+	}
+	expected0 := "/app/src/greet.go"
+	expected1 := "/app/src/util.go"
+	if paths[0] != expected0 {
+		t.Errorf("paths[0] = %q, want %q", paths[0], expected0)
+	}
+	if paths[1] != expected1 {
+		t.Errorf("paths[1] = %q, want %q", paths[1], expected1)
+	}
+}
+
+func TestFileSafetyCheck_MultiFileHunk_DeniesExternalWrite(t *testing.T) {
+	dir := t.TempDir()
+	g := NewGuard(WithWorkingDirs(dir))
+
+	// 多文件 edit:主文件在工作目录内,但 hunk body 中的副文件在工作目录外
+	mainFile := filepath.Join(dir, "main.go")
+	hunk := "*** Update File: src/greet.go\n@@ -1 +1 @@\n-old\n+new\n*** Update File: /etc/passwd\n@@ -1 +1 @@\n-old\n+new"
+	raw, _ := json.Marshal(struct {
+		FilePath string `json:"file_path"`
+		Hunk     string `json:"hunk"`
+	}{FilePath: mainFile, Hunk: hunk})
+
+	result := g.fileSafetyCheck(raw, true)
+	if result.Decision != DecisionDeny {
+		t.Errorf("expected DENY for hunk touching /etc/passwd, got %s: %s", result.Decision, result.Message)
+	}
+}
+
+func TestFileSafetyCheck_MultiFileHunk_AllInsideWorkspace(t *testing.T) {
+	dir := t.TempDir()
+	_ = os.MkdirAll(filepath.Join(dir, "src"), 0o755)
+	g := NewGuard(WithWorkingDirs(dir))
+
+	// 所有文件都在工作目录内(相对路径解析到主文件目录)
+	mainFile := filepath.Join(dir, "main.go")
+	hunk := "*** Update File: src/greet.go\n@@ -1 +1 @@\n-old\n+new\n*** Update File: src/util.go\n@@ -1 +1 @@\n-old\n+new"
+	raw, _ := json.Marshal(struct {
+		FilePath string `json:"file_path"`
+		Hunk     string `json:"hunk"`
+	}{FilePath: mainFile, Hunk: hunk})
+	result := g.fileSafetyCheck(raw, true)
+	if result.Decision != "" {
+		t.Errorf("expected passthrough for all paths inside workspace, got %s: %s", result.Decision, result.Message)
+	}
+}
+
+func TestExtractAllEditPaths_RelativeFilepathResolved(t *testing.T) {
+	// 验证相对 file_path 被解析为绝对路径,与 edit 工具行为对齐。
+	// edit 工具内部调用 ResolvePathWithDir 解析 file_path → 绝对路径,
+	// 然后 *** Update File: 中相对路径基于该绝对路径的目录解析。
+	// 权限系统必须与之一致,否则 PathSafetyCheck 会拿到不同的路径。
+	cwd, _ := os.Getwd()
+	absCwd, _ := filepath.Abs(cwd)
+
+	input := json.RawMessage(`{"file_path":"src/main.go","hunk":"*** Update File: util.go\n@@ -1 +1 @@\n-old\n+new"}`)
+	paths := extractAllEditPaths(input)
+	if len(paths) != 1 {
+		t.Fatalf("expected 1 path, got %d: %v", len(paths), paths)
+	}
+	// util.go 应解析为 filepath.Join(filepath.Dir(绝对 file_path), "util.go")
+	expected := filepath.Join(filepath.Dir(filepath.Join(absCwd, "src/main.go")), "util.go")
+	if paths[0] != filepath.Clean(expected) {
+		t.Errorf("paths[0] = %q, want %q", paths[0], filepath.Clean(expected))
 	}
 }
 
