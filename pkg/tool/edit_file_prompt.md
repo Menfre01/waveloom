@@ -84,10 +84,16 @@ Each additional file gets its own `*** Update File: <path>` header before its hu
 ### Tips
 
 - **Read first**: always `read` the file before editing — the engine validates file state. `write` also updates file state, so write→edit works without re-read.
-- **Context lines**: include 1-2 unchanged lines around each change for unique matching
-- **Exact whitespace**: copy tabs/spaces exactly from the read output
-- **Matching**: engine tries 4 layers: exact → trailing whitespace → full trim → unicode normalize
-- **Failed hunk**: re-read the file, check the diagnostics output, adjust context lines, retry. If a hunk fails twice on the same file, re-read with `read(file_path, pattern=<unique line from target area>, context_lines=5)` to get exact bytes — invisible Unicode whitespace (zero-width spaces, BOM, direction marks) may be present in the file but invisible in standard output.
+- **Context lines**: include 1-2 unchanged lines around each change for unique matching. Copy content exactly from `read` output — line numbers, colons, and the `[path]` header are NOT part of the context.
+- **Exact whitespace**: copy tabs/spaces exactly from the read output.
+- **Empty lines in read output**: an empty line appears as `N:` in read output (line number + colon, no visible content). In a hunk context line, copy it as ` ` (space prefix) with nothing after it — the space is the unified diff context marker, followed by the empty content.
+- **Matching**: engine tries 4 progressively tolerant layers:
+  1. exact — byte-for-byte match
+  2. trailing whitespace — strips `" \t\r"` from line ends before comparing
+  3. full trim — strips leading+trailing whitespace before comparing
+  4. unicode normalize — normalizes fancy quotes/dashes/spaces to ASCII before comparing
+  Each layer is only tried if the previous one fails. The failure diagnostics report which layer matched (or was closest), so you can diagnose the mismatch type without guesswork.
+- **Failed hunk**: re-read the file, check the diagnostics output, adjust context lines, retry. If a hunk fails twice on the same file, re-read with `read(file_path, pattern="<unique line from target area>", context_lines=5)` to get exact bytes — invisible Unicode whitespace (zero-width spaces, BOM, direction marks) may be present in the file but invisible in standard output.
 
 ### Common mistakes
 
@@ -131,6 +137,26 @@ Each additional file gets its own `*** Update File: <path>` header before its hu
 @@ func greet
  func greet() string {
 -    return "hello"
+```
+
+❌ Wrong empty line — using visible placeholder instead of actual empty line in hunk
+```
+*** Update File: src/main.go
+@@
+ func main() {
+-·                   ← copied the placeholder from read output
++    new line
+```
+Read output shows empty lines as `N:` with no content after colon. In a hunk, an empty context line is ` ` (space prefix) + nothing.
+
+✅ Correct — ` ` prefix with nothing after it
+```
+*** Update File: src/main.go
+@@
+ func main() {
++
+     fmt.Println("hello")
+ }
 ```
 
 ### Consecutive failures

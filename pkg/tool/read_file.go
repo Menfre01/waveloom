@@ -10,16 +10,15 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/Menfre01/waveloom/pkg/hashline"
 	"github.com/Menfre01/waveloom/pkg/lsp"
 	"github.com/Menfre01/waveloom/pkg/pathutil"
 )
 
 //go:embed read_file_prompt.md
-var readHashlinePrompt string
+var readFilePrompt string
 
 // ---------------------------------------------------------------------------
-// ReadFile — 读取文件内容，返回 hashline 格式（TAG + N:CONTENT）
+// ReadFile — 读取文件内容,返回带行号的文件内容
 // ---------------------------------------------------------------------------
 
 type ReadFileParams struct {
@@ -37,11 +36,11 @@ type ReadFile struct{}
 func (t *ReadFile) Name() string { return "read" }
 
 func (t *ReadFile) Description() string {
-	return "Read a file with line numbers for hash-anchored editing. Rules: see system prompt ## File Operations."
+	return "Read a file with line numbers for editing. Rules: see system prompt ## File Operations."
 }
 
-// Prompt 返回 read 工具使用指南，由 Registry.FormatToolPrompts() 注入 system prompt。
-func (t *ReadFile) Prompt() string { return readHashlinePrompt }
+// Prompt 返回 read 工具使用指南,由 Registry.FormatToolPrompts() 注入 system prompt。
+func (t *ReadFile) Prompt() string { return readFilePrompt }
 
 var readFileHashlineSchema = json.RawMessage(`{
   "type": "object",
@@ -140,13 +139,13 @@ func (t *ReadFile) Execute(ctx context.Context, p ReadFileParams) (*ToolResult, 
 	}
 
 	// ── Step 4: 大文件门限 ──
-	// 在读取任何内容之前先检查文件大小。hashline read 需要完整文件内容
-	// 计算 TAG + 存入 snapshot store，超大文件（>10MB）可能导致 OOM。
+	// 在读取任何内容之前先检查文件大小。read 需要完整文件内容
+	// 存入 read state store,超大文件(>10MB)可能导致 OOM。
 	const maxReadBytes = 10 * 1024 * 1024 // 10MB
 	if info.Size() > maxReadBytes {
 		s := fmt.Sprintf("%.1fMB", float64(info.Size())/(1024*1024))
 		return toolError(ErrorClassRecoverable, ErrKindLargeFile,
-			fmt.Sprintf("file too large for hashline read (%s > 10MB): %s. Use shell tools to both read (head/tail/grep) and edit (sed/awk) large files.", s, path), nil), nil
+			fmt.Sprintf("file too large for read (%s > 10MB): %s. Use shell tools to both read (head/tail/grep) and edit (sed/awk) large files.", s, path), nil), nil
 	}
 
 	// ── Step 5: 二进制检测 ──
@@ -183,15 +182,13 @@ func (t *ReadFile) Execute(ctx context.Context, p ReadFileParams) (*ToolResult, 
 			fmt.Sprintf("failed to read file: %v", err), err), nil
 	}
 
-	// ── Step 6: 生成 TAG（无论截断与否，TAG 对应完整文件内容）──
-	// 记录读取状态供 edit 冲突检测
+	// ── Step 6: 记录读取状态供 edit 冲突检测 ──
 	if rs := ReadStateFromContext(ctx); rs != nil {
 		rs.Record(path, fullContent)
 	}
-	tag := "0000"
 
 	// ── Step 7: pattern 匹配(可选)──
-	// pattern 选择显示窗口:匹配行 ±ContextLines。TAG 始终对应完整文件,不受 pattern 影响。
+	// pattern 选择显示窗口:匹配行 ±ContextLines。
 	var matchFooter string
 	if p.Pattern != "" && totalLines > 0 {
 		lines := strings.Split(fullContent, "\n")
@@ -257,8 +254,8 @@ func (t *ReadFile) Execute(ctx context.Context, p ReadFileParams) (*ToolResult, 
 	}
 
 	// ── Step 8: 格式化输出 ──
-	content := hashline.FormatContent(path, tag, fullContent, p.Offset, p.Limit)
-	content += "\n<system-reminder>Line numbers are 1-based current positions. SWAP N.=M replaces lines N through M inclusive. INS.PRE N inserts before line N. INS.POST N inserts after line N. Brace-only lines like `}` are real content with line numbers — include them when they belong inside a SWAP range.</system-reminder>"
+	content := formatReadOutput(path, fullContent, p.Offset, p.Limit)
+	content += "\n<system-reminder>Line numbers are 1-based current positions. Empty lines appear as `N:` (no content after colon). Trailing whitespace is preserved in read output — the edit engine matches with progressive tolerance (exact → trailing whitespace ignored → leading+trailing ignored → unicode normalize), so minor whitespace drift won't cause failures. When constructing edit hunks, use `@@` headers with `-` for removal, `+` for addition, and space prefix for context lines. Brace-only lines like `}` are real content with line numbers — include them when they belong inside a hunk.</system-reminder>"
 	if totalLines > 0 {
 		displayedLines := totalLines
 		if p.Limit > 0 && p.Offset+p.Limit < totalLines {
@@ -274,7 +271,7 @@ func (t *ReadFile) Execute(ctx context.Context, p ReadFileParams) (*ToolResult, 
 	}
 
 	if totalLines == 0 {
-		content = fmt.Sprintf("[%s#%s]\n<system-reminder>Warning: the file exists but the contents are empty.</system-reminder>", path, tag)
+		content = fmt.Sprintf("[%s]\n<system-reminder>Warning: the file exists but the contents are empty.</system-reminder>", path)
 	}
 
 	lineCount := totalLines
@@ -298,8 +295,8 @@ func (t *ReadFile) Execute(ctx context.Context, p ReadFileParams) (*ToolResult, 
 	}, nil
 }
 
-// readFullFile 读取完整文件内容，不做截断。
-// 返回：文件文本、实际行数、总行数、错误。
+// readFullFile 读取完整文件内容,不做截断。
+// 返回:文件文本、实际行数、总行数、错误。
 func readFullFile(ctx context.Context, path string) (content string, lineCount int, totalLines int, err error) {
 	raw, err := readFileWithContext(ctx, path)
 	if err != nil {
@@ -312,6 +309,58 @@ func readFullFile(ctx context.Context, path string) (content string, lineCount i
 	totalLines = len(lines)
 
 	return text, totalLines, totalLines, nil
+}
+
+// formatReadOutput 将文件内容格式化为 [path] 头 + N:CONTENT 行。
+func formatReadOutput(path string, content string, offset, limit int) string {
+	lines := strings.Split(content, "\n")
+	// 去除末尾空行(由 trailing newline 产生)
+	if len(lines) > 0 && lines[len(lines)-1] == "" {
+		lines = lines[:len(lines)-1]
+	}
+
+	totalLines := len(lines)
+
+	// 空文件
+	if totalLines == 0 {
+		return fmt.Sprintf("[%s]\n", path)
+	}
+
+	// 选择可见行
+	start := offset
+	if start < 0 {
+		start = 0
+	}
+	end := totalLines
+	if limit > 0 {
+		end = start + limit
+	}
+	if end > totalLines {
+		end = totalLines
+	}
+	if start >= totalLines {
+		return fmt.Sprintf("[%s]\n<system-reminder>Warning: the file exists but is shorter than the provided offset (%d). The file has %d lines.</system-reminder>",
+			path, offset, totalLines)
+	}
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "[%s]\n", path)
+
+	for i := start; i < end; i++ {
+		if lines[i] == "" {
+			fmt.Fprintf(&b, "%d:\n", i+1)
+		} else {
+			fmt.Fprintf(&b, "%d:%s\n", i+1, lines[i])
+		}
+	}
+
+	// 截断提示
+	if end < totalLines {
+		omitted := totalLines - end
+		fmt.Fprintf(&b, "... [truncated: %d lines omitted]", omitted)
+	}
+
+	return b.String()
 }
 
 // outline regex patterns — compiled once at package init, reused across calls.

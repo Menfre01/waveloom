@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 
 	"github.com/Menfre01/waveloom/pkg/filehistory"
-	"github.com/Menfre01/waveloom/pkg/hashline"
 )
 
 // ---------------------------------------------------------------------------
@@ -239,7 +238,7 @@ func applyFileHunks(ctx context.Context, filePath string, hunks []patchHunk, rea
 	}
 
 	// Write file
-	newContent := hashline.NormalizeFileContent(strings.Join(fileLines, "\n"))
+	newContent := normalizeFileContent(strings.Join(fileLines, "\n"))
 	if err := os.WriteFile(filePath, []byte(newContent), 0o644); err != nil {
 		// Mark remaining results as failed
 		for i := len(results); i < len(hunks); i++ {
@@ -562,4 +561,19 @@ func normalizeUnicode2(s string) string {
 		}
 		return r
 	}, s)
+}
+
+// normalizeFileContent normalizes file content before writing.
+// Rules: \r\n → \n, collapses 3+ blank lines to 2, strips trailing whitespace.
+func normalizeFileContent(s string) string {
+	s = strings.ReplaceAll(s, "\r\n", "\n")
+	s = strings.ReplaceAll(s, "\r", "\n")
+	for strings.Contains(s, "\n\n\n") {
+		s = strings.ReplaceAll(s, "\n\n\n", "\n\n")
+	}
+	lines := strings.Split(s, "\n")
+	for i, l := range lines {
+		lines[i] = strings.TrimRight(l, " \t\r")
+	}
+	return strings.Join(lines, "\n")
 }
