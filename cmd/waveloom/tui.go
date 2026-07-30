@@ -1224,6 +1224,10 @@ func (m *model) handleKeyPress(msg tea.KeyPressMsg) (bool, tea.Cmd) {
 		return true, nil
 
 	case key.Matches(msg, m.keys.Help):
+		// 仅当输入框为空时，? 才触发帮助 overlay；否则将 ? 传递给输入框
+		if m.overlay == overlayNone && m.input.Value() != "" {
+			return false, nil
+		}
 		if m.overlay == overlayHelp {
 			m.overlay = overlayNone
 			m.input.Focus()
