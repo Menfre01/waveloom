@@ -150,17 +150,22 @@ func formatToolArgs(toolName string, argsJSON string, cwd string) string {
 	case "write":
 		return stripCWDPrefix(extractField(argsJSON, "file_path"), cwd)
 	case "edit":
-		patch := extractField(argsJSON, "patch")
-		// 提取所有 [PATH#TAG] 中的文件路径
-		paths := extractPatchFilePaths(patch)
+		patch := extractField(argsJSON, "hunk")
+		patch = strings.ReplaceAll(patch, "\\n", "\n")
+		paths := extractPatchPaths(patch)
+		n := countHunks(patch)
+		// Fallback: use top-level file_path when hunk body has no *** Update File: headers
 		if len(paths) == 0 {
-			return truncateStr(patch, 40)
+			if fp := extractField(argsJSON, "file_path"); fp != "" {
+				paths = []string{fp}
+			}
 		}
-		first := stripCWDPrefix(paths[0], cwd)
-		if len(paths) > 1 {
-			return first + fmt.Sprintf(" +%d more", len(paths)-1)
+		if len(paths) == 1 {
+			return fmt.Sprintf("%s  %d hunk(s)", stripCWDPrefix(paths[0], cwd), n)
+		} else if len(paths) > 1 {
+			return fmt.Sprintf("%d files, %d hunk(s)", len(paths), n)
 		}
-		return first
+		return fmt.Sprintf("%d hunk(s)", n)
 	case "bash":
 		cmd := extractField(argsJSON, "command")
 		// 归一化:剥离 "cd <path> &&" 前缀,避免 turn log 中显示冗长的 cd 前缀
@@ -335,6 +340,43 @@ func truncateStr(s string, maxLen int) string {
 	}
 	return string(runes[:maxLen])
 }
+
+// truncateByDisplayWidth 按显示列宽截断字符串，末尾添加 "…"。
+// 与 truncateStr 不同：本函数按终端显示宽度截断，正确处理 CJK 全角字符（每字符 2 列）。
+func truncateByDisplayWidth(s string, maxWidth int) string {
+	if maxWidth <= 0 {
+		return ""
+	}
+	if displayWidth(s) <= maxWidth {
+		return s
+	}
+	// 预留 "…" (1 rune，displayWidth=1) 或 "..." (3 runes，displayWidth=3)
+	// 这里用 "…" 更紧凑，但仍需 1 列显示宽度
+	ellipsis := "…"
+	ellipsisWidth := displayWidth(ellipsis)
+	targetWidth := maxWidth - ellipsisWidth
+	if targetWidth < 0 {
+		return ellipsis
+	}
+	runes := []rune(s)
+	w := 0
+	cut := 0
+	for i, r := range runes {
+		rw := 1
+		if r >= 128 {
+			rw = lipgloss.Width(string(r))
+		}
+		if w+rw > targetWidth {
+			break
+		}
+		w += rw
+		cut = i + 1
+	}
+	if cut == 0 {
+		return ellipsis
+	}
+	return string(runes[:cut]) + ellipsis
+}
 // collapseMultilineCommand 将多行 shell 命令拼接为单行。
 // extractField 返回原始 JSON 子串(不含 JSON 反转义),因此需要对 JSON 转义序列
 // 做特殊处理: \\\n(JSON \\\n = shell \<newline\> 续行)、\\n(JSON \\n = 字面量 \n)、
@@ -373,36 +415,6 @@ func collapseMultilineCommand(cmd string) string {
 	s = strings.TrimSuffix(s, " &&")
 	return s
 }
-// extractPatchFilePaths 从 hashline patch 文本中提取所有 [PATH#TAG] 节的文件路径。
-// 返回去重后的路径列表（保持首次出现的顺序）。
-func extractPatchFilePaths(patch string) []string {
-	var paths []string
-	seen := make(map[string]bool)
-	rest := patch
-	for {
-		idx := strings.Index(rest, "[")
-		if idx < 0 {
-			break
-		}
-		rest = rest[idx+1:]
-		end := strings.IndexByte(rest, ']')
-		if end < 0 {
-			break
-		}
-		header := rest[:end]
-		hashIdx := strings.LastIndex(header, "#")
-		if hashIdx > 0 {
-			path := header[:hashIdx]
-			if !seen[path] {
-				seen[path] = true
-				paths = append(paths, path)
-			}
-		}
-		rest = rest[end+1:]
-	}
-	return paths
-}
-
 // formatQuestionArgs 从 ask_user_question 的 JSON 参数中提取问题 header 摘要。
 // 解析失败或 header 过多时回退到截断原 JSON。
 func formatQuestionArgs(argsJSON string) string {
@@ -984,6 +996,7 @@ type ViewportCtx struct {
 	Width    int                   // viewport 内容宽度（终端宽度 - 4）
 	Focused  bool                  // 当前段落是否处于焦点态
 	LC       *Messages             // 当前语言文案
+	CWD      string                // 工作目录,用于剥离路径前缀显示
 }
 
 // buildViewportContent 从段落列表重建 viewport 的全部文本行，同时返回每段的起始行号。
@@ -1191,8 +1204,6 @@ func renderAssistantPara(sb *strings.Builder, p *Paragraph, ctx ViewportCtx) {
 	}
 }
 
-
-
 // renderThoughtPara 渲染 thought 段落（斜体灰色，流式时有 spinner 前缀，通过字体样式与正文区分）。
 func renderThoughtPara(sb *strings.Builder, p *Paragraph, ctx ViewportCtx) {
 	// 前缀：流式时 spinner 动画，done 时静态灰色 ·，始终保持锚点宽度
@@ -1342,8 +1353,6 @@ func renderThoughtPara(sb *strings.Builder, p *Paragraph, ctx ViewportCtx) {
 		}
 	}
 }
-
-
 
 // wrapLineStable 按列宽硬截断，不做 word-wrap 优化。
 // 流式输出中使用，保证换行位置仅由字符位置决定，不因后续词增长而漂移。
@@ -1603,9 +1612,8 @@ func renderToolPara(sb *strings.Builder, p *Paragraph, ctx ViewportCtx) {
 		maxArgsWidth = 4
 	}
 	argsDisplay := p.ToolArgs
-	argsRunes := []rune(argsDisplay)
-	if len(argsRunes) > maxArgsWidth {
-		argsDisplay = string(argsRunes[:maxArgsWidth-1]) + "…"
+	if displayWidth(argsDisplay) > maxArgsWidth {
+		argsDisplay = truncateByDisplayWidth(argsDisplay, maxArgsWidth)
 	}
 	sb.WriteString(toolNameRendered)
 	sb.WriteString("  ")
@@ -1618,7 +1626,7 @@ func renderToolPara(sb *strings.Builder, p *Paragraph, ctx ViewportCtx) {
 	if p.State == stateDone || p.State == stateError {
 		if p.State == stateCollapsed || p.State == stateDone || p.State == stateError {
 			if p.DiffHunks != nil {
-				renderDiffPreview(sb, p.DiffHunks, textWidth, indentStr, ctx.LC)
+				renderDiffPreview(sb, p.DiffHunks, textWidth, indentStr, ctx)
 			} else {
 				renderToolPreview(sb, p, textWidth, indentStr, ctx.LC)
 			}
@@ -1633,7 +1641,7 @@ func renderToolPara(sb *strings.Builder, p *Paragraph, ctx ViewportCtx) {
 	// 展开态 —— 显示完整输出
 	if p.State == stateExpanded {
 		if p.DiffHunks != nil {
-			renderDiffView(sb, p.DiffHunks, textWidth, indentStr, ctx.LC)
+			renderDiffView(sb, p.DiffHunks, textWidth, indentStr, ctx)
 		} else {
 			renderToolFullOutput(sb, p, textWidth, indentStr, ctx.LC)
 		}
@@ -1845,7 +1853,6 @@ func renderToolStreamOutput(sb *strings.Builder, p *Paragraph, textWidth int, in
 	}
 }
 
-
 // maxExpandedWrapped 是展开态的最大包装后行数。防止单条超长行在展开时产生海量 viewport 行。
 const maxExpandedWrapped = 2000
 
@@ -2003,7 +2010,7 @@ func renderToolFullOutput(sb *strings.Builder, p *Paragraph, textWidth int, inde
 
 // renderDiffPreview 渲染 diff 的折叠预览。受 maxPreviewWrapped 约束，
 // 防止单条超长行撑满预览。edit_file 不参与段落聚焦，截断时仅显示标记。
-func renderDiffPreview(sb *strings.Builder, hunks []tool.DiffHunk, textWidth int, indent string, lc *Messages) {
+func renderDiffPreview(sb *strings.Builder, hunks []tool.DiffHunk, textWidth int, indent string, ctx ViewportCtx) {
 	if len(hunks) == 0 {
 		return
 	}
@@ -2040,7 +2047,7 @@ func renderDiffPreview(sb *strings.Builder, hunks []tool.DiffHunk, textWidth int
 	}
 	if truncated {
 		sb.WriteString(indent)
-		sb.WriteString(styleToolPreviewHint.Render(lc.ToolTruncated))
+		sb.WriteString(styleToolPreviewHint.Render(ctx.LC.ToolTruncated))
 		sb.WriteString("\n")
 	}
 }
@@ -2051,7 +2058,7 @@ func renderDiffPreview(sb *strings.Builder, hunks []tool.DiffHunk, textWidth int
 //   - 附加虚行号列（灰色），不影响 diff 语义
 //
 // 受 maxExpandedWrapped 约束，防止超长行导致海量输出。
-func renderDiffView(sb *strings.Builder, hunks []tool.DiffHunk, textWidth int, indent string, lc *Messages) {
+func renderDiffView(sb *strings.Builder, hunks []tool.DiffHunk, textWidth int, indent string, ctx ViewportCtx) {
 	if len(hunks) == 0 {
 		return
 	}
@@ -2079,7 +2086,7 @@ func renderDiffView(sb *strings.Builder, hunks []tool.DiffHunk, textWidth int, i
 
 	var lastFilePath string
 	for hi, h := range hunks {
-		// 文件路径变化时（多文件编辑），渲染 hashline 风格的文件头
+		// 文件路径变化时（多文件编辑），渲染 文件头
 		if h.FilePath != "" && h.FilePath != lastFilePath {
 			lastFilePath = h.FilePath
 			if hi > 0 {
@@ -2089,7 +2096,7 @@ func renderDiffView(sb *strings.Builder, hunks []tool.DiffHunk, textWidth int, i
 				sb.WriteString("\n")
 			}
 			sb.WriteString(indent)
-			sb.WriteString(styleDiffHeader.Render("── " + stripCWDPrefix(h.FilePath, "") + " ──"))
+			sb.WriteString(styleDiffHeader.Render("── " + stripCWDPrefix(h.FilePath, ctx.CWD) + " ──"))
 			sb.WriteString("\n")
 		} else if hi > 0 {
 			// 同文件 hunks 之间单线分隔（兼容旧行为及单文件多 hunk 场景）
@@ -2164,7 +2171,7 @@ func renderDiffView(sb *strings.Builder, hunks []tool.DiffHunk, textWidth int, i
 
 	if truncated {
 		sb.WriteString(indent)
-		sb.WriteString(styleToolPreviewHint.Render(fmt.Sprintf(lc.ToolTruncatedLines, maxExpandedWrapped)))
+		sb.WriteString(styleToolPreviewHint.Render(fmt.Sprintf(ctx.LC.ToolTruncatedLines, maxExpandedWrapped)))
 		sb.WriteString("\n")
 	}
 }
@@ -2235,8 +2242,6 @@ func diffLinePrefixAndStyle(kind tool.DiffLineKind) (prefix string, style lipglo
 	}
 }
 
-
-
 // ---------------------------------------------------------------------------
 // 辅助：检测字符串内容类型
 // ---------------------------------------------------------------------------
@@ -2248,6 +2253,34 @@ func collapseBlankLines(s string) string {
 		s = strings.ReplaceAll(s, "\n\n\n", "\n\n")
 	}
 	return s
+}
+
+// countHunks 统计 hunk 文本中 @@ 头的数量。
+func countHunks(hunk string) int {
+	n := 0
+	for _, line := range strings.Split(hunk, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "@@") {
+			n++
+		}
+	}
+	return n
+}
+
+// extractPatchPaths 从 patch 文本中提取 *** Update File: 指定的文件路径。
+func extractPatchPaths(patch string) []string {
+	var paths []string
+	seen := make(map[string]bool)
+	for _, line := range strings.Split(patch, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "*** Update File:") {
+			p := strings.TrimSpace(strings.TrimPrefix(trimmed, "*** Update File:"))
+			if p != "" && !seen[p] {
+				seen[p] = true
+				paths = append(paths, p)
+			}
+		}
+	}
+	return paths
 }
 
 // findFirstPromptPos 在可能含 ANSI 转义序列的字符串中查找第一个 "  "（2 空格）的位置。
@@ -2326,9 +2359,8 @@ func renderSubagentPara(sb *strings.Builder, p *Paragraph, ctx ViewportCtx) {
 	if maxArgsWidth < 4 {
 		maxArgsWidth = 4
 	}
-	argsRunes := []rune(argsText)
-	if len(argsRunes) > maxArgsWidth {
-		argsText = string(argsRunes[:maxArgsWidth-1]) + "…"
+	if displayWidth(argsText) > maxArgsWidth {
+		argsText = truncateByDisplayWidth(argsText, maxArgsWidth)
 	}
 
 	sb.WriteString(prefixStr)

@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 )
 
 // TempDir 返回规范化的临时目录路径。
@@ -101,4 +102,33 @@ func ResolvePathWithDir(path, workingDir string) (string, error) {
 		absPath = filepath.Join(absDir, path)
 	}
 	return filepath.Clean(absPath), nil
+}
+
+// updateFileRE 匹配 hunk body 中的 *** Update File: <path> 头。
+var updateFileRE = regexp.MustCompile(`^\*\*\* Update File:\s*(.+)$`)
+
+// ExtractHunkFilePaths 从 diff hunk 文本中提取所有文件路径。
+// 解析 *** Update File: <path> 头,将相对路径基于 defaultPath 所在目录解析为绝对路径。
+// 若 hunk 中没有 *** Update File: 头,返回 [defaultPath]。
+// 返回的路径均已通过 filepath.Clean 归一化。
+func ExtractHunkFilePaths(hunk string, defaultPath string) []string {
+	lines := strings.Split(hunk, "\n")
+	var paths []string
+
+	for _, line := range lines {
+		matches := updateFileRE.FindStringSubmatch(line)
+		if matches == nil {
+			continue
+		}
+		path := strings.TrimSpace(matches[1])
+		if !filepath.IsAbs(path) && defaultPath != "" {
+			path = filepath.Join(filepath.Dir(defaultPath), path)
+		}
+		paths = append(paths, filepath.Clean(path))
+	}
+
+	if len(paths) == 0 {
+		return []string{filepath.Clean(defaultPath)}
+	}
+	return paths
 }

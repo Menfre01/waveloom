@@ -263,3 +263,60 @@ func TestRegression_TempDir_SymlinkResolution(t *testing.T) {
 		t.Errorf("TempDir() = %q does not point to same file as os.TempDir() = %q", dir, raw)
 	}
 }
+
+func TestExtractHunkFilePaths(t *testing.T) {
+	t.Run("single file no header", func(t *testing.T) {
+		paths := ExtractHunkFilePaths("@@ -1 +1 @@\n-old\n+new\n", "/app/main.go")
+		if len(paths) != 1 || paths[0] != "/app/main.go" {
+			t.Errorf("expected [/app/main.go], got %v", paths)
+		}
+	})
+
+	t.Run("multi-file with headers", func(t *testing.T) {
+		hunk := `*** Update File: src/greet.go
+@@ func greet
+ func greet() string {
+-    return "hello"
++    return "hello, " + name
+ }
+*** Update File: src/util.go
+@@ func helper
+ func helper(x int) int {
+-    return x * 2
++    return x * 3
+ }`
+		paths := ExtractHunkFilePaths(hunk, "/app/main.go")
+		expected := []string{"/app/src/greet.go", "/app/src/util.go"}
+		if len(paths) != len(expected) {
+			t.Fatalf("expected %d paths, got %d: %v", len(expected), len(paths), paths)
+		}
+		for i, p := range paths {
+			if p != expected[i] {
+				t.Errorf("paths[%d] = %q, want %q", i, p, expected[i])
+			}
+		}
+	})
+
+	t.Run("absolute path in header", func(t *testing.T) {
+		hunk := `*** Update File: /tmp/config.go
+@@
+-debug=true
++debug=false`
+		paths := ExtractHunkFilePaths(hunk, "/app/main.go")
+		if len(paths) != 1 || paths[0] != "/tmp/config.go" {
+			t.Errorf("expected [/tmp/config.go], got %v", paths)
+		}
+	})
+
+	t.Run("whitespace-only path ignored", func(t *testing.T) {
+		// *** Update File: 后只有空白 → 不匹配正则,整行跳过,回退到 defaultPath
+		hunk := `*** Update File:
+@@ -1 +1 @@
+-old
++new`
+		paths := ExtractHunkFilePaths(hunk, "/app/main.go")
+		if len(paths) != 1 || paths[0] != "/app/main.go" {
+			t.Errorf("expected [/app/main.go] (fallback), got %v", paths)
+		}
+	})
+}

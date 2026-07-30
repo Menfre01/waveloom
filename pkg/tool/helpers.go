@@ -11,7 +11,7 @@ import (
 	"strings"
 )
 
-// ── 共享辅助函数：从旧 read_file.go 提取，被 hashline 工具和其他工具依赖 ──
+// ── 共享辅助函数 ──
 
 func toolError(class ErrorClass, kind, msg string, cause error) *ToolResult {
 	return &ToolResult{Error: &ToolError{Class: class, Kind: kind, Message: msg, Cause: cause}}
@@ -151,4 +151,45 @@ func suggestFileInDir(dirPath string, entries []os.DirEntry) string {
 	}
 
 	return ""
+}
+
+// formatFileIndex generates a structural index for large files,
+// helping the LLM navigate to edit targets outside the post-edit context window.
+func formatFileIndex(lines []string) string {
+	const maxEntries = 30
+	type entry struct {
+		line int
+		text string
+	}
+	var entries []entry
+	inParagraph := false
+	for i, line := range lines {
+		isBlank := strings.TrimSpace(line) == ""
+		if !isBlank && !inParagraph {
+			entries = append(entries, entry{line: i + 1, text: line})
+			inParagraph = true
+		} else if isBlank {
+			inParagraph = false
+		}
+	}
+
+	var b strings.Builder
+	if len(entries) <= maxEntries {
+		b.WriteString("--- file index ---\n")
+		for _, e := range entries {
+			fmt.Fprintf(&b, "%d:%s\n", e.line, e.text)
+		}
+	} else {
+		b.WriteString("--- file index (sampled every 25 lines) ---\n")
+		step := 25
+		for i := 0; i < len(lines); i += step {
+			for j := i; j < len(lines) && j < i+step; j++ {
+				if strings.TrimSpace(lines[j]) != "" {
+					fmt.Fprintf(&b, "%d:%s\n", j+1, lines[j])
+					break
+				}
+			}
+		}
+	}
+	return b.String()
 }

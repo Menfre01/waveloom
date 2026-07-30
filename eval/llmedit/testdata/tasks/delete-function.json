@@ -1,0 +1,12 @@
+{
+  "name": "delete-function",
+  "instruction": "删除 main.go 里的函数 oldHelper 及其所有调用",
+  "type": "multi-line",
+  "files": {
+    "main.go": "package main\n\nfunc oldHelper(x int) int {\n\treturn x * 2\n}\n\nfunc main() {\n\ty := oldHelper(5)\n\tprintln(y)\n}\n"
+  },
+  "gold": {
+    "main.go": "package main\n\nfunc main() {\n}\n"
+  },
+  "max_turns": 5
+}

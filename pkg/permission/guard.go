@@ -491,16 +491,23 @@ func (g *GuardImpl) quickPathCheck(cmd string) *DecisionResult {
 	return nil
 }
 
-// fileSafetyCheck 对文件工具执行路径安全检查。
-// 仅返回 deny（危险路径 write 操作硬拦截），不返回 ask。
-// plan 模式下 write 操作仅放行 plan 文件路径。
 func (g *GuardImpl) fileSafetyCheck(input json.RawMessage, isWriteOp bool) DecisionResult {
-	filePath, _ := extractFilePath(input)
-	if filePath == "" {
+	filePaths := extractAllEditPaths(input)
+	if len(filePaths) == 0 {
 		return DecisionResult{}
 	}
 
-	// plan 模式：仅允许写入 plan 文件
+	for _, filePath := range filePaths {
+		if result := g.checkSingleFilePath(filePath, isWriteOp); result.Decision != "" {
+			return result
+		}
+	}
+	return DecisionResult{}
+}
+
+// checkSingleFilePath 对单个文件路径执行安全检查。
+func (g *GuardImpl) checkSingleFilePath(filePath string, isWriteOp bool) DecisionResult {
+	// plan 模式:仅允许写入 plan 文件
 	if g.planMode && isWriteOp {
 		resolved, _ := pathutil.ResolvePathWithDir(filePath, "")
 		planResolved, _ := pathutil.ResolvePathWithDir(g.planFilePath, "")
@@ -511,7 +518,7 @@ func (g *GuardImpl) fileSafetyCheck(input json.RawMessage, isWriteOp bool) Decis
 				Message:  fmt.Sprintf("plan mode: only writes to %s are allowed", g.planFilePath),
 			}
 		}
-		// plan 文件 → 直接 ALLOW，不经过后续规则/默认策略
+		// plan 文件 → 直接 ALLOW,不经过后续规则/默认策略
 		return DecisionResult{
 			Decision: DecisionAllow,
 			Reason:   ReasonSafety,
@@ -530,7 +537,7 @@ func (g *GuardImpl) fileSafetyCheck(input json.RawMessage, isWriteOp bool) Decis
 		}
 	}
 
-	// 其他情况（safe/sensitive read/write）→ passthrough
+	// 其他情况(safe/sensitive read/write)→ passthrough
 	return DecisionResult{}
 }
 
@@ -709,7 +716,6 @@ func extractFilePath(input json.RawMessage) (path, workingDir string) {
 	var params struct {
 		FilePath   string `json:"file_path"`
 		Path       string `json:"path"`
-		Patch      string `json:"patch"`
 		WorkingDir string `json:"working_dir"`
 	}
 	if json.Unmarshal(input, &params) != nil {
@@ -719,31 +725,33 @@ func extractFilePath(input json.RawMessage) (path, workingDir string) {
 	if path == "" {
 		path = params.Path
 	}
-	if path == "" && params.Patch != "" {
-		// edit: 从 patch 文本中提取第一个 [PATH#TAG] 中的路径
-		path = extractPathFromPatch(params.Patch)
-	}
 	if path == "" {
 		path = params.WorkingDir
 	}
 	return path, params.WorkingDir
 }
 
-// extractPathFromPatch 从 hashline patch 文本中提取第一个 [PATH#TAG] 的路径部分。
-func extractPathFromPatch(patch string) string {
-	idx := strings.Index(patch, "[")
-	if idx < 0 {
-		return ""
+// extractAllEditPaths 从工具输入中提取所有文件路径。
+// 对 edit 工具,同时提取 file_path 参数和 hunk body 中 *** Update File: 头指定的路径。
+// file_path 经过 ResolvePathWithDir 解析为绝对路径,与 edit 工具实际执行行为对齐。
+func extractAllEditPaths(input json.RawMessage) []string {
+	var params struct {
+		FilePath string `json:"file_path"`
+		Hunk     string `json:"hunk"`
 	}
-	rest := patch[idx+1:]
-	end := strings.IndexByte(rest, ']')
-	if end < 0 {
-		return ""
+	if json.Unmarshal(input, &params) != nil {
+		return nil
 	}
-	header := rest[:end]
-	hashIdx := strings.LastIndex(header, "#")
-	if hashIdx < 0 {
-		return header // 无 TAG，整段当作路径
+	if params.FilePath == "" {
+		return nil
 	}
-	return header[:hashIdx]
+	// 解析为绝对路径,与 edit 工具实际执行时的行为对齐。
+	// file_path 在 edit 工具中会被 ResolvePathWithDir 解析为绝对路径,
+	// *** Update File: 中的相对路径基于该绝对路径的目录解析。
+	resolved, _ := pathutil.ResolvePathWithDir(params.FilePath, "")
+	if params.Hunk != "" {
+		return pathutil.ExtractHunkFilePaths(params.Hunk, resolved)
+	}
+	return []string{resolved}
 }
+

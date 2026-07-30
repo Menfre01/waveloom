@@ -869,6 +869,72 @@ func TestRewindConversationTo_PersistsForkFiles(t *testing.T) {
 	_ = beforeCount
 }
 
+// TestRewindConversationTo_JSONLContent verifies that the JSONL file produced
+// by RewindConversationTo contains exactly the truncated messages with correct
+// UUID format (36-char UUID v4), proper content blocks, and parentUUID linkage.
+func TestRewindConversationTo_JSONLContent(t *testing.T) {
+	dir := t.TempDir()
+	cm := New("system")
+
+	msgs, _ := cm.PrepareRun("hello")
+	cm.CompleteRun(append(msgs, llm.Message{Role: llm.RoleAssistant, Content: "hi there"}),
+		50, 50, 25, 10, 5, 0, "model", 500, "completed")
+
+	// Second turn
+	msgs2, _ := cm.PrepareRun("world")
+	cm.CompleteRun(append(msgs2, llm.Message{Role: llm.RoleAssistant, Content: "hey"}),
+		30, 30, 10, 5, 0, 0, "model", 300, "completed")
+
+	// Rewind to keep only first turn (index 2 = system + first user)
+	_, jsonlPath, err := cm.RewindConversationTo(2, dir)
+	if err != nil {
+		t.Fatalf("RewindConversationTo failed: %v", err)
+	}
+
+	entries, jlErr := LoadTranscriptEntries(jsonlPath)
+	if jlErr != nil {
+		t.Fatalf("load JSONL failed: %v", jlErr)
+	}
+
+	if len(entries) != 2 {
+		t.Fatalf("expected 2 entries, got %d", len(entries))
+	}
+
+	// Verify UUID format: 36-char UUID v4
+	for _, e := range entries {
+		if e.UUID == "" {
+			t.Fatalf("entry type=%s has empty UUID", e.Type)
+		}
+		if len(e.UUID) != 36 {
+			t.Fatalf("entry type=%s UUID length=%d, expected 36: %q", e.Type, len(e.UUID), e.UUID)
+		}
+	}
+
+	// Verify first entry is system, second is user
+	if entries[0].Type != "system" {
+		t.Fatalf("expected first entry type=system, got %s", entries[0].Type)
+	}
+	if entries[1].Type != "user" {
+		t.Fatalf("expected second entry type=user, got %s", entries[1].Type)
+	}
+
+	// Verify parentUUID linkage: second entry's parentUUID == first entry's UUID
+	if entries[1].ParentUUID == nil {
+		t.Fatal("second entry has nil parentUUID")
+	}
+	if entries[0].UUID == "" || *entries[1].ParentUUID != entries[0].UUID {
+		t.Fatalf("parentUUID chain broken: system=%q, user.parent=%q",
+			entries[0].UUID, *entries[1].ParentUUID)
+	}
+
+	// Verify content blocks
+	umsg := entries[1].ToMessage()
+	if umsg.Content != "hello" {
+		t.Fatalf("expected content 'hello', got %q", umsg.Content)
+	}
+
+}
+
 func TestMessages(t *testing.T) {
 	cm := New("system")
 	_, _ = cm.PrepareRun("hello")

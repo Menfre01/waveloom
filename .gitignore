@@ -15,6 +15,7 @@ bin/
 dist/
 # 根目录 waveloom 二进制（go build 本地产物）
 /waveloom
+/llmedit
 
 # 实验编译产物（go build ./experiments/...）
 /attention_order

@@ -1,0 +1,12 @@
+{
+  "name": "remove-dead-code",
+  "instruction": "这个文件里有一些不再使用的函数，清理掉它们，只保留还在用的代码。",
+  "type": "multi-line",
+  "files": {
+    "main.go": "package main\n\nfunc unused() string {\n\treturn \"never called\"\n}\n\nfunc helper() string {\n\treturn unused()\n}\n\nfunc main() {\n\tprintln(\"hello\")\n}\n"
+  },
+  "gold": {
+    "main.go": "package main\n\nfunc main() {\n\tprintln(\"hello\")\n}\n"
+  },
+  "max_turns": 5
+}

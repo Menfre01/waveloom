@@ -418,12 +418,13 @@ type ModelInfo struct {
 // NewMessageID — 消息 ID 生成
 // ---------------------------------------------------------------------------
 
-// NewMessageID 生成 8 字节随机十六进制消息标识符。
-// 格式:16 个十六进制字符,如 "a1b2c3d4e5f6a7b8"。
+// NewMessageID 生成 16 字节随机标识符,格式为 8-4-4-4-12 hex 字符(UUID v4)。
+// 例:a1b2c3d4-e5f6-a7b8-c9d0-e1f2a3b4c5d6
 func NewMessageID() string {
-	b := make([]byte, 8)
+	b := make([]byte, 16)
 	if _, err := rand.Read(b); err != nil {
 		panic("crypto/rand.Read failed: " + err.Error())
 	}
-	return hex.EncodeToString(b)
+	s := hex.EncodeToString(b)
+	return s[0:8] + "-" + s[8:12] + "-" + s[12:16] + "-" + s[16:20] + "-" + s[20:32]
 }

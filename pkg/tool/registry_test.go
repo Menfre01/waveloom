@@ -136,9 +136,9 @@ func TestRegistryExecuteSuccess(t *testing.T) {
 
 func TestRegistry_RegisterAndList(t *testing.T) {
 	r := NewRegistry()
-	r.Register(Wrap(&ReadFileHashline{}))
+	r.Register(Wrap(&ReadFile{}))
 	r.Register(Wrap(&WriteFile{}))
-	r.Register(Wrap(&EditFileHashline{}))
+	r.Register(Wrap(&EditFile{}))
 	r.Register(Wrap(&Shell{AllowBg: true}))  // "bash"
 	r.Register(Wrap(&Shell{AllowBg: false})) // "bash_subagent"
 	r.Register(Wrap(&WebFetch{}))
@@ -186,7 +186,7 @@ func TestRegistry_IsStreamable_Shell(t *testing.T) {
 
 func TestRegistry_IsStreamable_NonStreamable(t *testing.T) {
 	r := NewRegistry()
-	r.Register(Wrap(&ReadFileHashline{}))
+	r.Register(Wrap(&ReadFile{}))
 	if r.IsStreamable("read") {
 		t.Error("read_file should not be streamable")
 	}
@@ -222,7 +222,7 @@ func TestRegistry_ExecuteStreaming(t *testing.T) {
 
 func TestRegistry_ExecuteStreaming_NotStreamable(t *testing.T) {
 	r := NewRegistry()
-	r.Register(Wrap(&ReadFileHashline{}))
+	r.Register(Wrap(&ReadFile{}))
 	_, err := r.ExecuteStreaming(context.Background(), "read", json.RawMessage(`{"file_path":"test"}`), func(chunk string) {})
 	if err == nil {
 		t.Error("expected error for non-streamable tool")

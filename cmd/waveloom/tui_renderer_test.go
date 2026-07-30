@@ -877,3 +877,65 @@ var ansiRE = regexp.MustCompile(`\x1b\[[0-9;]*m`)
 func stripANSI(s string) string {
 	return ansiRE.ReplaceAllString(s, "")
 }
+
+// ---------------------------------------------------------------------------
+// truncateByDisplayWidth — 按显示列宽截断
+// ---------------------------------------------------------------------------
+
+func TestTruncateByDisplayWidth_ShortString(t *testing.T) {
+	// 字符串未超出 maxWidth 时原样返回
+	got := truncateByDisplayWidth("hello", 10)
+	if got != "hello" {
+		t.Errorf("expected 'hello', got %q", got)
+	}
+}
+
+func TestTruncateByDisplayWidth_ASCII(t *testing.T) {
+	// ASCII 字符串按列宽截断,末尾追加 …
+	got := truncateByDisplayWidth("hello world", 8)
+	// "hello w" = 7 cols, + "…" (1 col) = 8 cols
+	if got != "hello w…" {
+		t.Errorf("expected 'hello w…', got %q", got)
+	}
+}
+
+func TestTruncateByDisplayWidth_CJK(t *testing.T) {
+	// CJK 字符每字符 2 列,截断时按显示宽度而非 rune 计数
+	got := truncateByDisplayWidth("你好世界", 5)
+	// "你好" = 4 cols, + "…" (1 col) = 5 cols
+	if got != "你好…" {
+		t.Errorf("expected '你好…', got %q", got)
+	}
+}
+
+func TestTruncateByDisplayWidth_CJK_MixedASCII(t *testing.T) {
+	// 混合 CJK + ASCII 文本,按显示宽度截断
+	got := truncateByDisplayWidth("文件 file.go 已修改", 11)
+	// "文件"=4 + " "=1 + "file"=4 + "."=1 + "…"=1 = 11 → "文件 file.…"
+	if got != "文件 file.…" {
+		t.Errorf("expected '文件 file.…', got %q", got)
+	}
+}
+
+func TestTruncateByDisplayWidth_NarrowWidth(t *testing.T) {
+	// 宽度不足以容纳任何内容时仅返回 …
+	got := truncateByDisplayWidth("hello", 1)
+	if got != "…" {
+		t.Errorf("expected '…', got %q", got)
+	}
+}
+
+func TestTruncateByDisplayWidth_ZeroWidth(t *testing.T) {
+	got := truncateByDisplayWidth("hello", 0)
+	if got != "" {
+		t.Errorf("expected '', got %q", got)
+	}
+}
+
+func TestTruncateByDisplayWidth_ExactFit(t *testing.T) {
+	// 恰好等于 maxWidth 时不截断
+	got := truncateByDisplayWidth("你好", 4)
+	if got != "你好" {
+		t.Errorf("expected '你好', got %q", got)
+	}
+}

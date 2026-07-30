@@ -61,9 +61,13 @@ type anthropicMessage struct {
 
 // NewTranscriptEntry 将 llm.Message 转换为 TranscriptEntry，同时做 content blocks 映射。
 func NewTranscriptEntry(msg llm.Message, parentUUID *string, sessionID, version, cwd, gitBranch string) TranscriptEntry {
+	uuid := msg.ID
+	if uuid == "" {
+		uuid = llm.NewMessageID()
+	}
 	return TranscriptEntry{
 		ParentUUID: parentUUID,
-		UUID:       msg.ID,
+		UUID:       uuid,
 		SessionID:  sessionID,
 		Version:    version,
 		Cwd:        cwd,
@@ -237,7 +241,7 @@ func MessagesToTranscriptEntries(messages []llm.Message, startingParentUUID *str
 		msg := messages[i]
 		e := NewTranscriptEntry(msg, prevUUID, sessionID, version, cwd, gitBranch)
 		entries = append(entries, e)
-		prevUUID = &msg.ID
+		prevUUID = &e.UUID
 	}
 	return entries
 }
