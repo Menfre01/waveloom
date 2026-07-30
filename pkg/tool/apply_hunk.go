@@ -368,7 +368,7 @@ func diagnoseMatchLayer(fileLines, pattern []string, pos int) string {
 
 	switch {
 	case exactOk:
-		return fmt.Sprintf("  (pattern exists at line %d — search may have started after it; re-read and retry with more context)\n", pos+1)
+		return fmt.Sprintf("  (pattern exists at line %d — search may have started after it; re-read with more context lines and retry edit — do NOT use python/sed/bash)\n", pos+1)
 	case rstripOk:
 		return "  (matches after stripping trailing whitespace)\n"
 	case trimOk:

@@ -190,10 +190,12 @@ Read output shows empty lines as `N:` with no content after colon. In a hunk, an
 
 ### Consecutive failures
 
+**⚠️ CRITICAL: Do NOT use bash, python, sed, awk, or any other tool to modify files. `edit` and `write` are the ONLY permitted file modification tools.** When a hunk fails, the ONLY valid response is: re-read → better hunk → retry edit.
+
 Two failures on the same file → **stop using edit**, switch to `read` and verify the target content at byte level. Likely causes:
 
 - **Invisible Unicode**: zero-width spaces (`\u200B`), BOM (`\uFEFF`), direction markers (`\u200E`/`\u200F`), line separators (`\u2028`). Use `read(file_path, pattern="<unique snippet>", context_lines=5)` to reveal the exact bytes around the target area.
 - **Indentation mismatch**: tabs vs spaces, or trailing whitespace not visible in terminal output. Re-read with `context_lines=30` to see surrounding indentation pattern.
 - **Wrong file section**: the area has changed since last read. Re-read the full file or use `read(outline=true)` first.
 
-After re-reading, construct a new hunk with exact context lines from the fresh read output. Do NOT attempt more than 2 edits on the same file without re-reading. Do NOT fall back to bash/python/sed — the only way through a failed hunk is re-read → better hunk → retry edit.
+After re-reading, construct a new hunk with exact context lines from the fresh read output. Do NOT attempt more than 2 edits on the same file without re-reading. **NEVER fall back to bash/python/sed — these are NOT alternatives to edit. The ONLY path through an edit failure is re-read → better hunk → retry edit.**

@@ -109,7 +109,7 @@ func (t *EditFile) Execute(ctx context.Context, p EditFileParams) (*ToolResult, 
 	total := succeeded + failed
 	fmt.Fprintf(&buf, "\n%d/%d hunks succeeded", succeeded, total)
 	if failed > 0 {
-		fmt.Fprintf(&buf, " — re-read failed files and retry")
+		fmt.Fprintf(&buf, " — re-read failed files and retry. Do NOT fall back to bash/python/sed — edit is the ONLY file modification tool. The only fix for a failed hunk is: re-read the target area → construct a better hunk → retry edit.")
 	}
 	buf.WriteByte('\n')
 
