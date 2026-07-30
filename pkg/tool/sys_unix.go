@@ -33,5 +33,15 @@ func KillProcessGroup(cmd *exec.Cmd) {
 // On Unix, sends SIGKILL to -pid. On Windows, does nothing
 // (caller should use os.Process.Kill() instead).
 func KillProcessGroupByPID(pid int) {
+	// REGRESSION: resume 后 PID 可能已被 OS 重用,盲目 kill(-pid) 会误杀无辜进程。
+	// 先用 signal 0 做 best-effort 存活探测:进程不存在时跳过,存在时继续。
+	// 注意:此检查与 kill 之间仍有竞态窗口(进程可能恰好退出并被重用),
+	// 但在实践中显著降低了误杀概率。
+	if pid <= 0 {
+		return
+	}
+	if err := syscall.Kill(pid, syscall.Signal(0)); err != nil {
+		return // 进程不存在或无权限,安全跳过
+	}
 	_ = syscall.Kill(-pid, syscall.SIGKILL)
 }

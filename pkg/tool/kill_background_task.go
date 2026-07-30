@@ -88,6 +88,10 @@ func (t *KillBackgroundTask) Execute(ctx context.Context, p KillBackgroundTaskPa
 		KillProcessGroupByPID(pid)
 	}
 
+	// REGRESSION: 杀死进程后立即更新 registry 状态,消除状态窗口。
+	// 避免 wait goroutine 的延迟 Update 与 kill_background_task 之间出现不一致。
+	task.DefaultRegistry.Update(p.TaskID, task.TaskInterrupted, -1)
+
 	return &ToolResult{
 		Content: fmt.Sprintf("Task %s (PID %d, command: %s) killed.", p.TaskID, pid, info.Command),
 	}, nil

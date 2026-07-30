@@ -3,6 +3,7 @@
 package task
 
 import (
+	"context"
 	"sync"
 	"time"
 )
@@ -49,6 +50,8 @@ type TaskInfo struct {
 type Registry struct {
 	mu    sync.RWMutex
 	tasks map[string]*TaskInfo
+	shutdownCtx    context.Context
+	shutdownCancel context.CancelFunc
 }
 
 // DefaultRegistry 是全局共享的后台任务注册表实例。
@@ -56,6 +59,27 @@ var DefaultRegistry = &Registry{
 	tasks: make(map[string]*TaskInfo),
 }
 
+func init() {
+	DefaultRegistry.shutdownCtx, DefaultRegistry.shutdownCancel = context.WithCancel(context.Background())
+}
+
+// Done 返回一个 channel,当 Registry 被 Shutdown 时关闭。
+// 后台 wait goroutine 应监听此 channel,在 TUI 退出时及时释放。
+func (r *Registry) Done() <-chan struct{} {
+	if r.shutdownCtx == nil {
+		// 测试中可能直接创建 Registry 而未经过 init(),此时返回永不关闭的 channel。
+		return make(chan struct{})
+	}
+	return r.shutdownCtx.Done()
+}
+
+// Shutdown 触发全局关闭信号,通知所有后台 wait goroutine 退出。
+func (r *Registry) Shutdown() {
+	if r.shutdownCancel == nil {
+		return
+	}
+	r.shutdownCancel()
+}
 // Register 注册一个新的后台任务。如果 ID 已存在则不覆盖。
 func (r *Registry) Register(id string, info *TaskInfo) {
 	r.mu.Lock()
@@ -158,9 +182,15 @@ func (r *Registry) Remove(id string) {
 	delete(r.tasks, id)
 }
 
-// Reset 清空所有已注册的任务（用于测试清理）。
+// Reset 清空所有已注册的任务(用于测试清理)。
 func (r *Registry) Reset() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.tasks = make(map[string]*TaskInfo)
+	// REGRESSION: 重新创建 shutdown context,防止 Reset-after-Shutdown 后
+	// Done() channel 永久关闭导致新任务 goroutine 立即收到假信号。
+	if r.shutdownCancel != nil {
+		r.shutdownCancel()
+	}
+	r.shutdownCtx, r.shutdownCancel = context.WithCancel(context.Background())
 }

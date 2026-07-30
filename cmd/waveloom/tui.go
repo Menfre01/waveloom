@@ -63,6 +63,7 @@ import (
 	"github.com/Menfre01/waveloom/pkg/skill"
 	"github.com/Menfre01/waveloom/pkg/slashcommand"
 	"github.com/Menfre01/waveloom/pkg/subagent"
+	"github.com/Menfre01/waveloom/pkg/task"
 	"github.com/Menfre01/waveloom/pkg/todo"
 	"github.com/Menfre01/waveloom/pkg/tool"
 	"github.com/Menfre01/waveloom/pkg/prompt"
@@ -4037,6 +4038,11 @@ func (m *model) executeRewind(opt rewindOption) tea.Cmd {
 			if m.hookRunner != nil {
 				m.hookRunner.SetSessionInfo(newID, m.transcriptPath)
 			}
+			// REGRESSION: RewindConversationTo 重置了 messages/stats/compaction,
+			// 但 DefaultRegistry 仍保留 rewind 点之后注册的后台任务。
+			// 多次 resume+rewind 累积僵尸条目,新 session JSON 中包含无效 task 引用。
+			task.DefaultRegistry.Reset()
+
 			// 从截断后的消息重建段落列表
 			m.rebuildParasFromMessages()
 
@@ -4829,6 +4835,18 @@ func runTUI(llmClient llm.Client, registry tool.Registry, guard permission.Guard
 	}
 
 	m.initTheme() // 根据 themeMode + 终端背景自动检测并应用主题
+
+	// REGRESSION: p.Run() 可能正常返回或 error 返回(os.Exit(1)),两种路径都需要
+	// 清理后台进程,避免孤儿进程泄漏。defer 保证清理一定执行。
+	defer func() {
+		task.DefaultRegistry.Shutdown()
+		for _, t := range task.DefaultRegistry.Running() {
+			if t.PID > 0 {
+				tool.KillProcessGroupByPID(t.PID)
+			}
+			task.DefaultRegistry.Update(t.ID, task.TaskInterrupted, -1)
+		}
+	}()
 
 	if _, err := p.Run(); err != nil {
 		slog.Error("TUI runtime error", "err", err)

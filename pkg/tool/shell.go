@@ -25,7 +25,6 @@ import (
 //go:embed shell_prompt.md
 var shellPrompt string
 
-
 // ---------------------------------------------------------------------------
 // Shell — 执行 Shell 命令
 // ---------------------------------------------------------------------------
@@ -48,7 +47,6 @@ func (t *Shell) Name() string {
 	}
 	return "bash_subagent"
 }
-
 
 var shellSchema = json.RawMessage(`{
   "type": "object",
@@ -193,17 +191,39 @@ func (t *Shell) Execute(ctx context.Context, p ShellParams) (*ToolResult, error)
 		go func() {
 			defer func() {
 				if r := recover(); r != nil {
-					// 极端情况（如 outputFile.Close() panic）确保 task 不永久卡 running
+					// 极端情况(如 outputFile.Close() panic)确保 task 不永久卡 running
 					task.DefaultRegistry.Update(taskID, task.TaskFailed, -1)
 				}
-			if useFileFD {
-				_ = outputFile.Close()
-			}
+				if useFileFD {
+					_ = outputFile.Close()
+				}
 			}()
-			err := cmd.Wait()
+			// REGRESSION: 使用 channel 解耦 cmd.Wait(),避免永不退出的进程(如
+			// python -m http.server)导致 goroutine 永久泄漏。通过 select 同时监听
+			// 进程退出和 shutdown 信号,确保 TUI 退出时 goroutine 能及时回收。
+			type waitOutcome struct {
+				exitErr error
+			}
+			waitCh := make(chan waitOutcome, 1)
+			go func() {
+				err := cmd.Wait()
+				waitCh <- waitOutcome{exitErr: err}
+			}()
+
+			var werr error
+			select {
+			case wo := <-waitCh:
+				werr = wo.exitErr
+			case <-task.DefaultRegistry.Done():
+				// 全局 shutdown(如 TUI 退出):杀进程后等 Wait 返回以释放 OS 资源
+				KillProcessGroup(cmd)
+				wo := <-waitCh
+				werr = wo.exitErr
+			}
+
 			exitCode := 0
-			if err != nil {
-				if exitErr, ok := err.(*exec.ExitError); ok {
+			if werr != nil {
+				if exitErr, ok := werr.(*exec.ExitError); ok {
 					exitCode = exitErr.ExitCode()
 				} else {
 					exitCode = -1
@@ -329,14 +349,34 @@ func (t *Shell) ExecuteStreaming(ctx context.Context, p ShellParams, chunkCb fun
 				if r := recover(); r != nil {
 					task.DefaultRegistry.Update(taskID, task.TaskFailed, -1)
 				}
-			if useFileFD {
-				_ = outputFile.Close()
-			}
+				if useFileFD {
+					_ = outputFile.Close()
+				}
 			}()
-			err := cmd.Wait()
+			// REGRESSION: 使用 channel 解耦 cmd.Wait(),避免永不退出的进程导致
+			// goroutine 永久泄漏。通过 select 同时监听进程退出和 shutdown 信号。
+			type waitOutcome struct {
+				exitErr error
+			}
+			waitCh := make(chan waitOutcome, 1)
+			go func() {
+				err := cmd.Wait()
+				waitCh <- waitOutcome{exitErr: err}
+			}()
+
+			var werr error
+			select {
+			case wo := <-waitCh:
+				werr = wo.exitErr
+			case <-task.DefaultRegistry.Done():
+				KillProcessGroup(cmd)
+				wo := <-waitCh
+				werr = wo.exitErr
+			}
+
 			exitCode := 0
-			if err != nil {
-				if exitErr, ok := err.(*exec.ExitError); ok {
+			if werr != nil {
+				if exitErr, ok := werr.(*exec.ExitError); ok {
 					exitCode = exitErr.ExitCode()
 				} else {
 					exitCode = -1
@@ -858,7 +898,7 @@ func prepareBackgroundCommand(p *ShellParams) (bgLogFile string, isBackground bo
 	return "", false
 }
 // interpretShellExitCode 解释命令退出码的语义。
-// 
+//
 // 返回空字符串表示退出码是真正的错误。
 func interpretShellExitCode(cmd string, exitCode int) string {
 	base := extractBaseCmd(cmd)
