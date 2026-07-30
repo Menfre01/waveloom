@@ -80,7 +80,11 @@ func parsePatchFiles(text string, defaultPath string) []patchFile {
 		}
 		if strings.HasPrefix(line, "*** Update File:") {
 			path := strings.TrimSpace(strings.TrimPrefix(line, "*** Update File:"))
-			if !filepath.IsAbs(path) && defaultPath != "" {
+			// hunk header 中路径使用 Unix 约定，需在 FromSlash 前记录 / 前缀
+			//（Windows 上 filepath.IsAbs 不认 / 也不认单 \ 开头）
+			unixAbs := strings.HasPrefix(path, "/")
+			path = filepath.FromSlash(path)
+			if !filepath.IsAbs(path) && !unixAbs && defaultPath != "" {
 				path = filepath.Join(filepath.Dir(defaultPath), path)
 			}
 			files = append(files, patchFile{path: path})

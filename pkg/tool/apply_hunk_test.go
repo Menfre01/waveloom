@@ -112,9 +112,10 @@ func TestParsePatchFilesRelativePathWithEnvelope(t *testing.T) {
 
 func TestParsePatchFilesAbsolutePathPreserved(t *testing.T) {
 	text := "*** Update File: /absolute/path/to/main.go\n@@ func greet\n \n"
-	files := parsePatchFiles(text, "/other/default/path.go")
-	if len(files) != 1 || files[0].path != "/absolute/path/to/main.go" {
-		t.Fatalf("abs: expected /absolute/path/to/main.go, got %q", files[0].path)
+	files := parsePatchFiles(text, filepath.FromSlash("/other/default/path.go"))
+	expected := filepath.FromSlash("/absolute/path/to/main.go")
+	if len(files) != 1 || files[0].path != expected {
+		t.Fatalf("abs: expected %s, got %q", expected, files[0].path)
 	}
 }
 
