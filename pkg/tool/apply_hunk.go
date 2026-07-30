@@ -61,7 +61,6 @@ type patchHunk struct {
 	header  string // @@ line text
 	pattern []string
 	replace []string
-	oldTxt  string // original hunk text for diagnostics
 	rawBody string // raw hunk body (lines between @@ header and next hunk/EOF)
 }
 
@@ -109,7 +108,6 @@ func parseOneHunk(lines []string, i *int) patchHunk {
 	h := patchHunk{}
 	// Parse @@ header
 	h.header = strings.TrimSpace(lines[*i])
-	h.oldTxt = h.header + "\n"
 	*i++
 	bodyStart := *i
 
@@ -123,11 +121,32 @@ func parseOneHunk(lines []string, i *int) patchHunk {
 		if strings.HasPrefix(trimmed, "*** End Patch") {
 			break
 		}
-		h.oldTxt += line + "\n"
 
 		if len(line) == 0 {
-			*i++
-			continue
+			// Handle bare empty lines (no space prefix).
+			// Strict unified diff requires a space prefix, but LLMs and humans
+			// naturally use blank lines for visual separation.
+			//
+			// Strategy: scan forward through consecutive empty lines. If the
+			// run ends at a boundary/EOF, all are trailing artifacts → skip.
+			// If the run ends at a content line, all are intra-body → context.
+			emptyEnd := *i
+			for emptyEnd < len(lines) && len(lines[emptyEnd]) == 0 {
+				emptyEnd++
+			}
+			if emptyEnd >= len(lines) || isHunkBoundary(lines[emptyEnd]) {
+				// Trailing empty run — skip all, let the loop see the boundary next
+				*i = emptyEnd
+				continue
+			} else {
+				// Intra-body empty run — treat all as context
+				for *i < emptyEnd {
+					h.pattern = append(h.pattern, "")
+					h.replace = append(h.replace, "")
+					*i++
+				}
+				continue
+			}
 		}
 		switch line[0] {
 		case ' ':
@@ -147,6 +166,17 @@ func parseOneHunk(lines []string, i *int) patchHunk {
 	// Store raw hunk body (lines between @@ header and next hunk/EOF)
 	h.rawBody = strings.Join(lines[bodyStart:*i], "\n")
 	return h
+}
+
+// isHunkBoundary reports whether a line marks the end of a hunk body
+// (next hunk header, file marker, or envelope marker).
+// NOTE: Keep in sync with the break conditions in parseOneHunk's for-loop
+// (lines 120-125). Any new boundary marker added there must be added here too.
+func isHunkBoundary(line string) bool {
+	trimmed := strings.TrimSpace(line)
+	return strings.HasPrefix(trimmed, "@@") ||
+		strings.HasPrefix(trimmed, "*** Update File:") ||
+		strings.HasPrefix(trimmed, "*** End Patch")
 }
 
 // ---------------------------------------------------------------------------

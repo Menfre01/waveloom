@@ -640,3 +640,206 @@ func TestRegression_FullwidthColonHunkMatch(t *testing.T) {
 		t.Fatalf("hunk not found (unicode norm should match fullwidth colon): %+v", results)
 	}
 }
+
+// TestRegression_BareEmptyLineTreatedAsContext verifies that bare empty lines
+// (without space prefix) in hunk bodies are tolerated as empty context lines.
+// LLMs and humans naturally use blank lines for visual separation when writing
+// hunks, even though strict unified diff expects a leading space.
+func TestRegression_BareEmptyLineTreatedAsContext(t *testing.T) {
+	// File has two functions separated by an empty line.
+	fileContent := "package main\n\nfunc helper() int {\n    return 42\n}\n\nfunc greet() string {\n    return \"hello\"\n}\n"
+
+	// Hunk inserts a comment above greet(). The empty line between functions
+	// is a bare empty line (no space prefix) — exactly what LLMs and humans write.
+	hunkText := "*** Begin Patch\n*** Update File: main.go\n@@ func greet\n func helper() int {\n     return 42\n }\n\n+// sayHi greets the user\n+\n func greet() string {\n*** End Patch\n"
+
+	tmpDir := t.TempDir()
+	filePath := filepath.Join(tmpDir, "main.go")
+	if err := os.WriteFile(filePath, []byte(fileContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	states := NewReadStateStore()
+	states.Record(filePath, fileContent)
+
+	results, err := ApplyHunk(context.Background(), filePath, hunkText, states)
+	if err != nil {
+		t.Fatalf("ApplyHunk error: %v", err)
+	}
+	if len(results) != 1 || results[0].Error != "" {
+		t.Fatalf("hunk not found (bare empty line should be tolerated): %+v", results)
+	}
+
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expected := "package main\n\nfunc helper() int {\n    return 42\n}\n\n// sayHi greets the user\n\nfunc greet() string {\n    return \"hello\"\n}\n"
+	if string(data) != expected {
+		t.Fatalf("unexpected file content:\ngot:  %q\nwant: %q", string(data), expected)
+	}
+}
+
+// TestRegression_MultipleTrailingEmptyLinesSkipped verifies that multiple
+// consecutive bare empty lines at the end of a hunk body are ALL skipped,
+// not partially treated as context.
+func TestRegression_MultipleTrailingEmptyLinesSkipped(t *testing.T) {
+	fileContent := "line1\nline2\nline3\n"
+
+	// Hunk ends with two trailing newlines (two bare empty lines before *** End Patch).
+	hunkText := "*** Begin Patch\n*** Update File: test.txt\n@@\n line1\n-line2\n+lineTWO\n line3\n\n\n*** End Patch\n"
+
+	tmpDir := t.TempDir()
+	filePath := filepath.Join(tmpDir, "test.txt")
+	if err := os.WriteFile(filePath, []byte(fileContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	states := NewReadStateStore()
+	states.Record(filePath, fileContent)
+
+	results, err := ApplyHunk(context.Background(), filePath, hunkText, states)
+	if err != nil {
+		t.Fatalf("ApplyHunk error: %v", err)
+	}
+	if len(results) != 1 || results[0].Error != "" {
+		t.Fatalf("hunk not found (multiple trailing empty lines should be skipped): %+v", results)
+	}
+
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expected := "line1\nlineTWO\nline3\n"
+	if string(data) != expected {
+		t.Fatalf("unexpected file content:\ngot:  %q\nwant: %q", string(data), expected)
+	}
+}
+
+// TestRegression_BareEmptyLineAtHunkStart verifies that a bare empty line
+// right after the @@ header (first line of hunk body is empty) is tolerated.
+func TestRegression_BareEmptyLineAtHunkStart(t *testing.T) {
+	fileContent := "package main\n\nimport \"fmt\"\n\nfunc main() {\n    fmt.Println(\"hi\")\n}\n"
+
+	// Hunk body starts with a bare empty line (no space prefix).
+	hunkText := "*** Begin Patch\n*** Update File: main.go\n@@\n\n import \"fmt\"\n*** End Patch\n"
+
+	tmpDir := t.TempDir()
+	filePath := filepath.Join(tmpDir, "main.go")
+	if err := os.WriteFile(filePath, []byte(fileContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	states := NewReadStateStore()
+	states.Record(filePath, fileContent)
+
+	results, err := ApplyHunk(context.Background(), filePath, hunkText, states)
+	if err != nil {
+		t.Fatalf("ApplyHunk error: %v", err)
+	}
+	if len(results) != 1 || results[0].Error != "" {
+		t.Fatalf("hunk not found (bare empty line at hunk start should be tolerated): %+v", results)
+	}
+}
+
+// TestRegression_TrailingEmptyLineStillSkipped verifies that a bare empty line
+// at the END of a hunk body (trailing newline artifact) is still skipped,
+// not treated as an extra empty context line that would break matching.
+func TestRegression_TrailingEmptyLineStillSkipped(t *testing.T) {
+	fileContent := "line1\nline2\nline3\n"
+
+	// Hunk ends with a trailing newline — the empty line after "line3" should be skipped.
+	hunkText := "*** Begin Patch\n*** Update File: test.txt\n@@\n line1\n-line2\n+lineTWO\n line3\n*** End Patch\n"
+
+	tmpDir := t.TempDir()
+	filePath := filepath.Join(tmpDir, "test.txt")
+	if err := os.WriteFile(filePath, []byte(fileContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	states := NewReadStateStore()
+	states.Record(filePath, fileContent)
+
+	results, err := ApplyHunk(context.Background(), filePath, hunkText, states)
+	if err != nil {
+		t.Fatalf("ApplyHunk error: %v", err)
+	}
+	if len(results) != 1 || results[0].Error != "" {
+		t.Fatalf("hunk not found (trailing empty line should still be skipped): %+v", results)
+	}
+
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expected := "line1\nlineTWO\nline3\n"
+	if string(data) != expected {
+		t.Fatalf("unexpected file content:\ngot:  %q\nwant: %q", string(data), expected)
+	}
+}
+
+// TestRegression_MultipleBareEmptyLines verifies that multiple consecutive
+// bare empty lines in a hunk body are all tolerated.
+func TestRegression_MultipleBareEmptyLines(t *testing.T) {
+	fileContent := "package main\n\n\nfunc main() {\n}\n"
+
+	// Hunk has two consecutive bare empty lines between context lines.
+	hunkText := "*** Begin Patch\n*** Update File: main.go\n@@\n package main\n\n\n func main() {\n*** End Patch\n"
+
+	tmpDir := t.TempDir()
+	filePath := filepath.Join(tmpDir, "main.go")
+	if err := os.WriteFile(filePath, []byte(fileContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	states := NewReadStateStore()
+	states.Record(filePath, fileContent)
+
+	results, err := ApplyHunk(context.Background(), filePath, hunkText, states)
+	if err != nil {
+		t.Fatalf("ApplyHunk error: %v", err)
+	}
+	if len(results) != 1 || results[0].Error != "" {
+		t.Fatalf("hunk not found (multiple bare empty lines should be tolerated): %+v", results)
+	}
+}
+
+// TestRegression_BareEmptyLineBetweenHunks verifies that a bare empty line
+// between two hunks in the same file is skipped (next line is @@, a boundary).
+func TestRegression_BareEmptyLineBetweenHunks(t *testing.T) {
+	fileContent := "line1\nline2\nlineA\nlineB\n"
+
+	// Two hunks separated by a bare empty line.
+	hunkText := "*** Begin Patch\n*** Update File: test.txt\n@@\n line1\n-line2\n+lineTWO\n\n@@\n-lineA\n+lineALPHA\n lineB\n*** End Patch\n"
+
+	tmpDir := t.TempDir()
+	filePath := filepath.Join(tmpDir, "test.txt")
+	if err := os.WriteFile(filePath, []byte(fileContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	states := NewReadStateStore()
+	states.Record(filePath, fileContent)
+
+	results, err := ApplyHunk(context.Background(), filePath, hunkText, states)
+	if err != nil {
+		t.Fatalf("ApplyHunk error: %v", err)
+	}
+	if len(results) != 2 {
+		t.Fatalf("expected 2 hunk results, got %d: %+v", len(results), results)
+	}
+	for i, r := range results {
+		if r.Error != "" {
+			t.Fatalf("hunk %d failed: %+v", i, r)
+		}
+	}
+
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expected := "line1\nlineTWO\nlineALPHA\nlineB\n"
+	if string(data) != expected {
+		t.Fatalf("unexpected file content:\ngot:  %q\nwant: %q", string(data), expected)
+	}
+}
