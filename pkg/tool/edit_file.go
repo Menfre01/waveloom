@@ -97,9 +97,6 @@ func (t *EditFile) Execute(ctx context.Context, p EditFileParams) (*ToolResult, 
 			if r.ClosestMatch != "" {
 				buf.WriteString(r.ClosestMatch)
 			}
-			if r.CharDiff != "" {
-				buf.WriteString(r.CharDiff)
-			}
 		} else {
 			succeeded++
 			fmt.Fprintf(&buf, "✓ %s: @@ %s — applied at line %d\n", r.File, r.Header, r.Line)
@@ -117,13 +114,8 @@ func (t *EditFile) Execute(ctx context.Context, p EditFileParams) (*ToolResult, 
 	buf.WriteByte('\n')
 
 	if succeeded == 0 && failed > 0 {
-		var filePath string
-		if len(results) > 0 {
-			filePath = results[0].File
-		}
 		return &ToolResult{
 			Content: buf.String(),
-			Meta:    ToolMeta{FilePath: filePath},
 			Error: &ToolError{
 				Class:   ErrorClassRecoverable,
 				Kind:    ErrKindInvalidArgs,

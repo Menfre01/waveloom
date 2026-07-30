@@ -28,7 +28,6 @@ type HunkResult struct {
 	// Failure diagnostics
 	FileSnippet  string   // file content around expected location
 	ClosestMatch string   // closest-match hint
-	CharDiff     string   // character-level diff (if distance <= 3)
 }
 
 // ApplyHunk applies a multi-file multi-hunk patch to the filesystem.
@@ -202,7 +201,7 @@ func applyFileHunks(ctx context.Context, filePath string, hunks []patchHunk, rea
 	for _, h := range hunks {
 		matchStart := seekHunk(fileLines, h.pattern, lastMatch)
 		if matchStart < 0 {
-			diagnostics := buildHunkDiagnostics(filePath, fileLines, h, lastMatch)
+			diagnostics := buildHunkDiagnostics(filePath, fileLines, h)
 			results = append(results, HunkResult{
 				File:         filePath,
 				Header:       h.header,
@@ -212,7 +211,6 @@ func applyFileHunks(ctx context.Context, filePath string, hunks []patchHunk, rea
 				RawBody:      h.rawBody,
 				FileSnippet:  diagnostics.fileSnippet,
 				ClosestMatch: diagnostics.closestMatch,
-				CharDiff:     diagnostics.charDiff,
 			})
 			continue
 		}
@@ -265,18 +263,20 @@ func applyFileHunks(ctx context.Context, filePath string, hunks []patchHunk, rea
 type hunkDiagnostics struct {
 	fileSnippet  string
 	closestMatch string
-	charDiff     string
 }
 
-func buildHunkDiagnostics(filePath string, fileLines []string, h patchHunk, searchStart int) hunkDiagnostics {
+func buildHunkDiagnostics(filePath string, fileLines []string, h patchHunk) hunkDiagnostics {
 	var d hunkDiagnostics
 
-	// Layer 1: file snippet around expected location
-	snippetStart := searchStart - 3
+	// Find the best matching position for the pattern in the file.
+	bestPos := findBestHunkPosition(fileLines, h.pattern)
+
+	// Layer 1: file snippet around best match position
+	snippetStart := bestPos - 3
 	if snippetStart < 0 {
 		snippetStart = 0
 	}
-	snippetEnd := searchStart + len(h.pattern) + 3
+	snippetEnd := bestPos + len(h.pattern) + 3
 	if snippetEnd > len(fileLines) {
 		snippetEnd = len(fileLines)
 	}
@@ -286,50 +286,122 @@ func buildHunkDiagnostics(filePath string, fileLines []string, h patchHunk, sear
 	}
 	d.fileSnippet = b.String()
 
-	// Layer 2: closest-match (Levenshtein per line, top-3)
-	if len(h.pattern) > 0 {
-		query := h.pattern[0]
-		type candidate struct {
-			line int
-			dist int
-		}
-		var best [3]candidate
-		for i := range best {
-			best[i] = candidate{line: -1, dist: 9999}
-		}
-		for i, l := range fileLines {
-			d := levenshteinDist(query, l)
-			if d == 0 {
+	// Layer 2: per-line diagnostics at the best match position
+	if len(h.pattern) > 0 && bestPos >= 0 && bestPos+len(h.pattern) <= len(fileLines) {
+		var cb strings.Builder
+		for j, p := range h.pattern {
+			fl := fileLines[bestPos+j]
+			if p == fl {
 				continue
 			}
-			for j := range best {
-				if d < best[j].dist {
-					for k := 2; k > j; k-- {
-						best[k] = best[k-1]
-					}
-					best[j] = candidate{line: i + 1, dist: d}
-					break
-				}
+			dist := levenshteinDist(p, fl)
+			fmt.Fprintf(&cb, "  Line %d: -%s\n", bestPos+j+1, p)
+			fmt.Fprintf(&cb, "  Line %d: +%s\n", bestPos+j+1, fl)
+			if dist > 0 && dist <= 5 {
+				cb.WriteString(charDiff(p, fl))
 			}
 		}
-		if best[0].line > 0 {
-			var cb strings.Builder
-			for _, c := range best {
-				if c.line < 0 {
-					break
-				}
-				marker := "→"
-				fmt.Fprintf(&cb, "  %s Line %d: %s (distance=%d)\n", marker, c.line, fileLines[c.line-1], c.dist)
-				// Layer 3: char diff for closest match
-				if c.dist > 0 && c.dist <= 3 {
-					cb.WriteString(charDiff(query, fileLines[c.line-1]))
-				}
-			}
-			d.closestMatch = cb.String()
-		}
+		// Always report layer diagnostics — even when all lines match exactly,
+		// the hunk may have been missed because lastMatch overshot the position.
+		cb.WriteString(diagnoseMatchLayer(fileLines, h.pattern, bestPos))
+		d.closestMatch = cb.String()
 	}
 
 	return d
+}
+
+// findBestHunkPosition finds the file line best matching the first pattern line.
+// Uses progressive matching (exact → rstrip → trim → unicode), falling back to Levenshtein.
+func findBestHunkPosition(fileLines, pattern []string) int {
+	if len(pattern) == 0 {
+		return 0
+	}
+	firstPattern := pattern[0]
+	firstTrim := strings.TrimSpace(firstPattern)
+	firstUnicode := normalizeUnicode2(firstTrim)
+
+	// Pass 1: find pattern[0] via progressive matching
+	for i, l := range fileLines {
+		if l == firstPattern ||
+			strings.TrimRight(l, " \t\r") == strings.TrimRight(firstPattern, " \t\r") ||
+			strings.TrimSpace(l) == firstTrim ||
+			normalizeUnicode2(strings.TrimSpace(l)) == firstUnicode {
+			return i
+		}
+	}
+
+	// Pass 2: best Levenshtein match
+	bestDist := -1
+	bestIdx := 0
+	for i, l := range fileLines {
+		d := levenshteinDist(firstTrim, strings.TrimSpace(l))
+		if bestDist < 0 || d < bestDist {
+			bestDist = d
+			bestIdx = i
+		}
+	}
+	return bestIdx
+}
+
+// diagnoseMatchLayer reports which matching layer would have passed or came closest,
+// helping the LLM understand whether the issue is whitespace, Unicode, or content.
+func diagnoseMatchLayer(fileLines, pattern []string, pos int) string {
+	if pos < 0 || pos+len(pattern) > len(fileLines) || len(pattern) == 0 {
+		return ""
+	}
+
+	exactOk, rstripOk, trimOk, unicodeOk := true, true, true, true
+	for j, p := range pattern {
+		fl := fileLines[pos+j]
+		if fl != p {
+			exactOk = false
+		}
+		if strings.TrimRight(fl, " \t\r") != strings.TrimRight(p, " \t\r") {
+			rstripOk = false
+		}
+		if strings.TrimSpace(fl) != strings.TrimSpace(p) {
+			trimOk = false
+		}
+		if normalizeUnicode2(strings.TrimSpace(fl)) != normalizeUnicode2(strings.TrimSpace(p)) {
+			unicodeOk = false
+		}
+	}
+
+	switch {
+	case exactOk:
+		return fmt.Sprintf("  (pattern exists at line %d — search may have started after it; re-read and retry with more context)\n", pos+1)
+	case rstripOk:
+		return "  (matches after stripping trailing whitespace)\n"
+	case trimOk:
+		return "  (matches after trimming leading+trailing whitespace)\n"
+	case unicodeOk:
+		return "  (matches after Unicode normalization — check for invisible/double-width characters)\n"
+	default:
+		// Compute per-layer distance to find the closest
+		exactDist, rstripDist, trimDist, unicodeDist := 0, 0, 0, 0
+		for j, p := range pattern {
+			fl := fileLines[pos+j]
+			exactDist += levenshteinDist(fl, p)
+			rstripDist += levenshteinDist(
+				strings.TrimRight(fl, " \t\r"),
+				strings.TrimRight(p, " \t\r"))
+			trimDist += levenshteinDist(strings.TrimSpace(fl), strings.TrimSpace(p))
+			unicodeDist += levenshteinDist(
+				normalizeUnicode2(strings.TrimSpace(fl)),
+				normalizeUnicode2(strings.TrimSpace(p)))
+		}
+		layer, dist := "exact", exactDist
+		if rstripDist < dist {
+			layer, dist = "rstrip", rstripDist
+		}
+		if trimDist < dist {
+			layer, dist = "trim", trimDist
+		}
+		if unicodeDist < dist {
+			layer, dist = "unicode", unicodeDist
+		}
+		return fmt.Sprintf("  (closest layer: %s, remaining distance=%d)\n", layer, dist)
+	}
 }
 
 func levenshteinDist(a, b string) int {
@@ -356,6 +428,17 @@ func levenshteinDist(a, b string) int {
 
 func charDiff(a, b string) string {
 	ra, rb := []rune(a), []rune(b)
+	// Find first position where strings differ
+	firstDiff := 0
+	for firstDiff < len(ra) && firstDiff < len(rb) && ra[firstDiff] == rb[firstDiff] {
+		firstDiff++
+	}
+
+	// Identical
+	if firstDiff == len(ra) && firstDiff == len(rb) {
+		return ""
+	}
+
 	var result strings.Builder
 	result.WriteString("    old: ")
 	result.WriteString(a)
@@ -363,13 +446,17 @@ func charDiff(a, b string) string {
 	result.WriteString("    new: ")
 	result.WriteString(b)
 	result.WriteByte('\n')
-	result.WriteString("          ")
-	for i := 0; i < len(ra) && i < len(rb); i++ {
-		if ra[i] != rb[i] {
-			result.WriteByte('^')
-		} else {
-			result.WriteByte(' ')
-		}
+	result.WriteString("         ")
+	// Single ^ marker at first differing character (count bytes, not runes, for alignment)
+	markerPos := len(string(ra[:firstDiff]))
+	for i := 0; i < markerPos; i++ {
+		result.WriteByte(' ')
+	}
+	result.WriteByte('^')
+	if firstDiff >= len(ra) {
+		result.WriteString(" (old ends, new continues)")
+	} else if firstDiff >= len(rb) {
+		result.WriteString(" (new ends, old continues)")
 	}
 	result.WriteByte('\n')
 	return result.String()

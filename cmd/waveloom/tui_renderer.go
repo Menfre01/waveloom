@@ -151,8 +151,15 @@ func formatToolArgs(toolName string, argsJSON string, cwd string) string {
 		return stripCWDPrefix(extractField(argsJSON, "file_path"), cwd)
 	case "edit":
 		patch := extractField(argsJSON, "hunk")
+		patch = strings.ReplaceAll(patch, "\\n", "\n")
 		paths := extractPatchPaths(patch)
 		n := countHunks(patch)
+		// Fallback: use top-level file_path when hunk body has no *** Update File: headers
+		if len(paths) == 0 {
+			if fp := extractField(argsJSON, "file_path"); fp != "" {
+				paths = []string{fp}
+			}
+		}
 		if len(paths) == 1 {
 			return fmt.Sprintf("%s  %d hunk(s)", stripCWDPrefix(paths[0], cwd), n)
 		} else if len(paths) > 1 {

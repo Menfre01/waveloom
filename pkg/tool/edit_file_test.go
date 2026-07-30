@@ -144,10 +144,9 @@ func TestEditFile_AllHunksFailed(t *testing.T) {
 		t.Errorf("Error.Class = %v, want recoverable", result.Error.Class)
 	}
 
-	// FilePath 应为绝对路径
-	absPath, _ := filepath.Abs(filePath)
-	if result.Meta.FilePath != absPath {
-		t.Errorf("FilePath = %q, want %q", result.Meta.FilePath, absPath)
+	// FilePath 应为空 — 全部 hunk 失败时文件未修改，不触发 LSP 诊断
+	if result.Meta.FilePath != "" {
+		t.Errorf("FilePath = %q, want empty (all hunks failed, no LSP needed)", result.Meta.FilePath)
 	}
 
 	// 文件内容不应被修改
