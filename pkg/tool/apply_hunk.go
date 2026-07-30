@@ -36,7 +36,8 @@ type HunkResult struct {
 func ApplyHunk(ctx context.Context, path, hunkText string, readStates *ReadStateStore) ([]HunkResult, error) {
 	files := parsePatchFiles(hunkText, path)
 	if len(files) == 0 {
-		return nil, fmt.Errorf("no hunks found in patch")
+		// 无 hunk — 返回空结果,由 edit 层处理为 "no changes needed"
+		return nil, nil
 	}
 
 	var allResults []HunkResult

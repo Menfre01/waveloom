@@ -37,7 +37,7 @@ type ReadFile struct{}
 func (t *ReadFile) Name() string { return "read" }
 
 func (t *ReadFile) Description() string {
-	return "Read a file with TAG and line numbers for hash-anchored editing. Rules: see system prompt ## File Operations."
+	return "Read a file with line numbers for hash-anchored editing. Rules: see system prompt ## File Operations."
 }
 
 // Prompt 返回 read 工具使用指南，由 Registry.FormatToolPrompts() 注入 system prompt。

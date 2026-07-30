@@ -952,6 +952,7 @@ type ViewportCtx struct {
 	Width    int                   // viewport 内容宽度（终端宽度 - 4）
 	Focused  bool                  // 当前段落是否处于焦点态
 	LC       *Messages             // 当前语言文案
+	CWD      string                // 工作目录,用于剥离路径前缀显示
 }
 
 // buildViewportContent 从段落列表重建 viewport 的全部文本行，同时返回每段的起始行号。
@@ -1582,7 +1583,7 @@ func renderToolPara(sb *strings.Builder, p *Paragraph, ctx ViewportCtx) {
 	if p.State == stateDone || p.State == stateError {
 		if p.State == stateCollapsed || p.State == stateDone || p.State == stateError {
 			if p.DiffHunks != nil {
-				renderDiffPreview(sb, p.DiffHunks, textWidth, indentStr, ctx.LC)
+				renderDiffPreview(sb, p.DiffHunks, textWidth, indentStr, ctx)
 			} else {
 				renderToolPreview(sb, p, textWidth, indentStr, ctx.LC)
 			}
@@ -1597,7 +1598,7 @@ func renderToolPara(sb *strings.Builder, p *Paragraph, ctx ViewportCtx) {
 	// 展开态 —— 显示完整输出
 	if p.State == stateExpanded {
 		if p.DiffHunks != nil {
-			renderDiffView(sb, p.DiffHunks, textWidth, indentStr, ctx.LC)
+			renderDiffView(sb, p.DiffHunks, textWidth, indentStr, ctx)
 		} else {
 			renderToolFullOutput(sb, p, textWidth, indentStr, ctx.LC)
 		}
@@ -1966,7 +1967,7 @@ func renderToolFullOutput(sb *strings.Builder, p *Paragraph, textWidth int, inde
 
 // renderDiffPreview 渲染 diff 的折叠预览。受 maxPreviewWrapped 约束，
 // 防止单条超长行撑满预览。edit_file 不参与段落聚焦，截断时仅显示标记。
-func renderDiffPreview(sb *strings.Builder, hunks []tool.DiffHunk, textWidth int, indent string, lc *Messages) {
+func renderDiffPreview(sb *strings.Builder, hunks []tool.DiffHunk, textWidth int, indent string, ctx ViewportCtx) {
 	if len(hunks) == 0 {
 		return
 	}
@@ -2003,7 +2004,7 @@ func renderDiffPreview(sb *strings.Builder, hunks []tool.DiffHunk, textWidth int
 	}
 	if truncated {
 		sb.WriteString(indent)
-		sb.WriteString(styleToolPreviewHint.Render(lc.ToolTruncated))
+		sb.WriteString(styleToolPreviewHint.Render(ctx.LC.ToolTruncated))
 		sb.WriteString("\n")
 	}
 }
@@ -2014,7 +2015,7 @@ func renderDiffPreview(sb *strings.Builder, hunks []tool.DiffHunk, textWidth int
 //   - 附加虚行号列（灰色），不影响 diff 语义
 //
 // 受 maxExpandedWrapped 约束，防止超长行导致海量输出。
-func renderDiffView(sb *strings.Builder, hunks []tool.DiffHunk, textWidth int, indent string, lc *Messages) {
+func renderDiffView(sb *strings.Builder, hunks []tool.DiffHunk, textWidth int, indent string, ctx ViewportCtx) {
 	if len(hunks) == 0 {
 		return
 	}
@@ -2052,7 +2053,7 @@ func renderDiffView(sb *strings.Builder, hunks []tool.DiffHunk, textWidth int, i
 				sb.WriteString("\n")
 			}
 			sb.WriteString(indent)
-			sb.WriteString(styleDiffHeader.Render("── " + stripCWDPrefix(h.FilePath, "") + " ──"))
+			sb.WriteString(styleDiffHeader.Render("── " + stripCWDPrefix(h.FilePath, ctx.CWD) + " ──"))
 			sb.WriteString("\n")
 		} else if hi > 0 {
 			// 同文件 hunks 之间单线分隔（兼容旧行为及单文件多 hunk 场景）
@@ -2127,7 +2128,7 @@ func renderDiffView(sb *strings.Builder, hunks []tool.DiffHunk, textWidth int, i
 
 	if truncated {
 		sb.WriteString(indent)
-		sb.WriteString(styleToolPreviewHint.Render(fmt.Sprintf(lc.ToolTruncatedLines, maxExpandedWrapped)))
+		sb.WriteString(styleToolPreviewHint.Render(fmt.Sprintf(ctx.LC.ToolTruncatedLines, maxExpandedWrapped)))
 		sb.WriteString("\n")
 	}
 }

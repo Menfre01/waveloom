@@ -83,7 +83,7 @@ Each additional file gets its own `*** Update File: <path>` header before its hu
 
 ### Tips
 
-- **Read first**: always `read` the file before editing — the engine validates file state
+- **Read first**: always `read` the file before editing — the engine validates file state. `write` also updates file state, so write→edit works without re-read.
 - **Context lines**: include 1-2 unchanged lines around each change for unique matching
 - **Exact whitespace**: copy tabs/spaces exactly from the read output
 - **Matching**: engine tries 4 layers: exact → trailing whitespace → full trim → unicode normalize

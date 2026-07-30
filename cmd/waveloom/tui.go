@@ -2561,6 +2561,7 @@ func (m *model) viewportCtx() ViewportCtx {
 		Glamour:  m.glamourRenderer,
 		Width:    contentWidth,
 		LC:       m.msg(),
+		CWD:      m.cwd,
 	}
 }
 

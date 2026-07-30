@@ -5,8 +5,11 @@ import (
 	_ "embed"
 	"encoding/json"
 	"fmt"
+	"os"
 	"strconv"
 	"strings"
+
+	"github.com/Menfre01/waveloom/pkg/pathutil"
 )
 
 //go:embed edit_file_prompt.md
@@ -53,14 +56,21 @@ func (t *EditFile) Execute(ctx context.Context, p EditFileParams) (*ToolResult, 
 			"hunk is required", nil), nil
 	}
 
-	results, err := ApplyHunk(ctx, p.FilePath, p.Hunk, ReadStateFromContext(ctx))
+	// 解析为绝对路径,与 read/write 对齐,确保 LSP 诊断能定位文件
+	resolvedPath, resolveErr := pathutil.ResolvePathWithDir(p.FilePath, "")
+	if resolveErr != nil {
+		return toolError(ErrorClassRecoverable, ErrKindInvalidArgs,
+			fmt.Sprintf("invalid path: %v", resolveErr), resolveErr), nil
+	}
+
+	results, err := ApplyHunk(ctx, resolvedPath, p.Hunk, ReadStateFromContext(ctx))
 	if err != nil {
 		return toolError(ErrorClassRecoverable, ErrKindInvalidArgs,
 			fmt.Sprintf("hunk error: %v", err), err), nil
 	}
 
 	if len(results) == 0 {
-		return &ToolResult{Content: "✓ no changes needed"}, nil
+		return &ToolResult{Content: "✓ no changes needed", Meta: ToolMeta{FilePath: resolvedPath}}, nil
 	}
 
 	var succeeded, failed int
@@ -107,8 +117,13 @@ func (t *EditFile) Execute(ctx context.Context, p EditFileParams) (*ToolResult, 
 	buf.WriteByte('\n')
 
 	if succeeded == 0 && failed > 0 {
+		var filePath string
+		if len(results) > 0 {
+			filePath = results[0].File
+		}
 		return &ToolResult{
 			Content: buf.String(),
+			Meta:    ToolMeta{FilePath: filePath},
 			Error: &ToolError{
 				Class:   ErrorClassRecoverable,
 				Kind:    ErrKindInvalidArgs,
@@ -118,9 +133,19 @@ func (t *EditFile) Execute(ctx context.Context, p EditFileParams) (*ToolResult, 
 	}
 
 	result := &ToolResult{Content: buf.String()}
+	// Set FilePath and stats from first successful file
+	for _, r := range results {
+		if r.Error == "" && r.File != "" {
+			result.Meta.FilePath = r.File
+			if data, err := os.ReadFile(r.File); err == nil {
+				result.Meta.ByteCount = len(data)
+				result.Meta.LineCount = countLinesInContent(string(data))
+			}
+			break
+		}
+	}
 	if len(diffHunks) > 0 {
 		result.Meta.DiffHunks = diffHunks
-		result.Meta.FilePath = diffHunks[0].FilePath
 	}
 	return result, nil
 }

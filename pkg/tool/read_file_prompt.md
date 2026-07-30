@@ -1,4 +1,4 @@
-## Read File (Hashline)
+## Read File
 
 Use `read` to inspect file content before editing. The system records file state internally — no TAG needed.
 
