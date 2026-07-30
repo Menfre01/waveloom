@@ -340,6 +340,43 @@ func truncateStr(s string, maxLen int) string {
 	}
 	return string(runes[:maxLen])
 }
+
+// truncateByDisplayWidth 按显示列宽截断字符串，末尾添加 "…"。
+// 与 truncateStr 不同：本函数按终端显示宽度截断，正确处理 CJK 全角字符（每字符 2 列）。
+func truncateByDisplayWidth(s string, maxWidth int) string {
+	if maxWidth <= 0 {
+		return ""
+	}
+	if displayWidth(s) <= maxWidth {
+		return s
+	}
+	// 预留 "…" (1 rune，displayWidth=1) 或 "..." (3 runes，displayWidth=3)
+	// 这里用 "…" 更紧凑，但仍需 1 列显示宽度
+	ellipsis := "…"
+	ellipsisWidth := displayWidth(ellipsis)
+	targetWidth := maxWidth - ellipsisWidth
+	if targetWidth < 0 {
+		return ellipsis
+	}
+	runes := []rune(s)
+	w := 0
+	cut := 0
+	for i, r := range runes {
+		rw := 1
+		if r >= 128 {
+			rw = lipgloss.Width(string(r))
+		}
+		if w+rw > targetWidth {
+			break
+		}
+		w += rw
+		cut = i + 1
+	}
+	if cut == 0 {
+		return ellipsis
+	}
+	return string(runes[:cut]) + ellipsis
+}
 // collapseMultilineCommand 将多行 shell 命令拼接为单行。
 // extractField 返回原始 JSON 子串(不含 JSON 反转义),因此需要对 JSON 转义序列
 // 做特殊处理: \\\n(JSON \\\n = shell \<newline\> 续行)、\\n(JSON \\n = 字面量 \n)、
@@ -1575,9 +1612,8 @@ func renderToolPara(sb *strings.Builder, p *Paragraph, ctx ViewportCtx) {
 		maxArgsWidth = 4
 	}
 	argsDisplay := p.ToolArgs
-	argsRunes := []rune(argsDisplay)
-	if len(argsRunes) > maxArgsWidth {
-		argsDisplay = string(argsRunes[:maxArgsWidth-1]) + "…"
+	if displayWidth(argsDisplay) > maxArgsWidth {
+		argsDisplay = truncateByDisplayWidth(argsDisplay, maxArgsWidth)
 	}
 	sb.WriteString(toolNameRendered)
 	sb.WriteString("  ")
@@ -2323,9 +2359,8 @@ func renderSubagentPara(sb *strings.Builder, p *Paragraph, ctx ViewportCtx) {
 	if maxArgsWidth < 4 {
 		maxArgsWidth = 4
 	}
-	argsRunes := []rune(argsText)
-	if len(argsRunes) > maxArgsWidth {
-		argsText = string(argsRunes[:maxArgsWidth-1]) + "…"
+	if displayWidth(argsText) > maxArgsWidth {
+		argsText = truncateByDisplayWidth(argsText, maxArgsWidth)
 	}
 
 	sb.WriteString(prefixStr)
