@@ -53,7 +53,7 @@ func (t *EditFile) Execute(ctx context.Context, p EditFileParams) (*ToolResult, 
 			"hunk is required", nil), nil
 	}
 
-	results, err := ApplyHunk(p.FilePath, p.Hunk, ReadStateFromContext(ctx))
+	results, err := ApplyHunk(ctx, p.FilePath, p.Hunk, ReadStateFromContext(ctx))
 	if err != nil {
 		return toolError(ErrorClassRecoverable, ErrKindInvalidArgs,
 			fmt.Sprintf("hunk error: %v", err), err), nil

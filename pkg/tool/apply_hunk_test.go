@@ -1,10 +1,13 @@
 package tool
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/Menfre01/waveloom/pkg/filehistory"
 )
 
 func TestSeekExact(t *testing.T) {
@@ -349,7 +352,7 @@ func TestApplyHunkEnvelopeIntegration(t *testing.T) {
 
 	// Envelope format with relative path in *** Update File:
 	patch := "*** Begin Patch\n*** Update File: main.go\n@@ func greet\n func greet() string {\n-    return \"hello\"\n+    return \"hello, world\"\n }\n*** End Patch\n"
-	results, err := ApplyHunk(filePath, patch, nil)
+	results, err := ApplyHunk(context.Background(), filePath, patch, nil)
 	if err != nil {
 		t.Fatalf("ApplyHunk error: %v", err)
 	}
@@ -387,7 +390,7 @@ func TestApplyHunkEnvelopeMultiFileIntegration(t *testing.T) {
 	}
 
 	patch := "*** Begin Patch\n*** Update File: main.go\n@@ func greet\n func greet() string {\n-    return \"hello\"\n+    return \"hello, world\"\n }\n*** Update File: util.go\n@@ func helper\n func helper(x int) int {\n-    return x * 2\n+    return x * 3\n }\n*** End Patch\n"
-	results, err := ApplyHunk(mainPath, patch, nil)
+	results, err := ApplyHunk(context.Background(), mainPath, patch, nil)
 	if err != nil {
 		t.Fatalf("ApplyHunk error: %v", err)
 	}
@@ -410,5 +413,69 @@ func TestApplyHunkEnvelopeMultiFileIntegration(t *testing.T) {
 	}
 	if !strings.Contains(string(utilData), "x * 3") {
 		t.Fatal("util.go not updated")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Integration: FileHistory tracking
+// ---------------------------------------------------------------------------
+
+func TestApplyHunkFileHistoryTracking(t *testing.T) {
+	dir := t.TempDir()
+	filePath := filepath.Join(dir, "main.go")
+	original := "package main\n\nfunc greet() string {\n    return \"hello\"\n}\n"
+	if err := os.WriteFile(filePath, []byte(original), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Set up FileHistory context
+	sessionDir := t.TempDir()
+	fh := filehistory.NewState()
+	ctx := context.Background()
+	ctx = filehistory.WithFileHistory(ctx, fh)
+	ctx = filehistory.WithSessionDir(ctx, sessionDir)
+	ctx = filehistory.WithMessageID(ctx, "msg-test-1")
+
+	patch := "*** Begin Patch\n*** Update File: main.go\n@@ func greet\n func greet() string {\n-    return \"hello\"\n+    return \"hello, world\"\n }\n*** End Patch\n"
+	results, err := ApplyHunk(ctx, filePath, patch, nil)
+	if err != nil {
+		t.Fatalf("ApplyHunk error: %v", err)
+	}
+	if len(results) != 1 || results[0].Error != "" {
+		t.Fatalf("hunk failed: %+v", results)
+	}
+
+	// Verify a backup was created in the file-history directory
+	backupDir := filepath.Join(sessionDir, "file-history")
+	entries, err := os.ReadDir(backupDir)
+	if err != nil {
+		t.Fatalf("backup dir not found: %v", err)
+	}
+	if len(entries) == 0 {
+		t.Fatal("no backup files created — TrackEdit was not called")
+	}
+	t.Logf("backup files: %d", len(entries))
+	for _, e := range entries {
+		t.Logf("  %s", e.Name())
+	}
+}
+
+func TestApplyHunkWithoutFileHistory(t *testing.T) {
+	dir := t.TempDir()
+	filePath := filepath.Join(dir, "main.go")
+	original := "package main\n\nfunc greet() string {\n    return \"hello\"\n}\n"
+	if err := os.WriteFile(filePath, []byte(original), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// No FileHistory in context — should not panic
+	ctx := context.Background()
+	patch := "*** Begin Patch\n*** Update File: main.go\n@@ func greet\n func greet() string {\n-    return \"hello\"\n+    return \"hello, world\"\n }\n*** End Patch\n"
+	results, err := ApplyHunk(ctx, filePath, patch, nil)
+	if err != nil {
+		t.Fatalf("ApplyHunk error: %v", err)
+	}
+	if len(results) != 1 || results[0].Error != "" {
+		t.Fatalf("hunk failed: %+v", results)
 	}
 }

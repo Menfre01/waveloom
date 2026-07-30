@@ -1,13 +1,14 @@
 package tool
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"strings"
 
 	"path/filepath"
 
-
+	"github.com/Menfre01/waveloom/pkg/filehistory"
 	"github.com/Menfre01/waveloom/pkg/hashline"
 )
 
@@ -32,7 +33,7 @@ type HunkResult struct {
 
 // ApplyHunk applies a multi-file multi-hunk patch to the filesystem.
 // readStates is consulted for conflict detection; on success, read states are updated.
-func ApplyHunk(path, hunkText string, readStates *ReadStateStore) ([]HunkResult, error) {
+func ApplyHunk(ctx context.Context, path, hunkText string, readStates *ReadStateStore) ([]HunkResult, error) {
 	files := parsePatchFiles(hunkText, path)
 	if len(files) == 0 {
 		return nil, fmt.Errorf("no hunks found in patch")
@@ -41,7 +42,7 @@ func ApplyHunk(path, hunkText string, readStates *ReadStateStore) ([]HunkResult,
 	var allResults []HunkResult
 
 	for _, pf := range files {
-		results := applyFileHunks(pf.path, pf.hunks, readStates)
+		results := applyFileHunks(ctx, pf.path, pf.hunks, readStates)
 		allResults = append(allResults, results...)
 	}
 
@@ -153,7 +154,7 @@ func parseOneHunk(lines []string, i *int) patchHunk {
 // File-level hunk application
 // ---------------------------------------------------------------------------
 
-func applyFileHunks(filePath string, hunks []patchHunk, readStates *ReadStateStore) []HunkResult {
+func applyFileHunks(ctx context.Context, filePath string, hunks []patchHunk, readStates *ReadStateStore) []HunkResult {
 	var results []HunkResult
 
 	if readStates != nil {
@@ -168,6 +169,15 @@ func applyFileHunks(filePath string, hunks []patchHunk, readStates *ReadStateSto
 				})
 			}
 			return results
+		}
+	}
+
+	// ── FileHistory tracking: backup file before modification, so rewind can restore ──
+	if fh := filehistory.FromContext(ctx); fh != nil {
+		if msgID := filehistory.MessageIDFromContext(ctx); msgID != "" {
+			if sd := filehistory.SessionDirFromContext(ctx); sd != "" {
+				fh.TrackEdit(filePath, msgID, sd)
+			}
 		}
 	}
 
