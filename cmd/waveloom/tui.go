@@ -74,7 +74,6 @@ import (
 
 var updateSpinnerFrames = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
 
-
 // ---------------------------------------------------------------------------
 // 自定义消息类型
 // ---------------------------------------------------------------------------
@@ -178,7 +177,6 @@ func makeKeyMap(lc *Messages) keyMap {
 	}
 }
 
-
 // rewindMsg 表示 rewind 消息选择器中可回退的一条用户消息。
 type rewindMsg struct {
 	MessageID    string // 消息 UUID
@@ -191,8 +189,6 @@ type rewindMsg struct {
 // ---------------------------------------------------------------------------
 // Model
 // ---------------------------------------------------------------------------
-
-
 
 type model struct {
 	// 外部依赖
@@ -1531,7 +1527,6 @@ func (m *model) handleKeyPress(msg tea.KeyPressMsg) (bool, tea.Cmd) {
 		m.scrollDown(1)
 		return true, nil
 
-
 	case key.Matches(msg, m.keys.PageUp):
 		m.scrollUp(m.bodyHeight)
 		return true, nil
@@ -1555,8 +1550,6 @@ func (m *model) handleKeyPress(msg tea.KeyPressMsg) (bool, tea.Cmd) {
 	// 未匹配的按键 → 传给 input
 	return false, nil
 }
-
-
 
 // ---------------------------------------------------------------------------
 // 流式事件处理（状态机）
@@ -1670,7 +1663,7 @@ func (m *model) handleToolResult(ev agentloop.ToolCallResult) {
 			if ev.IsError() || ev.Denied {
 				p.State = stateError
 			} else if ev.DiffHunks != nil {
-				p.State = stateExpanded // edit_file 直接展开完整 diff 视图
+				p.State = stateExpanded // edit / write: 有结构化 diff 则直接展开 diff view
 			} else if p.ToolName == "ask_user_question" {
 				p.State = stateExpanded // ask_user_question 默认展开显示完整问答
 			} else {
@@ -2195,8 +2188,6 @@ func transcriptEntryToParagraph(e session.TranscriptEntry, paras *[]Paragraph) {
 	}
 }
 
-
-
 // replayTranscript 从统一 JSONL 文件加载最近条目并还原为 viewport 段落。
 func (m *model) replayTranscript() {
 	if m.transcriptPath == "" {
@@ -2300,7 +2291,6 @@ func (m *model) findSubagentPara(agentID string) *Paragraph {
 	return nil
 }
 
-
 // hasStreamingPara 返回当前是否存在流式中的段落（thought / assistant / tool）。
 // 仅检查尾部 3 个段落——流式段落始终在列表末尾，O(1)。
 func (m *model) hasStreamingPara() bool {
@@ -2366,7 +2356,6 @@ func extractPlanPairID(messages []llm.Message) string {
 	}
 	return ""
 }
-
 
 // isExpandable 判断段落是否可通过焦点 Enter 展开/折叠。
 // contentWidth 用于计算内容换行后的行数，避免将未溢出预览区的段落标记为可交互。
@@ -2692,7 +2681,6 @@ func (m *model) doTurn(userInput string) tea.Cmd {
 	if m.inPlanMode && m.planFile != "" && !m.loop.InPlanMode() {
 		m.loop.RestorePlanMode(m.planFile)
 	}
-
 
 	// ctx bar 保持上轮压缩后值,待 TurnStats 用 API PromptTokens 更新
 
@@ -3445,7 +3433,6 @@ func (m *model) renderCacheRate() string {
 	return label + " " + valStyle.Render(fmt.Sprintf("%d%%", pct))
 }
 
-
 // addCost 根据模型和 token 增量计算费用并累加到 hudCost。
 // model 为空时回退到当前 hudModel(子 agent 继承主模型场景)。
 // addCost 根据模型、币种和 token 增量计算费用并累加到 hudCost。
@@ -4181,7 +4168,6 @@ func (m *model) rebuildParasFromMessages() {
 	}
 }
 
-
 func (m *model) handleSlashCommand(input string) tea.Cmd {
 	cmd, args := m.slashRegistry.Match(input)
 	if cmd == nil {
@@ -4375,7 +4361,6 @@ func (m *model) handleSlashCommand(input string) tea.Cmd {
 				return nil
 			}
 
-
 		case slashcommand.SideEffectProviderSwitched:
 			m.reconfigureLLMClientForProvider(se.Detail, nil)
 		case slashcommand.SideEffectOpenRewind:
@@ -4439,9 +4424,6 @@ func (m *model) reconfigureLLMClientForProvider(newProvider string, settings *ll
 		m.hudModel = normalizeWidth(settings.Model)
 	}
 	m.hudThinkingEffort = resolveThinkingEffort(settings)
-
-
-
 
 	// 重置余额状态，避免旧 provider 的余额残留
 	m.hudBalance = ""

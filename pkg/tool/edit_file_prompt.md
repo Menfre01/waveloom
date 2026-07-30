@@ -1,39 +1,55 @@
 ## Edit File
 
-`edit` — unified diff hunk format. Every code change uses the same pattern.
+`edit` — patch format with envelope. Every file section uses `*** Update File:` header.
 
 ### Format
 
 ```
-@@ [optional header]
+*** Begin Patch
+*** Update File: <relative/path>
+@@ [optional context label]
  context line (space prefix)
 -old line to remove
 +new line to add
  context line
+*** End Patch
 ```
+
+- Every patch starts with `*** Begin Patch` and ends with `*** End Patch`.
+- Every file MUST have a `*** Update File: <path>` header before its hunks — even single-file edits.
+- `@@ [context label]` is optional (bare `@@` is fine). Use a function name or line hint for readability.
+- Paths are relative to workspace root.
 
 ### Basic usage
 
 **Replace** (change function signature):
 ```
+*** Begin Patch
+*** Update File: src/main.go
 @@ func greet
  func greet() string {
 -    return "hello"
 +    return "hello, " + name
  }
+*** End Patch
 ```
 
 **Delete** (remove a function and its calls):
 ```
+*** Begin Patch
+*** Update File: src/main.go
 @@
  func main() {
 -    y := oldHelper(5)
 -    println(y)
  }
+*** End Patch
 ```
 
 **Insert** (add error handling):
 ```
+*** Begin Patch
+*** Update File: src/config.go
 @@ func readConfig
  func readConfig() string {
      data, _ := os.ReadFile("config.txt")
@@ -41,31 +57,37 @@
 +        return ""
 +    }
      return string(data)
+*** End Patch
 ```
 
-### Multi-hunk (same file, same call)
+### Multi-file (same call)
 
 ```
+*** Begin Patch
+*** Update File: src/greet.go
 @@ func greet
  func greet() string {
 -    return "hello"
 +    return "hello, " + name
  }
-
-@@ func main
- func main() {
--    msg := greet()
-+    msg := greet("world")
-     println(msg)
+*** Update File: src/util.go
+@@ func helper
+ func helper(x int) int {
+-    return x * 2
++    return x * 3
+ }
+*** End Patch
 ```
+
+Each additional file gets its own `*** Update File: <path>` header before its hunks.
 
 ### Tips
 
 - **Read first**: always `read` the file before editing — the engine validates file state
 - **Context lines**: include 1-2 unchanged lines around each change for unique matching
 - **Exact whitespace**: copy tabs/spaces exactly from the read output
-- **Matching**: engine tries exact → trailing whitespace → full trim → unicode normalize
-- **Failed hunk**: re-read the file, check the diagnostics output, adjust context lines, retry
+- **Matching**: engine tries 4 layers: exact → trailing whitespace → full trim → unicode normalize
+- **Failed hunk**: re-read the file, check the diagnostics output, adjust context lines, retry. If a hunk fails twice on the same file, re-read with `read(file_path, pattern=<unique line from target area>, context_lines=5)` to get exact bytes — invisible Unicode whitespace (zero-width spaces, BOM, direction marks) may be present in the file but invisible in standard output.
 
 ### Common mistakes
 
@@ -95,3 +117,28 @@
 -    return x * 2
  }
 ```
+
+❌ Missing `*** Update File:` header — every file section needs one
+```
+@@ func greet
+ func greet() string {
+-    return "hello"
+```
+
+✅ Always include file header before hunks
+```
+*** Update File: src/main.go
+@@ func greet
+ func greet() string {
+-    return "hello"
+```
+
+### Consecutive failures
+
+Two failures on the same file → **stop using edit**, switch to `read` and verify the target content at byte level. Likely causes:
+
+- **Invisible Unicode**: zero-width spaces (`\u200B`), BOM (`\uFEFF`), direction markers (`\u200E`/`\u200F`), line separators (`\u2028`). Use `read(file_path, pattern="<unique snippet>", context_lines=5)` to reveal the exact bytes around the target area.
+- **Indentation mismatch**: tabs vs spaces, or trailing whitespace not visible in terminal output. Re-read with `context_lines=30` to see surrounding indentation pattern.
+- **Wrong file section**: the area has changed since last read. Re-read the full file or use `read(outline=true)` first.
+
+After re-reading, construct a new hunk with exact context lines from the fresh read output. Do NOT attempt more than 2 edits on the same file without re-reading. Do NOT fall back to bash/python/sed — the only way through a failed hunk is re-read → better hunk → retry edit.

@@ -150,17 +150,15 @@ func formatToolArgs(toolName string, argsJSON string, cwd string) string {
 	case "write":
 		return stripCWDPrefix(extractField(argsJSON, "file_path"), cwd)
 	case "edit":
-		patch := extractField(argsJSON, "patch")
-		// 提取所有 [PATH#TAG] 中的文件路径
-		paths := extractPatchFilePaths(patch)
-		if len(paths) == 0 {
-			return truncateStr(patch, 40)
+		patch := extractField(argsJSON, "hunk")
+		paths := extractPatchPaths(patch)
+		n := countHunks(patch)
+		if len(paths) == 1 {
+			return fmt.Sprintf("%s  %d hunk(s)", stripCWDPrefix(paths[0], cwd), n)
+		} else if len(paths) > 1 {
+			return fmt.Sprintf("%d files, %d hunk(s)", len(paths), n)
 		}
-		first := stripCWDPrefix(paths[0], cwd)
-		if len(paths) > 1 {
-			return first + fmt.Sprintf(" +%d more", len(paths)-1)
-		}
-		return first
+		return fmt.Sprintf("%d hunk(s)", n)
 	case "bash":
 		cmd := extractField(argsJSON, "command")
 		// 归一化:剥离 "cd <path> &&" 前缀,避免 turn log 中显示冗长的 cd 前缀
@@ -373,36 +371,6 @@ func collapseMultilineCommand(cmd string) string {
 	s = strings.TrimSuffix(s, " &&")
 	return s
 }
-// extractPatchFilePaths 从 hashline patch 文本中提取所有 [PATH#TAG] 节的文件路径。
-// 返回去重后的路径列表（保持首次出现的顺序）。
-func extractPatchFilePaths(patch string) []string {
-	var paths []string
-	seen := make(map[string]bool)
-	rest := patch
-	for {
-		idx := strings.Index(rest, "[")
-		if idx < 0 {
-			break
-		}
-		rest = rest[idx+1:]
-		end := strings.IndexByte(rest, ']')
-		if end < 0 {
-			break
-		}
-		header := rest[:end]
-		hashIdx := strings.LastIndex(header, "#")
-		if hashIdx > 0 {
-			path := header[:hashIdx]
-			if !seen[path] {
-				seen[path] = true
-				paths = append(paths, path)
-			}
-		}
-		rest = rest[end+1:]
-	}
-	return paths
-}
-
 // formatQuestionArgs 从 ask_user_question 的 JSON 参数中提取问题 header 摘要。
 // 解析失败或 header 过多时回退到截断原 JSON。
 func formatQuestionArgs(argsJSON string) string {
@@ -1191,8 +1159,6 @@ func renderAssistantPara(sb *strings.Builder, p *Paragraph, ctx ViewportCtx) {
 	}
 }
 
-
-
 // renderThoughtPara 渲染 thought 段落（斜体灰色，流式时有 spinner 前缀，通过字体样式与正文区分）。
 func renderThoughtPara(sb *strings.Builder, p *Paragraph, ctx ViewportCtx) {
 	// 前缀：流式时 spinner 动画，done 时静态灰色 ·，始终保持锚点宽度
@@ -1342,8 +1308,6 @@ func renderThoughtPara(sb *strings.Builder, p *Paragraph, ctx ViewportCtx) {
 		}
 	}
 }
-
-
 
 // wrapLineStable 按列宽硬截断，不做 word-wrap 优化。
 // 流式输出中使用，保证换行位置仅由字符位置决定，不因后续词增长而漂移。
@@ -1845,7 +1809,6 @@ func renderToolStreamOutput(sb *strings.Builder, p *Paragraph, textWidth int, in
 	}
 }
 
-
 // maxExpandedWrapped 是展开态的最大包装后行数。防止单条超长行在展开时产生海量 viewport 行。
 const maxExpandedWrapped = 2000
 
@@ -2235,8 +2198,6 @@ func diffLinePrefixAndStyle(kind tool.DiffLineKind) (prefix string, style lipglo
 	}
 }
 
-
-
 // ---------------------------------------------------------------------------
 // 辅助：检测字符串内容类型
 // ---------------------------------------------------------------------------
@@ -2248,6 +2209,34 @@ func collapseBlankLines(s string) string {
 		s = strings.ReplaceAll(s, "\n\n\n", "\n\n")
 	}
 	return s
+}
+
+// countHunks 统计 hunk 文本中 @@ 头的数量。
+func countHunks(hunk string) int {
+	n := 0
+	for _, line := range strings.Split(hunk, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "@@") {
+			n++
+		}
+	}
+	return n
+}
+
+// extractPatchPaths 从 patch 文本中提取 *** Update File: 指定的文件路径。
+func extractPatchPaths(patch string) []string {
+	var paths []string
+	seen := make(map[string]bool)
+	for _, line := range strings.Split(patch, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "*** Update File:") {
+			p := strings.TrimSpace(strings.TrimPrefix(trimmed, "*** Update File:"))
+			if p != "" && !seen[p] {
+				seen[p] = true
+				paths = append(paths, p)
+			}
+		}
+	}
+	return paths
 }
 
 // findFirstPromptPos 在可能含 ANSI 转义序列的字符串中查找第一个 "  "（2 空格）的位置。

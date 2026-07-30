@@ -28,17 +28,17 @@ var writeFilePrompt string
 type WriteFileParams struct {
 	FilePath   string `json:"file_path"`
 	Content    string `json:"content"`
-	WorkingDir string `json:"working_dir"` // 工作目录（可选），相对路径基于此解析
+	WorkingDir string `json:"working_dir"` // 工作目录(可选),相对路径基于此解析
 }
 
 type WriteFile struct{}
 
-func (t *WriteFile) Name() string            { return "write" }
+func (t *WriteFile) Name() string        { return "write" }
 func (t *WriteFile) Description() string {
 	return "Create a new file or overwrite an existing file. Creates parent directories automatically."
 }
 
-// Prompt 返回 write_file 使用约束，由 Registry.FormatToolPrompts() 注入 C1 system prompt。
+// Prompt 返回 write_file 使用约束,由 Registry.FormatToolPrompts() 注入 C1 system prompt。
 func (t *WriteFile) Prompt() string { return writeFilePrompt }
 
 var writeFileSchema = json.RawMessage(`{
@@ -71,7 +71,7 @@ func (t *WriteFile) Execute(ctx context.Context, p WriteFileParams) (*ToolResult
 			fmt.Sprintf("invalid path: %v", err), err), nil
 	}
 
-	// ── Step 1.5: FileHistory 追踪（在文件被修改前备份原始内容）──
+	// ── Step 1.5: FileHistory 追踪(在文件被修改前备份原始内容)──
 	if fh := filehistory.FromContext(ctx); fh != nil {
 		if msgID := filehistory.MessageIDFromContext(ctx); msgID != "" {
 			if sd := filehistory.SessionDirFromContext(ctx); sd != "" {
@@ -124,23 +124,27 @@ func (t *WriteFile) Execute(ctx context.Context, p WriteFileParams) (*ToolResult
 			fmt.Sprintf("cannot write file: %s", path), err), nil
 	}
 
-
-	// ── Step 5.5: 注册 hashline 快照，使 write 后可直接 edit 无需 re-read ──
+	// ── Step 5.5: 注册 hashline 快照,使 write 后可直接 edit 无需 re-read ──
 	tag := ""
 	if store := hashline.StoreFromContext(ctx); store != nil {
 		var tagErr error
 		tag, tagErr = store.Record(path, p.Content)
-	// Update readState after write
-	if rs := ReadStateFromContext(ctx); rs != nil {
-		rs.Update(path, p.Content)
-	}
 		if tagErr != nil {
 			tag = "" // TAG 生成失败不阻断写入
 		}
 	}
+
+	// Update readState after write — independent of hashline store,
+	// so edit-after-write can detect conflicts even when hashline is unavailable.
+	if rs := ReadStateFromContext(ctx); rs != nil {
+		rs.Update(path, p.Content)
+	}
+
 	// ── Step 6: Diff 反馈 ──
 	newLines := countLinesInContent(p.Content)
 	oldLines := countLinesInContent(oldContent)
+
+	diffHunks := computeWriteDiff(oldContent, p.Content, path)
 
 	var result strings.Builder
 
@@ -172,6 +176,7 @@ func (t *WriteFile) Execute(ctx context.Context, p WriteFileParams) (*ToolResult
 			FilePath:  path,
 			LineCount: newLines,
 			ByteCount: len(p.Content),
+			DiffHunks: diffHunks,
 		},
 	}, nil
 }
@@ -307,6 +312,102 @@ func maxInt(a, b int) int {
 		return a
 	}
 	return b
+}
+
+// computeWriteDiff generates DiffHunks for TUI diff view from old→new content.
+// For new files (empty old), all lines are additions.
+// For updates, a single hunk shows the changed region with context.
+func computeWriteDiff(oldContent, newContent, filePath string) []DiffHunk {
+	oldLines := strings.Split(oldContent, "\n")
+	newLines := strings.Split(newContent, "\n")
+
+	// Strip trailing empty line from split
+	if len(oldLines) > 0 && oldLines[len(oldLines)-1] == "" {
+		oldLines = oldLines[:len(oldLines)-1]
+	}
+	if len(newLines) > 0 && newLines[len(newLines)-1] == "" {
+		newLines = newLines[:len(newLines)-1]
+	}
+
+	// New file: all additions
+	if len(oldLines) == 0 {
+		if len(newLines) == 0 {
+			return nil
+		}
+		lines := make([]DiffLine, len(newLines))
+		for i, l := range newLines {
+			lines[i] = DiffLine{Kind: DiffAdd, Content: l, NewNum: i + 1}
+		}
+		return []DiffHunk{{
+			FilePath: filePath,
+			OldStart: 0, OldCount: 0,
+			NewStart: 1, NewCount: len(newLines),
+			Lines: lines,
+		}}
+	}
+
+	// Update: compute common head/tail, build one hunk with context
+	head := 0
+	for head < len(oldLines) && head < len(newLines) && oldLines[head] == newLines[head] {
+		head++
+	}
+	tail := 0
+	for tail < len(oldLines)-head && tail < len(newLines)-head &&
+		oldLines[len(oldLines)-1-tail] == newLines[len(newLines)-1-tail] {
+		tail++
+	}
+
+	if head+tail >= len(oldLines) && head+tail >= len(newLines) && len(oldLines) == len(newLines) {
+		return nil
+	}
+
+	const ctxLines = 2
+	ctxStart := head - ctxLines
+	if ctxStart < 0 {
+		ctxStart = 0
+	}
+	oldEnd := len(oldLines) - tail
+	newEnd := len(newLines) - tail
+
+	var lines []DiffLine
+	oldNum := ctxStart + 1
+	newNum := ctxStart + 1
+
+	// Context before
+	for i := ctxStart; i < head; i++ {
+		lines = append(lines, DiffLine{Kind: DiffCtx, Content: oldLines[i], OldNum: oldNum, NewNum: newNum})
+		oldNum++
+		newNum++
+	}
+	// Deleted lines
+	for i := head; i < oldEnd; i++ {
+		lines = append(lines, DiffLine{Kind: DiffDel, Content: oldLines[i], OldNum: oldNum})
+		oldNum++
+	}
+	// Added lines
+	for i := head; i < newEnd; i++ {
+		lines = append(lines, DiffLine{Kind: DiffAdd, Content: newLines[i], NewNum: newNum})
+		newNum++
+	}
+	// Context after
+	ctxEnd := oldEnd + ctxLines
+	if ctxEnd > len(oldLines) {
+		ctxEnd = len(oldLines)
+	}
+	for i := oldEnd; i < ctxEnd; i++ {
+		lines = append(lines, DiffLine{Kind: DiffCtx, Content: oldLines[i], OldNum: oldNum, NewNum: newNum})
+		oldNum++
+		newNum++
+	}
+
+	return []DiffHunk{{
+		FilePath: filePath,
+		OldStart: ctxStart + 1,
+		OldCount: oldEnd - ctxStart,
+		NewStart: ctxStart + 1,
+		NewCount: newEnd - ctxStart,
+		Lines:    lines,
+	}}
 }
 
 func isDiskFull(err error) bool {

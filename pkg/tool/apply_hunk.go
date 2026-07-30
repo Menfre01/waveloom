@@ -4,6 +4,10 @@ import (
 	"fmt"
 	"os"
 	"strings"
+
+	"path/filepath"
+
+
 	"github.com/Menfre01/waveloom/pkg/hashline"
 )
 
@@ -19,6 +23,7 @@ type HunkResult struct {
 	Error    string // empty if success
 	OldLines []string
 	NewLines []string
+	RawBody  string // raw hunk body (lines after @@ header), for DiffHunk construction
 	// Failure diagnostics
 	FileSnippet  string   // file content around expected location
 	ClosestMatch string   // closest-match hint
@@ -57,6 +62,7 @@ type patchHunk struct {
 	pattern []string
 	replace []string
 	oldTxt  string // original hunk text for diagnostics
+	rawBody string // raw hunk body (lines between @@ header and next hunk/EOF)
 }
 
 func parsePatchFiles(text string, defaultPath string) []patchFile {
@@ -68,8 +74,16 @@ func parsePatchFiles(text string, defaultPath string) []patchFile {
 
 	for i < len(lines) {
 		line := strings.TrimSpace(lines[i])
+		// Envelope markers — skip, don't create phantom entries
+		if strings.HasPrefix(line, "*** Begin Patch") || strings.HasPrefix(line, "*** End Patch") {
+			i++
+			continue
+		}
 		if strings.HasPrefix(line, "*** Update File:") {
 			path := strings.TrimSpace(strings.TrimPrefix(line, "*** Update File:"))
+			if !filepath.IsAbs(path) && defaultPath != "" {
+				path = filepath.Join(filepath.Dir(defaultPath), path)
+			}
 			files = append(files, patchFile{path: path})
 			current = &files[len(files)-1]
 			i++
@@ -97,10 +111,11 @@ func parseOneHunk(lines []string, i *int) patchHunk {
 	h.header = strings.TrimSpace(lines[*i])
 	h.oldTxt = h.header + "\n"
 	*i++
+	bodyStart := *i
 
 	for *i < len(lines) {
 		line := lines[*i]
-		// Stop at next @@ or *** Update File
+		// Stop at next @@ or *** Update File or *** End Patch
 		trimmed := strings.TrimSpace(line)
 		if strings.HasPrefix(trimmed, "@@") || strings.HasPrefix(trimmed, "*** Update File:") {
 			break
@@ -129,6 +144,8 @@ func parseOneHunk(lines []string, i *int) patchHunk {
 		}
 		*i++
 	}
+	// Store raw hunk body (lines between @@ header and next hunk/EOF)
+	h.rawBody = strings.Join(lines[bodyStart:*i], "\n")
 	return h
 }
 
@@ -144,9 +161,10 @@ func applyFileHunks(filePath string, hunks []patchHunk, readStates *ReadStateSto
 		if !ok {
 			for _, h := range hunks {
 				results = append(results, HunkResult{
-					File:  filePath,
-					Header: h.header,
-					Error: reason,
+					File:    filePath,
+					Header:  h.header,
+					Error:   reason,
+					RawBody: h.rawBody,
 				})
 			}
 			return results
@@ -157,9 +175,10 @@ func applyFileHunks(filePath string, hunks []patchHunk, readStates *ReadStateSto
 	if err != nil {
 		for _, h := range hunks {
 			results = append(results, HunkResult{
-				File:  filePath,
-				Header: h.header,
-				Error: fmt.Sprintf("cannot read file: %v", err),
+				File:    filePath,
+				Header:  h.header,
+				Error:   fmt.Sprintf("cannot read file: %v", err),
+				RawBody: h.rawBody,
 			})
 		}
 		return results
@@ -169,7 +188,7 @@ func applyFileHunks(filePath string, hunks []patchHunk, readStates *ReadStateSto
 	lastMatch := 0
 	lineOffset := 0
 
-	for hi, h := range hunks {
+	for _, h := range hunks {
 		matchStart := seekHunk(fileLines, h.pattern, lastMatch)
 		if matchStart < 0 {
 			diagnostics := buildHunkDiagnostics(filePath, fileLines, h, lastMatch)
@@ -179,6 +198,7 @@ func applyFileHunks(filePath string, hunks []patchHunk, readStates *ReadStateSto
 				Error:        "hunk not found",
 				OldLines:     h.pattern,
 				NewLines:     h.replace,
+				RawBody:      h.rawBody,
 				FileSnippet:  diagnostics.fileSnippet,
 				ClosestMatch: diagnostics.closestMatch,
 				CharDiff:     diagnostics.charDiff,
@@ -204,9 +224,9 @@ func applyFileHunks(filePath string, hunks []patchHunk, readStates *ReadStateSto
 			Line:     matchStart + 1,
 			OldLines: h.pattern,
 			NewLines: h.replace,
+			RawBody:  h.rawBody,
 		})
 
-		_ = hi
 	}
 
 	// Write file
@@ -343,6 +363,7 @@ func charDiff(a, b string) string {
 	result.WriteByte('\n')
 	return result.String()
 }
+
 // ---------------------------------------------------------------------------
 // 4-layer progressive matching
 // ---------------------------------------------------------------------------
