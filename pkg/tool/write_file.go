@@ -10,7 +10,6 @@ import (
 	"strings"
 
 	"github.com/Menfre01/waveloom/pkg/filehistory"
-	"github.com/Menfre01/waveloom/pkg/hashline"
 	"github.com/Menfre01/waveloom/pkg/pathutil"
 )
 
@@ -124,18 +123,7 @@ func (t *WriteFile) Execute(ctx context.Context, p WriteFileParams) (*ToolResult
 			fmt.Sprintf("cannot write file: %s", path), err), nil
 	}
 
-	// ── Step 5.5: 注册 hashline 快照,使 write 后可直接 edit 无需 re-read ──
-	tag := ""
-	if store := hashline.StoreFromContext(ctx); store != nil {
-		var tagErr error
-		tag, tagErr = store.Record(path, p.Content)
-		if tagErr != nil {
-			tag = "" // TAG 生成失败不阻断写入
-		}
-	}
-
-	// Update readState after write — independent of hashline store,
-	// so edit-after-write can detect conflicts even when hashline is unavailable.
+	// Update readState after write, so edit-after-write can detect conflicts.
 	if rs := ReadStateFromContext(ctx); rs != nil {
 		rs.Update(path, p.Content)
 	}
@@ -150,12 +138,12 @@ func (t *WriteFile) Execute(ctx context.Context, p WriteFileParams) (*ToolResult
 
 	if !isUpdate {
 		// ── Create ──
-		fmt.Fprintf(&result, "✓ Created: %s (TAG: %s)\n", path, tag)
+		fmt.Fprintf(&result, "✓ Created: %s\n", path)
 		fmt.Fprintf(&result, "   Lines: %d, Size: %s\n", newLines, formatSize(int64(len(p.Content))))
 		result.WriteString(renderContentPreview(p.Content))
 	} else {
 		// ── Update ──
-		fmt.Fprintf(&result, "✓ Updated: %s (TAG: %s)\n", path, tag)
+		fmt.Fprintf(&result, "✓ Updated: %s\n", path)
 		fmt.Fprintf(&result, "   Lines: %d → %d (%s%d)\n",
 			oldLines, newLines, changeSign(newLines-oldLines), absInt(newLines-oldLines))
 		fmt.Fprintf(&result, "   Size: %s → %s\n",

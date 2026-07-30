@@ -22,7 +22,6 @@ var readHashlinePrompt string
 // ReadFile — 读取文件内容，返回 hashline 格式（TAG + N:CONTENT）
 // ---------------------------------------------------------------------------
 
-
 type ReadFileParams struct {
 	FilePath     string `json:"file_path"`     // 与 read_file 一致
 	Offset       int    `json:"offset"`        // 0-based: 0 = 文件第一行
@@ -185,21 +184,11 @@ func (t *ReadFile) Execute(ctx context.Context, p ReadFileParams) (*ToolResult, 
 	}
 
 	// ── Step 6: 生成 TAG（无论截断与否，TAG 对应完整文件内容）──
-	var tag string
-	if store := hashline.StoreFromContext(ctx); store != nil {
-		tag, err = store.Record(path, fullContent)
-	// Record readState for edit conflict detection
+	// 记录读取状态供 edit 冲突检测
 	if rs := ReadStateFromContext(ctx); rs != nil {
 		rs.Record(path, fullContent)
 	}
-		if err != nil {
-			return toolError(ErrorClassRecoverable, ErrKindCommandFailed,
-				fmt.Sprintf("failed to generate TAG: %v", err), err), nil
-		}
-	} else {
-		// 无 Store 时用临时 TAG（仍可读但不可编辑）
-		tag = "0000"
-	}
+	tag := "0000"
 
 	// ── Step 7: pattern 匹配(可选)──
 	// pattern 选择显示窗口:匹配行 ±ContextLines。TAG 始终对应完整文件,不受 pattern 影响。
@@ -511,7 +500,6 @@ type symbolPattern struct {
 	re   *regexp.Regexp
 	kind string
 }
-
 
 // isMakefileName checks whether a base file name is a Makefile variant.
 func isMakefileName(name string) bool {

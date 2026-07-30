@@ -15,7 +15,6 @@ import (
 	"time"
 
 	"github.com/Menfre01/waveloom/pkg/compaction"
-	"github.com/Menfre01/waveloom/pkg/hashline"
 	"github.com/Menfre01/waveloom/pkg/lsp"
 	"github.com/Menfre01/waveloom/pkg/hook"
 	"github.com/Menfre01/waveloom/pkg/llm"
@@ -117,15 +116,12 @@ const maxConsecutiveSameError = 8
 // 阶梯:3 → 5 → 8(终止)
 var warnThresholds = map[int]bool{3: true, 5: true}
 
-
 // todoReminderInterval 定义 todo 周期性提醒的间隔（assistant turn 数）。
 // 首次提醒在 idleTodoWrite（距上次 todo_update 达到此值）时触发，// 后续提醒至少间隔 idleTodoReminder 轮。
 const (
 	idleTodoWrite    = 2 // 超过此值无 todo_update → 注入提醒
 	idleTodoReminder = 2 // 两次提醒之间的最小间隔
 )
-
-
 
 // ---------------------------------------------------------------------------
 // TerminalReason — 终止原因
@@ -168,7 +164,6 @@ type Loop struct {
 	planPairID  string // START/END 配对 ID（4 位 hex，如 "a3f7"）
 	approvedPlan string // 审批通过的 plan 内容（用于 executeToolCalls 在 tool 消息后注入 [plan:end]）
 
-
 	// ── 退避追踪（会话级，跨 Run() 持久化）──
 
 	// lastErrorKind 记录上一轮工具错误的 Kind。
@@ -191,16 +186,7 @@ type Loop struct {
 	// todo_update 成功执行时重置为 false。防止 LLM 忘记最后一次 todo 更新导致残留。
 	lastChanceTodoInjected bool
 
-
-	// ── hashline 快照存储（会话级，跨 turn 持久化）──
-	//
-	// SPEC-DRIFT: 规范 §3.2 要求 per-turn 生命周期（turn 结束清空）。
-	// 但 read → edit 工作流必然跨 turn（先读后编），	// per-turn NewStore() 会导致下一 turn 编辑时 TAG 验证失败（"no snapshot for path"）。
-	// 因此改为会话级 Store：Loop 创建时初始化，跨 turn 复用，子代理通过 agentloop.New()
-	// 因此改为会话级 Store：Loop 创建时初始化，跨 turn 复用，子代理通过 agentloop.New()
-	// 获得独立 Store 实现隔离。
-	snapshotStore *hashline.SnapshotStore
-	readStateStore *tool.ReadStateStore
+	readStateStore    *tool.ReadStateStore
 
 	// hookRunner 执行 hooks。nil → 跳过 hooks。
 	// todoMultiInProgressMsg 由 executeTodoMutate 在检测到多个 in_progress 时设置，
@@ -218,7 +204,6 @@ func New(llmClient llm.Client, toolRegistry tool.Registry, config Config) *Loop 
 		llmClient:    llmClient,
 		toolRegistry: toolRegistry,
 		config:       config,
-		snapshotStore: hashline.NewStore(),
 		readStateStore: tool.NewReadStateStore(),
 	}
 }
@@ -671,7 +656,6 @@ func (l *Loop) Run(ctx context.Context, messages []llm.Message) <-chan TurnEvent
 				tick := l.config.Compactor.Compact(ctx, &state.Messages, lastPromptTokens)
 				compacted = true
 
-
 				// 推送合并后的 TurnStats（含压缩字段）
 				if lastUsage != nil {
 					ch <- TurnStats{
@@ -814,7 +798,6 @@ func todoReminderText(summary string, turnsSince int) string {
 	return summary + "\n\n" +
 		fmt.Sprintf("[system:todo] %d turns since last todo_update. Your todo list is stale — call todo_update NOW to update task statuses. Mark completed tasks as 'completed' and set the next pending task to 'in_progress'.", turnsSince)
 }
-
 
 // updateTodoCounters 在每轮工具执行后更新 todo 提醒计数器。
 // 当无活跃任务时保持计数器归零（无需提醒）；否则递增。

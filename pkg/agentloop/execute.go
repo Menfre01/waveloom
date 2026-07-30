@@ -13,7 +13,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Menfre01/waveloom/pkg/hashline"
 	"github.com/Menfre01/waveloom/pkg/llm"
 	"github.com/Menfre01/waveloom/pkg/lsp"
 	"github.com/Menfre01/waveloom/pkg/permission"
@@ -70,9 +69,8 @@ func (l *Loop) executeToolCalls(ctx context.Context, calls []llm.ToolCall, state
 		ctx = WithAgentsMD(ctx, l.config.AgentsMD)
 	}
 
-	// Inject session-level SnapshotStore for hashline read/edit tools (跨 turn 持久化).
+	// Inject session-level ReadStateStore for read/edit conflict detection (跨 turn 持久化).
 ctx = tool.WithReadState(ctx, l.readStateStore)
-	ctx = hashline.WithStore(ctx, l.snapshotStore)
 	// Inject LSP Manager for tools that need symbol/document out-of-band access (e.g., read outline).
 	if l.config.LSPManager != nil {
 		ctx = lsp.WithLSPManager(ctx, l.config.LSPManager)
@@ -1182,7 +1180,6 @@ func (l *Loop) executeExitPlanMode(ctx context.Context, tc llm.ToolCall, state *
 	l.approvedPlan = planStr // 暂存，由 executeToolCalls 在 tool 消息后注入 [plan:end]
 	l.config.PlanFile = ""   // 清除,确保下次进入生成新文件
 
-
 	if l.config.Guard != nil {
 		l.config.Guard.ExitPlanMode()
 	}
@@ -1310,7 +1307,6 @@ var nouns = []string{
 	"quokka", "raven", "salmon", "tapir", "urchin",
 	"viper", "weasel", "xerus", "yak", "zebra",
 }
-
 
 // safeSend 向 channel 安全发送，channel 已关闭时静默丢弃（不 panic）。
 // REGRESSION: 工具 goroutine 可能在 resultsCh 关闭后仍尝试发送（工具忽略 context 取消），// 导致 panic-in-recover 的 double-panic 使进程崩溃。

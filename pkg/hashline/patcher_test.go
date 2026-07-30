@@ -1,7 +1,6 @@
 package hashline
 
 import (
-	"context"
 	"fmt"
 	"os"
 	"strings"
@@ -627,7 +626,6 @@ DEL 5
 DEL 2
 *** End Patch`)
 
-
 	results := ApplyPatch(patch, fs, store)
 	if len(results) != 1 || results[0].Error != nil {
 		t.Fatalf("ApplyPatch descending DELs failed: %+v", results[0].Error)
@@ -638,7 +636,6 @@ DEL 2
 		t.Errorf("descending DEL 5 → DEL 2:\n got: %q\nwant: %q", fs.files["src/main.go"], expected)
 	}
 }
-
 
 func TestTagMismatch(t *testing.T) {
 	fs := NewMemoryFS()
@@ -813,25 +810,6 @@ func TestOpKindString(t *testing.T) {
 		t.Errorf("unknown OpKind.String() = %q, want UNKNOWN", unknown.String())
 	}
 }
-
-// ---------------------------------------------------------------------------
-// SnapshotStore context test
-// ---------------------------------------------------------------------------
-
-func TestWithStoreAndStoreFromContext(t *testing.T) {
-	store := NewStore()
-	ctx := WithStore(context.Background(), store)
-
-	got := StoreFromContext(ctx)
-	if got != store {
-		t.Fatal("StoreFromContext returned different store")
-	}
-
-	if StoreFromContext(context.TODO()) != nil {
-		t.Fatal("StoreFromContext on nil context should return nil")
-	}
-}
-
 // ---------------------------------------------------------------------------
 // TestOpRange 验证 opRange 将操作转换为 0-based 行范围
 // ---------------------------------------------------------------------------
@@ -984,7 +962,6 @@ func TestParseLineRangeEdgeCases(t *testing.T) {
 		t.Fatal("expected error for empty")
 	}
 
-
 	// := confusion (用户写了 N:=M 而非 N.=M)
 	_, _, err = parseLineRange("3:=7")
 	if err == nil {
@@ -1103,8 +1080,6 @@ func TestRecordTagCollision(t *testing.T) {
 	}
 }
 
-
-
 // ---------------------------------------------------------------------------
 // OSFS tests (real filesystem)
 // ---------------------------------------------------------------------------
@@ -1196,7 +1171,6 @@ INS.TAIL:
 +line2
 *** End Patch`)
 
-
 	results := ApplyPatch(patch, fs, store)
 	if len(results) != 1 || results[0].Error != nil {
 		t.Fatalf("ApplyPatch INS.TAIL on empty failed: %+v", results[0].Error)
@@ -1207,7 +1181,6 @@ INS.TAIL:
 		t.Errorf("unexpected content:\n got: %q\nwant: %q", fs.files["empty.go"], expected)
 	}
 }
-
 
 // ---------------------------------------------------------------------------
 // applySection REM on non-existent file
@@ -1220,7 +1193,6 @@ func TestApplyRemOnNonExistent(t *testing.T) {
 		t.Fatal("expected parse error for REM (no longer supported)")
 	}
 }
-
 
 // REGRESSION: INS.POST with only + (empty body line) should insert one blank line.
 // Previously splitBody returned nil for empty body, causing the blank line to be silently dropped.
@@ -1597,7 +1569,6 @@ func TestDetectCrossSectionConflicts_NoOverlap(t *testing.T) {
 		t.Fatalf("expected no conflict, got: %v", errs)
 	}
 }
-
 
 func TestDetectCrossSectionConflicts_MultiFile_OneConflict(t *testing.T) {
 	// fileA has conflict, fileB doesn't — only fileA should be rejected

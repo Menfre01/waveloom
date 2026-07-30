@@ -9,9 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Menfre01/waveloom/pkg/hashline"
 )
-
 
 // ---------------------------------------------------------------------------
 // ReadFile — 正常路径
@@ -25,8 +23,7 @@ func TestReadFile_Success(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	store := hashline.NewStore()
-	ctx := hashline.WithStore(context.Background(), store)
+	ctx := context.Background()
 
 	tool := &ReadFile{}
 	result, err := tool.Execute(ctx, ReadFileParams{FilePath: filePath})
@@ -38,10 +35,6 @@ func TestReadFile_Success(t *testing.T) {
 	}
 	if result.Content == "" {
 		t.Fatal("expected non-empty content")
-	}
-	// 检查 TAG 存在
-	if _, ok := store.Get(filePath); !ok {
-		t.Error("store should contain snapshot after read")
 	}
 }
 
@@ -60,8 +53,7 @@ func TestReadFile_OffsetAndLimit(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	store := hashline.NewStore()
-	ctx := hashline.WithStore(context.Background(), store)
+	ctx := context.Background()
 
 	tests := []struct {
 		name          string
@@ -102,8 +94,7 @@ func TestReadFile_FileNotFound(t *testing.T) {
 	dir := t.TempDir()
 	missingPath := filepath.Join(dir, "nonexistent.go")
 
-	store := hashline.NewStore()
-	ctx := hashline.WithStore(context.Background(), store)
+	ctx := context.Background()
 
 	tool := &ReadFile{}
 	result, err := tool.Execute(ctx, ReadFileParams{FilePath: missingPath})
@@ -129,8 +120,7 @@ func TestReadFile_FileNotFound_ParentExists(t *testing.T) {
 
 	missingPath := filepath.Join(dir, "main_test.go") // 不存在，但 main.go 存在
 
-	store := hashline.NewStore()
-	ctx := hashline.WithStore(context.Background(), store)
+	ctx := context.Background()
 
 	tool := &ReadFile{}
 	result, err := tool.Execute(ctx, ReadFileParams{FilePath: missingPath})
@@ -152,8 +142,7 @@ func TestReadFile_FileNotFound_ParentExists(t *testing.T) {
 func TestReadFile_IsDirectory(t *testing.T) {
 	dir := t.TempDir()
 
-	store := hashline.NewStore()
-	ctx := hashline.WithStore(context.Background(), store)
+	ctx := context.Background()
 
 	tool := &ReadFile{}
 	result, err := tool.Execute(ctx, ReadFileParams{FilePath: dir})
@@ -181,8 +170,7 @@ func TestReadFile_IsDirectory_SuggestsMatchingFile(t *testing.T) {
 	// 创建 skill.go —— 与目录名 skill 同名
 	_ = os.WriteFile(filepath.Join(pkgDir, "skill.go"), []byte("package skill"), 0o644)
 
-	store := hashline.NewStore()
-	ctx := hashline.WithStore(context.Background(), store)
+	ctx := context.Background()
 
 	tool := &ReadFile{}
 	result, err := tool.Execute(ctx, ReadFileParams{FilePath: pkgDir})
@@ -213,8 +201,7 @@ func TestReadFile_BinaryByExtension(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	store := hashline.NewStore()
-	ctx := hashline.WithStore(context.Background(), store)
+	ctx := context.Background()
 
 	tool := &ReadFile{}
 	result, err := tool.Execute(ctx, ReadFileParams{FilePath: filePath})
@@ -240,8 +227,7 @@ func TestReadFile_EmptyFile(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	store := hashline.NewStore()
-	ctx := hashline.WithStore(context.Background(), store)
+	ctx := context.Background()
 
 	tool := &ReadFile{}
 	result, err := tool.Execute(ctx, ReadFileParams{FilePath: filePath})
@@ -266,8 +252,7 @@ func TestReadFile_DeviceBlocked(t *testing.T) {
 		devicePath = "NUL"
 	}
 
-	store := hashline.NewStore()
-	ctx := hashline.WithStore(context.Background(), store)
+	ctx := context.Background()
 
 	tool := &ReadFile{}
 	result, err := tool.Execute(ctx, ReadFileParams{FilePath: devicePath})
@@ -326,8 +311,7 @@ func TestReadFile_WorkingDirResolution(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	store := hashline.NewStore()
-	ctx := hashline.WithStore(context.Background(), store)
+	ctx := context.Background()
 
 	tool := &ReadFile{}
 	result, err := tool.Execute(ctx, ReadFileParams{
@@ -357,8 +341,7 @@ func TestReadFile_ContextAlreadyCancelled(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	store := hashline.NewStore()
-	ctx, cancel := context.WithCancel(hashline.WithStore(context.Background(), store))
+	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
 	tool := &ReadFile{}
@@ -373,8 +356,7 @@ func TestReadFile_ContextAlreadyCancelled(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestReadFile_InvalidPath(t *testing.T) {
-	store := hashline.NewStore()
-	ctx := hashline.WithStore(context.Background(), store)
+	ctx := context.Background()
 
 	tool := &ReadFile{}
 	result, err := tool.Execute(ctx, ReadFileParams{FilePath: "\x00invalid"})
@@ -408,8 +390,7 @@ func TestReadFile_BinaryByContent(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	store := hashline.NewStore()
-	ctx := hashline.WithStore(context.Background(), store)
+	ctx := context.Background()
 
 	tool := &ReadFile{}
 	result, err := tool.Execute(ctx, ReadFileParams{FilePath: filePath})
@@ -423,7 +404,6 @@ func TestReadFile_BinaryByContent(t *testing.T) {
 		t.Errorf("expected ErrKindBinaryFile, got %q", result.Error.Kind)
 	}
 }
-
 
 // ---------------------------------------------------------------------------
 // ReadFile — 超大文件拒绝（>10MB）
@@ -440,8 +420,7 @@ func TestReadFile_LargeFileRejected(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	store := hashline.NewStore()
-	ctx := hashline.WithStore(context.Background(), store)
+	ctx := context.Background()
 
 	tool := &ReadFile{}
 	result, err := tool.Execute(ctx, ReadFileParams{FilePath: filePath})
@@ -468,8 +447,7 @@ func TestReadFile_Pattern_SingleMatch(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	store := hashline.NewStore()
-	ctx := hashline.WithStore(context.Background(), store)
+	ctx := context.Background()
 
 	tool := &ReadFile{}
 	result, err := tool.Execute(ctx, ReadFileParams{FilePath: filePath, Pattern: "HandleRequest"})
@@ -482,10 +460,6 @@ func TestReadFile_Pattern_SingleMatch(t *testing.T) {
 	// 应该显示匹配行周围的上下文,而不是全文件
 	if !strings.Contains(result.Content, "Match 1 of") {
 		t.Errorf("expected content to contain matched pattern, got:\n%s", result.Content)
-	}
-	// TAG 仍应在 store 中
-	if _, ok := store.Get(filePath); !ok {
-		t.Error("store should contain snapshot after read with pattern")
 	}
 }
 
@@ -504,8 +478,7 @@ func TestReadFile_Pattern_MultipleMatches(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	store := hashline.NewStore()
-	ctx := hashline.WithStore(context.Background(), store)
+	ctx := context.Background()
 
 	tool := &ReadFile{}
 	// 第一个匹配 (matchIdx=0)
@@ -541,8 +514,7 @@ func TestReadFile_Pattern_NoMatch(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	store := hashline.NewStore()
-	ctx := hashline.WithStore(context.Background(), store)
+	ctx := context.Background()
 
 	tool := &ReadFile{}
 	result, err := tool.Execute(ctx, ReadFileParams{FilePath: filePath, Pattern: "NotFound"})
@@ -569,8 +541,7 @@ func TestReadFile_Pattern_EmptyPattern(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	store := hashline.NewStore()
-	ctx := hashline.WithStore(context.Background(), store)
+	ctx := context.Background()
 
 	tool := &ReadFile{}
 	// 空 pattern 等同于不传 pattern — 显示全文件,无 match footer
@@ -597,8 +568,7 @@ func TestReadFile_Pattern_ContextLines(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	store := hashline.NewStore()
-	ctx := hashline.WithStore(context.Background(), store)
+	ctx := context.Background()
 
 	tool := &ReadFile{}
 	// context_lines=2 → 匹配行 ±2 行
@@ -638,8 +608,7 @@ func TestReadFile_Pattern_WithLimit(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	store := hashline.NewStore()
-	ctx := hashline.WithStore(context.Background(), store)
+	ctx := context.Background()
 
 	tool := &ReadFile{}
 	// limit=3 → 只显示 3 行,即使 context 更大
@@ -668,8 +637,7 @@ func TestReadFile_Pattern_OffsetOutOfRange(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	store := hashline.NewStore()
-	ctx := hashline.WithStore(context.Background(), store)
+	ctx := context.Background()
 
 	tool := &ReadFile{}
 	// offset=99 超出匹配数 → 回退到最后一个匹配
@@ -701,8 +669,7 @@ func TestReadFile_Pattern_OffsetAndLimit(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	store := hashline.NewStore()
-	ctx := hashline.WithStore(context.Background(), store)
+	ctx := context.Background()
 
 	tool := &ReadFile{}
 	// offset=2(第三个匹配) + limit=3 → 应显示第三个 MARKER ±5 行中的前 3 行
@@ -846,8 +813,7 @@ func TestReadFile_Outline_DefaultFalse(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	store := hashline.NewStore()
-	ctx := hashline.WithStore(context.Background(), store)
+	ctx := context.Background()
 	tool := &ReadFile{}
 
 	// outline=false (default) should return normal file content, not outline
