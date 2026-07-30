@@ -138,7 +138,14 @@ func (r *Runner) Run(ctx context.Context, task *Task) *RunResult {
 			if e.ToolCallName == "read" && e.Error == "" {
 				hadRead = true
 			}
-			if e.ToolCallName == "edit" {
+			switch e.ToolCallName {
+			case "read":
+				if e.Error == "" {
+					hadRead = true
+				}
+				tm.ToolCalls = append(tm.ToolCalls, rec)
+				metrics.RecordTurn(tm)
+			case "edit":
 				parseOK, _, hasWarn, hasHunkFail := extractEditMetrics(e.Result, rec.Arguments, e.Error)
 				rec.ParseOK = parseOK
 				tm.ParseOK = parseOK
@@ -152,12 +159,12 @@ func (r *Runner) Run(ctx context.Context, task *Task) *RunResult {
 				}
 				tm.ToolCalls = append(tm.ToolCalls, rec)
 				metrics.RecordTurn(tm)
-			} else if e.ToolCallName == "write" {
+			case "write":
 				tm.WriteUsed = true
 				tm.ToolCalls = append(tm.ToolCalls, rec)
 				metrics.RecordTurn(tm)
 				hadRead = false
-			} else {
+			default:
 				tm.ToolCalls = append(tm.ToolCalls, rec)
 				metrics.RecordTurn(tm)
 			}

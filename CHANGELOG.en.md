@@ -1,3 +1,15 @@
+## [v0.4.4] — 2026-07-30
+
+### Fixed
+- **edit hunk empty line matching**: bare empty lines in hunk body are now correctly treated as context lines, fixing hunk match failures caused by trailing empty lines
+- **Unicode punctuation mapping**: normalizeUnicode2 now covers 152 additional Unicode punctuation mappings, improving hunk match tolerance for non-ASCII punctuation
+- **hashline Op field restoration**: restored Op.Position / Op.DestPath / OpREM / OpMV fields, fixing backward compatibility for historical data parsing
+
+### Changed
+- **Prompt read-first search guidance**: removed residual rg/hashline references, eliminated grep signal contradictions, guiding LLM to use read(pattern=...) for single-file search and grep only for multi-file scanning
+
+---
+
 ## [v0.4.3] — 2026-07-30
 
 ### Added

@@ -1,3 +1,17 @@
+## [v0.4.4] — 2026-07-30
+
+### 修复
+- **edit hunk 空行误匹配**:hunk body 裸空行（无内容空行）现在正确视为上下文行，消除 trailing 空行导致的 hunk 匹配失败
+- **Unicode 标点映射补全**:normalizeUnicode2 补齐 152 个 Unicode 标点映射，提升非 ASCII 标点的 hunk 匹配容错
+- **hashline Op 字段恢复**:恢复 Op.Position / Op.DestPath / OpREM / OpMV 字段，修复历史数据解析兼容性
+
+### 重构
+- **提示词 read-first 检索强化**:移除 rg/hashline 残留引用，消除 grep 信号矛盾，引导 LLM 单文件用 read(pattern=...) 搜索、多文件才用 grep
+
+---
+
+📝 [Changelog (English)](https://github.com/Menfre01/waveloom/blob/dev/CHANGELOG.en.md)
+
 ## [v0.4.3] — 2026-07-30
 
 ### 新增功能
