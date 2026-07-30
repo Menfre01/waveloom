@@ -549,12 +549,188 @@ func seekUnicode(lines, pattern []string, start int) int {
 func normalizeUnicode2(s string) string {
 	return strings.Map(func(r rune) rune {
 		switch r {
+		// Invisible characters — drop them (return -1).
+		// These are matching poison: they break hunk alignment but are invisible to users.
+		case '\u00AD', '\u200B', '\u200C', '\u200D', '\u200E', '\u200F',
+			'\u2028', '\u2029', '\u2060', '\uFEFF':
+			return -1
+		// Fullwidth punctuation → ASCII (U+FF01–U+FF5E offset 0xFEE0).
+		// Skips fullwidth letters (U+FF21–U+FF3A, U+FF41–U+FF5A) and digits (U+FF10–U+FF19)
+		// since those are semantically distinct in CJK contexts.
+		case '\uFF01', '\uFF02', '\uFF03', '\uFF04', '\uFF05', '\uFF06', '\uFF07',
+			'\uFF08', '\uFF09', '\uFF0A', '\uFF0B', '\uFF0C', '\uFF0D', '\uFF0E', '\uFF0F':
+			return r - 0xFEE0
+		case '\uFF1A', '\uFF1B', '\uFF1C', '\uFF1D', '\uFF1E', '\uFF1F', '\uFF20':
+			return r - 0xFEE0
+		case '\uFF3B', '\uFF3C', '\uFF3D', '\uFF3E', '\uFF3F', '\uFF40':
+			return r - 0xFEE0
+		case '\uFF5B', '\uFF5C', '\uFF5D', '\uFF5E':
+			return r - 0xFEE0
+		// CJK Compatibility Forms (vertical presentation) → ASCII
+		case '\uFE35', '\uFE59':
+			return '('
+		case '\uFE36', '\uFE5A':
+			return ')'
+		case '\uFE37', '\uFE5B':
+			return '{'
+		case '\uFE38', '\uFE5C':
+			return '}'
+		case '\uFE39', '\uFE3B', '\uFE47', '\uFE5D':
+			return '['
+		case '\uFE3A', '\uFE3C', '\uFE48', '\uFE5E':
+			return ']'
+		case '\uFE3D', '\uFE3E', '\uFE41', '\uFE42', '\uFE43', '\uFE44':
+			return '"'
+		case '\uFE3F':
+			return '<'
+		case '\uFE40':
+			return '>'
+		case '\uFE30':
+			return ':'
+		case '\uFE31', '\uFE32', '\uFE33', '\uFE34':
+			return '|'
+		case '\uFE45', '\uFE46':
+			return '?'
+		case '\uFE4D', '\uFE4E', '\uFE4F':
+			return '_'
+		// Small Form Variants → ASCII
+		case '\uFE50', '\uFE51':
+			return ','
+		case '\uFE52':
+			return '.'
+		case '\uFE54':
+			return ';'
+		case '\uFE55':
+			return ':'
+		case '\uFE56':
+			return '?'
+		case '\uFE57':
+			return '!'
+		case '\uFE5F':
+			return '#'
+		case '\uFE60':
+			return '&'
+		case '\uFE61':
+			return '*'
+		case '\uFE62':
+			return '+'
+		case '\uFE64':
+			return '<'
+		case '\uFE65':
+			return '>'
+		case '\uFE66':
+			return '='
+		case '\uFE68':
+			return '\\'
+		case '\uFE69':
+			return '$'
+		case '\uFE6A':
+			return '%'
+		case '\uFE6B':
+			return '@'
+		// CJK punctuation → ASCII
+		case '\u3001':
+			return ','
+		case '\u3002':
+			return '.'
+		// CJK brackets → ASCII
+		case '\u3008', '\u300A':
+			return '<'
+		case '\u3009', '\u300B':
+			return '>'
+		case '\u300C', '\u300E':
+			return '"'
+		case '\u300D', '\u300F':
+			return '"'
+		case '\u3010', '\u3016':
+			return '['
+		case '\u3011', '\u3017':
+			return ']'
+		case '\u3014':
+			return '('
+		case '\u3015':
+			return ')'
+		// CJK quotation marks
+		case '\u301D', '\u301E', '\u301F':
+			return '"'
+		// CJK wave dash
+		case '\u301C', '\u3030':
+			return '~'
+		// Fullwidth white parentheses (same block as fullwidth punctuation)
+		case '\uFF5F':
+			return '('
+		case '\uFF60':
+			return ')'
 		case '\u2010', '\u2011', '\u2012', '\u2013', '\u2014', '\u2015', '\u2212':
 			return '-'
+		// Small form dashes
+		case '\uFE58', '\uFE63':
+			return '-'
+		// Two-em / three-em dash → - (single char; multi-char not supported by strings.Map)
+		case '\u2E3A', '\u2E3B':
+			return '-'
+		// Hyphen bullet → -
+		case '\u2043':
+			return '-'
+		// Superscript/subscript operators → ASCII
+		case '\u207A', '\u208A':
+			return '+'
+		case '\u207B', '\u208B':
+			return '-'
+		case '\u207C', '\u208C':
+			return '='
+		case '\u207D', '\u208D':
+			return '('
+		case '\u207E', '\u208E':
+			return ')'
+		// Asterisk operator → *
+		case '\u2217':
+			return '*'
+		// Ratio → :
+		case '\u2236':
+			return ':'
+		// Ellipsis → .
+		case '\u2026':
+			return '.'
+		// Bullet → -
+		case '\u2022':
+			return '-'
+		// Guillemets → "
+		case '\u00AB', '\u00BB':
+			return '"'
+		// Middle dot → .
+		case '\u00B7':
+			return '.'
+		// Prime / double prime → ' / "
+		case '\u2032':
+			return '\''
+		case '\u2033':
+			return '"'
+		// Single guillemets → '
+		case '\u2039', '\u203A':
+			return '\''
+		// Fraction slash → /
+		case '\u2044':
+			return '/'
+		// Halfwidth Katakana punctuation
+		case '\uFF61':
+			return '.'
+		case '\uFF62', '\uFF63':
+			return '"'
+		case '\uFF64':
+			return ','
+		case '\uFF65':
+			return '\u00B7' // · (middle dot, keep as-is since no ASCII equivalent)
 		case '\u2018', '\u2019', '\u201A', '\u201B':
 			return '\''
 		case '\u201C', '\u201D', '\u201E', '\u201F':
 			return '"'
+		// Additional space variants
+		case '\u2000', '\u2001':
+			return ' '
+		// Tilde operator → ~
+		case '\u223C':
+			return '~'
 		case '\u00A0', '\u2002', '\u2003', '\u2004', '\u2005', '\u2006',
 			'\u2007', '\u2008', '\u2009', '\u200A', '\u202F', '\u205F', '\u3000':
 			return ' '

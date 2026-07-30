@@ -479,3 +479,164 @@ func TestApplyHunkWithoutFileHistory(t *testing.T) {
 		t.Fatalf("hunk failed: %+v", results)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// normalizeUnicode2
+// ---------------------------------------------------------------------------
+
+func TestNormalizeUnicode2(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected string
+	}{
+		// Fullwidth punctuation → ASCII
+		{"\uFF1A", ":"}, // ： → :
+		{"\uFF0C", ","}, // ， → ,
+		{"\uFF1B", ";"}, // ； → ;
+		{"\uFF1F", "?"}, // ？ → ?
+		{"\uFF01", "!"}, // ！ → !
+		{"\uFF08", "("}, // （ → (
+		{"\uFF09", ")"}, // ） → )
+		{"\uFF3B", "["}, // ［ → [
+		{"\uFF3D", "]"}, // ］ → ]
+		{"\uFF5B", "{"}, // ｛ → {
+		{"\uFF5D", "}"}, // ｝ → }
+		{"\uFF5E", "~"}, // ～ → ~
+		// CJK punctuation → ASCII
+		{"\u3001", ","}, // 、 → ,
+		{"\u3002", "."}, // 。 → .
+		// Mixed: fullwidth colon in Chinese text → halfwidth
+		{"\u6587\u4EF6\uFF1A\u6D4B\u8BD5", "\u6587\u4EF6:\u6D4B\u8BD5"}, // 文件：测试 → 文件:测试
+		// Existing mappings should still work
+		{"\u2014", "-"}, // — → -
+		{"\u201C\u201D", "\"\""}, // "" → ""
+		{"\u00A0", " "}, // NBSP → space
+		// Fullwidth letters/digits should NOT be affected
+		{"\uFF21\uFF22", "\uFF21\uFF22"}, // ＡＢ → ＡＢ (unchanged)
+		{"\uFF10\uFF19", "\uFF10\uFF19"}, // ０９ → ０９ (unchanged)
+		// Invisible characters → removed
+		{"a\u200Bb", "ab"},                  // ZWSP removed
+		{"\uFEFFtext", "text"},              // BOM removed
+		{"line1\u2028line2", "line1line2"},  // LINE SEPARATOR removed
+		{"p1\u2029p2", "p1p2"},              // PARAGRAPH SEPARATOR removed
+		{"a\u200Cb", "ab"},                  // ZWNJ removed
+		{"a\u200Db", "ab"},                  // ZWJ removed
+		{"\u00ADsoft", "soft"},              // SOFT HYPHEN removed
+		{"\u200E\u200Ftext", "text"},        // LRM/RLM removed
+		{"\u2060middle", "middle"},           // WORD JOINER removed
+		// CJK brackets → ASCII
+		{"\u3008\u3009", "<>"},   // 〈〉 → <>
+		{"\u300A\u300B", "<>"},   // 《》 → <>
+		{"\u300C\u300D", "\"\""}, // 「」 → ""
+		{"\u300E\u300F", "\"\""}, // 『』 → ""
+		{"\u3010\u3011", "[]"},   // 【】 → []
+		{"\u3014\u3015", "()"},   // 〔〕 → ()
+		{"\u3016\u3017", "[]"},   // 〖〗 → []
+		// CJK quotation marks
+		{"\u301D\u301E\u301F", "\"\"\""}, // 〝〞〟 → """
+		// CJK wave dashes
+		{"\u301C", "~"}, // 〜 → ~
+		{"\u3030", "~"}, // 〰 → ~
+		// Fullwidth white parentheses
+		{"\uFF5F\uFF60", "()"}, // ｟｠ → ()
+		// Additional punctuation
+		{"\u2026", "."},           // … → .
+		{"\u2022", "-"},           // • → -
+		{"\u00AB\u00BB", "\"\""},  // «» → ""
+		{"\u00B7", "."},           // · → .
+		{"\u2032", "'"},           // ′ → '
+		{"\u2033", "\""},          // ″ → "
+		// Single guillemets
+		{"\u2039\u203A", "''"}, // ‹› → ''
+		// Fraction slash
+		{"\u2044", "/"}, // ⁄ → /
+		// Small form dashes
+		{"\uFE58", "-"}, // ﹘ → -
+		{"\uFE63", "-"}, // ﹣ → -
+		// Multi-em dashes
+		{"\u2E3A", "-"}, // ⸺ → -
+		{"\u2E3B", "-"}, // ⸻ → -
+		// Hyphen bullet
+		{"\u2043", "-"}, // ⁃ → -
+		// Halfwidth Katakana punctuation
+		{"\uFF61", "."},           // ｡ → .
+		{"\uFF62\uFF63", "\"\""},  // ｢｣ → ""
+		{"\uFF64", ","},           // ､ → ,
+		// CJK Compatibility Forms → ASCII
+		{"\uFE35\uFE36", "()"},    // ︵︶ → ()
+		{"\uFE37\uFE38", "{}"},    // ︷︸ → {}
+		{"\uFE39\uFE3A", "[]"},    // ︹︺ → []
+		{"\uFE3D\uFE3E", "\"\""},  // ︽︾ → ""
+		{"\uFE3F\uFE40", "<>"},    // ︿﹀ → <>
+		{"\uFE41\uFE42", "\"\""},  // ﹁﹂ → ""
+		{"\uFE30", ":"},           // ︰ → :
+		{"\uFE31", "|"},           // ︱ → |
+		{"\uFE45\uFE46", "??"},    // ﹅﹆ → ??
+		{"\uFE4D\uFE4E\uFE4F", "___"}, // ﹍﹎﹏ → ___
+		// Small Form Variants → ASCII
+		{"\uFE50", ","},  // ﹐ → ,
+		{"\uFE51", ","},  // ﹑ → ,
+		{"\uFE52", "."},  // ﹒ → .
+		{"\uFE54", ";"},  // ﹔ → ;
+		{"\uFE55", ":"},  // ﹕ → :
+		{"\uFE56", "?"},  // ﹖ → ?
+		{"\uFE57", "!"},  // ﹗ → !
+		{"\uFE59\uFE5A", "()"},  // ﹙﹚ → ()
+		{"\uFE5B\uFE5C", "{}"},  // ﹛﹜ → {}
+		{"\uFE5D\uFE5E", "[]"},  // ﹝﹞ → []
+		{"\uFE5F", "#"},  // ﹟ → #
+		{"\uFE60", "&"},  // ﹠ → &
+		{"\uFE61", "*"},  // ﹡ → *
+		{"\uFE62", "+"},  // ﹢ → +
+		{"\uFE64\uFE65", "<>"},  // ﹤﹥ → <>
+		{"\uFE66", "="},  // ﹦ → =
+		{"\uFE68", "\\"}, // ﹨ → \
+		{"\uFE69", "$"},  // ﹩ → $
+		{"\uFE6A", "%"},  // ﹪ → %
+		{"\uFE6B", "@"},  // ﹫ → @
+		// Superscript/subscript operators → ASCII
+		{"\u207A\u207B\u207C\u207D\u207E", "+-=()"}, // ⁺⁻⁼⁽⁾ → +-=()
+		{"\u208A\u208B\u208C\u208D\u208E", "+-=()"}, // ₊₋₌₍₎ → +-=()
+		// Math symbols → ASCII
+		{"\u2217", "*"}, // ∗ → *
+		{"\u2236", ":"}, // ∶ → :
+		// Additional space variants
+		{"\u2000", " "}, // EN QUAD → space
+		{"\u2001", " "}, // EM QUAD → space
+		// Tilde operator
+		{"\u223C", "~"}, // ∼ → ~
+	}
+	for _, tt := range tests {
+		got := normalizeUnicode2(tt.input)
+		if got != tt.expected {
+			t.Errorf("normalizeUnicode2(%q) = %q, want %q", tt.input, got, tt.expected)
+		}
+	}
+}
+
+// TestRegression_FullwidthColonHunkMatch 回归:全角冒号(：)在半角 hunk 中无法匹配。
+// 根因：normalizeUnicode2 未涵盖 U+FF1A 全角冒号，而中文文本中全角标点极为常见。
+func TestRegression_FullwidthColonHunkMatch(t *testing.T) {
+	// 文件使用全角冒号 (U+FF1A)
+	fileContent := "Release \u6807\u9898\uFF1A\u6D4B\u8BD5" // Release 标题：测试
+
+	// hunk 使用半角冒号 (:),LLM 生成 hunk 时的典型行为
+	hunkText := "*** Begin Patch\n*** Update File: test.md\n@@\n Release 标题:测试\n*** End Patch\n"
+
+	tmpDir := t.TempDir()
+	filePath := filepath.Join(tmpDir, "test.md")
+	if err := os.WriteFile(filePath, []byte(fileContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	states := NewReadStateStore()
+	states.Record(filePath, fileContent)
+
+	results, err := ApplyHunk(context.Background(), filePath, hunkText, states)
+	if err != nil {
+		t.Fatalf("ApplyHunk error: %v", err)
+	}
+	if len(results) != 1 || results[0].Error != "" {
+		t.Fatalf("hunk not found (unicode norm should match fullwidth colon): %+v", results)
+	}
+}
