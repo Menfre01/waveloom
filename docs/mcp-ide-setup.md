@@ -6,7 +6,7 @@ Waveloom 支持通过 MCP 协议连接 IntelliJ IDEA 或 VS Code 的 MCP Server�
 
 | 场景 | Shell 方案 | IDE MCP 方案 |
 |------|-----------|-------------|
-| 文件搜索 | `find` / `rg`（遍历磁盘） | IDE 索引（毫秒级，自动排除 `node_modules`） |
+| 文件搜索 | `find` / `grep`(遍历磁盘) | IDE 索引(毫秒级,自动排除 `node_modules`) |
 | 符号查找 | `grep`（文本匹配） | PSI/LSP 精确语义查找 |
 | 当前文件 | 需要 `@` 引用 | IDE 直接提供打开文件列表 |
 
@@ -19,8 +19,6 @@ Waveloom 支持通过 MCP 协议连接 IntelliJ IDEA 或 VS Code 的 MCP Server�
 | 项目工作区匹配（CWD 校验） | ✅ | ✅ |
 
 *VS Code MCP Server 没有列出所有打开文件的工具，但会通过 `get_workspace_folders` 校验 workspace 是否匹配。
-
-
 
 ## IntelliJ IDEA
 

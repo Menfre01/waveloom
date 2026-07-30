@@ -9,14 +9,13 @@ import (
 type TurnMetrics struct {
 	Turn int `json:"turn"`
 
-	// L1 — patch 生成质量
+	// L1 — hunk 生成质量
 	ParseOK    bool `json:"parse_ok"`
-	HasOldSent bool `json:"has_old_sent"`
 
 	// L2 — 执行正确性
 	FirstPassOK    bool `json:"first_pass_ok"`
 	SideEffect     bool `json:"side_effect"`
-	TAGMismatch    bool `json:"tag_mismatch"`
+	HunkMatchFail  bool `json:"hunk_match_fail"`
 	WarningSeen    bool `json:"warning_seen"`
 	WarningRespond bool `json:"warning_respond"`
 	BlindEdit      bool `json:"blind_edit"`
@@ -40,18 +39,16 @@ type RunMetrics struct {
 	Passed   bool          `json:"passed"`
 	Turns    []TurnMetrics `json:"turns"`
 
-	// L1
+	// L1 — hunk 解析
 	TotalEdits       int     `json:"total_edits"`
 	ParseSuccess     int     `json:"parse_success"`
 	ParseRate        float64 `json:"parse_rate"`
-	OldSentinelEdits int     `json:"old_sentinel_edits"`
-	OldSentinelRate  float64 `json:"old_sentinel_rate"`
 
-	// L2
+	// L2 — 执行
 	FirstPassCount    int `json:"first_pass_count"`
 	FirstPassRate     float64 `json:"first_pass_rate"`
 	SideEffects       int `json:"side_effects"`
-	TAGMismatches     int `json:"tag_mismatches"`
+	HunkMatchFailures int `json:"hunk_match_failures"`
 	WarningsCount     int `json:"warnings_count"`
 	WarningsResponded int `json:"warnings_responded"`
 	BlindEdits        int `json:"blind_edits"`
@@ -72,7 +69,7 @@ func (m *RunMetrics) RecordTurn(tm TurnMetrics) {
 	m.Turns = append(m.Turns, tm)
 
 	for _, tc := range tm.ToolCalls {
-		if tc.Name != "edit" && tc.Name != "multiedit" {
+		if tc.Name != "edit" {
 			continue
 		}
 		m.TotalEdits++
@@ -80,11 +77,12 @@ func (m *RunMetrics) RecordTurn(tm TurnMetrics) {
 			m.ParseSuccess++
 		}
 		if tc.Error != "" {
-			if strings.Contains(tc.Error, "tag_mismatch") || strings.Contains(tc.Result, "tag_mismatch") {
-				m.TAGMismatches++
+			if strings.Contains(tc.Error, "tag_mismatch") || strings.Contains(tc.Result, "tag_mismatch") ||
+				strings.Contains(tc.Error, "content mismatch") || strings.Contains(tc.Result, "no_match") {
+				m.HunkMatchFailures++
 			}
 		}
-		if strings.Contains(tc.Result, "SKIPPING VERIFICATION") {
+		if strings.Contains(tc.Result, "re-read") || strings.Contains(tc.Result, "SKIPPING VERIFICATION") {
 			m.WarningsCount++
 		}
 	}
@@ -112,18 +110,20 @@ func (m *RunMetrics) RecordTurn(tm TurnMetrics) {
 func (m *RunMetrics) Finalize() {
 	if m.TotalEdits > 0 {
 		m.ParseRate = float64(m.ParseSuccess) / float64(m.TotalEdits) * 100
-		m.OldSentinelRate = float64(m.OldSentinelEdits) / float64(m.TotalEdits) * 100
 		m.FirstPassRate = float64(m.FirstPassCount) / float64(m.TotalEdits) * 100
 	}
 	m.TotalTurns = len(m.Turns)
 }
 
-func extractEditMetrics(resultText, arguments, toolError string) (parseOK bool, hasOld bool, hasWarning bool, hasTagMismatch bool) {
-	// 基于 tool error 判断是否成功(适用于 edit 和 multiedit)
+func extractEditMetrics(resultText, arguments, toolError string) (parseOK bool, hasOld bool, hasWarning bool, hasHunkFail bool) {
+	// 基于 tool error 判断 hunk 是否成功应用
 	parseOK = toolError == ""
-	hasOld = strings.Contains(arguments, "%OLD")
-	hasWarning = strings.Contains(resultText, "SKIPPING VERIFICATION") || strings.Contains(resultText, "⚠️")
-	hasTagMismatch = strings.Contains(toolError, "tag_mismatch") || strings.Contains(resultText, "TAG mismatch") || strings.Contains(resultText, "has not been read yet")
+	hasOld = false // deprecated — no sentinel in hunk format
+	hasWarning = strings.Contains(resultText, "re-read") || strings.Contains(resultText, "SKIPPING VERIFICATION")
+	hasHunkFail = strings.Contains(toolError, "tag_mismatch") ||
+		strings.Contains(toolError, "content mismatch") ||
+		strings.Contains(resultText, "no_match") ||
+		strings.Contains(resultText, "has not been read yet")
 	return
 }
 

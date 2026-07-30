@@ -302,16 +302,16 @@ You are connected to IntelliJ IDEA via MCP. The following IDE tools are availabl
 
 | Task | IDE tool | Shell alternative |
 |------|----------|-------------------|
-| File search | %s | find / rg |
+| File search | %s | find / grep |
 | Text search | %s | grep |
-| Symbol lookup | %s | grep |
-| Symbol search | %s | rg |
+| Symbol lookup | %s | read(outline=true) / grep |
+| Symbol search | %s | grep |
 | Build | %s | go build / make |
 | Check errors | %s | go vet / cargo check |
 | Rename | %s | sed / edit |
 | Run | %s | shell commands |
 
-Prefer IDE tools for semantic operations (symbol lookup, references, refactoring) where the IDE's pre-built index avoids full disk scans. Prefer shell tools for batch processing, pipelines, and one-off searches in known locations.`,
+Prefer IDE tools for semantic exploration (symbol lookup, references, refactoring) where the IDE's pre-built index avoids full disk scans. IDE tools do NOT replace ` + "`read`" + ` — you must still ` + "`read`" + ` a file before ` + "`edit`" + `/` + "`write`" + `. Prefer shell tools for batch processing, pipelines, and one-off searches in known locations.`,
 			info.ServerName,
 			prefix+"find_files_by_name_keyword",
 			prefix+"search_text",
@@ -328,16 +328,16 @@ You are connected to VS Code via MCP. The following IDE tools are available as a
 
 | Task | IDE tool | Shell alternative |
 |------|----------|-------------------|
-| Find symbols | %s | rg / grep |
+| Find symbols | %s | grep |
 | List files | %s | find / ls |
-| Document symbols | %s | rg / grep |
-| Find references | %s | rg |
+| Document symbols | %s | read(outline=true) / grep |
+| Find references | %s | grep |
 | Check errors | %s | go build / go vet |
 | Rename | %s | sed / edit |
 | Debug | %s / %s | print / run |
 | Terminal output | %s | bash |
 
-Prefer IDE tools for semantic operations (symbol lookup, references, refactoring) where the IDE's pre-built index avoids full disk scans. Prefer shell tools for batch processing, pipelines, and one-off searches in known locations. Verify with %s that the CWD project is open before using these tools.`,
+Prefer IDE tools for semantic exploration (symbol lookup, references, refactoring) where the IDE's pre-built index avoids full disk scans. IDE tools do NOT replace ` + "`read`" + ` — you must still ` + "`read`" + ` a file before ` + "`edit`" + `/` + "`write`" + `. Prefer shell tools for batch processing, pipelines, and one-off searches in known locations. Verify with %s that the CWD project is open before using these tools.`,
 			info.ServerName,
 			prefix+"get_workspace_symbols",
 			prefix+"list_files",

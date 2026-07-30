@@ -138,13 +138,12 @@ func (r *Runner) Run(ctx context.Context, task *Task) *RunResult {
 			if e.ToolCallName == "read" && e.Error == "" {
 				hadRead = true
 			}
-			if e.ToolCallName == "edit" || e.ToolCallName == "multiedit" { //nolint:staticcheck
-				parseOK, hasOld, hasWarn, hasTag := extractEditMetrics(e.Result, rec.Arguments, e.Error)
+			if e.ToolCallName == "edit" {
+				parseOK, _, hasWarn, hasHunkFail := extractEditMetrics(e.Result, rec.Arguments, e.Error)
 				rec.ParseOK = parseOK
 				tm.ParseOK = parseOK
-				tm.HasOldSent = hasOld
 				tm.WarningSeen = hasWarn
-				tm.TAGMismatch = hasTag
+				tm.HunkMatchFail = hasHunkFail
 				if !hadRead {
 					tm.BlindEdit = true
 				}

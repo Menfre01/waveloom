@@ -123,10 +123,10 @@ func printResult(result *llmedit.RunResult, elapsedMs int64) {
 	if !s.Passed {
 		status = "✗"
 	}
-	fmt.Printf("%s 通过:%v 编译:%v 编辑距离:%d  turn:%d edit:%d parse:%.0f%% old:%.0f%% 盲编:%d tag误:%d 警告:%d 响应:%d (%dms)\n",
+	fmt.Printf("%s 通过:%v 编译:%v 编辑距离:%d  turn:%d edit:%d parse:%.0f%% 盲编:%d 匹配失败:%d (%dms)\n",
 		status, s.Passed, s.CompileOK, s.EditDistance,
-		m.TotalTurns, m.TotalEdits, m.ParseRate, m.OldSentinelRate,
-		m.BlindEdits, m.TAGMismatches, m.WarningsCount, m.WarningsResponded,
+		m.TotalTurns, m.TotalEdits, m.ParseRate,
+		m.BlindEdits, m.HunkMatchFailures,
 		elapsedMs)
 
 	if !s.Passed {
@@ -159,34 +159,28 @@ func truncate(s string, n int) string {
 }
 
 func buildEditSystemPrompt() string {
-	return `You are a coding agent. Use the read/edit/write tools to complete the task.
+	return `You are a coding agent. Use read/edit/write tools to complete the task.
 
-## Edit File (Hashline)
+## Edit — Unified Diff Hunk Format
 
-` + "`read` → TAG + line numbers → `edit` with TAG + line numbers. Never reproduce old code — only TAG, line numbers, and new content." + `
+` + "`read`" + ` the file first, then ` + "`edit`" + ` with unified diff hunks.
+Each hunk uses @@ header with context lines, - for removal, + for addition.
 
-### Operations
+### Hunk format
 
-SWAP N.=M      Replace lines N–M with body. Use %OLD ... %NEW sentinel.
-DEL N.=M       Delete lines N–M.
-INS.PRE N:     Insert before line N.  INS.POST N: after line N.
-INS.HEAD:      Insert at file start.  INS.TAIL: at file end.
+@@ [optional context label]
+ context line
+-old line to remove
++new line to add
+ context line
 
-### Sentinel format (preferred)
+### Rules
 
-SWAP 2.=2
-%OLD
-func main() {
-%NEW
-func run() {
+- Always ` + "`read`" + ` before ` + "`edit`" + `/` + "`write`" + ` — the tool requires read state.
+- For single-file edits: include multiple @@ hunks in one ` + "`edit`" + ` call.
+- For multi-file edits: use ` + "`*** Update File: <path>`" + ` header before each file's hunks.
+- Include enough context lines around each change for unique matching.
+- If a hunk fails to apply: re-read the file, adjust context, retry.
 
-### Same-file multi-section rule
-
-When editing the same file with multiple sections in one patch, every SWAP MUST include %OLD — otherwise the entire patch is rejected.
-
-### ⚠️ Warning handling
-
-If the edit response contains "⚠️ SKIPPING VERIFICATION" — re-read the file and retry with %OLD.
-
-Complete the task with minimal turns. Do not commit code.`
+Complete the task with minimal turns.`
 }

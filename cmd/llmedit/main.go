@@ -111,7 +111,7 @@ func main() {
 
 	type agg struct {
 		total, passed, edits, writes    int
-		parseRate, blind, tagMis, warn  float64
+		parseRate, blind, hunkFail, warn  float64
 		turns, dist                     float64
 	}
 	aggResults := make(map[string]*agg)
@@ -135,9 +135,9 @@ func main() {
 			if res.Score.Passed {
 				status = "✓"
 			}
-			fmt.Printf("%s — %s  edits=%d writes=%d parse=%.0f%% blind=%d tagMis=%d warn=%d turns=%d dist=%d\n",
+			fmt.Printf("%s — %s  edits=%d writes=%d parse=%.0f%% blind=%d hunkFail=%d warn=%d turns=%d dist=%d\n",
 				label, status, m.TotalEdits, m.WriteCount, m.ParseRate,
-				m.BlindEdits, m.TAGMismatches, m.WarningsCount,
+				m.BlindEdits, m.HunkMatchFailures, m.WarningsCount,
 				m.TotalTurns, m.EditDistance)
 			if *verbose && res.VerboseOutput != "" {
 				fmt.Println(res.VerboseOutput)
@@ -152,7 +152,7 @@ func main() {
 			a.writes += m.WriteCount
 			a.parseRate += m.ParseRate
 			a.blind += float64(m.BlindEdits)
-			a.tagMis += float64(m.TAGMismatches)
+			a.hunkFail += float64(m.HunkMatchFailures)
 			a.warn += float64(m.WarningsCount)
 			a.turns += float64(m.TotalTurns)
 			a.dist += float64(m.EditDistance)
@@ -165,7 +165,7 @@ func main() {
 		fmt.Printf("  汇总统计 (每任务 N=%d)\n", *repeat)
 		fmt.Println("═══════════════════════════════════════════════════════════════")
 		fmt.Printf("%-22s %6s %6s %6s %7s %7s %6s %6s %6s\n",
-			"任务", "通过率", "均edit", "均turn", "均dist", "均parse", "均盲编", "均tag误", "均warn")
+			"任务", "通过率", "均edit", "均turn", "均dist", "均parse", "均盲编", "均hunk", "均warn")
 		fmt.Println("─────────────────────────────────────────────────────────────")
 		totalPassed, totalRuns := 0, 0
 		for _, t := range tasks {
@@ -178,7 +178,7 @@ func main() {
 			fmt.Printf("%-22s %5.0f%%  %5.1f  %5.1f  %6.1f  %6.0f%% %5.1f  %5.1f  %5.1f\n",
 				t.Name, pct,
 				float64(a.edits)/n, a.turns/n, a.dist/n,
-				a.parseRate/n, a.blind/n, a.tagMis/n, a.warn/n)
+				a.parseRate/n, a.blind/n, a.hunkFail/n, a.warn/n)
 			totalPassed += a.passed
 			totalRuns += a.total
 		}

@@ -323,7 +323,7 @@ Available tools:
   cargo      cargo 1.85.0
   ...
 
-Not found: dotnet, php, rg
+Not found: dotnet, php
 ```
 
 ## IDE Integration(运行时追加)
@@ -340,10 +340,10 @@ You are connected to IntelliJ IDEA via MCP. The following IDE tools are availabl
 
 | Task | IDE tool | Shell alternative |
 |------|----------|-------------------|
-| File search | mcp__idea__find_files_by_name_keyword | find / rg |
+| File search | mcp__idea__find_files_by_name_keyword | find / grep |
 | Text search | mcp__idea__search_text | grep |
-| Symbol lookup | mcp__idea__get_symbol_info | grep |
-| Symbol search | mcp__idea__search_symbol | rg |
+| Symbol lookup | mcp__idea__get_symbol_info | read(outline=true) / grep |
+| Symbol search | mcp__idea__search_symbol | grep |
 | Build | mcp__idea__build_project | go build / make |
 | Check errors | mcp__idea__get_file_problems | go vet / cargo check |
 | Rename | mcp__idea__rename_refactoring | sed / edit |
@@ -360,10 +360,10 @@ You are connected to VS Code via MCP. The following IDE tools are available as a
 
 | Task | IDE tool | Shell alternative |
 |------|----------|-------------------|
-| Find symbols | mcp__vscode__get_workspace_symbols | rg / grep |
+| Find symbols | mcp__vscode__get_workspace_symbols | grep |
 | List files | mcp__vscode__list_files | find / ls |
-| Document symbols | mcp__vscode__get_document_symbols | rg / grep |
-| Find references | mcp__vscode__find_references | rg |
+| Document symbols | mcp__vscode__get_document_symbols | read(outline=true) / grep |
+| Find references | mcp__vscode__find_references | grep |
 | Check errors | mcp__vscode__get_diagnostics | go build / go vet |
 | Rename | mcp__vscode__rename_symbol | sed / edit |
 | Debug | mcp__vscode__start_debugging / mcp__vscode__add_breakpoint | print / run |

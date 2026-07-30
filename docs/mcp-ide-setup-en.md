@@ -6,7 +6,7 @@ Waveloom supports connecting to IntelliJ IDEA or VS Code MCP Server via the MCP 
 
 | Scenario | Shell approach | IDE MCP approach |
 |------|-----------|-------------|
-| File search | `find` / `rg` (disk scan) | IDE index (milliseconds, auto-excludes `node_modules`) |
+| File search | `find` / `grep` (disk scan) | IDE index (milliseconds, auto-excludes `node_modules`) |
 | Symbol lookup | `grep` (text match) | PSI/LSP precise semantic lookup |
 | Current file | Requires `@` reference | IDE directly provides open file list |
 
