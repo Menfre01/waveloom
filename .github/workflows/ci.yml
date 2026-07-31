@@ -21,12 +21,10 @@ jobs:
         run: make test
       - name: Integration Test
         run: make test-integration
-        continue-on-error: true
 
   lint:
     name: Lint
     runs-on: ubuntu-latest
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v6

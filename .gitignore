@@ -53,3 +53,5 @@ cmd/cache-proxy/
 /cache-proxy
 **/..jsonl
 .mcp.json
+
+.qoder

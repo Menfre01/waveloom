@@ -3,7 +3,69 @@ version: "2"
 linters:
   default: none
   enable:
+    - gosec
     - errcheck
-    - ineffassign
+    - errname
+    - govet
     - staticcheck
+    - ineffassign
     - unused
+    - unconvert
+    - copyloopvar
+    - noctx
+
+  settings:
+    gosec:
+      excludes:
+        - G104
+        - G204
+        - G301
+        - G302
+        - G304
+        - G306
+    govet:
+      enable-all: true
+      disable:
+        - fieldalignment
+
+  exclusions:
+    rules:
+      - path: (.+)_test\.go
+        linters: [errcheck]
+      - path: (.+)_test\.go
+        linters: [gosec]
+        text: "G101|G304"
+      - linters: [gosec]
+        text: "G117"
+      - path: pkg/environment/self_update.go
+        linters: [gosec]
+        text: "G110"
+      - path: pkg/llm/retry.go
+        linters: [gosec]
+        text: "G404"
+      - path: pkg/shellutil/shellutil.go
+        linters: [gosec]
+        text: "G703"
+      - path: pkg/filehistory/backup.go
+        linters: [gosec]
+        text: "G703"
+      - path: pkg/tool/apply_hunk.go
+        linters: [gosec]
+        text: "G703"
+      - path: cmd/waveloom/i18n.go
+        linters: [gosec]
+      - path: cmd/waveloom/tui.go
+        linters: [gosec]
+        text: "G115"
+      - path: pkg/llm/settings_test.go
+        linters: [gosec]
+      - path: .*
+        linters: [noctx]
+      - path: .*
+        linters: [unconvert]
+      - path: .*
+        linters: [govet]
+        text: "shadow"
+      - path: .*
+        linters: [govet]
+        text: "unusedwrite"
