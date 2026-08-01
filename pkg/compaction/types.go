@@ -29,6 +29,7 @@ type Tick struct {
 	MessagesSnipped          int     // 本轮 snip 数
 	TokensSaved              int     // 本轮估算节省 token 数
 	Tier3SummaryDone         bool    // Tier 3 摘要是否成功
+	Tier3SkippedNoSummarizer bool    // tier≥3 但未配置 summarizer(降级可见性,三审 Medium)
 	UsageRatio               float64 // 当前利用率
 	ContextTokens            int     // 本轮 prompt_tokens
 	ContextLimit             int     // 窗口上限

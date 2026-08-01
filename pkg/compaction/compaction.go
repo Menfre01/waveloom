@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"sort"
 	"strings"
 	"unicode/utf8"
@@ -185,8 +186,10 @@ type CompactionResult struct {
 	MessagesSnipped    int    // 被 snip 的消息数
 	TokensSaved        int    // 估算节省 token 数
 	Tier3SummaryDone   bool   // Tier 3 摘要是否成功执行
-	Tier3Error         error  // Tier 3 失败时的错误（nil 表示成功或未执行）
-	ProtectionStartIdx int    // 保护区起始索引（供外部 Tier 3 分步执行）
+	Tier3Error         error  // Tier 3 失败时的错误(nil 表示成功或未执行)
+	Tier3SkippedNoSummarizer bool // tier≥3 但未配置 summarizer(降级警告,三审 Medium-4)
+	RepairedMessages   int    // 压缩后配对验证修复的消息数(红线防线,>0 说明 alignPairBoundary 有漏)
+	ProtectionStartIdx int    // 保护区起始索引(供外部 Tier 3 分步执行)
 }
 
 // ---------------------------------------------------------------------------
@@ -339,6 +342,13 @@ func applyTier1(
 	scanStart := *tier1Cursor
 	scanEnd := protectionStartIdx
 
+	// REGRESSION(三审 Medium-3):Restore 后消息数组可能被 ValidateMessages
+	// 缩短(游标越界),此前直接返回且不推进 → tier1 永久失效。
+	// 钳制游标到有效范围再扫描。
+	if scanStart > len(messages) {
+		*tier1Cursor = len(messages)
+		return 0, 0
+	}
 	if scanStart >= scanEnd {
 		return 0, 0
 	}
@@ -468,6 +478,11 @@ func applyTier2(
 	scanStart := *tier2Cursor
 	scanEnd := protectionStartIdx
 
+	// REGRESSION(三审 Medium-3):同 applyTier1——游标越界时钳制而非永久失效
+	if scanStart > len(messages) {
+		*tier2Cursor = len(messages)
+		return 0, 0
+	}
 	if scanStart >= scanEnd {
 		return 0, 0
 	}
@@ -664,7 +679,7 @@ var summarizableRoles = map[llm.Role]bool{
 }
 
 // applyTier3 对 messages[tier3Cursor:protectionStartIdx) 执行 LLM 增量摘要。
-// 删除 delta 消息，将新摘要追加到摘要链末尾。
+// 删除 delta 消息,将新摘要追加到摘要链末尾。
 // 重置三个 cursor。
 func applyTier3(
 	ctx context.Context,
@@ -678,12 +693,23 @@ func applyTier3(
 	tier3Cursor := watermark.Tier3Cursor
 	scanEnd := protectionStartIdx
 
+	// REGRESSION(三审 Medium-3):同 applyTier1/2——游标越界时钳制
+	if tier3Cursor > len(*messages) {
+		watermark.Tier3Cursor = len(*messages)
+		return false, nil
+	}
 	if tier3Cursor >= scanEnd {
 		return false, nil // 无待摘要消息
 	}
 
 	if tier3Cursor < 2 {
 		tier3Cursor = 2
+	}
+	// REGRESSION(三审 Critical-1):删除边界必须对齐 assistant↔tool 配对,
+	// 否则切割产生孤儿 tool_calls/tool 消息 → 下一轮 API 400 / 会话终止
+	tier3Cursor, scanEnd = alignPairBoundary(*messages, tier3Cursor, scanEnd)
+	if tier3Cursor >= scanEnd {
+		return false, nil
 	}
 
 	// 收集 delta 消息
@@ -743,12 +769,64 @@ func applyTier3(
 	return true, nil
 }
 
+// alignPairBoundary 将删除范围 [start, end) 的边界对齐到 assistant↔tool 配对边界。
+// 配对关系:assistant(tool_calls) 与其后续的 tool 结果消息(可多条——
+// 并行工具产生 A(c1,c2)→T1→T2 批量,三审 High-1 修正)。
+// 向前:start 指向 tool 消息且前一条 assistant 带 tool_calls(在范围外)→ 包含 assistant;
+// 向后:end-1 是 assistant 带 tool_calls 且其后紧跟 tool 结果(在范围外)→
+// 包含整个连续 tool run(直到下一条非 tool 消息)。
+func alignPairBoundary(messages []llm.Message, start, end int) (int, int) {
+	// 向前扩展:start 位于 tool run 内(任意位置,含 run 中间 A→T1→T2,start=T2)
+	// → 回退到 run 开头的 assistant。REGRESSION(复查发现):原实现只检查
+	// start-1 是否为 assistant,start 在 run 中间时(T2,prev=T1)不扩展 →
+	// T2 被删而 A(c1,c2)/T1 保留 → 孤儿 tool_call → API 400。
+	if start > 1 && start < end && messages[start].Role == llm.RoleTool {
+		// 向前扫到 run 的第一条 tool 消息
+		j := start
+		for j > 1 && messages[j-1].Role == llm.RoleTool {
+			j--
+		}
+		prev := &messages[j-1]
+		if prev.Role == llm.RoleAssistant && len(prev.ToolCalls) > 0 {
+			start = j - 1 // 回退到 assistant(包含整个 run)
+		}
+	}
+	// 向后扩展:end 处或其后的 tool run 的 assistant 在删除范围内 →
+	// 纳入整个连续 tool run(并行工具批量 A→T1→T2)
+	for end < len(messages) && end > start {
+		// 情况 A:end-1 是 assistant 带 tool_calls,其后紧跟 tool → 纳入整个 run
+		last := &messages[end-1]
+		if last.Role == llm.RoleAssistant && len(last.ToolCalls) > 0 && end < len(messages) && messages[end].Role == llm.RoleTool {
+			for end < len(messages) && messages[end].Role == llm.RoleTool {
+				end++
+			}
+			continue
+		}
+		// 情况 B:end 指向 tool run 中间(边界切在 T1/T2 之间),
+		// 该 run 的 assistant 在删除范围内 → 纳入整个 run
+		if messages[end].Role == llm.RoleTool {
+			j := end - 1
+			for j >= start && messages[j].Role != llm.RoleAssistant {
+				j--
+			}
+			if j >= start && len(messages[j].ToolCalls) > 0 {
+				for end < len(messages) && messages[end].Role == llm.RoleTool {
+					end++
+				}
+				continue
+			}
+		}
+		break
+	}
+	return start, end
+}
+
 // ---------------------------------------------------------------------------
 // 硬临界值检查
 // ---------------------------------------------------------------------------
 
-// checkHardLimit 检查是否达到硬临界值（98% 或 Tier 3 连续失败 2 次）。
-// 返回 true 表示已达硬限制，后续 LLM 调用应被阻止。
+// checkHardLimit 检查是否达到硬临界值(98% 或 Tier 3 连续失败 2 次)。
+// 返回 true 表示已达硬限制,后续 LLM 调用应被阻止。
 func checkHardLimit(usageRatio float64, tier3ConsecutiveFailures int) (bool, string) {
 	if usageRatio >= ContextLimitBuffer {
 		return true, "usage"
@@ -757,6 +835,35 @@ func checkHardLimit(usageRatio float64, tier3ConsecutiveFailures int) (bool, str
 		return true, "tier3_failures"
 	}
 	return false, ""
+}
+
+// validateAfterCompaction 压缩后立即执行消息配对完整性验证(红线防线)。
+//
+// 背景:压缩(尤其 tier2/tier3 删除消息)可能破坏 assistant(tool_calls)↔tool
+// 配对——孤儿 tool_calls 或孤儿 tool 消息会导致下一次 API 调用 400,
+// 直接摧毁会话。alignPairBoundary 是"防患于未然",本函数是"兜底修复":
+// 压缩后运行 llm.ValidateMessages,修复孤儿并记录数量。
+// 修复数 > 0 时输出 WARN(说明对齐逻辑有漏,但被防线兜住,会话不中断)。
+//
+// 注意:ValidateMessages 会删除消息,可能导致游标越界——applyTier1/2/3
+// 开头的钳制逻辑已兜底(三审 Medium-3 修复)。
+func validateAfterCompaction(messages *[]llm.Message) int {
+	cleaned, report := llm.ValidateMessages(*messages)
+	if len(report) == 0 {
+		return 0
+	}
+	*messages = cleaned
+	// 修复报告分类统计
+	orphans := 0
+	for _, r := range report {
+		switch r.Action {
+		case llm.RepairSkipOrphanTool, llm.RepairStripToolCall:
+			orphans++
+		}
+	}
+	slog.Warn("compaction: post-compaction validation repaired messages (pair integrity redline)",
+		"repaired", len(report), "orphans", orphans)
+	return len(report)
 }
 
 // ---------------------------------------------------------------------------
@@ -815,8 +922,7 @@ func CompactMessages(
 	if reached, reason := checkHardLimit(watermark.UsageRatio, watermark.Tier3ConsecutiveFailures); reached {
 		result.HardLimitReached = true
 		result.HardLimitReason = reason
-		// 仍继续执行 Tier 1/2（非 LLM）并计算 ProtectionStartIdx，
-		// 确保 tier3_failures 触发的硬限仍能给 Tier 3 一次恢复机会
+		// 仍继续执行 Tier 1/2(非 LLM)并计算 ProtectionStartIdx
 		protectionStartIdx := findProtectionStartIdx(*messages, config.ProtectionZoneTokens)
 		result.ProtectionStartIdx = protectionStartIdx
 		if tier >= 1 {
@@ -828,6 +934,30 @@ func CompactMessages(
 			pruned, saved := applyTier2(*messages, decisions, &watermark.Tier2Cursor, watermark.Tier1Cursor, totalTurns)
 			result.MessagesPruned = pruned
 			result.TokensSaved += saved
+		}
+		// REGRESSION(三审 Critical-2 + 复查):硬限分支此前从不执行 Tier 3,
+		// Tier3ConsecutiveFailures 只在摘要成功时清零 → 失败计数永不复位
+		// → 每次 Compact 都 HardLimitReached → 会话永久终止。
+		// 硬限路径无条件尝试 Tier 3(若可用):
+		//   - 不依赖 tier >= 3——tier3_failures 硬限时 usage 可能在 80-95%
+		//     (tier=2),此时同样需要 tier3 重试来清零计数(复查发现)
+		//   - applyTier3 内部有 tier3Cursor>=scanEnd 守卫,无消息时安全返回
+		if summarizer != nil {
+			done, err := applyTier3(ctx, messages, decisions, watermark, protectionStartIdx, summarizer, existingSummaries)
+			if err != nil {
+				result.Tier3Error = err
+			} else if done {
+				result.Tier3SummaryDone = true
+				// 三审 High-2:摘要成功即上下文已压缩、硬限解除——
+				// 否则调用层(loop/tui)看到 HardLimitReached 立即终止会话,
+				// "恢复机会"在生产不可达
+				result.HardLimitReached = false
+				result.HardLimitReason = ""
+			}
+		}
+		// 红线防线:硬限分支压缩后同样验证配对完整性(仅实际修改时)
+		if result.MessagesSnipped > 0 || result.MessagesPruned > 0 || result.Tier3SummaryDone {
+			result.RepairedMessages = validateAfterCompaction(messages)
 		}
 		result.Tier = tier
 		return result
@@ -851,18 +981,32 @@ func CompactMessages(
 		result.TokensSaved += saved
 	}
 
-	// 7. Tier 3（如 tier ≥ 3）
-	if tier >= 3 && summarizer != nil {
-		done, err := applyTier3(ctx, messages, decisions, watermark, protectionStartIdx, summarizer, existingSummaries)
-		if err != nil {
-			// Tier 3 失败不中断，记录后继续
-			result.Tier = tier
-			result.Tier3Error = err
-			return result
+	// 7. Tier 3(如 tier ≥ 3)
+	if tier >= 3 {
+		if summarizer == nil {
+			// REGRESSION(三审 Medium-4):无 summarizer 静默降级——≥95% 只靠
+			// tier1/2 最多省至 ~99.2% > 98% 硬限,长会话必死于硬限。
+			// 至少可见警告,让调用方知道 tier3 未执行
+			result.Tier3SkippedNoSummarizer = true
+		} else {
+			done, err := applyTier3(ctx, messages, decisions, watermark, protectionStartIdx, summarizer, existingSummaries)
+			if err != nil {
+				// Tier 3 失败不中断,记录后继续
+				result.Tier = tier
+				result.Tier3Error = err
+				return result
+			}
+			if done {
+				result.Tier3SummaryDone = true
+			}
 		}
-		if done {
-			result.Tier3SummaryDone = true
-		}
+	}
+
+	// 8. 红线防线:压缩后配对完整性验证(孤儿 tool_calls/tool → API 400 摧毁会话)
+	//    仅在**实际发生修改**时执行(有 snip/prune/摘要)——tier=1 但无消息
+	//    可处理(removed=0,新增消息未滚出保护区)的轮次跳过,O(n) 校验零开销
+	if result.MessagesSnipped > 0 || result.MessagesPruned > 0 || result.Tier3SummaryDone {
+		result.RepairedMessages = validateAfterCompaction(messages)
 	}
 
 	result.Tier = tier
