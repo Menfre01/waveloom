@@ -175,17 +175,23 @@ func NewGuard(opts ...GuardOption) *GuardImpl {
 
 // Check 对工具调用执行权限检查，返回决策结果。
 //
-// 8 步检查流程（按顺序短路）：
+// 8 步检查流程(按顺序短路):
 //
 //  0. 内置白名单 → ALLOW
-//  1. deny 规则（工具级 + 内容级）→ DENY
-//  2. ask 规则（工具级 + 内容级）→ ASK
-//  2.5 Skill Bash 白名单（shell 工具且命令匹配）→ ALLOW（绕过 Step 3 高危拦截）
-//  3. 工具特有安全检查 → DENY（硬拦截，不允许规则覆盖）
-//  4. allow 规则（工具级 + 内容级）→ ALLOW
+//  1. deny 规则(工具级 + 内容级)→ DENY
+//  2. ask 规则(工具级 + 内容级)→ ASK(二元决策下 → ALLOW)
+//  2.5 Skill Bash 白名单(shell 工具且命令匹配)→ ALLOW(绕过 Step 3 高危拦截)
+//  3. 工具特有安全检查 → DENY(硬拦截,不允许规则覆盖);ASK 在二元决策下 → ALLOW
+//  4. allow 规则(工具级 + 内容级)→ ALLOW
 //  5. Session 记忆 → ALLOW/DENY
 //  6. Bypass 模式 → ALLOW
-//  7. 默认策略（read→ALLOW, write/execute→ASK）
+//  7. 默认策略(read→ALLOW, write/execute→ASK)
+//
+// 二元决策(bypass 模式下):所有 ASK → ALLOW,仅保留 DENY(Step 1 deny /
+// Step 3 RiskHigh / Step 3 PathDangerous 写 / Step 5 session deny)。
+// 这是与沙箱联动的前置阶段(见 specs/sandbox.md「ModeAutoAllow」):
+// 第一阶段 bypass 模式即触发二元决策;第二阶段沙箱接入后收紧为
+// "bypass + 沙箱激活 + 无交互 + per-command 标志"。
 func (g *GuardImpl) Check(ctx context.Context, toolName string, input json.RawMessage) DecisionResult {
 	// Step 0: 内置白名单 — 直接放行，不经过规则/安全检查/默认策略
 	if g.builtinAllow[toolName] {
@@ -207,6 +213,14 @@ func (g *GuardImpl) Check(ctx context.Context, toolName string, input json.RawMe
 
 	// Step 2: ask 规则检查
 	if result, found := g.ruleEngine.CheckAsk(toolName, input); found {
+		if g.binaryDecision() {
+			// 二元决策:ask 规则 → ALLOW(无交互场景下 ask 无处安放,行为边界由沙箱兜底)
+			result.Decision = DecisionAllow
+			result.Reason = ReasonBypass
+			result.Message = "auto-allow (ask rule): " + result.Message
+			g.denialTracker.RecordAllow()
+			return result
+		}
 		return result
 	}
 
@@ -243,6 +257,13 @@ func (g *GuardImpl) Check(ctx context.Context, toolName string, input json.RawMe
 			return safetyResult
 		}
 		if safetyResult.Decision == DecisionAsk {
+			if g.binaryDecision() {
+				// 二元决策:安全 ASK → ALLOW(仅保留 DENY 硬拦截)
+				safetyResult.Decision = DecisionAllow
+				safetyResult.Reason = ReasonBypass
+				g.denialTracker.RecordAllow()
+				return safetyResult
+			}
 			return safetyResult
 		}
 		// DecisionAllow:暂存,继续检查 allow 规则
@@ -261,7 +282,6 @@ func (g *GuardImpl) Check(ctx context.Context, toolName string, input json.RawMe
 		g.denialTracker.RecordAllow()
 		return *safetyAllowResult
 	}
-
 
 	// Step 5: session 记忆检查
 	if d, found := g.sessionMemory.Lookup(toolName, ExtractPattern(toolName, input)); found {
@@ -341,7 +361,6 @@ func (g *GuardImpl) shellSafetyCheck(input json.RawMessage) DecisionResult {
 			}
 		}
 	}
-
 
 	// ── 预处理:剥离危险环境变量 + 注释行 ──
 	safeCmd := StripBinaryHijackVars(cmd)
@@ -456,6 +475,14 @@ func (g *GuardImpl) currentMode() PermissionMode {
 		return ModePlan
 	}
 	return ModeDefault
+}
+
+// binaryDecision 返回是否处于二元决策模式(仅 DENY/ALLOW,不产生 ASK)。
+// 第一阶段:bypass 模式即触发二元决策(见 specs/sandbox.md「ModeAutoAllow」);
+// 第二阶段(沙箱接入后)将收紧为 "bypass + 沙箱激活 + 无交互 + per-command 标志",
+// 届时通过 context 中的 SandboxStatus 判定。
+func (g *GuardImpl) binaryDecision() bool {
+	return g.bypassMode
 }
 
 // cwd 返回当前工作目录。
