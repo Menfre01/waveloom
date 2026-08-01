@@ -161,6 +161,29 @@ waveloom
 
 **平台支持**:Linux(bubblewrap,`apt install bubblewrap`)/ macOS(Seatbelt,系统自带)/ Windows 不支持(建议 WSL2 走 Linux 后端)。沙箱后端不可用时自动降级并警告;`failIfUnavailable: true` 可改为拒绝启动。
 
+### Linux 首次使用:bubblewrap 安装引导
+
+bubblewrap **不是 Linux 默认安装**——首次启用沙箱时若缺失,启动日志会按发行版给出安装命令:
+
+| 发行版 | 命令 |
+|--------|------|
+| Ubuntu / Debian / Mint | `sudo apt install bubblewrap` |
+| Fedora / RHEL / CentOS | `sudo dnf install bubblewrap` |
+| Arch / Manjaro | `sudo pacman -S bubblewrap` |
+| Alpine | `sudo apk add bubblewrap` |
+| openSUSE | `sudo zypper install bubblewrap` |
+
+> [!TIP]
+> 装有 **Flatpak** 的系统通常已自带 bubblewrap(Flatpak 沙箱的核心依赖)——先 `which bwrap` 确认,可能无需安装。
+
+Ubuntu 24.04+ 若被 AppArmor 拦截(unprivileged userns 限制),按错误信息指引:
+
+```sh
+# 临时方案
+sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+# 永久方案:安装允许 bwrap userns 的 AppArmor profile(见错误输出指引)
+```
+
 ### excludedCommands:经典逃生舱场景
 
 `excludedCommands` 让指定命令**不进沙箱**(裸跑),但权限仍受 Guard 约束(deny 规则与高危硬拦截保留)。典型场景:

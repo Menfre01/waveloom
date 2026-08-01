@@ -104,6 +104,32 @@ func TestProbe_AppArmorSysctlMissing(t *testing.T) {
 	}
 }
 
+// TestLinuxBwrapInstallHint 验证首次使用引导按发行版生成正确安装命令。
+func TestLinuxBwrapInstallHint(t *testing.T) {
+	tests := []struct {
+		distro   string
+		contains string
+	}{
+		{"ubuntu", "apt install bubblewrap"},
+		{"debian", "apt install bubblewrap"},
+		{"linuxmint", "apt install bubblewrap"},
+		{"fedora", "dnf install bubblewrap"},
+		{"centos", "dnf install bubblewrap"},
+		{"arch", "pacman -S bubblewrap"},
+		{"alpine", "apk add bubblewrap"},
+		{"opensuse", "zypper install bubblewrap"},
+		{"unknown-distro", "package repository"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.distro, func(t *testing.T) {
+			cmd := bwrapInstallCommandFor(tt.distro)
+			if !strings.Contains(cmd, tt.contains) {
+				t.Errorf("distro %q: command = %q, want contains %q", tt.distro, cmd, tt.contains)
+			}
+		})
+	}
+}
+
 // ============================================================================
 // 小缺口补充
 // ============================================================================

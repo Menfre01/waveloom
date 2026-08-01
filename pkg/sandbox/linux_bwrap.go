@@ -74,7 +74,7 @@ var apparmorSysctlPath = "/proc/sys/kernel/apparmor_restrict_unprivileged_userns
 func (b *bwrapBackend) Probe() error {
 	bin, err := exec.LookPath(b.bin)
 	if err != nil {
-		return fmt.Errorf("sandbox: bwrap not found in PATH (install via 'sudo apt install bubblewrap' or 'sudo dnf install bubblewrap'); set failIfUnavailable=true to hard-fail")
+		return fmt.Errorf("sandbox: bwrap not found in PATH — %s; set failIfUnavailable=true to hard-fail", linuxBwrapInstallHint())
 	}
 	b.bin = bin
 
@@ -88,6 +88,45 @@ func (b *bwrapBackend) Probe() error {
 		return err
 	}
 	return nil
+}
+
+// linuxBwrapInstallHint 生成 bwrap 缺失时的首次使用安装引导:
+// 按发行版(/etc/os-release)给出安装命令;检测到 Flatpak 时提示可能已随其安装。
+func linuxBwrapInstallHint() string {
+	distro := ""
+	if data, err := os.ReadFile("/etc/os-release"); err == nil {
+		for _, line := range strings.Split(string(data), "\n") {
+			if strings.HasPrefix(line, "ID=") {
+				distro = strings.Trim(strings.TrimPrefix(line, "ID="), `"`)
+				break
+			}
+		}
+	}
+
+	hint := "install via '" + bwrapInstallCommandFor(distro) + "'"
+	// Flatpak 用户:bubblewrap 是 Flatpak 沙箱的核心依赖,系统可能已安装但不在 PATH
+	if _, flatpakErr := exec.LookPath("flatpak"); flatpakErr == nil {
+		hint += "; Flatpak detected — bubblewrap may already be installed (check 'which bwrap')"
+	}
+	return hint
+}
+
+// bwrapInstallCommandFor 按发行版返回 bubblewrap 安装命令(测试可直调)。
+func bwrapInstallCommandFor(distro string) string {
+	switch distro {
+	case "ubuntu", "debian", "pop", "linuxmint", "raspbian":
+		return "sudo apt install bubblewrap"
+	case "fedora", "rhel", "centos", "rocky", "almalinux":
+		return "sudo dnf install bubblewrap"
+	case "arch", "manjaro", "endeavouros":
+		return "sudo pacman -S bubblewrap"
+	case "alpine":
+		return "sudo apk add bubblewrap"
+	case "opensuse", "opensuse-tumbleweed", "suse":
+		return "sudo zypper install bubblewrap"
+	default:
+		return "install bubblewrap from your distribution's package repository (e.g. 'sudo apt install bubblewrap' on Debian/Ubuntu)"
+	}
 }
 
 // probeCapabilities 解析 bwrap --help 输出,探测 --argv0/--perms(v0.9.0+)。

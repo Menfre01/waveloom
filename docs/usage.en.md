@@ -161,6 +161,29 @@ waveloom
 
 **Platform support**: Linux (bubblewrap, `apt install bubblewrap`) / macOS (Seatbelt, built-in) / Windows unsupported (use WSL2 for the Linux backend). When the backend is unavailable the sandbox degrades with a warning; `failIfUnavailable: true` turns that into a hard refusal to start.
 
+### Linux first run: bubblewrap installation guide
+
+bubblewrap is **not installed by default** on Linux — when the sandbox is first enabled and bwrap is missing, the startup log shows the install command for your distribution:
+
+| Distro | Command |
+|--------|---------|
+| Ubuntu / Debian / Mint | `sudo apt install bubblewrap` |
+| Fedora / RHEL / CentOS | `sudo dnf install bubblewrap` |
+| Arch / Manjaro | `sudo pacman -S bubblewrap` |
+| Alpine | `sudo apk add bubblewrap` |
+| openSUSE | `sudo zypper install bubblewrap` |
+
+> [!TIP]
+> Systems with **Flatpak** usually already have bubblewrap (it's Flatpak's core sandbox dependency) — run `which bwrap` first; you may not need to install anything.
+
+On Ubuntu 24.04+ if AppArmor blocks unprivileged user namespaces, follow the error output:
+
+```sh
+# Temporary
+sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+# Permanent: install an AppArmor profile allowing bwrap userns (see error output)
+```
+
 ### excludedCommands: classic escape-hatch scenarios
 
 `excludedCommands` lets specific commands run **outside the sandbox** (bare), while permissions still pass through Guard (deny rules and high-risk hard blocks remain). Typical scenarios:
