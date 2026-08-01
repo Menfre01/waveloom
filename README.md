@@ -85,8 +85,8 @@ waveloom
 | Hook | PreToolUse / PostToolUse / Notification / Stop / SubagentStop, permission_mode field, runtime fail-open | Native hooks: PreToolUse, PostToolUse, etc. | — |
 | TUI polish | Streaming reasoning, rich diff, permission dialogs, `@` fuzzy picker, `/` palette, i18n, theme toggle — premium terminal UX | Native TUI (Ink/React), gold standard | Functional TUI, different UX paradigm |
 
-**Choose Waveloom if**: you want premium terminal UX with multi-provider support (DeepSeek / Kimi / OpenAI), `.claude/skills/` + `.claude/plugins/` drop-in, without the cache miss cost.  
-**Choose Claude Code if**: you use Anthropic, need coordinator mode, deep in the Claude ecosystem.  
+**Choose Waveloom if**: you want premium terminal UX with multi-provider support (DeepSeek / Kimi / OpenAI), `.claude/skills/` + `.claude/plugins/` drop-in, without the cache miss cost.
+**Choose Claude Code if**: you use Anthropic, need coordinator mode, deep in the Claude ecosystem.
 **Choose Reasonix if**: you want a desktop GUI, QQ Bot integration, or a larger community ecosystem.
 
 ---
@@ -101,6 +101,7 @@ waveloom
 
 - **Prefix cache optimized** — Fixed System Prompt, append-only message history, four-tier watermark compaction. Maximum common prefix stays cache-hot across turns.
 - **Permission safety** — Three-tier decisions (allow / deny / ask) with pattern-matching rule engine, backed by a 5-layer tool output security pipeline (Unicode cleaning → injection scan → boundary markers → risk grading → safe truncation). Every write operation requires your confirmation.
+- **OS-level sandbox** — Optional execution isolation via bubblewrap (Linux) / Seatbelt (macOS): read-only root, workspace-only writes, credential masking (`~/.ssh`, keychains, tokens), env var stripping, and network control (`off` / `on`). Auto-activated with `--bypass-permissions`; configure via `"sandbox"` in `settings.json` or `--sandbox-network off|on`.
 - **Hook system** — PreToolUse / PostToolUse / Notification / Stop / SubagentStop hooks with permission_mode field. Runtime fail-open — hooks never block tool execution. Configured via `settings.json`.
 - **Session persistence** — Close the terminal, come back days later with `waveloom --continue`. The agent remembers all prior context.
 - **Checkpoint/Rewind** — Rewind to any previous message with full file state restoration. Fork mode preserves original session intact — history never lost.
@@ -113,22 +114,22 @@ waveloom
 
 ## FAQ
 
-**Q: How do I switch models?**  
+**Q: How do I switch models?**
 Type `/model` in interactive mode, or `waveloom --model deepseek-v4-flash`.
 
-**Q: How do I switch LLM providers?**  
+**Q: How do I switch LLM providers?**
 Type `/provider` to open the interactive provider picker (overlay with ↑↓ select / Enter confirm / Esc cancel), or `/provider kimi` to switch directly. Profiles are configured in `settings.json` under `llm.profiles`.
 
-**Q: Is my API key safe?**  
+**Q: Is my API key safe?**
 Stored locally at `~/.waveloom/`. Keys connect directly to DeepSeek / Kimi / OpenAI — no third-party relay.
 
-**Q: How do I switch languages?**  
+**Q: How do I switch languages?**
 Type `/locale` to toggle between Chinese and English, or `waveloom --locale zh-CN`. The setting persists automatically in `settings.json`.
 
-**Q: How do I configure a lightweight model for explore subagents?**  
+**Q: How do I configure a lightweight model for explore subagents?**
 Add `"sub_model": "deepseek-v4-flash"` to the `llm` section in `settings.json`. The explore subagent uses this model for code search and discovery tasks — ~2× cheaper than the primary model. For evaluate/verification subagents, the primary model (`model`, e.g. `deepseek-v4-pro`) is used for full reasoning quality. No runtime switching needed.
 
-**Q: What languages are supported?**  
+**Q: What languages are supported?**
 Waveloom works with any text-based project. Post-edit LSP diagnostics automatically verify code correctness for Go, Rust, TypeScript/JavaScript, and C/C++. Other languages use native build tools (`go build`, `npx tsc`, `cargo build`, `make`, etc.).
 
 ---
@@ -155,5 +156,4 @@ Go 1.25+, `make build` / `make test`. See [`CONTRIBUTING.md`](./CONTRIBUTING.md)
 Built with [Bubble Tea](https://github.com/charmbracelet/bubbletea) (TUI framework),
 [Glamour](https://github.com/charmbracelet/glamour) (Markdown rendering),
 and [Lip Gloss](https://github.com/charmbracelet/lipgloss) (terminal styling) — part of the [Charm](https://charm.sh) ecosystem.
-
 

@@ -52,7 +52,6 @@ Waveloom 首次运行在 `.waveloom/settings.json` 生成默认配置。配置�
 }
 ```
 
-
 ### permissions 配置
 
 ```json
@@ -76,7 +75,6 @@ Waveloom 首次运行在 `.waveloom/settings.json` 生成默认配置。配置�
 | `tier3_threshold` | Tier 3（Summarize）触发阈值 | `0.95`（95%） |
 | `protection_zone_tokens` | 保护区 Token 数，支持 `"8K"` / `8000` | `8000` |
 | `context_limit_tokens` | 模型上下文上限，支持 `"1M"` / `1000000` | `1000000` |
-
 
 ### hooks 配置
 
@@ -185,7 +183,6 @@ Agent 启动时自动探测可用工具链。若工具不在 PATH 中或需指�
 }
 ```
 
-
 `web_search` 工具默认使用 DuckDuckGo 搜索引擎，无需任何配置。如需更好的搜索结果质量，通过环境变量切换到 Brave Search API：
 
 ```bash
@@ -214,7 +211,6 @@ export BRAVE_API_KEY="your-brave-api-key"
 }
 ```
 
-
 ### 界面配置
 
 | 字段 | 说明 | 默认值 |
@@ -233,7 +229,36 @@ export BRAVE_API_KEY="your-brave-api-key"
 
 | 字段 | 说明 | 默认值 |
 |------|------|--------|
-| `plans_directory` | Plan 文件存储目录（相对路径相对于配置文件所在目录） | `~/.waveloom/plans/` |
+| `plans_directory` | Plan 文件存储目录(相对路径相对于配置文件所在目录) | `~/.waveloom/plans/` |
+
+### sandbox 沙箱配置
+
+| 字段 | 说明 | 默认值 |
+|------|------|--------|
+| `enabled` | TUI 常规模式是否启用沙箱;`--bypass-permissions` / ACP 无交互自动激活,无需置 true | `false` |
+| `failIfUnavailable` | 后端缺失(bwrap 未装)时是否拒绝启动 | `false` |
+| `allowUnsandboxedCommands` | 沙箱内命令失败时是否提示逃生(加入 excludedCommands) | `true` |
+| `excludedCommands` | 逃逸命令列表(前缀/精确/通配),命中不进沙箱(裸跑),但权限仍受 Guard 约束 | `[]` |
+| `network.mode` | 网络策略:`off`(全断网)/ `on`(直连);`proxy` 为 v2 未实现 | `off` |
+| `network.allowedDomains` | 域名白名单(v2 proxy 预留,当前不生效) | `[]` |
+| `filesystem.allowWrite` | 额外可写路径(`//abs` 绝对、`~/` 家目录、`./` 或裸名项目根);根目录与遮蔽路径冲突时拒绝 | `[]` |
+| `filesystem.denyRead` | 额外遮蔽(不可读)路径,叠加在内置默认遮蔽清单之上 | `[]` |
+| `capabilities.keep` | `--cap-drop ALL` 后加回的内核能力(如 `net_raw` 供 ping) | `[]` |
+| `credentials.files` | 凭据遮蔽路径(网络 on 时强烈建议配置) | `[]` |
+| `credentials.envVars` | 额外剥离的环境变量,与内置 glob(`*TOKEN*` / `*_API_KEY` 等)叠加 | `[]` |
+
+```json
+{
+  "sandbox": {
+    "enabled": false,
+    "excludedCommands": ["docker *"],
+    "network": { "mode": "off" },
+    "filesystem": { "allowWrite": ["~/.cache"], "denyRead": ["~/.aws"] },
+    "credentials": { "files": ["~/.ssh"], "envVars": ["GH_TOKEN"] }
+  }
+}
+```
+
 ## CLI 参数
 
 | 参数 | 说明 | 默认值 |
@@ -248,6 +273,7 @@ export BRAVE_API_KEY="your-brave-api-key"
 | `--log-level level` | 日志级别（error/warn/info/debug） | `info` |
 | `--verbose` | 输出详细日志到 `.waveloom/waveloom.log` | 关闭 |
 | `--bypass-permissions` | 跳过所有权限检查 | 关闭 |
+| `--sandbox-network off/on` | 沙箱网络模式,覆盖 `settings.json` 的 `network.mode`(on 建议配置凭据遮蔽) | 取配置 |
 | `--tool-timeout D` | 单个工具执行超时（Go Duration 格式，如 `10m` / `600s` / `0s`，0 禁用） | `10m` |
 | `--resume ID` | 恢复指定会话 | — |
 | `--continue` | 恢复最近一次会话 | — |

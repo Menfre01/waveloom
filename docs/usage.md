@@ -112,6 +112,95 @@ Plan 模式是"先规划后执行"的二阶段工作流。适合 3 个以上文�
 
 输入框左侧 `▌Plan` 标记表示当前处于 Plan 模式。
 
+## 沙箱执行
+
+Waveloom 提供 OS 级执行隔离(bubblewrap(Linux)/ Seatbelt(macOS)):只读根、工作区可写、敏感路径遮蔽(`~/.ssh`、钥匙串、token 等)、环境变量剥离、网络可控。
+
+### 经典组合:沙箱 + bypass-permissions + 网络 on(CI/无交互)
+
+```sh
+waveloom --bypass-permissions --sandbox-network on "go build && go test"
+```
+
+这一组合的效果:
+
+| 层 | 行为 |
+|----|------|
+| 权限 | `--bypass-permissions` → 二元决策(仅 DENY/ALLOW,无弹窗,deny 规则与高危硬拦截仍生效) |
+| 沙箱 | 自动激活 → 命令在沙箱内执行(只读根 + 工作区可写 + 凭据遮蔽 + 环境变量剥离) |
+| 网络 | `--sandbox-network on` → 沙箱内直连(拉依赖、git fetch、gh 等可用);`off` 为默认全断网 |
+
+> [!TIP]
+> 网络 `on` 时建议配置凭据遮蔽(`settings.json` 的 `credentials.files` / `filesystem.denyRead`),防止未遮蔽的用户文件被读走外传。未配置时沙箱仍启用,但会输出警告提示。
+
+### 其他常见用法
+
+```sh
+# 沙箱 + 权限放行 + 断网(本地构建/测试,默认网络策略)
+waveloom --bypass-permissions "make build && make test"
+
+# TUI 常规模式显式启用沙箱(需要 .waveloom/settings.json 配置 enabled: true)
+waveloom
+
+# 需要 docker / 联网特权命令时,配置逃生舱(项目级 .waveloom/settings.json):
+# { "sandbox": { "excludedCommands": ["docker *"] } }
+```
+
+**配置样例**(`.waveloom/settings.json`):
+
+```json
+{
+  "sandbox": {
+    "enabled": true,
+    "excludedCommands": ["docker *"],
+    "network": { "mode": "on" },
+    "credentials": { "files": ["~/.ssh", "~/.aws/credentials"] }
+  }
+}
+```
+
+**平台支持**:Linux(bubblewrap,`apt install bubblewrap`)/ macOS(Seatbelt,系统自带)/ Windows 不支持(建议 WSL2 走 Linux 后端)。沙箱后端不可用时自动降级并警告;`failIfUnavailable: true` 可改为拒绝启动。
+
+### excludedCommands:经典逃生舱场景
+
+`excludedCommands` 让指定命令**不进沙箱**(裸跑),但权限仍受 Guard 约束(deny 规则与高危硬拦截保留)。典型场景:
+
+**1. docker(最常用)——沙箱内 docker 无法工作**
+
+沙箱遮蔽了 `~/.docker/config.json` 并限制 daemon socket 连接,因此 docker 命令必须在沙箱外运行:
+
+```json
+{
+  "sandbox": { "excludedCommands": ["docker *"] }
+}
+```
+
+```sh
+waveloom --bypass-permissions --sandbox-network on "docker build -t app . && docker push app"
+```
+
+> [!NOTE]
+> 复合命令中只要含逃逸命令(`A && docker ps && B`),**整条命令都会逃逸沙箱**——模型应把 docker 命令单独执行,其余命令保持沙箱内。
+
+**2. 部分联网——只放行特定命令,其余保持断网**
+
+不想全局开 `network.mode: on`,但需要个别命令联网(如 `git push`、`npm install`):
+
+```json
+{
+  "sandbox": {
+    "excludedCommands": ["git push *", "npm install *"],
+    "network": { "mode": "off" }
+  }
+}
+```
+
+效果:沙箱内其他命令全部断网,只有逃逸命令可以联网。
+
+**3. 逃生舱——沙箱内失败的命令**
+
+命令在沙箱内失败时(`allowUnsandboxedCommands` 默认开启),输出会提示可加入 `excludedCommands` 重试;确认命令本身安全后按提示配置即可。
+
 ### AGENTS.md 自动加载
 
 Waveloom 启动时会自动发现并加载 `AGENTS.md`(查找路径:`~/.waveloom/AGENTS.md` → 项目根 `.git` 所在目录 → CWD),按"由外到内"顺序拼接,作为第一条 user 消息注入上下文。Agent 在对话中自动遵循其中的项目约定、编码规范和操作流程。

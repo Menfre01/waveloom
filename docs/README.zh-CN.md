@@ -82,8 +82,8 @@ waveloom
 | 权限模型 | 7 步决策管线,5 层工具输出安全(Unicode 清洗 → 注入扫描 → 边界标记 → 风险分级 → 安全截断),4 级命令安全分类(RiskNone/RiskLow/RiskMedium/RiskHigh) | 8 源规则合并 + LLM 分类器自动审批 | Policy + Approver,9 阶段执行管线,shellsafe readOnly 检测 |
 | Hook | PreToolUse / PostToolUse / Notification / Stop / SubagentStop,permission_mode 字段,runtime fail-open | 原生 hooks:PreToolUse, PostToolUse 等 | — |
 | TUI 打磨 | 流式推理、rich diff、权限对话框、`@` 模糊选择器、`/` 面板、i18n、主题切换 — 专业级 | 原生 TUI(Ink/React),标杆水平 | 功能完备的 TUI,不同 UX 范式 |
-**选 Waveloom 如果**：追求专业终端体验，需要多 Provider 支持（DeepSeek / Kimi / OpenAI），想要 `.claude/skills/` + `.claude/plugins/` 开箱即用，不想白烧缓存未命中费用。  
-**选 Claude Code 如果**：用 Anthropic API、需要 coordinator 模式、重度依赖 Claude 生态。  
+**选 Waveloom 如果**：追求专业终端体验，需要多 Provider 支持（DeepSeek / Kimi / OpenAI），想要 `.claude/skills/` + `.claude/plugins/` 开箱即用，不想白烧缓存未命中费用。
+**选 Claude Code 如果**：用 Anthropic API、需要 coordinator 模式、重度依赖 Claude 生态。
 **选 Reasonix 如果**：需要桌面 GUI、QQ Bot 集成、或更大的社区生态。
 
 ---
@@ -98,6 +98,7 @@ waveloom
 
 - **前缀缓存深度优化** — System Prompt 固定，消息只在末尾追加，四级水位线压缩后字节永不变化，最大公共前缀持续命中
 - **权限安全模型** — 三级决策(allow / deny / ask),规则引擎支持模式匹配,底层 5 层工具输出安全管线(Unicode 清洗 → 注入扫描 → 边界标记 → 风险分级 → 安全截断)。写操作和命令执行需要你确认。
+- **OS 级沙箱** — 可选执行隔离:bubblewrap(Linux)/ Seatbelt(macOS)实现只读根、工作区可写、凭据遮蔽(`~/.ssh`、钥匙串、token)、环境变量剥离与网络控制(`off`/`on`)。`--bypass-permissions` 自动激活;通过 `settings.json` 的 `"sandbox"` 段或 `--sandbox-network off|on` 配置。
 - **Hook 系统** — PreToolUse / PostToolUse / Notification / Stop / SubagentStop 五种事件,支持 permission_mode 字段。Runtime fail-open,永不阻塞工具执行。通过 `settings.json` 配置。
 - **会话持久恢复** — 关闭终端几天后 `waveloom --continue` 回来,Agent 记得所有上下文接着工作
 - **Checkpoint/Rewind 时间旅行** — 回退到任意历史消息,同时恢复所有文件变更。Fork 模式原 session 完整保留,历史永不丢失
@@ -109,22 +110,22 @@ waveloom
 
 ## 常见问题
 
-**Q: 怎么切换模型？**  
+**Q: 怎么切换模型？**
 输入 `/model` 选择，或 `waveloom --model deepseek-v4-flash`。
 
-**Q: 怎么切换 Provider?**  
+**Q: 怎么切换 Provider?**
 输入 `/provider` 弹出交互式 Provider 选择器(↑↓ 选择 / Enter 确认 / Esc 取消),或 `/provider kimi` 直接切换。Profile 配置在 `settings.json` 的 `llm.profiles` 中。
 
-**Q: API Key 安全吗？**  
+**Q: API Key 安全吗？**
 Key 存储在本地 `~/.waveloom/`，直连 DeepSeek / Kimi / OpenAI，不经过任何第三方服务器。
 
-**Q: 怎么切换语言？**  
+**Q: 怎么切换语言？**
 输入 `/locale` 切换中英文界面，或 `waveloom --locale en-US`。设置自动保存到 `settings.json`。
 
-**Q: 怎么为 explorer 子代理配置轻量模型?**  
+**Q: 怎么为 explorer 子代理配置轻量模型?**
 在 `settings.json` 的 `llm` 段中添加 `"sub_model": "deepseek-v4-flash"`。Explorer 子代理使用此模型执行代码搜索和发现任务——约 2 倍便宜。evaluate 和 verification 子代理始终使用主模型(`model`,如 `deepseek-v4-pro`)保证审查质量。无需运行时切换。
 
-**Q: 支持哪些语言?**  
+**Q: 支持哪些语言?**
 Waveloom 适用于任何文本项目。编辑后 LSP 诊断自动验证 Go、Rust、TypeScript/JavaScript、C/C++ 代码。其他语言使用原生构建工具(`go build`、`npx tsc`、`cargo build`、`make` 等)。
 
 ---
@@ -151,5 +152,4 @@ Go 1.25+，`make build` / `make test`。项目结构及贡献指南详见 [`CONT
 基于 [Bubble Tea](https://github.com/charmbracelet/bubbletea)（TUI 框架）、
 [Glamour](https://github.com/charmbracelet/glamour)（Markdown 渲染）、
 [Lip Gloss](https://github.com/charmbracelet/lipgloss)（终端样式）构建 — [Charm](https://charm.sh) 生态项目。
-
 

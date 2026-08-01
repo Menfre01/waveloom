@@ -52,7 +52,6 @@ Minimal config:
 }
 ```
 
-
 ### permissions Configuration
 
 ```json
@@ -76,7 +75,6 @@ Rule format: `ToolName` or `ToolName(pattern)`, e.g., `bash(ls *)` matches all c
 | `tier3_threshold` | Tier 3 (Summarize) trigger threshold | `0.95` (95%) |
 | `protection_zone_tokens` | Protection zone token count, supports `"8K"` / `8000` | `8000` |
 | `context_limit_tokens` | Model context limit, supports `"1M"` / `1000000` | `1000000` |
-
 
 ### hooks Configuration
 
@@ -234,6 +232,35 @@ Falls back to DuckDuckGo when not set.
 | Field | Description | Default |
 |-------|-------------|---------|
 | `plans_directory` | Plan file storage directory (relative paths are relative to the settings file directory) | `~/.waveloom/plans/` |
+
+### sandbox Configuration
+
+| Field | Description | Default |
+|-------|-------------|---------|
+| `enabled` | Enable the sandbox in TUI mode; auto-activated by `--bypass-permissions` / non-interactive ACP (no need to set true) | `false` |
+| `failIfUnavailable` | Refuse to start when the backend is missing (e.g. bwrap not installed) | `false` |
+| `allowUnsandboxedCommands` | Hint escape (add to excludedCommands) when a sandboxed command fails | `true` |
+| `excludedCommands` | Escape hatch list (prefix/exact/wildcard); matching commands run unsandboxed but still pass through Guard | `[]` |
+| `network.mode` | Network policy: `off` (fully offline) / `on` (direct); `proxy` is v2, not implemented | `off` |
+| `network.allowedDomains` | Domain allowlist (v2 proxy placeholder, not active yet) | `[]` |
+| `filesystem.allowWrite` | Extra writable paths (`//abs` absolute, `~/` home, `./` or bare name = project root); root and mask-conflicting paths are rejected | `[]` |
+| `filesystem.denyRead` | Extra masked (unreadable) paths, layered on top of the built-in default mask list | `[]` |
+| `capabilities.keep` | Kernel capabilities re-added after `--cap-drop ALL` (e.g. `net_raw` for ping) | `[]` |
+| `credentials.files` | Credential mask paths (strongly recommended when network is `on`) | `[]` |
+| `credentials.envVars` | Extra env vars to strip, layered on built-in globs (`*TOKEN*` / `*_API_KEY` etc.) | `[]` |
+
+```json
+{
+  "sandbox": {
+    "enabled": false,
+    "excludedCommands": ["docker *"],
+    "network": { "mode": "off" },
+    "filesystem": { "allowWrite": ["~/.cache"], "denyRead": ["~/.aws"] },
+    "credentials": { "files": ["~/.ssh"], "envVars": ["GH_TOKEN"] }
+  }
+}
+```
+
 ## CLI Flags
 
 | Flag | Description | Default |
@@ -248,6 +275,7 @@ Falls back to DuckDuckGo when not set.
 | `--log-level level` | Log level (error/warn/info/debug) | `info` |
 | `--verbose` | Log detailed output to `.waveloom/waveloom.log` | Off |
 | `--bypass-permissions` | Skip all permission checks | Off |
+| `--sandbox-network off/on` | Sandbox network mode, overrides `network.mode` in `settings.json` (on: credential masking recommended) | From config |
 | `--tool-timeout D` | Single tool execution timeout (Go Duration format, e.g. `10m` / `600s` / `0s`, 0 to disable) | `10m` |
 | `--resume ID` | Resume a specific session | — |
 | `--continue` | Resume the most recent session | — |

@@ -112,6 +112,95 @@ Plan Mode is a two-stage "design first, implement later" workflow. Ideal for tas
 
 The `▌Plan` indicator on the left of the input line shows you're in Plan Mode.
 
+## Sandboxed execution
+
+Waveloom provides OS-level execution isolation (bubblewrap on Linux / Seatbelt on macOS): read-only root, workspace-only writes, credential masking (`~/.ssh`, keychains, tokens, etc.), environment variable stripping, and controllable networking.
+
+### Classic combo: sandbox + bypass-permissions + network on (CI / non-interactive)
+
+```sh
+waveloom --bypass-permissions --sandbox-network on "go build && go test"
+```
+
+What this combination gives you:
+
+| Layer | Behavior |
+|-------|----------|
+| Permissions | `--bypass-permissions` → binary decision (DENY/ALLOW only, no prompts; deny rules and high-risk hard blocks still apply) |
+| Sandbox | Auto-activated → commands run isolated (read-only root + workspace writes + credential masking + env stripping) |
+| Network | `--sandbox-network on` → direct network inside the sandbox (dependency pulls, git fetch, gh, etc.); `off` (default) = fully offline |
+
+> [!TIP]
+> With network `on`, configure credential masking (`credentials.files` / `filesystem.denyRead` in `settings.json`) so unmasked user files can't be exfiltrated. Without it the sandbox still runs, but a warning is printed.
+
+### Other common usages
+
+```sh
+# Sandbox + permission bypass + offline (local build/test, default network policy)
+waveloom --bypass-permissions "make build && make test"
+
+# TUI mode with explicit sandbox (requires "sandbox": {"enabled": true} in .waveloom/settings.json)
+waveloom
+
+# Escape hatch for docker / network-privileged commands (project-level .waveloom/settings.json):
+# { "sandbox": { "excludedCommands": ["docker *"] } }
+```
+
+**Sample config** (`.waveloom/settings.json`):
+
+```json
+{
+  "sandbox": {
+    "enabled": true,
+    "excludedCommands": ["docker *"],
+    "network": { "mode": "on" },
+    "credentials": { "files": ["~/.ssh", "~/.aws/credentials"] }
+  }
+}
+```
+
+**Platform support**: Linux (bubblewrap, `apt install bubblewrap`) / macOS (Seatbelt, built-in) / Windows unsupported (use WSL2 for the Linux backend). When the backend is unavailable the sandbox degrades with a warning; `failIfUnavailable: true` turns that into a hard refusal to start.
+
+### excludedCommands: classic escape-hatch scenarios
+
+`excludedCommands` lets specific commands run **outside the sandbox** (bare), while permissions still pass through Guard (deny rules and high-risk hard blocks remain). Typical scenarios:
+
+**1. docker (most common) — docker doesn't work inside the sandbox**
+
+The sandbox masks `~/.docker/config.json` and restricts daemon socket access, so docker commands must run outside:
+
+```json
+{
+  "sandbox": { "excludedCommands": ["docker *"] }
+}
+```
+
+```sh
+waveloom --bypass-permissions --sandbox-network on "docker build -t app . && docker push app"
+```
+
+> [!NOTE]
+> In a compound command containing an escaped command (`A && docker ps && B`), the **whole command escapes the sandbox** — the model should run docker commands standalone and keep other commands sandboxed.
+
+**2. Partial networking — allow only specific commands, keep the rest offline**
+
+Instead of enabling `network.mode: on` globally, allow just a few commands to reach the network (e.g. `git push`, `npm install`):
+
+```json
+{
+  "sandbox": {
+    "excludedCommands": ["git push *", "npm install *"],
+    "network": { "mode": "off" }
+  }
+}
+```
+
+Effect: all other sandboxed commands stay offline; only the escaped commands can use the network.
+
+**3. Escape hatch — commands that fail inside the sandbox**
+
+When a command fails inside the sandbox (with `allowUnsandboxedCommands` on by default), the output suggests adding it to `excludedCommands` and retrying; once you confirm the command is safe, configure it as shown.
+
 ### AGENTS.md Auto-loading
 
 On startup, Waveloom discovers and loads `AGENTS.md` (search path: `~/.waveloom/AGENTS.md` → project root where `.git` lives → CWD), concatenating them from outer to inner as the first user message. The agent automatically follows project conventions, coding standards, and workflows defined therein.
