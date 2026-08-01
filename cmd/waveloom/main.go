@@ -22,6 +22,7 @@ import (
 	"github.com/Menfre01/waveloom/pkg/memory"
 	"github.com/Menfre01/waveloom/pkg/permission"
 	"github.com/Menfre01/waveloom/pkg/reference"
+	"github.com/Menfre01/waveloom/pkg/sandbox"
 	"github.com/Menfre01/waveloom/pkg/shellutil"
 	"github.com/Menfre01/waveloom/pkg/skill"
 	"github.com/Menfre01/waveloom/pkg/subagent"
@@ -127,11 +128,17 @@ func main() {
 	homeDir, _ = os.UserHomeDir()
 	skillLoader := skill.NewLoader(cwd, homeDir, "", "medium", guard)
 
+	// 5.5.1 沙箱管理器(可选):--bypass-permissions 或显式 enabled 时激活
+	sandboxMgr, sandboxFatal := createSandboxManager(cfg.BypassPerm, cfg.SandboxNetwork, globalPath, projectPath, cwd)
+	if sandboxFatal {
+		os.Exit(1) // failIfUnavailable: true 且后端不可用 → 拒绝启动
+	}
+
 	// 6. 初始化 Tool Registry
 	registry := tool.NewRegistry()
 	settingsProvider := &fileSettingsProvider{projectPath: projectPath, globalPath: globalPath}
- 
-	agentTool := registerBuiltinTools(registry, skillLoader, llmClient, llmSettings.Model, llmSettings.SubModel, cwd, settingsProvider)
+
+	agentTool := registerBuiltinTools(registry, skillLoader, llmClient, llmSettings.Model, llmSettings.SubModel, cwd, settingsProvider, sandboxMgr, guard)
 	// 8.5 启动 MCP Manager — 连接配置的 MCP Server，注册工具代理
 	mcpManager := mcp.NewManager(registry)
 	mcpManager.Start(context.Background(), mcp.LoadConfigs(cwd, homeDir))
@@ -331,22 +338,22 @@ waitLoop:
 	if cfg.OneShot == "" {
 		// 16.5 加载 Hook Runner（RTK 等 hooks）
 		hookRunner := loadHookRunner()
- 		runTUI(llmClient, registry, guard, expander, llmSettings.Model, cfg.Theme, cfg.ContextLimit, cfg.MaxTurns, cfg.ToolTimeout, cfg.ToolTimeoutSource, cfg.BypassPerm, ctxMgr, isResume, sessionDir, globalPath, projectPath, agentsMdText, loc, todoState, hookRunner, agentTool, mcpManager, lspManager)
+ 		runTUI(llmClient, registry, guard, sandboxMgr, expander, llmSettings.Model, cfg.Theme, cfg.ContextLimit, cfg.MaxTurns, cfg.ToolTimeout, cfg.ToolTimeoutSource, cfg.BypassPerm, ctxMgr, isResume, sessionDir, globalPath, projectPath, agentsMdText, loc, todoState, hookRunner, agentTool, mcpManager, lspManager)
 		return
 	}
 
 	// 16.5 加载 Hook Runner（RTK 等 hooks）
 	hookRunner := loadHookRunner()
- 	runOneShot(cfg, llmClient, registry, guard, expander, cwd, ctxMgr, agentsMdText, loc, todoState, llmSettings.Model, hookRunner, agentTool, mcpManager, lspManager)
+ 	runOneShot(cfg, llmClient, registry, guard, sandboxMgr, expander, cwd, ctxMgr, agentsMdText, loc, todoState, llmSettings.Model, hookRunner, agentTool, mcpManager, lspManager)
 }
 
-
 // registerBuiltinTools 注册内置工具。
- func registerBuiltinTools(r tool.Registry, skillLoader *skill.Loader, llmClient llm.Client, defaultModel, subModel string, cwd string, settings subagent.SettingsProvider) *subagent.AgentTool {
+ func registerBuiltinTools(r tool.Registry, skillLoader *skill.Loader, llmClient llm.Client, defaultModel, subModel string, cwd string, settings subagent.SettingsProvider, sandboxMgr *sandbox.SandboxManager, guard permission.Guard) *subagent.AgentTool {
 	r.Register(tool.Wrap(&tool.ReadFile{}))
 	r.Register(tool.Wrap(&tool.EditFile{}))
 	r.Register(tool.Wrap(&tool.WriteFile{}))
-	r.Register(tool.Wrap(&tool.Shell{AllowBg: true})) // "bash"
+	shellTool := &tool.Shell{AllowBg: true, SandboxMgr: sandboxMgr} // "bash"
+	r.Register(tool.Wrap(shellTool))
 	r.Register(tool.Wrap(&tool.WebFetch{}))
 	r.Register(tool.Wrap(&tool.WebSearch{}))
 
@@ -366,13 +373,15 @@ waitLoop:
 	r.Register(tool.Wrap(&tool.KillBackgroundTask{}))
 
 	// Agent — subagent delegation
- 	at := &subagent.AgentTool{
- 		LLMClient:    llmClient,
- 		Settings:     settings,
- 		DefaultModel: defaultModel,
- 		DefaultSubModel: subModel,
- 		WorkspaceDir: cwd,
- 	}
+     	at := &subagent.AgentTool{
+     		LLMClient:    llmClient,
+     		Settings:     settings,
+     		DefaultModel: defaultModel,
+     		DefaultSubModel: subModel,
+     		WorkspaceDir: cwd,
+     		SandboxMgr:   sandboxMgr,
+     		Guard:        guard,
+     	}
 	r.Register(tool.Wrap(at))
 
 	// TodoCreate / TodoUpdate — 结构化任务列表管理
@@ -438,7 +447,6 @@ func createLLMClient(globalPath, projectPath, cliModel, cliProvider string, loc 
 	}
 	return client, cfg, merged, nil
 }
-
 
 // createGuard 创建权限守门人，合并全局和项目权限规则。
 // 以 (Behavior, ToolName, Pattern) 为键，项目规则覆盖全局同键规则。
@@ -602,8 +610,6 @@ func (p *fileSettingsProvider) LoadLLM() (*llm.LLMSettings, error) {
 	}
 	return merged, nil
 }
-
-
 
 // loadHookRunner 从 settings.json 加载 hook 配置并创建 Runner。
 // 配置来源：~/.claude/settings.json、.claude/settings.json、.claude/settings.local.json

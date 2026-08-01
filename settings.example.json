@@ -36,6 +36,26 @@
         "deny": ["shell(rm -rf /*)"],
         "ask": ["write_file", "edit_file"]
     },
+    "sandbox": {
+        "enabled": false,
+        "failIfUnavailable": false,
+        "allowUnsandboxedCommands": true,
+        "excludedCommands": ["docker *", "git push *"],
+        "network": {
+            "mode": "off"
+        },
+        "filesystem": {
+            "allowWrite": ["~/.cache", "//tmp/build"],
+            "denyRead": ["~/.ssh", "~/.env", "~/.aws", "~/.docker"]
+        },
+        "capabilities": {
+            "keep": []
+        },
+        "credentials": {
+            "files": ["~/.ssh", "~/.aws/credentials"],
+            "envVars": ["GH_TOKEN", "NPM_TOKEN", "AWS_ACCESS_KEY_ID"]
+        }
+    },
     "hooks": {
         "PreToolUse": [
             {

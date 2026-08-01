@@ -16,6 +16,7 @@ import (
 	"github.com/Menfre01/waveloom/pkg/permission"
 	"github.com/Menfre01/waveloom/pkg/mcp"
 	"github.com/Menfre01/waveloom/pkg/reference"
+	"github.com/Menfre01/waveloom/pkg/sandbox"
 	"github.com/Menfre01/waveloom/pkg/session"
 	"github.com/Menfre01/waveloom/pkg/subagent"
 	"github.com/Menfre01/waveloom/pkg/todo"
@@ -23,7 +24,7 @@ import (
 )
 
 // runOneShot 执行单次/管道模式（无 TUI，纯文本输出）。
-func runOneShot(cfg CLIConfig, llmClient llm.Client, registry tool.Registry, guard permission.Guard, expander *reference.Expander, cwd string, cm *session.ContextManager, agentsMdText string, loc Locale, todoState *todo.TodoState, model string, hookRunner *hook.Runner, agentTool *subagent.AgentTool, mcpManager *mcp.Manager, lspManager *lsp.Manager) {
+func runOneShot(cfg CLIConfig, llmClient llm.Client, registry tool.Registry, guard permission.Guard, sandboxMgr *sandbox.SandboxManager, expander *reference.Expander, cwd string, cm *session.ContextManager, agentsMdText string, loc Locale, todoState *todo.TodoState, model string, hookRunner *hook.Runner, agentTool *subagent.AgentTool, mcpManager *mcp.Manager, lspManager *lsp.Manager) {
 	lc := messagesFor(loc)
 	// Context Manager 已管理 system prompt，Loop 无需重复注入
 	loopCfg := agentloop.Config{
@@ -36,11 +37,18 @@ func runOneShot(cfg CLIConfig, llmClient llm.Client, registry tool.Registry, gua
 		LSPManager:   lspManager,
 	}
 
-	// bypass 模式：覆盖 guard 为全放行模式
+	// bypass 模式:无条件注入 autoAllow 二元决策(仅 DENY/ALLOW,不产生 ASK)。
+	// --bypass-permissions 即"不要确认"的显式声明,与沙箱可用性无关;
+	// 沙箱兜底是额外保障而非前置条件(用户决策:bypass 即二元决策)。
 	if cfg.BypassPerm {
-		guard = permission.NewGuard(permission.WithBypassMode(true))
+		if impl, ok := guard.(*permission.GuardImpl); ok {
+			impl.EnableAutoAllow()
+		}
 	}
 	loopCfg.Guard = guard
+	// 注入沙箱管理器:agentloop 为每命令注入 per-command 沙箱状态,
+	// Shell 工具据此决定是否 bwrap 包装
+	loopCfg.SandboxMgr = sandboxMgr
 
 	// 单次模式无 UserResponder，ask 降级为 deny
 	loop := agentloop.New(llmClient, registry, loopCfg)

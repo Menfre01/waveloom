@@ -8,9 +8,10 @@ require (
 	charm.land/glamour/v2 v2.0.1
 	charm.land/huh/v2 v2.0.3
 	charm.land/lipgloss/v2 v2.0.4
-	github.com/cespare/xxhash/v2 v2.3.0
 	golang.org/x/net v0.39.0
+	golang.org/x/text v0.28.0
 	gopkg.in/yaml.v3 v3.0.1
+	mvdan.cc/sh/v3 v3.13.1
 )
 
 require (
@@ -45,6 +46,4 @@ require (
 	github.com/yuin/goldmark-emoji v1.0.5 // indirect
 	golang.org/x/sync v0.20.0 // indirect
 	golang.org/x/sys v0.45.0 // indirect
-	golang.org/x/text v0.28.0 // indirect
-	mvdan.cc/sh/v3 v3.13.1 // indirect
 )

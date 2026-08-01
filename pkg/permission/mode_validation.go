@@ -14,6 +14,7 @@ const (
 	ModeDefault         PermissionMode = "default"
 	ModeAcceptEdits     PermissionMode = "acceptEdits"
 	ModeBypass          PermissionMode = "bypassPermissions"
+	ModeAutoAllow       PermissionMode = "autoAllow" // 二元决策:沙箱激活 + 无交互
 	ModeDontAsk         PermissionMode = "dontAsk"
 	ModePlan            PermissionMode = "plan"
 )

@@ -19,6 +19,7 @@ import (
 	"github.com/Menfre01/waveloom/pkg/hook"
 	"github.com/Menfre01/waveloom/pkg/llm"
 	"github.com/Menfre01/waveloom/pkg/permission"
+	"github.com/Menfre01/waveloom/pkg/sandbox"
 	"github.com/Menfre01/waveloom/pkg/todo"
 	"github.com/Menfre01/waveloom/pkg/tool"
 )
@@ -44,6 +45,12 @@ type Config struct {
 	// UserResponder 处理 ask 决策的用户交互。
 	// nil → ask 自动降级为 deny。
 	UserResponder permission.UserResponder
+
+	// SandboxMgr 沙箱管理器(可选)。注入后:
+	// - execute.go 为每个工具调用注入 per-command SandboxStatus 到 context
+	//   (Guard 二元决策与 Shell 工具包装共用)
+	// - nil → 所有命令注入 active=false(安全默认,不触发二元决策)
+	SandboxMgr *sandbox.SandboxManager
 
 	// Compactor 每轮 LLM 调用后执行上下文压缩。
 	// nil → 跳过（向后兼容，由 CompleteRun 兜底）。

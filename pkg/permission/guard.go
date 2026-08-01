@@ -33,11 +33,32 @@ func WithExtraWorkingDirs(dirs ...string) GuardOption {
 	}
 }
 
-// WithBypassMode 启用 bypass 模式（CI/测试场景）。
+// WithBypassMode 启用 bypass 模式(CI/测试场景)。
 func WithBypassMode(enabled bool) GuardOption {
 	return func(g *GuardImpl) {
 		g.bypassMode = enabled
 	}
+}
+
+// WithAutoAllowMode 启用 auto-allow 二元决策模式(仅 DENY/ALLOW,不产生 ASK)。
+// 由 --bypass-permissions / ACP 无交互入口在沙箱激活成功后注入;
+// 生效条件:autoAllowMode + context 中 per-command 沙箱状态 active。
+func WithAutoAllowMode(enabled bool) GuardOption {
+	return func(g *GuardImpl) {
+		g.autoAllowMode = enabled
+	}
+}
+
+// EnableBypass 启用 bypass 模式(保留已加载规则)。
+// 供 runner/TUI 在创建后按入口语义切换,避免重建 guard 丢失用户 deny 规则。
+func (g *GuardImpl) EnableBypass() {
+	g.bypassMode = true
+}
+
+// EnableAutoAllow 启用 auto-allow 二元决策模式(保留已加载规则)。
+// 与 WithAutoAllowMode 等价,但作用于已创建的实例。
+func (g *GuardImpl) EnableAutoAllow() {
+	g.autoAllowMode = true
 }
 
 // WithRules 加载初始规则。
@@ -74,6 +95,7 @@ type GuardImpl struct {
 
 	workingDirs       []string
 	bypassMode        bool
+	autoAllowMode     bool // 二元决策:沙箱激活 + 无交互(bypass/ACP 入口注入)
 	toolRiskClass     map[string]ToolRiskClass
 	builtinAllow      map[string]bool   // 内置白名单工具，Check() 第 0 步直接放行
 	projectConfigPath string            // settings.json 路径（落盘用）
@@ -298,12 +320,19 @@ func (g *GuardImpl) Check(ctx context.Context, toolName string, input json.RawMe
 		}
 	}
 
-	// Step 6: bypass 模式
-	if g.bypassMode {
+	// Step 6: bypass 模式短路默认策略。
+	// autoAllow 模式下无条件短路(2025-08 决策:bypass 即二元决策,
+	// 与 per-command 沙箱状态无关——逃逸命令/write/edit 同样享受,
+	// 三审 Medium-2 注释统一)。
+	if g.bypassMode || g.binaryDecision() {
+		reason := "bypass mode enabled"
+		if g.binaryDecision() {
+			reason = "auto-allow mode enabled (sandboxed)"
+		}
 		return DecisionResult{
 			Decision: DecisionAllow,
 			Reason:   ReasonBypass,
-			Message:  "bypass mode enabled",
+			Message:  reason,
 		}
 	}
 
@@ -478,11 +507,11 @@ func (g *GuardImpl) currentMode() PermissionMode {
 }
 
 // binaryDecision 返回是否处于二元决策模式(仅 DENY/ALLOW,不产生 ASK)。
-// 第一阶段:bypass 模式即触发二元决策(见 specs/sandbox.md「ModeAutoAllow」);
-// 第二阶段(沙箱接入后)将收紧为 "bypass + 沙箱激活 + 无交互 + per-command 标志",
-// 届时通过 context 中的 SandboxStatus 判定。
+// 由无交互入口(--bypass-permissions one-shot / ACP)注入 autoAllowMode 触发,
+// 与沙箱可用性无关(用户显式声明"不要确认",沙箱兜底是额外保障而非前置条件)。
+// TUI 交互模式不注入 autoAllowMode,维持 ASK 弹窗。
 func (g *GuardImpl) binaryDecision() bool {
-	return g.bypassMode
+	return g.autoAllowMode
 }
 
 // cwd 返回当前工作目录。

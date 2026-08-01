@@ -33,6 +33,10 @@ test:
 test-integration:
 	go test -tags=integration ./... -timeout 300s
 
+.PHONY: test-sandbox
+test-sandbox:
+	bash scripts/test-sandbox.sh
+
 .PHONY: release
 release:
 	@rm -rf $(DIST_DIR)

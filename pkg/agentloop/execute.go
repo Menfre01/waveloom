@@ -16,6 +16,7 @@ import (
 	"github.com/Menfre01/waveloom/pkg/llm"
 	"github.com/Menfre01/waveloom/pkg/lsp"
 	"github.com/Menfre01/waveloom/pkg/permission"
+	"github.com/Menfre01/waveloom/pkg/sandbox"
 	"github.com/Menfre01/waveloom/pkg/todo"
 	"github.com/Menfre01/waveloom/pkg/tool"
 )
@@ -115,7 +116,7 @@ ctx = tool.WithReadState(ctx, l.readStateStore)
 			return nil, ReasonAborted, ctx.Err()
 		}
 
-		if l.checkPermission(ctx, tc, results, skip) {
+		if l.checkPermission(l.withSandboxStatus(ctx, tc), tc, results, skip) {
 			r := results[tc.ID]
 			if !sendEvent(ctx, ch, ToolCallResult{
 				Turn:         state.TurnCount,
@@ -170,11 +171,14 @@ ctx = tool.WithReadState(ctx, l.readStateStore)
 				}
 			}()
 				start := time.Now()
-				execCtx := ctx
+				execCtx := l.withSandboxStatus(ctx, tc)
 				timeout := l.effectiveTimeout(tc.Name)
 				if timeout > 0 {
 					var cancel context.CancelFunc
-					execCtx, cancel = context.WithTimeout(ctx, timeout)
+					// REGRESSION: 必须从 execCtx 派生,否则 withSandboxStatus 注入的
+					// per-command 沙箱状态被原始 ctx 重建覆盖丢失(bash 超时恒 > 0,
+					// 导致沙箱包装永不生效)
+					execCtx, cancel = context.WithTimeout(execCtx, timeout)
 					defer cancel()
 				}
 				execCtx = WithToolCallID(execCtx, tc.ID)
@@ -442,7 +446,7 @@ ctx = tool.WithReadState(ctx, l.readStateStore)
 			continue
 		}
 
-		if l.checkPermission(ctx, tc, results, skip) {
+		if l.checkPermission(l.withSandboxStatus(ctx, tc), tc, results, skip) {
 			r := results[tc.ID]
 			if !sendEvent(ctx, ch, ToolCallResult{
 				Turn:         state.TurnCount,
@@ -465,11 +469,12 @@ ctx = tool.WithReadState(ctx, l.readStateStore)
 		}
 
 		start := time.Now()
-		execCtx := ctx
+		execCtx := l.withSandboxStatus(ctx, tc)
 		timeout := l.effectiveTimeout(tc.Name)
 		if timeout > 0 {
 			var cancel context.CancelFunc
-			execCtx, cancel = context.WithTimeout(ctx, timeout)
+			// REGRESSION: 同上——必须从 execCtx 派生,保留 per-command 沙箱状态
+			execCtx, cancel = context.WithTimeout(execCtx, timeout)
 			defer cancel()
 		}
 		execCtx = WithToolCallID(execCtx, tc.ID)
@@ -798,8 +803,45 @@ func permissionDeniedResult(result permission.DecisionResult) *tool.ToolResult {
 	}
 }
 
+// withSandboxStatus 为工具调用注入 per-command 沙箱状态。
+// 消费方仅为 Shell 工具(是否 bwrap 包装);Guard 的二元决策不读此状态
+// (2025-08 决策:bypass 即二元决策,与沙箱无关——二审 Medium-2 澄清)。
+// 逃逸命令(excludedCommands 命中)→ active=false → 裸跑(不进沙箱)。
+func (l *Loop) withSandboxStatus(ctx context.Context, tc llm.ToolCall) context.Context {
+	status := sandbox.SandboxStatus{}
+	// 仅 bash 工具可被 OS 级沙箱包装;write/edit 等 in-process 工具
+	// 无沙箱兜底注入 active=false(权限决策不受影响——bypass 即二元决策,
+	// 三审 Medium-2 澄清;in-process 工具无 OS 兜底的风险由 deny 规则兜底)。
+	// REGRESSION: 子代理工具名为 "bash_subagent"(Shell.AllowBg=false),
+	// 必须与 "bash" 同等对待——此前名单遗漏导致子代理 bash 永不进沙箱,
+	// 而 subGuard autoAllow 全放行 → 组合裸奔(二审 High-1)。
+	if tc.Name != "bash" && tc.Name != "shell" && tc.Name != "bash_subagent" {
+		status.Reason = "non-bash tool (no OS-level sandbox)"
+		return sandbox.WithSandboxStatus(ctx, status)
+	}
+	switch {
+	case l.config.SandboxMgr == nil || !l.config.SandboxMgr.Available():
+		status.Reason = "sandbox unavailable"
+	default:
+		excluded, err := l.config.SandboxMgr.IsExcludedForTool(tc.Name, json.RawMessage(tc.Arguments))
+		switch {
+		case err != nil:
+			// 判定失败按逃逸处理:不进沙箱(命令裸跑,Guard 兜底)。
+			// 五审 Low-9:此路径实际不可达(JSON 解析失败时工具本身必败),
+			// 注释更正——非 fail-closed(裸跑),而是 fail-safe(工具必失败)
+			status.Reason = "excluded check failed: " + err.Error()
+		case excluded:
+			status.Reason = "excluded command (escapes sandbox)"
+		default:
+			status.Active = true
+			status.Reason = "sandboxed"
+		}
+	}
+	return sandbox.WithSandboxStatus(ctx, status)
+}
+
 // checkPermission 对单个 tool call 进行权限检查。
-// 返回 true 表示该工具被拒绝，结果已写入 results 和 skip。
+// 返回 true 表示该工具被拒绝,结果已写入 results 和 skip。
 func (l *Loop) checkPermission(ctx context.Context, tc llm.ToolCall, results map[string]*tool.ToolResult, skip map[string]bool) bool {
 	if l.config.Guard == nil {
 		return false

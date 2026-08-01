@@ -11,6 +11,7 @@ import (
 	"github.com/Menfre01/waveloom/pkg/agentloop"
 	"github.com/Menfre01/waveloom/pkg/llm"
 	"github.com/Menfre01/waveloom/pkg/permission"
+	"github.com/Menfre01/waveloom/pkg/sandbox"
 	"github.com/Menfre01/waveloom/pkg/session"
 	"github.com/Menfre01/waveloom/pkg/tool"
 )
@@ -49,6 +50,8 @@ type AgentTool struct {
 	DefaultModel    string // 主模型名
 	DefaultSubModel string // explore 等轻量 agent 的默认模型
 	WorkspaceDir    string // 工作目录,用于分类器路径检查
+	SandboxMgr      *sandbox.SandboxManager // 沙箱管理器(可选):子代理 bash 同样进沙箱
+	Guard           permission.Guard         // 父级权限 Guard(规则继承,三审 High-1)
 
 	mu sync.RWMutex // 保护 LLMClient 的并发读写(SetClient 与 executeFork/executeCold)
 
@@ -254,7 +257,7 @@ OUTPUT RULES:
 }
 
 func verificationSystemPrompt() string {
-	return coldAgentPreamble + `You are a verification specialist. Your job is NOT to confirm the implementation works — 
+	return coldAgentPreamble + `You are a verification specialist. Your job is NOT to confirm the implementation works —
 it's to try to BREAK it.
 
 However, you MAY create ephemeral test scripts in /tmp via bash_subagent when inline commands
@@ -301,7 +304,7 @@ Before reporting FAIL, verify:
 }
 
 func evaluateSystemPrompt() string {
-	return coldAgentPreamble + `You are an independent evaluation agent. Your role is to assess correctness, quality, and security — 
+	return coldAgentPreamble + `You are an independent evaluation agent. Your role is to assess correctness, quality, and security —
 not to implement changes.
 
 You MAY create ephemeral test scripts in /tmp via bash_subagent when you need to test behavior.
@@ -381,7 +384,8 @@ func (a *AgentTool) executeFork(ctx context.Context, p AgentParams) (*tool.ToolR
 	subLoop := agentloop.New(client, registry, agentloop.Config{
 		MaxTurns:      forkMaxTurns,
 		SystemPrompt:  "", // messages already contain system prompt
-		Guard:         permission.NewGuard(permission.WithBypassMode(true)),
+		Guard:         a.subGuard(),
+		SandboxMgr:    a.SandboxMgr,
 		UserResponder: nil,
 		ToolTimeout:   agentloop.DefaultToolTimeout,
 		Model:         model,
@@ -443,7 +447,7 @@ func (a *AgentTool) executeCold(ctx context.Context, p AgentParams) (*tool.ToolR
 	model := a.resolveModel(p.Model)
 
 	sp, extraDisallowed := agentConfig(p.SubagentType)
-	subRegistry := buildColdRegistry(extraDisallowed)
+	subRegistry := a.buildColdRegistry(extraDisallowed)
 
 	// Build tailored environment section: only include OS/Shell/CWD, not the full
 	// system tool list. The subagent's own tool registry defines what it can use;
@@ -472,7 +476,8 @@ func (a *AgentTool) executeCold(ctx context.Context, p AgentParams) (*tool.ToolR
 	subLoop := agentloop.New(client, subRegistry, agentloop.Config{
 		MaxTurns:      maxTurns,
 		SystemPrompt:  sp,
-		Guard:         permission.NewGuard(permission.WithBypassMode(true)),
+		Guard:         a.subGuard(),
+		SandboxMgr:    a.SandboxMgr,
 		UserResponder: nil,
 		ToolTimeout:   agentloop.DefaultToolTimeout,
 		Model:         model,
@@ -519,13 +524,35 @@ func (a *AgentTool) executeCold(ctx context.Context, p AgentParams) (*tool.ToolR
 	}, nil
 }
 
+// subGuard 构造子代理的权限 Guard:
+// - 继承父 Guard 的规则(deny/ask/allow + session 记忆)——三审 High-1:
+//   此前每次新建空规则 Guard,用户 deny 规则对子代理完全失效,
+//   叠加 autoAllow = 无沙箱逃逸命令三重裸奔,违反"子能力是父的子集"
+// - 沙箱可用 → autoAllow 二元决策(子代理无 responder + 沙箱兜底,不产生 ASK)
+// - 沙箱不可用 → 维持原 bypass 语义(子代理委托信任父级)
+func (a *AgentTool) subGuard() permission.Guard {
+	var opts []permission.GuardOption
+	if a.Guard != nil {
+		if entries := a.Guard.ListRules(); len(entries) > 0 {
+			opts = append(opts, permission.WithRules(entries))
+		}
+	}
+	g := permission.NewGuard(opts...)
+	if a.SandboxMgr != nil && a.SandboxMgr.Available() {
+		g.EnableAutoAllow()
+	} else {
+		g.EnableBypass()
+	}
+	return g
+}
+
 // ---------------------------------------------------------------------------
 // registry builders
 // ---------------------------------------------------------------------------
 
 func (a *AgentTool) buildForkRegistry() tool.Registry {
 	r := tool.NewRegistry()
-	for _, t := range allTools() {
+	for _, t := range a.allTools() {
 		if !allAgentDisallowed[t.Name()] {
 			r.Register(t)
 		}
@@ -533,9 +560,9 @@ func (a *AgentTool) buildForkRegistry() tool.Registry {
 	return r
 }
 
-func buildColdRegistry(extraDisallowed map[string]bool) tool.Registry {
+func (a *AgentTool) buildColdRegistry(extraDisallowed map[string]bool) tool.Registry {
 	r := tool.NewRegistry()
-	for _, t := range allTools() {
+	for _, t := range a.allTools() {
 		name := t.Name()
 		if allAgentDisallowed[name] || extraDisallowed[name] {
 			continue
@@ -545,14 +572,14 @@ func buildColdRegistry(extraDisallowed map[string]bool) tool.Registry {
 	return r
 }
 
-func allTools() []tool.Tool {
+func (a *AgentTool) allTools() []tool.Tool {
 	return []tool.Tool{
 		tool.Wrap(&tool.ReadFile{}),
 		tool.Wrap(&tool.EditFile{}),
 		tool.Wrap(&tool.WriteFile{}),
 		tool.Wrap(&tool.WebFetch{}),
 		tool.Wrap(&tool.WebSearch{}),
-		tool.Wrap(&tool.Shell{AllowBg: false}), // bash_subagent
+		tool.Wrap(&tool.Shell{AllowBg: false, SandboxMgr: a.SandboxMgr}), // bash_subagent 同样进沙箱
 	}
 }
 
@@ -976,7 +1003,7 @@ func findLastAssistant(msgs []llm.Message) *llm.Message {
 // buildForkDirective 构造 fork 子 agent 的身份注入提示词。
 func buildForkDirective(description, prompt string) string {
 	return fmt.Sprintf(`<%s>
-You are a fork child process. The message history above is inherited from your parent — 
+You are a fork child process. The message history above is inherited from your parent —
 understand the context, then execute the task below.
 
 Rules:

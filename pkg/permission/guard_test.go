@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/Menfre01/waveloom/pkg/sandbox"
 )
 
 // testGuardDir 创建一个临时工作目录（含 src/main.go 和 .git/）。
@@ -17,6 +19,12 @@ func testGuardDir(t *testing.T) string {
 	_ = os.WriteFile(filepath.Join(dir, "src", "main.go"), []byte("package main"), 0o644)
 	_ = os.MkdirAll(filepath.Join(dir, ".git", "refs"), 0o755)
 	return dir
+}
+
+// sandboxedCtx 返回注入 active 沙箱状态的 context(二元决策测试用)。
+// 模拟 agentloop 对沙箱内命令的 per-command 注入。
+func sandboxedCtx() context.Context {
+	return sandbox.WithSandboxStatus(context.Background(), sandbox.SandboxStatus{Active: true, Reason: "test"})
 }
 
 func TestGuard_Check_DenyRule(t *testing.T) {
@@ -197,9 +205,9 @@ func TestGuard_Check_BypassMode(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// 二元决策(bypass 模式):ASK → ALLOW 矩阵
-// 见 specs/sandbox.md「ModeAutoAllow」第一阶段:bypass 模式即触发二元决策,
-// 所有 ASK 转 ALLOW,仅保留 DENY 硬拦截。
+// 二元决策(autoAllow 模式):ASK → ALLOW 矩阵
+// 见 specs/sandbox.md「ModeAutoAllow」:autoAllowMode + per-command 沙箱状态
+// active 时所有 ASK 转 ALLOW,仅保留 DENY 硬拦截。
 // ---------------------------------------------------------------------------
 
 func TestGuard_BinaryDecision_AskRuleBecomesAllow(t *testing.T) {
@@ -208,14 +216,14 @@ func TestGuard_BinaryDecision_AskRuleBecomesAllow(t *testing.T) {
 		{Rule: Rule{Behavior: RuleAsk, ToolName: "write_file"}, Source: SourceConfig, Scope: ScopeConfig},
 	}
 
-	// bypass:ask 规则 → ALLOW
-	g := NewGuard(WithWorkingDirs(dir), WithBypassMode(true), WithRules(rules))
-	result := g.Check(context.Background(), "write_file", json.RawMessage(`{"file_path": "src/test.go"}`))
+	// autoAllow + 沙箱内:ask 规则 → ALLOW
+	g := NewGuard(WithWorkingDirs(dir), WithAutoAllowMode(true), WithRules(rules))
+	result := g.Check(sandboxedCtx(), "write_file", json.RawMessage(`{"file_path": "src/test.go"}`))
 	if result.Decision != DecisionAllow {
-		t.Errorf("bypass + ask rule: Decision = %s, want %s", result.Decision, DecisionAllow)
+		t.Errorf("autoAllow + ask rule: Decision = %s, want %s", result.Decision, DecisionAllow)
 	}
 	if result.Reason != ReasonBypass {
-		t.Errorf("bypass + ask rule: Reason = %s, want %s", result.Reason, ReasonBypass)
+		t.Errorf("autoAllow + ask rule: Reason = %s, want %s", result.Reason, ReasonBypass)
 	}
 
 	// 非 bypass:ask 规则保持 ASK(回归)
@@ -232,13 +240,13 @@ func TestGuard_BinaryDecision_DestructiveWarningBecomesAllow(t *testing.T) {
 	// rm -rf ./build:RiskMedium + 破坏性警告 → ASK;二元决策下 → ALLOW
 	cmd := json.RawMessage(`{"command": "rm -rf ./build"}`)
 
-	g := NewGuard(WithWorkingDirs(dir), WithBypassMode(true))
-	result := g.Check(context.Background(), "bash", cmd)
+	g := NewGuard(WithWorkingDirs(dir), WithAutoAllowMode(true))
+	result := g.Check(sandboxedCtx(), "bash", cmd)
 	if result.Decision != DecisionAllow {
-		t.Errorf("bypass + destructive warning: Decision = %s, want %s (msg: %s)", result.Decision, DecisionAllow, result.Message)
+		t.Errorf("autoAllow + destructive warning: Decision = %s, want %s (msg: %s)", result.Decision, DecisionAllow, result.Message)
 	}
 	if result.Reason != ReasonBypass {
-		t.Errorf("bypass + destructive warning: Reason = %s, want %s", result.Reason, ReasonBypass)
+		t.Errorf("autoAllow + destructive warning: Reason = %s, want %s", result.Reason, ReasonBypass)
 	}
 }
 
@@ -248,13 +256,13 @@ func TestGuard_BinaryDecision_PathAskBecomesAllow(t *testing.T) {
 	// cat /etc/passwd:只读命令 + 路径验证(工作目录外)→ ASK;二元决策下 → ALLOW
 	cmd := json.RawMessage(`{"command": "cat /etc/passwd"}`)
 
-	g := NewGuard(WithWorkingDirs(dir), WithBypassMode(true))
-	result := g.Check(context.Background(), "bash", cmd)
+	g := NewGuard(WithWorkingDirs(dir), WithAutoAllowMode(true))
+	result := g.Check(sandboxedCtx(), "bash", cmd)
 	if result.Decision != DecisionAllow {
-		t.Errorf("bypass + path ask: Decision = %s, want %s (msg: %s)", result.Decision, DecisionAllow, result.Message)
+		t.Errorf("autoAllow + path ask: Decision = %s, want %s (msg: %s)", result.Decision, DecisionAllow, result.Message)
 	}
 	if result.Reason != ReasonBypass {
-		t.Errorf("bypass + path ask: Reason = %s, want %s", result.Reason, ReasonBypass)
+		t.Errorf("autoAllow + path ask: Reason = %s, want %s", result.Reason, ReasonBypass)
 	}
 }
 
@@ -262,32 +270,32 @@ func TestGuard_BinaryDecision_DenyRuleStillDeny(t *testing.T) {
 	dir := testGuardDir(t)
 	g := NewGuard(
 		WithWorkingDirs(dir),
-		WithBypassMode(true),
+		WithAutoAllowMode(true),
 		WithRules([]RuleEntry{
 			{Rule: Rule{Behavior: RuleDeny, ToolName: "bash"}, Source: SourceConfig, Scope: ScopeConfig},
 		}),
 	)
 
-	result := g.Check(context.Background(), "bash", json.RawMessage(`{"command": "ls"}`))
+	result := g.Check(sandboxedCtx(), "bash", json.RawMessage(`{"command": "ls"}`))
 	if result.Decision != DecisionDeny {
-		t.Errorf("bypass + deny rule: Decision = %s, want %s", result.Decision, DecisionDeny)
+		t.Errorf("autoAllow + deny rule: Decision = %s, want %s", result.Decision, DecisionDeny)
 	}
 	if result.Reason != ReasonRule {
-		t.Errorf("bypass + deny rule: Reason = %s, want %s", result.Reason, ReasonRule)
+		t.Errorf("autoAllow + deny rule: Reason = %s, want %s", result.Reason, ReasonRule)
 	}
 }
 
 func TestGuard_BinaryDecision_PathDangerousWriteStillDeny(t *testing.T) {
 	dir := testGuardDir(t)
-	g := NewGuard(WithWorkingDirs(dir), WithBypassMode(true))
+	g := NewGuard(WithWorkingDirs(dir), WithAutoAllowMode(true))
 
 	// write_file 写工作目录外 → PathDangerous + write → DENY(二元决策保留硬拦截)
-	result := g.Check(context.Background(), "write_file", json.RawMessage(`{"file_path": "/etc/hosts"}`))
+	result := g.Check(sandboxedCtx(), "write_file", json.RawMessage(`{"file_path": "/etc/hosts"}`))
 	if result.Decision != DecisionDeny {
-		t.Errorf("bypass + dangerous write: Decision = %s, want %s (msg: %s)", result.Decision, DecisionDeny, result.Message)
+		t.Errorf("autoAllow + dangerous write: Decision = %s, want %s (msg: %s)", result.Decision, DecisionDeny, result.Message)
 	}
 	if result.Reason != ReasonSafety {
-		t.Errorf("bypass + dangerous write: Reason = %s, want %s", result.Reason, ReasonSafety)
+		t.Errorf("autoAllow + dangerous write: Reason = %s, want %s", result.Reason, ReasonSafety)
 	}
 }
 
@@ -326,14 +334,14 @@ func TestGuard_BinaryDecision_ParserDiffBecomesAllow(t *testing.T) {
 	// JSON 转义后命令为:false && cat safe.txt \; echo ~/.ssh/id_rsa
 	cmd := json.RawMessage(`{"command": "false && cat safe.txt \\; echo ~/.ssh/id_rsa"}`)
 
-	// bypass:parser diff ASK → ALLOW
-	g := NewGuard(WithWorkingDirs(dir), WithBypassMode(true))
-	result := g.Check(context.Background(), "bash", cmd)
+	// autoAllow + 沙箱内:parser diff ASK → ALLOW
+	g := NewGuard(WithWorkingDirs(dir), WithAutoAllowMode(true))
+	result := g.Check(sandboxedCtx(), "bash", cmd)
 	if result.Decision != DecisionAllow {
-		t.Errorf("bypass + parser diff: Decision = %s, want %s (msg: %s)", result.Decision, DecisionAllow, result.Message)
+		t.Errorf("autoAllow + parser diff: Decision = %s, want %s (msg: %s)", result.Decision, DecisionAllow, result.Message)
 	}
 	if result.Reason != ReasonBypass {
-		t.Errorf("bypass + parser diff: Reason = %s, want %s", result.Reason, ReasonBypass)
+		t.Errorf("autoAllow + parser diff: Reason = %s, want %s", result.Reason, ReasonBypass)
 	}
 
 	// 非 bypass:parser diff 保持 ASK(回归)
@@ -346,20 +354,20 @@ func TestGuard_BinaryDecision_ParserDiffBecomesAllow(t *testing.T) {
 
 func TestGuard_BinaryDecision_DefaultAskBecomesAllow(t *testing.T) {
 	dir := testGuardDir(t)
-	// git status:RiskLow 非 plan 模式 → 默认策略 ASK;bypass Step 6 → ALLOW
-	g := NewGuard(WithWorkingDirs(dir), WithBypassMode(true))
-	result := g.Check(context.Background(), "bash", json.RawMessage(`{"command": "git status"}`))
+	// git status:RiskLow 非 plan 模式 → 默认策略 ASK;二元决策 Step 6 → ALLOW
+	g := NewGuard(WithWorkingDirs(dir), WithAutoAllowMode(true))
+	result := g.Check(sandboxedCtx(), "bash", json.RawMessage(`{"command": "git status"}`))
 	if result.Decision != DecisionAllow {
-		t.Errorf("bypass + default ask: Decision = %s, want %s (msg: %s)", result.Decision, DecisionAllow, result.Message)
+		t.Errorf("autoAllow + default ask: Decision = %s, want %s (msg: %s)", result.Decision, DecisionAllow, result.Message)
 	}
 	if result.Reason != ReasonBypass {
-		t.Errorf("bypass + default ask: Reason = %s, want %s", result.Reason, ReasonBypass)
+		t.Errorf("autoAllow + default ask: Reason = %s, want %s", result.Reason, ReasonBypass)
 	}
 }
 
 func TestGuard_BinaryDecision_WritePathBecomesAllow(t *testing.T) {
 	dir := testGuardDir(t)
-	g := NewGuard(WithWorkingDirs(dir), WithBypassMode(true))
+	g := NewGuard(WithWorkingDirs(dir), WithAutoAllowMode(true))
 
 	// 规格书 write/edit 矩阵(二元决策):PathSafe/PathSensitive 写 → ALLOW(Step 6 短路)
 	// 需先创建目标文件:不存在的路径在 macOS 上无法 EvalSymlinks(/var → /private/var),
@@ -376,7 +384,7 @@ func TestGuard_BinaryDecision_WritePathBecomesAllow(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := g.Check(context.Background(), "write_file", json.RawMessage(fmt.Sprintf(`{"file_path": %q}`, tt.filePath)))
+			result := g.Check(sandboxedCtx(), "write_file", json.RawMessage(fmt.Sprintf(`{"file_path": %q}`, tt.filePath)))
 			if result.Decision != DecisionAllow {
 				t.Errorf("%s: Decision = %s, want %s (msg: %s)", tt.name, result.Decision, DecisionAllow, result.Message)
 			}
@@ -384,9 +392,81 @@ func TestGuard_BinaryDecision_WritePathBecomesAllow(t *testing.T) {
 	}
 
 	// 未知工具:默认策略 ASK → Step 6 ALLOW
-	result := g.Check(context.Background(), "unknown_tool", json.RawMessage(`{}`))
+	result := g.Check(sandboxedCtx(), "unknown_tool", json.RawMessage(`{}`))
 	if result.Decision != DecisionAllow {
-		t.Errorf("unknown tool + bypass: Decision = %s, want %s", result.Decision, DecisionAllow)
+		t.Errorf("unknown tool + autoAllow: Decision = %s, want %s", result.Decision, DecisionAllow)
+	}
+}
+
+// 回归:逃逸命令(excludedCommands 命中)在 autoAllow 下同样享受二元决策
+// (用户决策:--bypass-permissions 无条件二元决策,与沙箱/per-command 无关;
+// 逃逸命令的 excludedCommands 仅影响 Shell 是否 bwrap 包装,不影响权限决策)
+func TestRegression_EscapedCommandStillBinaryDecision(t *testing.T) {
+	dir := testGuardDir(t)
+	g := NewGuard(WithWorkingDirs(dir), WithAutoAllowMode(true))
+
+	// 逃逸命令注入 active=false(不影响权限决策)
+	escapedCtx := sandbox.WithSandboxStatus(context.Background(), sandbox.SandboxStatus{Active: false, Reason: "excluded command"})
+	// Step 3 安全 ASK → ALLOW(二元决策)
+	result := g.Check(escapedCtx, "bash", json.RawMessage(`{"command": "rm -rf ./build"}`))
+	if result.Decision != DecisionAllow {
+		t.Errorf("escaped command: Decision = %s, want %s (binary decision)", result.Decision, DecisionAllow)
+	}
+	// 默认策略 → ALLOW(Step 6 短路)
+	result = g.Check(escapedCtx, "bash", json.RawMessage(`{"command": "git status"}`))
+	if result.Decision != DecisionAllow {
+		t.Errorf("escaped + default policy: Decision = %s, want %s", result.Decision, DecisionAllow)
+	}
+
+	// 对照组:无 ctx 注入 → 同样 ALLOW(binaryDecision 不依赖 ctx)
+	result = g.Check(context.Background(), "bash", json.RawMessage(`{"command": "rm -rf ./build"}`))
+	if result.Decision != DecisionAllow {
+		t.Errorf("no ctx: Decision = %s, want %s", result.Decision, DecisionAllow)
+	}
+}
+
+// 回归:纯 bypass(沙箱不可用/未注入 autoAllow)+ ctx active → 不进入二元决策,
+// 维持原 bypass 语义(Step 3 ASK 走原路径,Step 6 短路默认策略)
+func TestRegression_PureBypassNoBinaryDecision(t *testing.T) {
+	dir := testGuardDir(t)
+	g := NewGuard(WithWorkingDirs(dir), WithBypassMode(true))
+
+	// 破坏性警告 ASK 不被转换:Step 3 ASK 直接返回,不短路 Step 6
+	// (规格书"纯 bypass 维持现状语义:Step 3 ASK 走原路径")
+	result := g.Check(sandboxedCtx(), "bash", json.RawMessage(`{"command": "rm -rf ./build"}`))
+	if result.Decision != DecisionAsk || result.Reason != ReasonSafety {
+		t.Errorf("pure bypass + destructive: Decision = %s (reason %s), want ask/safety (Step 3 preserved)", result.Decision, result.Reason)
+	}
+
+	// passthrough 命令:Step 6 bypass 短路默认策略 → ALLOW
+	result = g.Check(sandboxedCtx(), "bash", json.RawMessage(`{"command": "git status"}`))
+	if result.Decision != DecisionAllow || result.Reason != ReasonBypass {
+		t.Errorf("pure bypass + git status: Decision = %s (reason %s), want allow/bypass", result.Decision, result.Reason)
+	}
+
+	// ask 规则不被转换:二元决策要求 autoAllowMode,未注入时 ASK 保留
+	g2 := NewGuard(
+		WithWorkingDirs(dir),
+		WithBypassMode(true),
+		WithRules([]RuleEntry{
+			{Rule: Rule{Behavior: RuleAsk, ToolName: "write_file"}, Source: SourceConfig, Scope: ScopeConfig},
+		}),
+	)
+	result = g2.Check(sandboxedCtx(), "write_file", json.RawMessage(`{"file_path": "src/test.go"}`))
+	if result.Decision != DecisionAsk {
+		t.Errorf("pure bypass + ask rule: Decision = %s, want %s (ASK preserved)", result.Decision, DecisionAsk)
+	}
+}
+
+// 回归:autoAllowMode 且 ctx 未注入沙箱状态 → 仍二元决策
+// (binaryDecision 不依赖 per-command 沙箱标志,用户决策:bypass 即二元决策)
+func TestRegression_NoSandboxStatusInCtx(t *testing.T) {
+	dir := testGuardDir(t)
+	g := NewGuard(WithWorkingDirs(dir), WithAutoAllowMode(true))
+
+	result := g.Check(context.Background(), "bash", json.RawMessage(`{"command": "rm -rf ./build"}`))
+	if result.Decision != DecisionAllow {
+		t.Errorf("no sandbox status: Decision = %s, want %s", result.Decision, DecisionAllow)
 	}
 }
 

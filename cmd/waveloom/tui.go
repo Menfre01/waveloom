@@ -59,6 +59,7 @@ import (
 	"github.com/Menfre01/waveloom/pkg/permission"
 	"github.com/Menfre01/waveloom/pkg/pricing"
 	"github.com/Menfre01/waveloom/pkg/reference"
+	"github.com/Menfre01/waveloom/pkg/sandbox"
 	"github.com/Menfre01/waveloom/pkg/session"
 	"github.com/Menfre01/waveloom/pkg/skill"
 	"github.com/Menfre01/waveloom/pkg/slashcommand"
@@ -197,6 +198,7 @@ type model struct {
 	llmClient     llm.Client
 	registry      tool.Registry
 	guard         permission.Guard
+	sandboxMgr    *sandbox.SandboxManager
 	expander      *reference.Expander
 	slashRegistry *slashcommand.Registry
 	skillLoader   *skill.Loader
@@ -500,7 +502,7 @@ func colorHex(c color.Color) string {
 // ---------------------------------------------------------------------------
 
 // newTUIModel 创建 TUI model，依赖由外部注入（LLM client / tool registry / guard / expander / locale）。
-func newTUIModel(llmClient llm.Client, registry tool.Registry, guard permission.Guard, expander *reference.Expander, modelName string, theme string, contextLimit int, maxTurns int, toolTimeout time.Duration, toolTimeoutSource string, loc Locale, todoState *todo.TodoState, hookRunner *hook.Runner) *model {
+func newTUIModel(llmClient llm.Client, registry tool.Registry, guard permission.Guard, sandboxMgr *sandbox.SandboxManager, expander *reference.Expander, modelName string, theme string, contextLimit int, maxTurns int, toolTimeout time.Duration, toolTimeoutSource string, loc Locale, todoState *todo.TodoState, hookRunner *hook.Runner) *model {
 	cwd, _ := os.Getwd()
 	cm := session.New(buildSystemPrompt(cwd, loc))
 	lc := messagesFor(loc)
@@ -593,6 +595,7 @@ func newTUIModel(llmClient llm.Client, registry tool.Registry, guard permission.
 		llmClient:         llmClient,
 		registry:          registry,
 		guard:             guard,
+		sandboxMgr:        sandboxMgr,
 		expander:          expander,
 		hookRunner:        hookRunner,
 		cwd:               cwd,
@@ -636,12 +639,17 @@ func (m *model) msg() *Messages {
 func (m *model) wireLoop() {
 	guard := m.guard
 	if m.bypassPerm {
-		guard = permission.NewGuard(permission.WithBypassMode(true))
+		// TUI 有交互:bypass 但 NOT autoAllow(二元决策仅限无交互入口)。
+		// 在已创建的 guard 上启用,保留用户 deny 规则。
+		if impl, ok := guard.(*permission.GuardImpl); ok {
+			impl.EnableBypass()
+		}
 	}
 	m.loop = agentloop.New(m.llmClient, m.registry, agentloop.Config{
 		MaxTurns:      m.maxTurns,
 		SystemPrompt:  "",
 		Guard:         guard,
+		SandboxMgr:    m.sandboxMgr,
 		UserResponder: &tuiUserResponder{program: m.program, cwd: m.cwd},
 		Compactor:     m.cm.Compactor(),
 		ToolTimeout:   m.toolTimeout,
@@ -4730,8 +4738,8 @@ func newSlashRegistry(creator slashcommand.SessionCreator, store slashcommand.Se
 // ---------------------------------------------------------------------------
 
 // runTUI 启动交互式 TUI 模式。依赖由 main() 统一初始化后传入，无需重复创建。
-func runTUI(llmClient llm.Client, registry tool.Registry, guard permission.Guard, expander *reference.Expander, modelName string, theme string, contextLimit int, maxTurns int, toolTimeout time.Duration, toolTimeoutSource string, bypassPerm bool, ctxMgr *session.ContextManager, isResume bool, sessionDir string, globalPath string, projectPath string, agentsMdText string, loc Locale, todoState *todo.TodoState, hookRunner *hook.Runner, agentTool *subagent.AgentTool, mcpManager *mcp.Manager, lspManager *lsp.Manager) {
-	m := newTUIModel(llmClient, registry, guard, expander, modelName, theme, contextLimit, maxTurns, toolTimeout, toolTimeoutSource, loc, todoState, hookRunner)
+func runTUI(llmClient llm.Client, registry tool.Registry, guard permission.Guard, sandboxMgr *sandbox.SandboxManager, expander *reference.Expander, modelName string, theme string, contextLimit int, maxTurns int, toolTimeout time.Duration, toolTimeoutSource string, bypassPerm bool, ctxMgr *session.ContextManager, isResume bool, sessionDir string, globalPath string, projectPath string, agentsMdText string, loc Locale, todoState *todo.TodoState, hookRunner *hook.Runner, agentTool *subagent.AgentTool, mcpManager *mcp.Manager, lspManager *lsp.Manager) {
+	m := newTUIModel(llmClient, registry, guard, sandboxMgr, expander, modelName, theme, contextLimit, maxTurns, toolTimeout, toolTimeoutSource, loc, todoState, hookRunner)
 	m.mcpManager = mcpManager
 	m.lspManager = lspManager
 	m.agentTool = agentTool

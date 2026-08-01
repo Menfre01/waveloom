@@ -8,8 +8,10 @@ import (
 	"encoding/hex"
 	"unicode/utf8"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -19,6 +21,7 @@ import (
 	"time"
 
 	"github.com/Menfre01/waveloom/pkg/pathutil"
+	"github.com/Menfre01/waveloom/pkg/sandbox"
 	"github.com/Menfre01/waveloom/pkg/shellutil"
 	"github.com/Menfre01/waveloom/pkg/task"
 )
@@ -39,6 +42,10 @@ type ShellParams struct {
 type Shell struct {
 	AllowBg     bool // true for "bash" (main agent), false for "bash_subagent"
 	lastCommand string
+
+	// SandboxMgr 沙箱管理器(可选)。注入后,按 context 中 per-command
+	// SandboxStatus 决定是否用 bwrap 包装命令;nil 或不可用 → 原样执行。
+	SandboxMgr *sandbox.SandboxManager
 }
 
 func (t *Shell) Name() string {
@@ -276,8 +283,10 @@ func (t *Shell) Execute(ctx context.Context, p ShellParams) (*ToolResult, error)
 	} else {
 		output = append(stdout.Bytes(), stderr.Bytes()...)
 	}
+	output = t.annotateSandboxViolations(ctx, output)
 
 	result, _ := t.formatResult(execErr, cmdCtx, output, duration, timeout, outputPath, "")
+	result.Content = t.escapeHatchHint(ctx, execErr, result.Content)
 	if bgLogFile != "" {
 		result.Content += fmt.Sprintf("\n[background] log: %s", bgLogFile)
 	}
@@ -438,8 +447,10 @@ func (t *Shell) ExecuteStreaming(ctx context.Context, p ShellParams, chunkCb fun
 	} else {
 		output = outputBuf.Bytes()
 	}
+	output = t.annotateSandboxViolations(ctx, output)
 
 	result, _ := t.formatResult(execErr, cmdCtx, output, duration, timeout, outputPath, "")
+	result.Content = t.escapeHatchHint(ctx, execErr, result.Content)
 	if bgLogFile != "" {
 		result.Content += fmt.Sprintf("\n[background] log: %s", bgLogFile)
 	}
@@ -572,7 +583,31 @@ func (t *Shell) setupCommand(ctx context.Context, p *ShellParams) (*exec.Cmd, co
 
 	shellBin, shellArgs := shellInterpreter()
 	args := append(shellArgs, normalizedCmd)
+	// ── 沙箱包装(ctx 中 per-command 状态 active 时)→ 改写为 bwrap argv ──
+	var extraFiles []*os.File
+	if t.SandboxMgr != nil && t.SandboxMgr.Available() && sandbox.SandboxStatusFrom(ctx).Active {
+		wrapped, err := t.SandboxMgr.Transform(shellBin, args)
+		if err != nil {
+			// Transform 失败 → 警告 + 降级为裸命令(不静默失效)
+			slog.Warn("sandbox transform failed, running unsandboxed", "error", err)
+		} else {
+			// 沙箱内工作目录固定为 workspace(bwrap --chdir),working_dir 参数被忽略
+			if p.WorkingDir != "" {
+				slog.Warn("sandbox: working_dir ignored inside sandbox (chdir pinned to workspace)", "working_dir", p.WorkingDir)
+			}
+			shellBin = wrapped[0]
+			// REGRESSION: wrapped 是完整 argv(含 argv[0]=沙箱二进制),
+			// exec.Command(shellBin, args...) 会重复 argv[0]——
+			// sandbox-exec 收到 [sandbox-exec, sandbox-exec, -p, ...] → usage 错误,
+			// bwrap 同样受影响(两个平台全部命令失败)
+			args = wrapped[1:]
+			extraFiles = t.SandboxMgr.ExtraFiles()
+		}
+	}
 	cmd := exec.Command(shellBin, args...)
+	if len(extraFiles) > 0 {
+		cmd.ExtraFiles = append(cmd.ExtraFiles, extraFiles...)
+	}
 	if p.WorkingDir != "" {
 		cmd.Dir = p.WorkingDir
 	}
@@ -591,7 +626,40 @@ func (t *Shell) setupCommand(ctx context.Context, p *ShellParams) (*exec.Cmd, co
 	return cmd, cmdCtx, cancel, timeout, outputFile, outputPath
 }
 
-// newTaskID 生成一个短的唯一任务 ID（8 字符 hex）。
+// annotateSandboxViolations 在命令确实被沙箱包装时,对输出追加
+// <sandbox_violations> 注解(违规必须反馈,不静默失败)。
+// 非沙箱命令或无违规时输出原样返回。
+func (t *Shell) annotateSandboxViolations(ctx context.Context, output []byte) []byte {
+	if t.SandboxMgr == nil || !sandbox.SandboxStatusFrom(ctx).Active {
+		return output
+	}
+	return []byte(sandbox.AnnotateViolations(string(output)))
+}
+
+// escapeHatchHint 沙箱内命令失败时追加逃生舱提示
+// (allowUnsandboxedCommands=true 时;提示模型可配置 excludedCommands 逃逸)。
+// 五审 M3:仅在"疑似沙箱原因"时提示——输出含违规注解,或命令启动失败
+// (非 ExitError,如 exec 找不到二进制);普通退出码错误(grep 无匹配、
+// 语义失败)不提示,避免每次失败都噪。
+func (t *Shell) escapeHatchHint(ctx context.Context, execErr error, content string) string {
+	if execErr == nil || t.SandboxMgr == nil || !t.SandboxMgr.AllowUnsandboxed() {
+		return content
+	}
+	if !sandbox.SandboxStatusFrom(ctx).Active {
+		return content
+	}
+	if strings.Contains(content, "<sandbox_violations>") {
+		return content + "\n[sandbox] command failed inside sandbox — retry by adding it to sandbox.excludedCommands, or use a different approach"
+	}
+	var exitErr *exec.ExitError
+	if errors.As(execErr, &exitErr) {
+		// 命令正常执行但退出码非 0(语义失败)→ 非沙箱原因,不提示
+		return content
+	}
+	return content + "\n[sandbox] command failed inside sandbox — retry by adding it to sandbox.excludedCommands, or use a different approach"
+}
+
+// newTaskID 生成一个短的唯一任务 ID(8 字符 hex)。
 func newTaskID() string {
 	b := make([]byte, 4)
 	_, _ = rand.Read(b)

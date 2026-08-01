@@ -236,7 +236,8 @@ func TestAgentTool_ExecuteCold_SubagentEndError(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestBuildColdRegistry_Evaluate_IsReadOnly(t *testing.T) {
-	r := buildColdRegistry(coldDisallowed)
+	a := &AgentTool{}
+	r := a.buildColdRegistry(coldDisallowed)
 	names := toolNames(r)
 	for _, name := range []string{"read", "web_fetch", "bash_subagent"} {
 		if !contains(names, name) {
@@ -255,7 +256,8 @@ func TestBuildColdRegistry_Evaluate_IsReadOnly(t *testing.T) {
 }
 
 func TestBuildColdRegistry_Explore_IsReadOnly(t *testing.T) {
-	r := buildColdRegistry(coldDisallowed)
+	a := &AgentTool{}
+	r := a.buildColdRegistry(coldDisallowed)
 	names := toolNames(r)
 	for _, name := range []string{"read", "web_fetch", "bash_subagent"} {
 		if !contains(names, name) {
@@ -270,7 +272,8 @@ func TestBuildColdRegistry_Explore_IsReadOnly(t *testing.T) {
 }
 
 func TestBuildColdRegistry_NoAgentTool(t *testing.T) {
-	r := buildColdRegistry(nil)
+	a := &AgentTool{}
+	r := a.buildColdRegistry(nil)
 	names := toolNames(r)
 	for _, name := range []string{"agent", "enter_plan_mode", "exit_plan_mode", "ask_user_question", "kill_background_task"} {
 		if contains(names, name) {
@@ -988,7 +991,8 @@ func TestAgentTool_ExecuteCold_Verification(t *testing.T) {
 }
 
 func TestVerificationRegistry_IsReadOnly(t *testing.T) {
-	r := buildColdRegistry(coldDisallowed)
+	a := &AgentTool{}
+	r := a.buildColdRegistry(coldDisallowed)
 	names := toolNames(r)
 	for _, name := range []string{"read", "web_fetch", "bash_subagent"} {
 		if !contains(names, name) {
@@ -1108,7 +1112,8 @@ func TestFormatSubagentEnvironment_ExploreRegistry(t *testing.T) {
 	ctx := context.Background()
 	ctx = agentloop.WithParentSystemPrompt(ctx, parentSP)
 
-	r := buildColdRegistry(coldDisallowed)
+	a := &AgentTool{}
+	r := a.buildColdRegistry(coldDisallowed)
 
 	got := formatSubagentEnvironment(ctx, r)
 	// Explore 只有 read, web_fetch, bash_subagent
@@ -1130,7 +1135,6 @@ func TestFormatSubagentEnvironment_ExploreRegistry(t *testing.T) {
 		t.Error("should NOT contain parent tool 'docker'")
 	}
 }
-
 
 // ---------------------------------------------------------------------------
 // helpers
@@ -1174,7 +1178,6 @@ func BenchmarkForwardEvents(b *testing.B) {
 		cancel()
 	}
 }
-
 
 // ---------------------------------------------------------------------------
 // Model resolution tests (pro/flash enum -> Default{Sub}Model on AgentTool)
