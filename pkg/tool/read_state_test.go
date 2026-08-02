@@ -19,8 +19,8 @@ func TestRegression_ValidateResolvedPathDiagnostics(t *testing.T) {
 	if !strings.Contains(reason, "/proj/pkg/sandbox/x_test.go") {
 		t.Errorf("reason should contain resolved path: %q", reason)
 	}
-	if !strings.Contains(reason, "omit the '*** Update File:' header") {
-		t.Errorf("reason should hint at header omission: %q", reason)
+	if !strings.Contains(reason, "BEFORE edit") {
+		t.Errorf("reason should say read BEFORE edit: %q", reason)
 	}
 }
 

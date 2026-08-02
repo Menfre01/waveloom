@@ -65,10 +65,10 @@ func (s *ReadStateStore) Validate(path string) (ok bool, reason string) {
 	s.mu.RUnlock()
 
 	if state == nil {
-		// 路径诊断:not-been-read 的常见根因是 hunk header 路径被错误解析
-		// (如双重嵌套),而非真的没读过。展示解析后的路径让 LLM 能识别。
-		return false, "file has not been read yet — use read tool first (resolved: " + cleanPath +
-			"; if this is a single-file edit, omit the '*** Update File:' header so the hunk targets file_path directly)"
+		// 归因明确:主因是 edit 前未 read(路径双重嵌套已容错)。
+		// 展示解析后的路径,排除 header 路径写法的干扰。
+		return false, "file has not been read yet — call read on this file BEFORE edit (resolved: " + cleanPath +
+			"; already read? check the '*** Update File:' header — omit it for single-file edits)"
 	}
 
 	info, err := os.Stat(path)

@@ -28,7 +28,7 @@ type EditFile struct{}
 
 func (t *EditFile) Name() string        { return "edit" }
 func (t *EditFile) Description() string {
-	return "Edit files using unified diff hunks. Supports multi-file, multi-hunk patches."
+	return "Edit files using unified diff hunks. MANDATORY: read the target file(s) first — edit rejects files without a recent read state. Supports multi-file, multi-hunk patches."
 }
 func (t *EditFile) Prompt() string       { return editFilePrompt }
 func (t *EditFile) ConcurrentSafe() bool { return false }
@@ -89,9 +89,9 @@ func (t *EditFile) Execute(ctx context.Context, p EditFileParams) (*ToolResult, 
 			failed++
 			fmt.Fprintf(&buf, "✗ %s: @@ %s — %s\n", r.File, r.Header, r.Error)
 			// REGRESSION: not-been-read 的高发根因是 hunk header 路径被错误
-			// 解析(双重嵌套),而非真的没读过。给出可操作的恢复指引。
+			// 解析(双重嵌套,已容错)或根本没 read。给出可操作的恢复指引。
 			if strings.Contains(r.Error, "file has not been read yet") {
-				buf.WriteString("  hint: hunk 目标与 file_path 解析不一致——单文件编辑请省略 `*** Update File:` 头,或核对 header 路径写法(绝对路径/仅文件名)\n")
+				buf.WriteString("  hint: 目标文件尚未 read——edit 前必须 read(部分读取亦可);若已 read 仍失败,检查 hunk 是否带了 `*** Update File:` 头(单文件编辑请省略)\n")
 			}
 			if len(r.OldLines) > 0 {
 				buf.WriteString("  pattern:\n")

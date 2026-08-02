@@ -319,7 +319,7 @@ func TestEditFile_NotBeenReadHint(t *testing.T) {
 		t.Errorf("output missing not-been-read error: %q", result.Content)
 	}
 	if !strings.Contains(result.Content, "hint:") ||
-		!strings.Contains(result.Content, "省略 `*** Update File:` 头") {
+		!strings.Contains(result.Content, "edit 前必须 read") {
 		t.Errorf("output missing header hint: %q", result.Content)
 	}
 }

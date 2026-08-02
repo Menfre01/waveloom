@@ -7,6 +7,15 @@
 - `file_path` — default target file. For single-file edits (no `*** Update File:` headers), this is the file being edited. For multi-file patches, relative paths in `*** Update File:` headers resolve against this file's directory.
 - `hunk` — unified diff hunk(s) in the envelope format below.
 
+### ⚠️ Before you edit: READ FIRST (mandatory, not optional)
+
+**You MUST call `read` on the file before `edit`.** The engine rejects hunks for files without a recent read state — skipping read guarantees a failed round-trip: the tool refuses, you burn a turn and tokens re-reading, then retry.
+
+- Any read counts: full read, `read(pattern=...)`, or `read(limit=...)` all record the file's content.
+- **Multi-file patches: read EVERY target file before the edit call.**
+- `write` refreshes the read state, so `write` → `edit` on the same file needs no re-read.
+- If the file changed after your read (another tool modified it), `edit` reports "file has been modified since read" — re-read before retrying.
+
 ### Format
 
 ```
@@ -115,7 +124,6 @@ Each additional file gets its own `*** Update File: <path>` header before its hu
 
 ### Tips
 
-- **Read first**: always `read` the file before editing — the engine validates file state. `write` also updates file state, so write→edit works without re-read.
 - **Context lines**: include 1-2 unchanged lines around each change for unique matching. Copy content exactly from `read` output — line numbers, colons, and the `[path]` header are NOT part of the context.
 - **Exact whitespace**: copy tabs/spaces exactly from the read output.
 - **Empty lines in read output**: an empty line appears as `N:` in read output (line number + colon, no visible content). In a hunk context line, copy it as ` ` (space prefix) with nothing after it — the space is the unified diff context marker, followed by the empty content.
