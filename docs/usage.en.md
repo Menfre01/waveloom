@@ -44,7 +44,7 @@ The prefix character at the beginning of each line tells you **who is speaking**
 | `Ctrl+G` | Toggle theme (auto / dark / light / darkcolorblind / lightcolorblind) |
 | `Ctrl+V` | Paste from clipboard |
 | `?` | Show keyboard shortcut help |
-| `Ctrl+C` | Quit |
+| `Ctrl+C×2` | Double-tap to quit (prevents accidental exit) |
 | `Shift + mouse drag` | Select text in terminal |
 | `Mouse wheel` | Scroll 3 lines per tick |
 The **footer status bar** shows: current model, context usage (progress bar), cache hit rate, loop count, balance.
@@ -99,7 +99,7 @@ Plan Mode is a two-stage "design first, implement later" workflow. Ideal for tas
 - **Agent-invoked**: LLM assesses task complexity and calls `enter_plan_mode`, which pops up a confirmation dialog
 
 **In Plan Mode**:
-- All tools remain visible, but `write_file` / `edit_file` are restricted to the plan file only
+- All tools remain visible, but `write` / `edit` are restricted to the plan file only
 - Shell analysis commands (`go test`, `git log`, `npm ls`, etc.) are auto-allowed; dangerous commands are blocked
 - LLM communicates with you continuously via `ask_user_question` to clarify requirements
 - Plan content is written to `~/.waveloom/plans/<slug>.md`

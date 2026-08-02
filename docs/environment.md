@@ -8,9 +8,9 @@
 
 # 环境配置
 
-Agent 启动时会自动探测当前环境可用的编译器、运行时、构建工具和 LSP Server（`go`、`python3`、`node`、`rustc`、`gcc`、`java`、`gopls`、`clangd` 等 25 项）,并将结果注入 System Prompt 的 `## Environment` 节,告知模型当前可用命令。LSP Server 的探测结果用于自动启用 edit/write 后诊断,详见 [`lsp.md`](./lsp.md)。
+Agent 启动时会自动探测当前环境可用的编译器、运行时、构建工具和 LSP Server(`go`、`python3`、`node`、`rustc`、`gcc`、`java`、`gopls`、`clangd` 等 26 项),并将结果注入 System Prompt 的 `## Environment` 节,告知模型当前可用命令。LSP Server 的探测结果用于自动启用 edit/write 后诊断,详见 [`lsp.md`](./lsp.md)。
 
-> **Windows 用户**：Waveloom 依赖 [Git for Windows](https://git-scm.com/downloads/win) 提供的 `bash.exe` 执行 Shell 命令。安装 Git for Windows 后，Waveloom 会自动探测 `bash.exe` 路径（支持 `WAVELOOM_GIT_BASH_PATH` 环境变量覆盖）。
+> **Windows 用户**:Waveloom 依赖 [Git for Windows](https://git-scm.com/downloads/win) 提供的 `bash.exe` 执行 Shell 命令。安装 Git for Windows 后,Waveloom 会自动探测 `bash.exe` 路径(`WAVELOOM_GIT_BASH_PATH` 环境变量为第二优先级,PATH 中的 `bash.exe` 优先)。
 
 ## tools 覆盖
 

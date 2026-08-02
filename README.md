@@ -81,8 +81,8 @@ waveloom
 | Sub-agents | Fork (inherits context) / Cold: Evaluate (code review) • Explore (read-only) • Verification (adversarial) | Fork + Cold + In-process + Coordinator | `task` tool with nested agent, background via job manager |
 | Runtime | Go binary ~20MB, zero deps | Node.js | Go binary + Desktop app, external plugin host |
 | MCP | Full client (config, transport, tool proxy), registered alongside built-in tools | Native MCP support | Native MCP support |
-| Permission | 7-step pipeline, 5-layer tool output security (Unicode cleaning → injection scan → boundary markers → risk grading → safe truncation), 4-tier command safety (RiskNone/RiskLow/RiskMedium/RiskHigh) | 8-source rule merge + LLM classifier auto-approval | Policy + Approver, 9-stage execute pipeline, shellsafe readOnly detect |
-| Hook | PreToolUse / PostToolUse / Notification / Stop / SubagentStop, permission_mode field, runtime fail-open | Native hooks: PreToolUse, PostToolUse, etc. | — |
+| Permission | 8-step pipeline, 5-layer tool output security (Unicode cleaning → injection scan → boundary markers → risk grading → safe truncation), 4-tier command safety (RiskNone/RiskLow/RiskMedium/RiskHigh) | 8-source rule merge + LLM classifier auto-approval | Policy + Approver, 9-stage execute pipeline, shellsafe readOnly detect |
+| Hook | PreToolUse / PostToolUse / Notification / Stop, permission_mode field, fail-open by default (exit code 2 explicitly blocks) | Native hooks: PreToolUse, PostToolUse, etc. | — |
 | TUI polish | Streaming reasoning, rich diff, permission dialogs, `@` fuzzy picker, `/` palette, i18n, theme toggle — premium terminal UX | Native TUI (Ink/React), gold standard | Functional TUI, different UX paradigm |
 
 **Choose Waveloom if**: you want premium terminal UX with multi-provider support (DeepSeek / Kimi / OpenAI), `.claude/skills/` + `.claude/plugins/` drop-in, without the cache miss cost.
@@ -102,7 +102,7 @@ waveloom
 - **Prefix cache optimized** — Fixed System Prompt, append-only message history, four-tier watermark compaction. Maximum common prefix stays cache-hot across turns.
 - **Permission safety** — Three-tier decisions (allow / deny / ask) with pattern-matching rule engine, backed by a 5-layer tool output security pipeline (Unicode cleaning → injection scan → boundary markers → risk grading → safe truncation). Every write operation requires your confirmation.
 - **OS-level sandbox** — Optional execution isolation via bubblewrap (Linux) / Seatbelt (macOS): read-only root, workspace-only writes, credential masking (`~/.ssh`, keychains, tokens), env var stripping, configurable env injection (redirect build-tool caches like `GOPATH`/`GOMODCACHE`/`npm_config_cache` into the workspace), and network control (`off` / `on`). Auto-activated with `--bypass-permissions`; configure via `"sandbox"` in `settings.json` or `--sandbox-network off|on`.
-- **Hook system** — PreToolUse / PostToolUse / Notification / Stop / SubagentStop hooks with permission_mode field. Runtime fail-open — hooks never block tool execution. Configured via `settings.json`.
+- **Hook system** — PreToolUse / PostToolUse / Notification / Stop hooks with permission_mode field. Fail-open by default — hook crashes never block tool execution; exit code 2 explicitly blocks. Configured via `settings.json`.
 - **Session persistence** — Close the terminal, come back days later with `waveloom --continue`. The agent remembers all prior context.
 - **Checkpoint/Rewind** — Rewind to any previous message with full file state restoration. Fork mode preserves original session intact — history never lost.
 - **Plan Mode** — Two-stage workflow: explore & design first, implement after approval. `Shift+Tab` to enter/exit, Guard-enforced write protection.

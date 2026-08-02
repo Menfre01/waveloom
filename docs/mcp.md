@@ -61,8 +61,9 @@ waveloom mcp add --transport stdio --env "NODE_ENV=production" my-tool -- npx my
 
 | 值 | 写入位置 | 生效范围 |
 |----|---------|---------|
-| `user`（默认） | `~/.waveloom.json` | 全局，所有项目 |
-| `local` | `.mcp.json` | 仅当前项目 |
+| `local`(默认) | `~/.waveloom.json` 的 `projects.<cwd>` 段 | 仅当前项目 |
+| `user` | `~/.waveloom.json` 的顶层 `mcpServers` | 全局,所有项目 |
+| `project` | `.mcp.json` | 仅当前项目,跟随仓库提交 |
 
 ## 配置文件格式
 
@@ -139,7 +140,7 @@ waveloom mcp add --transport stdio --env "NODE_ENV=production" my-tool -- npx my
 
 ```bash
 # 查看 MCP 连接日志
-waveloom --verbose "test" 2>&1 | grep "\[mcp\]"
+waveloom --log-level debug "test" 2>&1 | grep "\[mcp\]"
 
 # 验证 Server 是否注册成功
 waveloom mcp list

@@ -26,11 +26,11 @@ Waveloom 依赖 Git Bash 提供 Unix 兼容的 shell 环境。请从 [git-scm.co
 
 **Q: 如何确认前缀缓存正在生效？**
 
-TUI 底部状态栏显示缓存命中率。也可查看 `.waveloom/waveloom.log`（需启用 `--verbose`）中的 `cache_hit_tokens` 信息。
+TUI 底部状态栏显示缓存命中率。也可查看 `~/.waveloom/logs/` 下的日志(默认级别 info,`--log-level debug` 输出更多细节)中的 `cache_hit_tokens` 信息。
 
 **Q: @ 文件引用在单次执行模式下能用吗？**
 
-`@` 文件引用当前仅在 TUI 交互模式中支持。单次执行模式下将 `@pkg/foo.go` 当作普通文本处理。
+`@` 文件引用在 TUI 交互模式和单次执行模式中均支持;展开失败时回退为普通文本。
 
 **Q: edit/write 后如何验证代码正确性?**
 

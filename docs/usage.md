@@ -44,7 +44,7 @@ waveloom
 | `Ctrl+G` | 切换主题（auto / dark / light / darkcolorblind / lightcolorblind） |
 | `Ctrl+V` | 粘贴剪贴板内容 |
 | `?` | 显示快捷键帮助 |
-| `Ctrl+C` | 退出 |
+| `Ctrl+C×2` | 双击退出(防误触) |
 | `Shift + 鼠标拖动` | 选中终端中的文本 |
 | `鼠标滚轮` | 每次滚动 3 行 |
 **底部状态栏**显示：当前模型、上下文用量（进度条）、缓存命中率、Loop 轮数、余额。
@@ -99,7 +99,7 @@ Plan 模式是"先规划后执行"的二阶段工作流。适合 3 个以上文�
 - **Agent 主动调用**：LLM 判断任务复杂度后调用 `enter_plan_mode`，弹出确认框
 
 **Plan 模式下**：
-- 所有工具正常可见，但 `write_file` / `edit_file` 仅允许写入 plan 文件
+- 所有工具正常可见,但 `write` / `edit` 仅允许写入 plan 文件
 - Shell 分析命令（`go test`、`git log`、`npm ls` 等）自动放行，危险命令硬拦截
 - LLM 通过 `ask_user_question` 与你持续沟通澄清需求
 - Plan 内容写入 `~/.waveloom/plans/<slug>.md`

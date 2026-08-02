@@ -79,8 +79,8 @@ waveloom
 | 子代理 | Fork(继承上下文)/ Cold:Evaluate(代码评审)• Explore(只读)• Verification(对抗验证) | Fork + Cold + In-process + Coordinator | `task` 工具嵌套 agent,后台任务通过 job manager |
 | 运行时 | Go 单二进制 ~20MB，零依赖 | Node.js | Go 二进制 + Desktop 应用，外部 plugin 宿主 |
 | MCP | 完整客户端（配置、传输、工具代理），与内置工具统一注册 | 原生 MCP 支持 | 原生 MCP 支持 |
-| 权限模型 | 7 步决策管线,5 层工具输出安全(Unicode 清洗 → 注入扫描 → 边界标记 → 风险分级 → 安全截断),4 级命令安全分类(RiskNone/RiskLow/RiskMedium/RiskHigh) | 8 源规则合并 + LLM 分类器自动审批 | Policy + Approver,9 阶段执行管线,shellsafe readOnly 检测 |
-| Hook | PreToolUse / PostToolUse / Notification / Stop / SubagentStop,permission_mode 字段,runtime fail-open | 原生 hooks:PreToolUse, PostToolUse 等 | — |
+| 权限模型 | 8 步决策管线,5 层工具输出安全(Unicode 清洗 → 注入扫描 → 边界标记 → 风险分级 → 安全截断),4 级命令安全分类(RiskNone/RiskLow/RiskMedium/RiskHigh) | 8 源规则合并 + LLM 分类器自动审批 | Policy + Approver,9 阶段执行管线,shellsafe readOnly 检测 |
+| Hook | PreToolUse / PostToolUse / Notification / Stop,permission_mode 字段,默认 fail-open(exit 2 显式拦截) | 原生 hooks:PreToolUse, PostToolUse 等 | — |
 | TUI 打磨 | 流式推理、rich diff、权限对话框、`@` 模糊选择器、`/` 面板、i18n、主题切换 — 专业级 | 原生 TUI(Ink/React),标杆水平 | 功能完备的 TUI,不同 UX 范式 |
 **选 Waveloom 如果**：追求专业终端体验，需要多 Provider 支持（DeepSeek / Kimi / OpenAI），想要 `.claude/skills/` + `.claude/plugins/` 开箱即用，不想白烧缓存未命中费用。
 **选 Claude Code 如果**：用 Anthropic API、需要 coordinator 模式、重度依赖 Claude 生态。
@@ -99,7 +99,7 @@ waveloom
 - **前缀缓存深度优化** — System Prompt 固定，消息只在末尾追加，四级水位线压缩后字节永不变化，最大公共前缀持续命中
 - **权限安全模型** — 三级决策(allow / deny / ask),规则引擎支持模式匹配,底层 5 层工具输出安全管线(Unicode 清洗 → 注入扫描 → 边界标记 → 风险分级 → 安全截断)。写操作和命令执行需要你确认。
 - **OS 级沙箱** — 可选执行隔离:bubblewrap(Linux)/ Seatbelt(macOS)实现只读根、工作区可写、凭据遮蔽(`~/.ssh`、钥匙串、token)、环境变量剥离、可配置环境变量注入(把 `GOPATH`/`GOMODCACHE`/`npm_config_cache` 等构建缓存重定向进工作区)与网络控制(`off`/`on`)。`--bypass-permissions` 自动激活;通过 `settings.json` 的 `"sandbox"` 段或 `--sandbox-network off|on` 配置。
-- **Hook 系统** — PreToolUse / PostToolUse / Notification / Stop / SubagentStop 五种事件,支持 permission_mode 字段。Runtime fail-open,永不阻塞工具执行。通过 `settings.json` 配置。
+- **Hook 系统** — PreToolUse / PostToolUse / Notification / Stop 四种事件,支持 permission_mode 字段。默认 fail-open——hook 崩溃不阻塞工具执行,exit code 2 显式拦截。通过 `settings.json` 配置。
 - **会话持久恢复** — 关闭终端几天后 `waveloom --continue` 回来,Agent 记得所有上下文接着工作
 - **Checkpoint/Rewind 时间旅行** — 回退到任意历史消息,同时恢复所有文件变更。Fork 模式原 session 完整保留,历史永不丢失
 - **Plan 模式** — 先规划后执行的二阶段工作流:探索设计 → 审批 → 编码。`Shift+Tab` 一键进入/退出,Guard 写保护拦截。

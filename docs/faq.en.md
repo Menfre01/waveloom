@@ -26,11 +26,11 @@ Waveloom requires Git Bash for a Unix-compatible shell environment. Download and
 
 **Q: How can I verify prefix caching is working?**
 
-The TUI footer status bar shows the cache hit rate. You can also check `.waveloom/waveloom.log` (requires `--verbose`) for `cache_hit_tokens` info.
+The TUI footer status bar shows the cache hit rate. You can also check logs under `~/.waveloom/logs/` (default level info; `--log-level debug` for more detail) for `cache_hit_tokens` info.
 
 **Q: Do @ file references work in one-shot mode?**
 
-`@` file references are currently only supported in TUI interactive mode. In one-shot mode, `@pkg/foo.go` is treated as plain text.
+`@` file references are supported in both TUI interactive mode and one-shot mode; if expansion fails, the text is used as-is.
 
 **Q: How does Waveloom verify code after edit/write?**
 

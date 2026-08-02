@@ -8,9 +8,9 @@
 
 # Environment Configuration
 
-On startup, the agent probes the current environment for available compilers, runtimes, build tools, and LSP servers (25 entries including `go`, `python3`, `node`, `rustc`, `gcc`, `java`, `gopls`, `clangd`, etc.), then injects the results into the System Prompt's `## Environment` section. LSP server probe results enable automatic post-edit diagnostics — see [`lsp.en.md`](./lsp.en.md).
+On startup, the agent probes the current environment for available compilers, runtimes, build tools, and LSP servers (26 entries including `go`, `python3`, `node`, `rustc`, `gcc`, `java`, `gopls`, `clangd`, etc.), then injects the results into the System Prompt's `## Environment` section. LSP server probe results enable automatic post-edit diagnostics — see [`lsp.en.md`](./lsp.en.md).
 
-> **Windows users**: Waveloom relies on [Git for Windows](https://git-scm.com/downloads/win) to provide `bash.exe` for shell command execution. After installing Git for Windows, Waveloom auto-detects the `bash.exe` path (override via `WAVELOOM_GIT_BASH_PATH` environment variable).
+> **Windows users**: Waveloom relies on [Git for Windows](https://git-scm.com/downloads/win) to provide `bash.exe` for shell command execution. After installing Git for Windows, Waveloom auto-detects the `bash.exe` path (`WAVELOOM_GIT_BASH_PATH` is the second priority; a `bash.exe` in PATH wins).
 
 ## Tools Override
 

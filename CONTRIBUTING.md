@@ -37,23 +37,34 @@ make test
 waveloom/
 ├── cmd/waveloom/          # CLI 入口 + TUI
 ├── pkg/
+│   ├── acp/               # Agent Client Protocol
 │   ├── agentloop/         # Think-Act-Observe 循环
+│   ├── bash/              # Shell 命令 AST 解析与危险检测
 │   ├── compaction/        # 四级水位线上下文压缩
-│   ├── context/           # 跨轮次消息历史
 │   ├── environment/       # 编译/运行时工具链探测
-│   ├── llm/               # LLM Client（DeepSeek + OpenAI）
-│   ├── mcp/               # MCP 客户端
+│   ├── filehistory/       # 文件历史备份、快照、回退
+│   ├── hook/              # Hook 系统(PreToolUse/PostToolUse 等)
+│   ├── llm/               # LLM Client(DeepSeek/Kimi/OpenAI adapter)
+│   ├── logging/           # 日志
+│   ├── lsp/               # LSP 诊断客户端
+│   ├── mcp/               # MCP 客户端(配置、传输、工具代理)
 │   ├── memory/            # AGENTS.md 层级加载
 │   ├── pathutil/          # 路径工具
-│   ├── permission/        # 权限守门人
+│   ├── permission/        # 权限守门人(规则引擎、路径/命令安全)
+│   ├── plugin/            # 插件发现
+│   ├── pricing/           # LLM token 计费
+│   ├── prompt/            # 系统提示词(embed)
 │   ├── reference/         # @ 文件引用展开
-│   ├── shellutil/         # Shell 工具
+│   ├── sandbox/           # OS 级沙箱(bwrap/Seatbelt)
+│   ├── session/           # 跨轮次消息历史与持久化
+│   ├── shellutil/         # Shell 命令处理共享实用函数
 │   ├── skill/             # Skill 系统
 │   ├── slashcommand/      # / 命令面板
-│   ├── subagent/          # 子代理
+│   ├── subagent/          # 子代理(Fork/Cold/Explore)
 │   ├── task/              # 后台任务管理
 │   ├── todo/              # Todo 状态管理
-│   └── tool/              # 内置工具系统
+│   ├── tool/              # 内置工具系统
+│   └── tuitest/           # TUI 测试辅助
 ├── specs/                 # 各组件设计规格书（修改前先阅读）
 ├── docs/                  # 文档
 └── Makefile
@@ -98,5 +109,5 @@ waveloom/
 ## 参考文档
 
 - [`docs/system-prompt.md`](./docs/system-prompt.md) — System Prompt 完整内容及设计原则
-- [`docs/tool-descriptions.md`](./docs/tool-descriptions.md) — 12 个内置工具的 Schema 定义
+- [`docs/tool-descriptions.md`](./docs/tool-descriptions.md) — 14 个内置工具的 Schema 定义
 - [`specs/`](./specs/) — 各组件设计规格书（修改前先阅读）

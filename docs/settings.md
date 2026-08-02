@@ -57,9 +57,9 @@ Waveloom 首次运行在 `.waveloom/settings.json` 生成默认配置。配置�
 ```json
 {
   "permissions": {
-    "allow": ["read_file", "web_fetch", "bash(go build *)", "bash(go test *)"],
+    "allow": ["read", "web_fetch", "bash(go build *)", "bash(go test *)"],
     "deny":  ["bash(rm -rf /*)"],
-    "ask":   ["write_file", "edit_file"]
+    "ask":   ["write", "edit"]
   }
 }
 ```
@@ -321,11 +321,10 @@ export BRAVE_API_KEY="your-brave-api-key"
 | `--theme auto/dark/light` | 主题，auto 自动检测终端背景 | `auto` |
 | `--locale zh-CN/en-US/auto` | 界面语言，auto 从 `LANG` 环境变量检测 | `auto` |
 | `--provider NAME` | 切换 LLM Provider（需在 `profiles` 中配置对应 profile） | — |
-| `--log-level level` | 日志级别（error/warn/info/debug） | `info` |
-| `--verbose` | 输出详细日志到 `.waveloom/waveloom.log` | 关闭 |
-| `--bypass-permissions` | 跳过所有权限检查 | 关闭 |
+| `--log-level level` | 日志级别(error/warn/info/debug) | `info` |
+| `--bypass-permissions` | 无交互入口(one-shot/ACP)下 ASK → ALLOW,保留 deny 规则与高危硬拦截;TUI 交互模式维持弹窗 | 关闭 |
 | `--sandbox-network off/on` | 沙箱网络模式,覆盖 `settings.json` 的 `network.mode`(on 建议配置凭据遮蔽) | 取配置 |
-| `--tool-timeout D` | 单个工具执行超时（Go Duration 格式，如 `10m` / `600s` / `0s`，0 禁用） | `10m` |
+| `--tool-timeout D` | 单个工具执行超时(Go Duration 格式,如 `10m` / `600s` / `0s`,0 禁用) | `5m` |
 | `--resume ID` | 恢复指定会话 | — |
 | `--continue` | 恢复最近一次会话 | — |
 | `--settings PATH` | 指定配置文件路径 | `.waveloom/settings.json` |

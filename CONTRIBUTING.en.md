@@ -37,23 +37,34 @@ make test
 waveloom/
 ├── cmd/waveloom/          # CLI entry point + TUI
 ├── pkg/
+│   ├── acp/               # Agent Client Protocol
 │   ├── agentloop/         # Think-Act-Observe loop
+│   ├── bash/              # Shell command AST parsing & danger detection
 │   ├── compaction/        # Four-tier watermark context compaction
-│   ├── context/           # Cross-turn message history
 │   ├── environment/       # Build/runtime toolchain probing
-│   ├── llm/               # LLM Client (DeepSeek + OpenAI)
-│   ├── mcp/               # MCP client
+│   ├── filehistory/       # File history backup, snapshots, rewind
+│   ├── hook/              # Hook system (PreToolUse/PostToolUse etc.)
+│   ├── llm/               # LLM Client (DeepSeek/Kimi/OpenAI adapters)
+│   ├── logging/           # Logging
+│   ├── lsp/               # LSP diagnostic client
+│   ├── mcp/               # MCP client (config, transport, tool proxy)
 │   ├── memory/            # AGENTS.md hierarchical loading
 │   ├── pathutil/          # Path utilities
-│   ├── permission/        # Permission gatekeeper
+│   ├── permission/        # Permission gatekeeper (rules, path/command safety)
+│   ├── plugin/            # Plugin discovery
+│   ├── pricing/           # LLM token pricing
+│   ├── prompt/            # System prompt (embedded)
 │   ├── reference/         # @ file reference expansion
-│   ├── shellutil/         # Shell utilities
+│   ├── sandbox/           # OS-level sandbox (bwrap/Seatbelt)
+│   ├── session/           # Cross-turn message history & persistence
+│   ├── shellutil/         # Shared shell command utilities
 │   ├── skill/             # Skill system
 │   ├── slashcommand/      # / command palette
-│   ├── subagent/          # Sub-agent delegation
+│   ├── subagent/          # Sub-agents (Fork/Cold/Explore)
 │   ├── task/              # Background task management
 │   ├── todo/              # Todo state management
-│   └── tool/              # Built-in tool system
+│   ├── tool/              # Built-in tool system
+│   └── tuitest/           # TUI test helpers
 ├── specs/                 # Component design specs (read before modifying)
 ├── docs/                  # Documentation
 └── Makefile
@@ -98,5 +109,5 @@ Follow [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/) v1
 ## Reference Docs
 
 - [`docs/system-prompt.md`](./docs/system-prompt.md) — Full System Prompt content and design principles
-- [`docs/tool-descriptions.md`](./docs/tool-descriptions.md) — Schema definitions for all 12 built-in tools
+- [`docs/tool-descriptions.md`](./docs/tool-descriptions.md) — Schema definitions for all 14 built-in tools
 - [`specs/`](./specs/) — Component design specs (read before modifying)

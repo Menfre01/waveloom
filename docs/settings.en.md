@@ -324,10 +324,9 @@ When the sandbox is enabled, the following paths are **unreadable by default** (
 | `--locale zh-CN/en-US/auto` | UI language, auto detects from `LANG` env var | `auto` |
 | `--provider NAME` | Switch LLM provider (requires matching profile in `profiles`) | — |
 | `--log-level level` | Log level (error/warn/info/debug) | `info` |
-| `--verbose` | Log detailed output to `.waveloom/waveloom.log` | Off |
-| `--bypass-permissions` | Skip all permission checks | Off |
+| `--bypass-permissions` | Non-interactive (one-shot/ACP): ASK → ALLOW, keeping deny rules and high-risk hard blocks; TUI interactive mode keeps dialogs | Off |
 | `--sandbox-network off/on` | Sandbox network mode, overrides `network.mode` in `settings.json` (on: credential masking recommended) | From config |
-| `--tool-timeout D` | Single tool execution timeout (Go Duration format, e.g. `10m` / `600s` / `0s`, 0 to disable) | `10m` |
+| `--tool-timeout D` | Single tool execution timeout (Go Duration format, e.g. `10m` / `600s` / `0s`, 0 to disable) | `5m` |
 | `--resume ID` | Resume a specific session | — |
 | `--continue` | Resume the most recent session | — |
 | `--settings PATH` | Specify config file path | `.waveloom/settings.json` |

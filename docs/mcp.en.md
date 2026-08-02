@@ -61,8 +61,9 @@ waveloom mcp add --transport stdio --env "NODE_ENV=production" my-tool -- npx my
 
 | Value | Written to | Scope |
 |-------|-----------|-------|
-| `user` (default) | `~/.waveloom.json` | Global, all projects |
-| `local` | `.mcp.json` | Current project only |
+| `local` (default) | `projects.<cwd>` section of `~/.waveloom.json` | Current project only |
+| `user` | Top-level `mcpServers` of `~/.waveloom.json` | Global, all projects |
+| `project` | `.mcp.json` | Current project only, committed with the repo |
 
 ## Config File Format
 
@@ -139,7 +140,7 @@ waveloom mcp add --transport stdio --env "NODE_ENV=production" my-tool -- npx my
 
 ```bash
 # View MCP connection logs
-waveloom --verbose "test" 2>&1 | grep "\[mcp\]"
+waveloom --log-level debug "test" 2>&1 | grep "\[mcp\]"
 
 # Verify a server is registered
 waveloom mcp list
