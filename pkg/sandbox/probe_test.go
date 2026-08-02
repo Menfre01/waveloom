@@ -30,6 +30,12 @@ func fakeBwrapRunner(helpOut string, helpErr, smokeErr error) *bwrapBackend {
 }
 
 func TestProbe_CapabilitiesParsed(t *testing.T) {
+	// 隔离宿主 AppArmor 状态(ubuntu 24.04+ 默认限制 userns):
+	// 本测试只验证 --help 能力解析,与真实 sysctl 无关。
+	orig := apparmorSysctlPath
+	apparmorSysctlPath = filepath.Join(t.TempDir(), "nonexistent")
+	defer func() { apparmorSysctlPath = orig }()
+
 	b := fakeBwrapRunner("--argv0\n--perms\n", nil, nil)
 	if err := b.Probe(); err != nil {
 		t.Fatal(err)
@@ -40,6 +46,11 @@ func TestProbe_CapabilitiesParsed(t *testing.T) {
 }
 
 func TestProbe_CapabilitiesMissing_CompatibleFallback(t *testing.T) {
+	// 隔离宿主 AppArmor 状态,同 TestProbe_CapabilitiesParsed。
+	orig := apparmorSysctlPath
+	apparmorSysctlPath = filepath.Join(t.TempDir(), "nonexistent")
+	defer func() { apparmorSysctlPath = orig }()
+
 	// 老版本 bwrap:--help 无 --argv0/--perms → 不报错,Transform 走兼容构造
 	b := fakeBwrapRunner("usage: bwrap [options]\n", nil, nil)
 	if err := b.Probe(); err != nil {
@@ -59,6 +70,11 @@ func TestProbe_HelpFails(t *testing.T) {
 }
 
 func TestProbe_SmokeFails(t *testing.T) {
+	// 隔离宿主 AppArmor 状态,同 TestProbe_CapabilitiesParsed。
+	orig := apparmorSysctlPath
+	apparmorSysctlPath = filepath.Join(t.TempDir(), "nonexistent")
+	defer func() { apparmorSysctlPath = orig }()
+
 	b := fakeBwrapRunner("--argv0\n", nil, errors.New("operation not permitted"))
 	err := b.Probe()
 	if err == nil || !strings.Contains(err.Error(), "smoke test failed") {

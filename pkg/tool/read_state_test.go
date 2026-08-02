@@ -15,8 +15,11 @@ import (
 // 只能盲目 re-read 重试(实测 re-read 两次均无效)。
 func TestRegression_ValidateResolvedPathDiagnostics(t *testing.T) {
 	s := NewReadStateStore()
-	_, reason := s.Validate("/proj/pkg/sandbox/x_test.go")
-	if !strings.Contains(reason, "/proj/pkg/sandbox/x_test.go") {
+	// REGRESSION: Windows 上 filepath.Clean 将 "/" 归一化为 "\",
+	// 硬编码 Unix 风格断言在 Windows 失败;断言用 Clean 后的期望值。
+	target := filepath.Clean("/proj/pkg/sandbox/x_test.go")
+	_, reason := s.Validate(target)
+	if !strings.Contains(reason, target) {
 		t.Errorf("reason should contain resolved path: %q", reason)
 	}
 	if !strings.Contains(reason, "BEFORE edit") {

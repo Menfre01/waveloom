@@ -2,6 +2,7 @@ package tool
 
 import (
 	"context"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -23,6 +24,12 @@ func (f *wrapBackend) Transform(shellBin string, args []string, cfg *sandbox.Con
 // sandbox-exec 收到 [sandbox-exec, sandbox-exec, -p, ...] → usage 错误,
 // 两个平台全部命令失败。
 func TestRegression_ShellSandboxWrap_NoDuplicateArgv0(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		// Windows 无沙箱后端(windowsStubBackend 恒不可用),且真实 bash 执行
+		// 在 Windows 上未被既有测试覆盖(见 shell_test.go 的 18 处 windows skip);
+		// 沙箱包装路径在 Windows 无实际使用场景。
+		t.Skip("sandbox wrapping is Unix-only (windows stub never activates)")
+	}
 	mgr := sandbox.NewManager(sandbox.DefaultConfig(), "/tmp")
 	mgr.SetBackend(&wrapBackend{})
 	s := &Shell{SandboxMgr: mgr}
@@ -40,6 +47,9 @@ func TestRegression_ShellSandboxWrap_NoDuplicateArgv0(t *testing.T) {
 // TestRegression_ShellSandboxWrap_NonSandboxedUnchanged 对照组:
 // 未注入沙箱状态 → 裸命令正常执行(行为不变)。
 func TestRegression_ShellSandboxWrap_NonSandboxedUnchanged(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("sandbox wrapping is Unix-only (windows stub never activates)")
+	}
 	mgr := sandbox.NewManager(sandbox.DefaultConfig(), "/tmp")
 	mgr.SetBackend(&wrapBackend{})
 	s := &Shell{SandboxMgr: mgr}

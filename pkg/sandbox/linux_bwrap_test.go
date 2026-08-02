@@ -1,3 +1,8 @@
+//go:build linux
+
+// bwrap 后端为 Linux 专属(windows_stub.go 在 Windows 提供占位)。
+// 测试随实现平台限定,避免 Windows 上 filepath 路径语义差异导致断言失败
+// (如 expandPath 的 "/" 前缀断言在 Windows 变为 "\" 前缀)。
 package sandbox
 
 import (

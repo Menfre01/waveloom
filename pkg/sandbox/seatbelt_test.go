@@ -1,3 +1,9 @@
+//go:build darwin
+
+// Seatbelt 后端为 macOS 专属。测试随实现平台限定:
+// - 避免 Windows 上 filepath 路径语义差异导致断言失败
+// - 避免 Linux CI 上进程环境中的 GITHUB_* 变量被动态 strip 列表捕获,
+//   导致 env strip 断言与本地开发环境不一致
 package sandbox
 
 import (

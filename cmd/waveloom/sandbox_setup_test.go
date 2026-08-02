@@ -122,6 +122,11 @@ func TestCreateSandboxManager_EnabledExplicit(t *testing.T) {
 // TestCreateSandboxManager_FailIfUnavailableFatal failIfUnavailable + 后端
 // 不可用 → fatal=true(调用方拒绝启动)。
 func TestCreateSandboxManager_FailIfUnavailableFatal(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		// 实现含 Windows 特例:stub 恒不可用是平台不支持而非环境缺陷,
+		// failIfUnavailable 不拒绝启动(见 sandbox_setup.go Select 失败分支)。
+		t.Skip("failIfUnavailable is not fatal on Windows by design")
+	}
 	path := filepath.Join(t.TempDir(), "settings.json")
 	_ = os.WriteFile(path, []byte(`{"sandbox": {"enabled": true, "failIfUnavailable": true}}`), 0o644)
 	// PATH 置空 → LookPath 必然失败 → Select 失败 → fatal
