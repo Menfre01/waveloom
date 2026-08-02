@@ -45,6 +45,16 @@ type Config struct {
 	Filesystem   FilesystemConfig   `json:"filesystem"`
 	Capabilities CapabilitiesConfig `json:"capabilities"`
 	Credentials  CredentialsConfig  `json:"credentials"`
+	// Env 沙箱内注入的环境变量(通用机制,不绑定任何工具)。
+	// 典型用途:构建工具缓存重定向——如 go 的
+	// {"GOPATH": "./.waveloom-gopath", "GOMODCACHE": "./.waveloom-gomodcache",
+	//  "GOCACHE": "./.waveloom-gocache"}(./ 展开为 workspace 下可写路径),
+	// npm 的 {"npm_config_cache": "./.waveloom-npm-cache"} 等。
+	// 值支持路径前缀语义(~ 家目录、// 绝对、/ 绝对、./ workspace 相对);
+	// 其他(裸名/URL 等)按字面量注入(如 GOPROXY)。
+	// 安全:键命中凭据剥离清单(如 *_API_KEY)时被忽略——剥离优先,
+	// 防止配置回填被剥离的敏感变量。
+	Env map[string]string `json:"env"`
 }
 
 // NetworkConfig 网络隔离策略。
@@ -150,6 +160,34 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("sandbox config: filesystem.allowRead contains empty entry")
 		}
 	}
+	for k, v := range c.Env {
+		if strings.TrimSpace(k) == "" {
+			return fmt.Errorf("sandbox config: env contains empty key")
+		}
+		if strings.TrimSpace(v) == "" {
+			return fmt.Errorf("sandbox config: env.%s has empty value", k)
+		}
+		if !validEnvName(k) {
+			return fmt.Errorf("sandbox config: env key %q is not a valid environment variable name", k)
+		}
+	}
 
 	return nil
+}
+
+// validEnvName 校验环境变量名格式(字母/下划线开头,后跟字母/数字/下划线)。
+func validEnvName(k string) bool {
+	if k == "" {
+		return false
+	}
+	for i, r := range k {
+		ok := r == '_' ||
+			(r >= 'a' && r <= 'z') ||
+			(r >= 'A' && r <= 'Z') ||
+			(i > 0 && r >= '0' && r <= '9')
+		if !ok {
+			return false
+		}
+	}
+	return true
 }

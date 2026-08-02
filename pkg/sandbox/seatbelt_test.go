@@ -279,7 +279,14 @@ func TestSeatbeltTransform_NoEnvStrip(t *testing.T) {
 	home, ws := newTestSeatbelt(t)
 	unsetEnv(t, "SSH_AUTH_SOCK") // 屏蔽本机真实环境变量,确保无剥离变量
 	allow := true
-	cfg := &Config{AllowUnsandboxedCommands: &allow, Network: NetworkConfig{Mode: NetworkModeOff}}
+	cfg := &Config{
+		AllowUnsandboxedCommands: &allow,
+		Network:                  NetworkConfig{Mode: NetworkModeOff},
+		Env: map[string]string{
+			"GOPATH":  "./.waveloom-gopath",
+			"GOPROXY": "https://proxy.golang.org,direct",
+		},
+	}
 	_ = home
 
 	b := newSeatbeltBackend()
@@ -293,10 +300,12 @@ func TestSeatbeltTransform_NoEnvStrip(t *testing.T) {
 	if argv[1] != "-p" {
 		t.Errorf("argv[1] = %q, want -p", argv[1])
 	}
-	// argv[2] 是 profile;随后是 env 包装(TMPDIR=/tmp 恒设置)+ 目标命令
-	// 无剥离变量时: [env, TMPDIR=/tmp, bash, -c, ls]
+	// argv[2] 是 profile;随后是 env 包装(TMPDIR 恒设置 + cfg.Env 注入)+ 目标命令
+	// 无剥离变量时: [env, TMPDIR=/tmp, GOPATH=..., GOPROXY=..., bash, -c, ls]
 	if argv[3] != "/usr/bin/env" || argv[4] != "TMPDIR=/tmp" ||
-		argv[5] != "bash" || argv[6] != "-c" || argv[7] != "ls" {
+		argv[5] != "GOPATH="+filepath.Join(ws, ".waveloom-gopath") ||
+		argv[6] != "GOPROXY=https://proxy.golang.org,direct" ||
+		argv[7] != "bash" || argv[8] != "-c" || argv[9] != "ls" {
 		t.Errorf("target command wrong: %v", argv[3:])
 	}
 }
@@ -330,9 +339,10 @@ func TestSeatbeltTransform_EnvStrip(t *testing.T) {
 	if argv[envIdx+1] != "-u" || argv[envIdx+2] != "MY_SB_TOKEN" {
 		t.Errorf("env strip wrong: %v", argv[envIdx:envIdx+3])
 	}
-	// 剥离变量之后是 TMPDIR=/tmp,再是目标命令
-	if argv[envIdx+3] != "TMPDIR=/tmp" || argv[envIdx+4] != "bash" {
-		t.Errorf("TMPDIR/target wrong: %v", argv[envIdx+3:envIdx+5])
+	// 剥离变量之后是 TMPDIR 赋值,再是目标命令(无 cfg.Env 时)
+	if argv[envIdx+3] != "TMPDIR=/tmp" ||
+		argv[envIdx+4] != "bash" {
+		t.Errorf("env assignments/target wrong: %v", argv[envIdx+3:envIdx+5])
 	}
 }
 

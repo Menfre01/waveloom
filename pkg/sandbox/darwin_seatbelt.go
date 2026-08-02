@@ -59,6 +59,7 @@ func (b *seatbeltBackend) Probe() error {
 func (b *seatbeltBackend) Transform(shellBin string, args []string, cfg *Config, workspace string) ([]string, error) {
 	profile := buildSeatbeltProfile(cfg, workspace)
 	argv := []string{b.bin, "-p", profile}
+	home, _ := os.UserHomeDir()
 
 	// env 包装:选项(-u)在前、赋值(TMPDIR=/tmp)在后——
 	// macOS env 语法 [OPTION]... [NAME=VALUE]... COMMAND,顺序颠倒会把 -u 当命令名
@@ -68,6 +69,12 @@ func (b *seatbeltBackend) Transform(shellBin string, args []string, cfg *Config,
 		argv = append(argv, "-u", name)
 	}
 	argv = append(argv, "TMPDIR=/tmp") // 沙箱内构建需要可写临时目录(对齐 bwrap --setenv)
+	// 通用环境变量注入(cfg.Env,配置驱动,不绑定任何工具)。
+	// 键命中凭据剥离清单的已在 envVarsToSet 过滤;此处赋值在 -u 之后,
+	// 双保险:过滤 + 赋值区,避免覆盖剥离。
+	for _, kv := range envVarsToSet(cfg, home, workspace) {
+		argv = append(argv, kv.Key+"="+kv.Value)
+	}
 
 	argv = append(argv, shellBin)
 	argv = append(argv, args...)

@@ -63,6 +63,12 @@ func newTestBwrap(t *testing.T) (*bwrapBackend, string, string) {
 func TestBwrapTransform_OffMode_StickerOrder(t *testing.T) {
 	b, home, ws := newTestBwrap(t)
 	cfg := DefaultConfig()
+	// 通用 env 注入(配置驱动):路径值展开为 workspace 相对,URL 原样
+	cfg.Env = map[string]string{
+		"GOPATH":     "./.waveloom-gopath",
+		"GOMODCACHE": "./.waveloom-gomodcache",
+		"GOPROXY":    "https://proxy.golang.org,direct",
+	}
 
 	argv, err := b.Transform("bash", []string{"-c", "ls"}, cfg, ws)
 	if err != nil {
@@ -93,6 +99,10 @@ func TestBwrapTransform_OffMode_StickerOrder(t *testing.T) {
 	// chdir + TMPDIR
 	assertSubsequence(t, argv, "--chdir", ws)
 	assertSubsequence(t, argv, "--setenv", "TMPDIR", "/tmp")
+	// 通用 env 注入:路径值展开到 workspace,非路径值原样
+	assertSubsequence(t, argv, "--setenv", "GOMODCACHE", filepath.Join(ws, ".waveloom-gomodcache"))
+	assertSubsequence(t, argv, "--setenv", "GOPATH", filepath.Join(ws, ".waveloom-gopath"))
+	assertSubsequence(t, argv, "--setenv", "GOPROXY", "https://proxy.golang.org,direct")
 
 	// 能力
 	assertSubsequence(t, argv, "--cap-drop", "ALL")
@@ -100,6 +110,29 @@ func TestBwrapTransform_OffMode_StickerOrder(t *testing.T) {
 
 	// 目标命令
 	assertSubsequence(t, argv, "--new-session", "bash", "-c", "ls")
+}
+
+// TestRegression_EnvInjectionStrippedConflict — env 注入与凭据剥离冲突时
+// 必须被忽略(剥离优先),防止配置回填敏感变量进沙箱。
+func TestRegression_EnvInjectionStrippedConflict(t *testing.T) {
+	b, _, ws := newTestBwrap(t)
+	cfg := DefaultConfig()
+	cfg.Env = map[string]string{
+		"GOPATH":                "./.waveloom-gopath", // 正常注入
+		"AWS_SECRET_ACCESS_KEY": "./.waveloom-aws",    // 命中剥离模式 → 忽略
+		"MY_SB_TOKEN":           "./.waveloom-tok",    // 命中 *TOKEN* → 忽略
+	}
+
+	argv, err := b.Transform("bash", []string{"-c", "ls"}, cfg, ws)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertSubsequence(t, argv, "--setenv", "GOPATH", filepath.Join(ws, ".waveloom-gopath"))
+	for _, a := range argv {
+		if a == "AWS_SECRET_ACCESS_KEY" || a == "MY_SB_TOKEN" {
+			t.Fatalf("stripped env key leaked into sandbox: %s (argv=%v)", a, argv)
+		}
+	}
 }
 
 func TestBwrapTransform_MissingPathSkipped(t *testing.T) {

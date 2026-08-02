@@ -1,6 +1,7 @@
 package sandbox
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -41,7 +42,8 @@ func TestConfigParseFull(t *testing.T) {
 	"network": {"mode": "off", "allowedDomains": ["github.com", "*.npmjs.org"]},
 	"filesystem": {"allowRead": ["~/.docker/run"], "denyRead": ["~/.ssh"]},
 	"capabilities": {"keep": ["net_raw"]},
-	"credentials": {"envVars": ["GH_TOKEN"]}
+	"credentials": {"envVars": ["GH_TOKEN"]},
+	"env": {"GOPATH": ".waveloom-gopath", "GOPROXY": "https://proxy.golang.org,direct"}
 }`)
 	cfg, err := LoadConfig(data)
 	if err != nil {
@@ -68,6 +70,37 @@ func TestConfigParseFull(t *testing.T) {
 	// allowedDomains 解析(v2 proxy 预留,当前仅解析不生效)
 	if len(cfg.Network.AllowedDomains) != 2 || cfg.Network.AllowedDomains[0] != "github.com" {
 		t.Errorf("allowedDomains = %v", cfg.Network.AllowedDomains)
+	}
+	if cfg.Env["GOPATH"] != ".waveloom-gopath" || cfg.Env["GOPROXY"] != "https://proxy.golang.org,direct" {
+		t.Errorf("env = %v", cfg.Env)
+	}
+}
+
+func TestConfigEnvValidation(t *testing.T) {
+	cases := []struct {
+		name string
+		env  string
+		want string // 期望错误子串,空 = 合法
+	}{
+		{"valid", `{"env": {"GOPATH": ".waveloom-gopath"}}`, ""},
+		{"empty key", `{"env": {"": "x"}}`, "empty key"},
+		{"empty value", `{"env": {"GOPATH": ""}}`, "empty value"},
+		{"bad key", `{"env": {"1BAD": "x"}}`, "not a valid environment variable name"},
+		{"bad key char", `{"env": {"GO PATH": "x"}}`, "not a valid environment variable name"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := LoadConfig([]byte(tc.env))
+			if tc.want == "" {
+				if err != nil {
+					t.Fatalf("expected valid, got %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("expected error containing %q, got %v", tc.want, err)
+			}
+		})
 	}
 }
 

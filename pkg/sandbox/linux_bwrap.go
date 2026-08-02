@@ -283,6 +283,12 @@ func (b *bwrapBackend) Transform(shellBin string, args []string, cfg *Config, wo
 		argv = append(argv, "--chdir", workspace)
 	}
 	argv = append(argv, "--setenv", "TMPDIR", "/tmp")
+	// 通用环境变量注入(cfg.Env,配置驱动,不绑定任何工具)。
+	// 位于 --unsetenv 剥离之前:与凭据剥离冲突的键已被 envVarsToSet 过滤,
+	// 双重保证剥离优先。
+	for _, kv := range envVarsToSet(cfg, home, workspace) {
+		argv = append(argv, "--setenv", kv.Key, kv.Value)
+	}
 
 	// 能力:--cap-drop ALL + 按需加回
 	argv = append(argv, "--cap-drop", "ALL")
@@ -540,14 +546,8 @@ func envVarsToStrip(cfg *Config) []string {
 			continue
 		}
 		name := kv[:eq]
-		if stripEnvExcludes[name] {
-			continue
-		}
-		for _, pattern := range stripEnvPatterns {
-			if matchStripPattern(name, pattern) {
-				add(name)
-				break
-			}
+		if envNameStripped(name, cfg) {
+			add(name)
 		}
 	}
 	for _, v := range cfg.Credentials.EnvVars {
@@ -555,6 +555,67 @@ func envVarsToStrip(cfg *Config) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// envNameStripped 判定环境变量名是否命中凭据剥离(默认模式 + credentials.envVars)。
+// excludes 名单(TOKENIZERS_PARALLELISM 等)优先,命中即不剥离。
+// envVarsToSet 复用此判定:与剥离冲突的 env 注入被忽略(剥离优先,防回填)。
+func envNameStripped(name string, cfg *Config) bool {
+	if stripEnvExcludes[name] {
+		return false
+	}
+	for _, pattern := range stripEnvPatterns {
+		if matchStripPattern(name, pattern) {
+			return true
+		}
+	}
+	for _, v := range cfg.Credentials.EnvVars {
+		if v == name {
+			return true
+		}
+	}
+	return false
+}
+
+// envKV 是沙箱内环境变量注入的键值对。
+type envKV struct {
+	Key   string
+	Value string
+}
+
+// envVarsToSet 返回配置的沙箱内环境变量注入列表(排序保证确定性)。
+// 通用机制,不绑定任何工具:典型用途是构建工具缓存重定向
+// (go 的 GOPATH/GOMODCACHE/GOCACHE、npm 的 npm_config_cache 等)。
+// 值按路径前缀语义展开(~/、//abs、/abs、./workspace 相对);
+// 非路径值(如 GOPROXY 的 URL)原样注入。
+// 键命中凭据剥离清单时忽略(剥离优先)。
+func envVarsToSet(cfg *Config, home, workspace string) []envKV {
+	var out []envKV
+	for k, v := range cfg.Env {
+		if envNameStripped(k, cfg) {
+			continue
+		}
+		out = append(out, envKV{Key: k, Value: envValueExpand(v, home, workspace)})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Key < out[j].Key })
+	return out
+}
+
+// envValueExpand 展开 env 配置值:路径前缀(~/、//、/、./)按路径语义,
+// 其余(裸名/URL 等)原样注入。
+func envValueExpand(v, home, workspace string) string {
+	switch {
+	case v == "~" || strings.HasPrefix(v, "~/"):
+		return filepath.Join(home, strings.TrimPrefix(v, "~"))
+	case strings.HasPrefix(v, "//"):
+		return v[1:]
+	case strings.HasPrefix(v, "/"):
+		return v
+	case strings.HasPrefix(v, "./"):
+		return filepath.Join(workspace, strings.TrimPrefix(v, "./"))
+	default:
+		return v
+	}
 }
 
 // matchStripPattern 匹配环境变量剥离模式(* 通配)。
