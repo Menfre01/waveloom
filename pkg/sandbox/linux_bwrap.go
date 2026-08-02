@@ -223,7 +223,14 @@ func (b *bwrapBackend) Transform(shellBin string, args []string, cfg *Config, wo
 			// 唯一可行:tmpfs 遮蔽父目录 —— 沙箱内 /var/run 清空,
 			// docker.sock 不可达(遮蔽目标达成)。副作用:父目录其余内容
 			// 在沙箱内不可见(安全优先,规格书 HIGH-2 docker.sock 逃逸)。
+			// 必须用真实路径:内核挂载目标解析跟随绝对 symlink 时相对
+			// 挂载 ns 根(新 tmpfs),/var/run → /run 在 setup 期解析为
+			// 不存在的 /run → ENOENT(实测 "Can't mount tmpfs on
+			// /newroot/var/run")。EvalSymlinks 得 /run,挂载真实目录。
 			parent := filepath.Dir(ms.path)
+			if real, err := filepath.EvalSymlinks(parent); err == nil {
+				parent = real
+			}
 			argv = append(argv, "--tmpfs", parent)
 		case maskDir:
 			argv = append(argv, "--tmpfs", ms.path)

@@ -233,6 +233,36 @@ func TestBwrapTransform_SocketMaskTmpfsParent(t *testing.T) {
 		t.Errorf("socket %s must not appear in argv (tmpfs parent mask): %v", sockPath, argv)
 	}
 	assertSubsequence(t, argv, "--tmpfs", filepath.Dir(sockPath))
+
+	// symlink 父目录场景:/var/run → /run 同型。内核挂载目标解析跟随绝对
+	// symlink 时相对挂载 ns 根(新 tmpfs),必须 tmpfs 挂载真实路径。
+	realDir := filepath.Join(home, "realrun")
+	_ = os.MkdirAll(realDir, 0o755)
+	linkDir := filepath.Join(home, "var")
+	_ = os.MkdirAll(linkDir, 0o755)
+	if err := os.Symlink(realDir, filepath.Join(linkDir, "run")); err != nil {
+		t.Fatal(err)
+	}
+	sock2 := filepath.Join(linkDir, "run", "docker.sock")
+	fd2, err := syscall.Socket(syscall.AF_UNIX, syscall.SOCK_STREAM, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := syscall.Bind(fd2, &syscall.SockaddrUnix{Name: sock2}); err != nil {
+		t.Fatal(err)
+	}
+	_ = syscall.Close(fd2)
+
+	cfg2 := &Config{
+		AllowUnsandboxedCommands: &allow,
+		Filesystem:               FilesystemConfig{DenyRead: []string{"~" + sock2[len(home):]}},
+	}
+	argv2, err := b.Transform("bash", []string{"-c", "ls"}, cfg2, ws)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 遮蔽真实父目录(realDir),而非 symlink 路径
+	assertSubsequence(t, argv2, "--tmpfs", realDir)
 }
 
 func TestBwrapTransform_EnvVarStrip(t *testing.T) {
