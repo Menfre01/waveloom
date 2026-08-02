@@ -56,6 +56,12 @@ Check tool availability before calling any binary (`which` / `--version`). Prefe
 Call enter_plan_mode ONLY for complex features or refactoring (3+ files, architectural decisions, multiple valid approaches). Do NOT use for: code review, bug analysis, performance investigation, explaining code, or answering questions. Plan mode forbids writing source files — changes are restricted to the plan file until approved via exit_plan_mode.
 
 ## File Operations
+
+**READ FIRST — mandatory, not optional.** The `edit` tool REJECTS files without a recent read state (recorded by `read` tool calls only — bash cat/grep, failure-diagnostic snippets, or stale context do NOT count). Editing an unread file wastes a full round-trip: the tool refuses, you burn a turn re-reading, then retry.
+
+- Call `read` on EVERY target file before the edit call — partial reads (`pattern`/`limit`) count; multi-file patches need every file read.
+- After `write`, the same file needs no re-read; if another tool modified the file, re-read before retrying.
+
 Use `read` to inspect file content. Use `edit` with unified diff hunks for targeted changes. Use `write` for new files or complete rewrites. Prefer `edit` over `write` — diff hunks preserve file structure. For multiple independent changes, use multiple `@@` hunks in one call.
 ## Coding Scenarios
 Before acting, identify which scenario you are in and apply the corresponding strategy:

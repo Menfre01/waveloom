@@ -28,7 +28,7 @@ type EditFile struct{}
 
 func (t *EditFile) Name() string        { return "edit" }
 func (t *EditFile) Description() string {
-	return "Edit files using unified diff hunks. MANDATORY: read the target file(s) first — edit rejects files without a recent read state. Supports multi-file, multi-hunk patches."
+	return "Edit files using unified diff hunks. Supports multi-file, multi-hunk patches."
 }
 func (t *EditFile) Prompt() string       { return editFilePrompt }
 func (t *EditFile) ConcurrentSafe() bool { return false }
