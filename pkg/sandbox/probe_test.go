@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -29,7 +30,18 @@ func fakeBwrapRunner(helpOut string, helpErr, smokeErr error) *bwrapBackend {
 	return b
 }
 
+// skipIfWindows 跳过依赖 POSIX true 命令的 bwrap 探测测试:
+// Windows 无 true 命令,Probe 的 LookPath 必然失败(与 linux_bwrap_test.go
+// 平台限定同理;本文件其余测试跨平台,不能整文件加 build tag)。
+func skipIfWindows(t *testing.T) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("skipping bwrap probe tests on Windows (requires POSIX 'true' command)")
+	}
+}
+
 func TestProbe_CapabilitiesParsed(t *testing.T) {
+	skipIfWindows(t)
 	// 隔离宿主 AppArmor 状态(ubuntu 24.04+ 默认限制 userns):
 	// 本测试只验证 --help 能力解析,与真实 sysctl 无关。
 	orig := apparmorSysctlPath
@@ -46,6 +58,7 @@ func TestProbe_CapabilitiesParsed(t *testing.T) {
 }
 
 func TestProbe_CapabilitiesMissing_CompatibleFallback(t *testing.T) {
+	skipIfWindows(t)
 	// 隔离宿主 AppArmor 状态,同 TestProbe_CapabilitiesParsed。
 	orig := apparmorSysctlPath
 	apparmorSysctlPath = filepath.Join(t.TempDir(), "nonexistent")
@@ -62,6 +75,7 @@ func TestProbe_CapabilitiesMissing_CompatibleFallback(t *testing.T) {
 }
 
 func TestProbe_HelpFails(t *testing.T) {
+	skipIfWindows(t)
 	b := fakeBwrapRunner("", errors.New("exec format error"), nil)
 	err := b.Probe()
 	if err == nil || !strings.Contains(err.Error(), "--help failed") {
@@ -70,6 +84,7 @@ func TestProbe_HelpFails(t *testing.T) {
 }
 
 func TestProbe_SmokeFails(t *testing.T) {
+	skipIfWindows(t)
 	// 隔离宿主 AppArmor 状态,同 TestProbe_CapabilitiesParsed。
 	orig := apparmorSysctlPath
 	apparmorSysctlPath = filepath.Join(t.TempDir(), "nonexistent")
@@ -83,6 +98,7 @@ func TestProbe_SmokeFails(t *testing.T) {
 }
 
 func TestProbe_AppArmorRestricted(t *testing.T) {
+	skipIfWindows(t)
 	// sysctl 值为 1 → 拒绝并给出修复指引
 	tmp := t.TempDir()
 	sysctl := filepath.Join(tmp, "apparmor_restrict")
@@ -109,6 +125,7 @@ func TestProbe_AppArmorRestricted(t *testing.T) {
 }
 
 func TestProbe_AppArmorSysctlMissing(t *testing.T) {
+	skipIfWindows(t)
 	// sysctl 不存在(非 Ubuntu 24.04)→ 不拦截
 	orig := apparmorSysctlPath
 	apparmorSysctlPath = filepath.Join(t.TempDir(), "nonexistent")
