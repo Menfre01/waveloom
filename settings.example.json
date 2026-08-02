@@ -41,6 +41,12 @@
         "failIfUnavailable": false,
         "allowUnsandboxedCommands": true,
         "excludedCommands": ["docker *", "git push *"],
+        "env": {
+            "GOPATH": "./.waveloom-gopath",
+            "GOMODCACHE": "./.waveloom-gomodcache",
+            "GOCACHE": "./.waveloom-gocache",
+            "GOPROXY": "https://proxy.golang.org,direct"
+        },
         "network": {
             "mode": "off"
         },

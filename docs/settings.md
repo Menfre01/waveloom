@@ -239,6 +239,7 @@ export BRAVE_API_KEY="your-brave-api-key"
 | `failIfUnavailable` | 后端缺失(bwrap 未装)时是否拒绝启动 | `false` |
 | `allowUnsandboxedCommands` | 沙箱内命令失败时是否提示逃生(加入 excludedCommands) | `true` |
 | `excludedCommands` | 逃逸命令列表(前缀/精确/通配),命中不进沙箱(裸跑),但权限仍受 Guard 约束 | `[]` |
+| `env` | 沙箱内注入的环境变量(通用机制,不绑定任何工具);值支持路径前缀(`~/` 家目录、`//`/`/` 绝对、`./` workspace 相对),其他按字面量注入;键命中凭据剥离清单时忽略(剥离优先) | `{}` |
 | `network.mode` | 网络策略:`off`(全断网)/ `on`(直连);`proxy` 为 v2 未实现 | `off` |
 | `network.allowedDomains` | 域名白名单(v2 proxy 预留,当前不生效) | `[]` |
 | `filesystem.allowWrite` | 额外可写路径(`//abs` 绝对、`~/` 家目录、`./` 或裸名项目根);根目录与遮蔽路径冲突时拒绝 | `[]` |
@@ -253,12 +254,27 @@ export BRAVE_API_KEY="your-brave-api-key"
   "sandbox": {
     "enabled": false,
     "excludedCommands": ["docker *"],
+    "env": {
+      "GOPATH": "./.waveloom-gopath",
+      "GOMODCACHE": "./.waveloom-gomodcache",
+      "GOCACHE": "./.waveloom-gocache",
+      "GOPROXY": "https://proxy.golang.org,direct"
+    },
     "network": { "mode": "off" },
     "filesystem": { "allowWrite": ["~/.cache"], "denyRead": ["~/.aws"] },
     "credentials": { "files": ["~/.ssh"], "envVars": ["GH_TOKEN"] }
   }
 }
 ```
+
+### 沙箱内环境变量注入(`env`)
+
+`sandbox.env` 是**工具无关**的通用机制:沙箱内命令启动时注入指定环境变量,典型用途是把构建工具缓存重定向到 workspace 可写区——只读根下宿主缓存(如 `~/go/pkg/mod`)不可写,go/npm/cargo 等工具写入会失败或降级告警。
+
+- **值路径语义**:`./` → workspace 相对(`"./.waveloom-gomodcache"` → `<项目根>/.waveloom-gomodcache`);`~/` → 家目录;`//` 或 `/` → 绝对路径;其余(URL 等)按字面量注入(如 `GOPROXY`)
+- **go 示例**:`GOPATH` / `GOMODCACHE` / `GOCACHE` 指到 workspace 后,首次沙箱内构建需网络下载依赖(一次性,缓存持久),之后离线可构建;宿主构建不受影响
+- **npm/cargo 等**:同理配 `npm_config_cache` / `CARGO_HOME` / `PIP_CACHE_DIR` 等
+- **安全**:键命中凭据剥离(内置 glob `*TOKEN*` / `*_API_KEY` 等或 `credentials.envVars`)时**忽略注入**,剥离优先——防止配置把被剥离的敏感变量回填进沙箱
 
 ### 内置默认遮蔽清单
 

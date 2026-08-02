@@ -98,7 +98,7 @@ waveloom
 
 - **前缀缓存深度优化** — System Prompt 固定，消息只在末尾追加，四级水位线压缩后字节永不变化，最大公共前缀持续命中
 - **权限安全模型** — 三级决策(allow / deny / ask),规则引擎支持模式匹配,底层 5 层工具输出安全管线(Unicode 清洗 → 注入扫描 → 边界标记 → 风险分级 → 安全截断)。写操作和命令执行需要你确认。
-- **OS 级沙箱** — 可选执行隔离:bubblewrap(Linux)/ Seatbelt(macOS)实现只读根、工作区可写、凭据遮蔽(`~/.ssh`、钥匙串、token)、环境变量剥离与网络控制(`off`/`on`)。`--bypass-permissions` 自动激活;通过 `settings.json` 的 `"sandbox"` 段或 `--sandbox-network off|on` 配置。
+- **OS 级沙箱** — 可选执行隔离:bubblewrap(Linux)/ Seatbelt(macOS)实现只读根、工作区可写、凭据遮蔽(`~/.ssh`、钥匙串、token)、环境变量剥离、可配置环境变量注入(把 `GOPATH`/`GOMODCACHE`/`npm_config_cache` 等构建缓存重定向进工作区)与网络控制(`off`/`on`)。`--bypass-permissions` 自动激活;通过 `settings.json` 的 `"sandbox"` 段或 `--sandbox-network off|on` 配置。
 - **Hook 系统** — PreToolUse / PostToolUse / Notification / Stop / SubagentStop 五种事件,支持 permission_mode 字段。Runtime fail-open,永不阻塞工具执行。通过 `settings.json` 配置。
 - **会话持久恢复** — 关闭终端几天后 `waveloom --continue` 回来,Agent 记得所有上下文接着工作
 - **Checkpoint/Rewind 时间旅行** — 回退到任意历史消息,同时恢复所有文件变更。Fork 模式原 session 完整保留,历史永不丢失

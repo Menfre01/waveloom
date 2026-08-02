@@ -241,6 +241,7 @@ Falls back to DuckDuckGo when not set.
 | `failIfUnavailable` | Refuse to start when the backend is missing (e.g. bwrap not installed) | `false` |
 | `allowUnsandboxedCommands` | Hint escape (add to excludedCommands) when a sandboxed command fails | `true` |
 | `excludedCommands` | Escape hatch list (prefix/exact/wildcard); matching commands run unsandboxed but still pass through Guard | `[]` |
+| `env` | Env vars injected inside the sandbox (tool-agnostic mechanism); values support path prefixes (`~/` home, `//`/`/` absolute, `./` workspace-relative), anything else is injected verbatim; keys matching the credential-strip list are ignored (strip wins) | `{}` |
 | `network.mode` | Network policy: `off` (fully offline) / `on` (direct); `proxy` is v2, not implemented | `off` |
 | `network.allowedDomains` | Domain allowlist (v2 proxy placeholder, not active yet) | `[]` |
 | `filesystem.allowWrite` | Extra writable paths (`//abs` absolute, `~/` home, `./` or bare name = project root); root and mask-conflicting paths are rejected | `[]` |
@@ -255,12 +256,27 @@ Falls back to DuckDuckGo when not set.
   "sandbox": {
     "enabled": false,
     "excludedCommands": ["docker *"],
+    "env": {
+      "GOPATH": "./.waveloom-gopath",
+      "GOMODCACHE": "./.waveloom-gomodcache",
+      "GOCACHE": "./.waveloom-gocache",
+      "GOPROXY": "https://proxy.golang.org,direct"
+    },
     "network": { "mode": "off" },
     "filesystem": { "allowWrite": ["~/.cache"], "denyRead": ["~/.aws"] },
     "credentials": { "files": ["~/.ssh"], "envVars": ["GH_TOKEN"] }
   }
 }
 ```
+
+### Env Injection Inside the Sandbox (`env`)
+
+`sandbox.env` is a **tool-agnostic** mechanism: the listed env vars are injected when commands start inside the sandbox. Its typical use is redirecting build-tool caches into the writable workspace area — under the read-only root, host caches (e.g. `~/go/pkg/mod`) are not writable, so go/npm/cargo would fail or degrade with warnings.
+
+- **Value path semantics**: `./` → workspace-relative (`"./.waveloom-gomodcache"` → `<project root>/.waveloom-gomodcache`); `~/` → home; `//` or `/` → absolute; anything else (URLs etc.) is injected verbatim (e.g. `GOPROXY`)
+- **Go example**: pointing `GOPATH` / `GOMODCACHE` / `GOCACHE` at the workspace makes the first in-sandbox build download dependencies over the network (one-time, cached persistently), after which offline builds work; host builds are unaffected
+- **npm/cargo etc.**: configure `npm_config_cache` / `CARGO_HOME` / `PIP_CACHE_DIR` the same way
+- **Security**: keys matching the credential-strip rules (built-in globs `*TOKEN*` / `*_API_KEY` etc. or `credentials.envVars`) are **ignored** — strip wins, preventing the config from re-injecting stripped secrets into the sandbox
 
 ### Built-in Default Mask List
 

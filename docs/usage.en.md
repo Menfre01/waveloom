@@ -153,11 +153,18 @@ waveloom
   "sandbox": {
     "enabled": true,
     "excludedCommands": ["docker *"],
+    "env": {
+      "GOPATH": "./.waveloom-gopath",
+      "GOMODCACHE": "./.waveloom-gomodcache",
+      "GOCACHE": "./.waveloom-gocache"
+    },
     "network": { "mode": "on" },
     "credentials": { "files": ["~/.ssh", "~/.aws/credentials"] }
   }
 }
 ```
+
+> `sandbox.env` redirects build-tool caches into the writable workspace area (go's `GOPATH`/`GOMODCACHE`/`GOCACHE`, npm's `npm_config_cache`, etc.), avoiding host-cache write failures under the read-only root. Full field reference: [settings.en.md](settings.en.md#env-injection-inside-the-sandboxenv).
 
 **Platform support**: Linux (bubblewrap, `apt install bubblewrap`) / macOS (Seatbelt, built-in) / Windows unsupported (use WSL2 for the Linux backend). When the backend is unavailable the sandbox degrades with a warning; `failIfUnavailable: true` turns that into a hard refusal to start.
 

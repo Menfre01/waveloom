@@ -153,11 +153,18 @@ waveloom
   "sandbox": {
     "enabled": true,
     "excludedCommands": ["docker *"],
+    "env": {
+      "GOPATH": "./.waveloom-gopath",
+      "GOMODCACHE": "./.waveloom-gomodcache",
+      "GOCACHE": "./.waveloom-gocache"
+    },
     "network": { "mode": "on" },
     "credentials": { "files": ["~/.ssh", "~/.aws/credentials"] }
   }
 }
 ```
+
+> `sandbox.env` 可把构建工具缓存重定向到 workspace 可写区(go 的 `GOPATH`/`GOMODCACHE`/`GOCACHE`、npm 的 `npm_config_cache` 等),避免只读根下宿主缓存写入失败。完整字段说明见 [settings.md](settings.md#沙箱内环境变量注入env)。
 
 **平台支持**:Linux(bubblewrap,`apt install bubblewrap`)/ macOS(Seatbelt,系统自带)/ Windows 不支持(建议 WSL2 走 Linux 后端)。沙箱后端不可用时自动降级并警告;`failIfUnavailable: true` 可改为拒绝启动。
 
