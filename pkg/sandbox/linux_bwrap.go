@@ -54,6 +54,23 @@ func (b *bwrapBackend) ExtraFiles() []*os.File {
 	return []*os.File{b.nullFile}
 }
 
+// socketMaskPath 是遮蔽 socket 路径(--ro-bind 源)用的固定空文件。
+// 不能放 os.TempDir():bwrap argv 中 --tmpfs /tmp 先于遮蔽挂载执行,
+// 新 tmpfs 覆盖宿主 /tmp 后源文件不可见(bwrap 按 argv 顺序应用挂载)。
+// /var/tmp 位于 --ro-bind / / 的只读根内,保留宿主内容,不被任何贴纸覆盖。
+// 固定路径设计:bind 挂载后源 inode 已固定,并发 Transform 截断覆盖
+// 不影响已挂载的沙箱;残留文件由系统清理(每主机最多 1 个)。
+var socketMaskPath = "/var/tmp/waveloom-socket-mask.tmp"
+
+// ensureSocketMaskFile 确保 socket 遮蔽源文件存在且为空。
+func ensureSocketMaskFile() error {
+	f, err := os.OpenFile(socketMaskPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
+	if err != nil {
+		return err
+	}
+	return f.Close()
+}
+
 // runCombinedDefault 默认执行器:exec.Command + CombinedOutput。
 func runCombinedDefault(name string, args ...string) ([]byte, error) {
 	return exec.Command(name, args...).CombinedOutput()
@@ -215,6 +232,18 @@ func (b *bwrapBackend) Transform(shellBin string, args []string, cfg *Config, wo
 			// bwrap 从 fd 读空内容生成普通空文件再 bind(实测 rc=0 空读)。
 			// fd 3 指向 /dev/null(ExtraFiles),多个遮蔽复用同一 fd(读恒空)。
 			argv = append(argv, "--bind-data", strconv.Itoa(nullFD), ms.path)
+		case maskSocketFile:
+			// socket 遮蔽:--bind-data 需 open(O_CREAT|O_WRONLY) 目标,
+			// 对 socket 语义失败(CI 实测 "Can't create file at ...: ENOENT",
+			// 本地 open 则为 ENXIO)——bind-data 不适用于 socket。
+			// --ro-bind 空文件:内核 bind 挂载不 open 目标、不检查目标类型,
+			// socket 路径被普通空文件覆盖 → 容器内读为 EOF,写为 EROFS。
+			// 固定路径临时文件:bind 后源 inode 固定,并发覆盖不影响已挂载内容;
+			// 残留文件由系统 /tmp 清理。
+			if err := ensureSocketMaskFile(); err != nil {
+				return nil, fmt.Errorf("sandbox: create socket mask file: %w", err)
+			}
+			argv = append(argv, "--ro-bind", socketMaskPath, ms.path)
 		case maskDir:
 			argv = append(argv, "--tmpfs", ms.path)
 		case maskMissing:
@@ -320,6 +349,7 @@ const (
 	maskFile maskKind = iota // 存在且为文件 → --bind /dev/null
 	maskDir                  // 存在且为目录 → --tmpfs
 	maskMissing              // 不存在 → --file 占位
+	maskSocketFile           // 存在且为 socket → --ro-bind 空文件
 )
 
 type maskSpec struct {
@@ -411,6 +441,11 @@ func collectMaskSpecs(home, workspace string, cfg *Config) []maskSpec {
 			out = append(out, maskSpec{kind: maskMissing, path: p})
 		case info.IsDir():
 			out = append(out, maskSpec{kind: maskDir, path: p})
+		case info.Mode()&os.ModeSocket != 0:
+			// socket 无法 --bind-data(open O_WRONLY socket 语义失败,实测 CI
+			// "Can't create file at ...: No such file or directory");
+			// 归入 maskSocketFile 走 --ro-bind 空文件遮蔽。
+			out = append(out, maskSpec{kind: maskSocketFile, path: p})
 		default:
 			out = append(out, maskSpec{kind: maskFile, path: p})
 		}

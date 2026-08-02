@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 )
 
@@ -198,6 +199,42 @@ func TestBwrapTransform_DenyReadMasks(t *testing.T) {
 	}
 	assertSubsequence(t, argv, "--bind-data", "3", secretFile)
 	assertSubsequence(t, argv, "--tmpfs", secretDir)
+}
+
+// TestBwrapTransform_SocketMaskRoBind 验证 socket 遮蔽走 --ro-bind 空文件。
+// REGRESSION: --bind-data 对 socket 目标 open(O_CREAT|O_WRONLY) 语义失败
+// (CI 实测 "Can't create file at /var/run/docker.sock: No such file or directory",
+// 本地 open 为 ENXIO)——bind-data 不适用于 socket;--ro-bind 空文件绕开目标
+// open(内核 bind 挂载不检查目标类型),docker.sock 等 socket 遮蔽在真实
+// Linux 上不再导致全部沙箱命令失败。
+func TestBwrapTransform_SocketMaskRoBind(t *testing.T) {
+	b, home, ws := newTestBwrap(t)
+	sockPath := filepath.Join(home, "docker.sock")
+	fd, err := syscall.Socket(syscall.AF_UNIX, syscall.SOCK_STREAM, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := syscall.Bind(fd, &syscall.SockaddrUnix{Name: sockPath}); err != nil {
+		t.Fatal(err)
+	}
+	_ = syscall.Close(fd) // 保留 socket 文件(net.UnixListener Close 会 unlink)
+
+	allow := true
+	cfg := &Config{
+		AllowUnsandboxedCommands: &allow,
+		Filesystem:               FilesystemConfig{DenyRead: []string{"~" + sockPath[len(home):]}},
+	}
+	argv, err := b.Transform("bash", []string{"-c", "ls"}, cfg, ws)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertSubsequence(t, argv, "--ro-bind", socketMaskPath, sockPath)
+	if idx := argIndex(argv, "--bind-data"); idx >= 0 {
+		t.Errorf("socket mask must not use --bind-data: %v", argv)
+	}
+	if fi, err := os.Stat(socketMaskPath); err != nil || fi.Size() != 0 {
+		t.Errorf("socket mask source should exist and be empty: fi=%v err=%v", fi, err)
+	}
 }
 
 func TestBwrapTransform_EnvVarStrip(t *testing.T) {
