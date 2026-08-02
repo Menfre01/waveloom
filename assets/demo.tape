@@ -1,4 +1,4 @@
-# Waveloom Demo (v0.3.0)
+# Waveloom Demo (v0.5.1)
 # 展示: Logo+HUD → /provider 交互式覆盖层 → 并行 Subagent + Todo 面板 → 权限弹框 → Plan Mode
 # 核心卖点: 6 色渐变 Logo、/provider 运行时切换、多 Subagent 并行执行、Todo 实时面板、▌Plan 状态标记
 
@@ -31,7 +31,6 @@ Sleep 2s
 # Esc 关闭覆盖层
 Escape
 Sleep 2s
-
 
 # ── 第二幕: 并行 Subagent Explore + Todo 面板 ──
 # 这个 prompt 设计用来同时触发: todo_create(任务拆分) + 并行 agent Explore(探索多个包)
@@ -71,5 +70,8 @@ Enter
 
 Sleep 12s
 
+# 双击 Ctrl+C 退出(v0.4+ 防误触)
+Ctrl+C
+Sleep 0.3s
 Ctrl+C
 Sleep 0.8s

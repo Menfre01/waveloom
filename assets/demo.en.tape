@@ -1,4 +1,4 @@
-# Waveloom Demo (English, v0.3.0)
+# Waveloom Demo (English, v0.5.1)
 # Showcase: Logo+HUD → /provider Interactive Overlay → Parallel Subagent Explore + Todo Panel → Permission Dialog → Plan Mode
 # Key highlights: 6-color gradient Logo, /provider runtime switching, parallel Subagent execution, real-time Todo panel, ▌Plan indicator
 
@@ -30,7 +30,6 @@ Sleep 2s
 # Esc to close overlay
 Escape
 Sleep 2s
-
 
 # ── Act 2: Parallel Subagent Explore + Todo Panel ──
 Type "Use 3 Explore agents in parallel to explore pkg/llm, pkg/tool, and pkg/subagent — one agent per package. Summarize each package's responsibilities, core interfaces, and dependencies."
@@ -69,5 +68,8 @@ Enter
 
 Sleep 12s
 
+# 双击 Ctrl+C 退出(v0.4+ 防误触)
+Ctrl+C
+Sleep 0.3s
 Ctrl+C
 Sleep 0.8s
