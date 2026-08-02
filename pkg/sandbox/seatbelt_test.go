@@ -80,6 +80,123 @@ func TestSeatbeltProfile_Structure(t *testing.T) {
 	}
 }
 
+// TestDarwinMaskedDirsFiltered 直接单测 darwin 特有遮蔽目录的 allowRead 过滤:
+// 精确命中 / 父目录放行(解除其下所有遮蔽)/ 未命中保留 / 空配置原样返回。
+// 不依赖本机真实目录存在性(函数仅做字符串匹配)。
+func TestDarwinMaskedDirsFiltered(t *testing.T) {
+	home := t.TempDir()
+	ws := t.TempDir()
+	keychains := filepath.Join(home, "Library", "Keychains")
+
+	t.Run("empty allowRead returns all", func(t *testing.T) {
+		cfg := DefaultConfig()
+		got := darwinMaskedDirsFiltered(home, ws, cfg)
+		want := darwinMaskedDirs(home)
+		if len(got) != len(want) {
+			t.Errorf("got %d dirs, want %d", len(got), len(want))
+		}
+	})
+
+	t.Run("exact match removes one", func(t *testing.T) {
+		cfg := DefaultConfig()
+		cfg.Filesystem.AllowRead = []string{"~" + keychains[len(home):]}
+		got := darwinMaskedDirsFiltered(home, ws, cfg)
+		for _, p := range got {
+			if p == keychains {
+				t.Errorf("keychains should be unmasked: %v", got)
+			}
+		}
+		if len(got) != len(darwinMaskedDirs(home))-1 {
+			t.Errorf("got %d dirs, want %d: %v", len(got), len(darwinMaskedDirs(home))-1, got)
+		}
+	})
+
+	t.Run("parent dir lifts all descendants", func(t *testing.T) {
+		cfg := DefaultConfig()
+		cfg.Filesystem.AllowRead = []string{"~/Library"}
+		got := darwinMaskedDirsFiltered(home, ws, cfg)
+		// ~/Library 放行其下全部(Keychains/HTTPStorages/Cookies/浏览器数据);
+		// home 外(/var/run/docker.sock)与非 Library 路径仍保留
+		for _, p := range got {
+			if strings.HasPrefix(p, filepath.Join(home, "Library")+string(filepath.Separator)) {
+				t.Errorf("Library dir should be unmasked: %v", got)
+			}
+		}
+		if len(got) != 5 { // /var/run/docker.sock + .docker/run + .kube + .config/gcloud + .gnupg
+			t.Errorf("got %d dirs, want 5: %v", len(got), got)
+		}
+	})
+
+	t.Run("unrelated path keeps all", func(t *testing.T) {
+		cfg := DefaultConfig()
+		cfg.Filesystem.AllowRead = []string{"~/tmp/xyz"}
+		got := darwinMaskedDirsFiltered(home, ws, cfg)
+		if len(got) != len(darwinMaskedDirs(home)) {
+			t.Errorf("unrelated allowRead should keep all: %v", got)
+		}
+	})
+
+	t.Run("tilde home lifts all", func(t *testing.T) {
+		cfg := DefaultConfig()
+		cfg.Filesystem.AllowRead = []string{"~"}
+		got := darwinMaskedDirsFiltered(home, ws, cfg)
+		// ~ 放行 home 下全部;home 外路径(/var/run/docker.sock)不受影响
+		if len(got) != 1 || got[0] != "/var/run/docker.sock" {
+			t.Errorf("allowRead=~ should keep only /var/run/docker.sock: %v", got)
+		}
+	})
+}
+
+// TestSeatbeltProfile_GitconfigNotMasked 回归防护:
+// ~/.gitconfig 移出默认遮蔽清单(2026-08 决策),否则 macOS 上 git 启动即 EPERM。
+func TestSeatbeltProfile_GitconfigNotMasked(t *testing.T) {
+	home, ws := newTestSeatbelt(t)
+	_ = os.WriteFile(filepath.Join(home, ".gitconfig"), []byte("[user]\n\tname = test\n"), 0o600)
+
+	allow := true
+	cfg := &Config{AllowUnsandboxedCommands: &allow, Network: NetworkConfig{Mode: NetworkModeOff}}
+	prof := buildSeatbeltProfile(cfg, ws)
+
+	gitconfig := realPath(filepath.Join(home, ".gitconfig"))
+	if strings.Contains(prof, `(deny file-read* (literal "`+gitconfig+`"))`) {
+		t.Errorf(".gitconfig must NOT be masked (git unusable otherwise):\n%s", prof)
+	}
+	// 真凭证仍遮蔽
+	gitCred := realPath(filepath.Join(home, ".git-credentials"))
+	if strings.Contains(prof, `(deny file-read* (literal "`+gitCred+`"))`) {
+		t.Log("git-credentials masked (expected)")
+	}
+}
+
+func TestSeatbeltProfile_AllowRead(t *testing.T) {
+	home, ws := newTestSeatbelt(t)
+	allow := true
+	cfg := &Config{
+		AllowUnsandboxedCommands: &allow,
+		Filesystem:               FilesystemConfig{AllowRead: []string{"~/.waveloom/settings.json", "~/.ssh"}},
+	}
+	prof := buildSeatbeltProfile(cfg, ws)
+
+	settings := realPath(filepath.Join(home, ".waveloom", "settings.json"))
+	if strings.Contains(prof, `(deny file-read* (literal "`+settings+`"))`) {
+		t.Errorf("allowRead file should not be masked:\n%s", prof)
+	}
+	sshDir := realPath(filepath.Join(home, ".ssh"))
+	if strings.Contains(prof, `(deny file-read* (subpath "`+sshDir+`"))`) {
+		t.Errorf("allowRead dir should not be masked:\n%s", prof)
+	}
+	// 未放行的 darwin 敏感目录(若本机存在)仍遮蔽
+	for _, p := range darwinMaskedDirs(home) {
+		if _, err := os.Stat(p); err != nil {
+			continue
+		}
+		real := realPath(p)
+		if !strings.Contains(prof, `(deny file-read* (subpath "`+real+`"))`) {
+			t.Errorf("darwin sensitive dir not masked after allowRead: %s\n%s", real, prof)
+		}
+	}
+}
+
 func TestSeatbeltProfile_NetworkOn(t *testing.T) {
 	_, ws := newTestSeatbelt(t)
 	allow := true

@@ -37,12 +37,12 @@ func TestConfigParseFull(t *testing.T) {
 		"enabled": true,
 		"failIfUnavailable": true,
 		"allowUnsandboxedCommands": false,
-		"excludedCommands": ["docker *", "git push *"],
-		"network": {"mode": "off", "allowedDomains": ["github.com", "*.npmjs.org"]},
-		"filesystem": {"denyRead": ["~/.ssh"]},
-		"capabilities": {"keep": ["net_raw"]},
-		"credentials": {"envVars": ["GH_TOKEN"]}
-	}`)
+	"excludedCommands": ["docker *", "git push *"],
+	"network": {"mode": "off", "allowedDomains": ["github.com", "*.npmjs.org"]},
+	"filesystem": {"allowRead": ["~/.docker/run"], "denyRead": ["~/.ssh"]},
+	"capabilities": {"keep": ["net_raw"]},
+	"credentials": {"envVars": ["GH_TOKEN"]}
+}`)
 	cfg, err := LoadConfig(data)
 	if err != nil {
 		t.Fatal(err)
@@ -58,6 +58,12 @@ func TestConfigParseFull(t *testing.T) {
 	}
 	if len(cfg.Capabilities.Keep) != 1 || cfg.Capabilities.Keep[0] != "net_raw" {
 		t.Errorf("capabilities.keep = %v", cfg.Capabilities.Keep)
+	}
+	if len(cfg.Filesystem.AllowRead) != 1 || cfg.Filesystem.AllowRead[0] != "~/.docker/run" {
+		t.Errorf("filesystem.allowRead = %v", cfg.Filesystem.AllowRead)
+	}
+	if len(cfg.Filesystem.DenyRead) != 1 || cfg.Filesystem.DenyRead[0] != "~/.ssh" {
+		t.Errorf("filesystem.denyRead = %v", cfg.Filesystem.DenyRead)
 	}
 	// allowedDomains 解析(v2 proxy 预留,当前仅解析不生效)
 	if len(cfg.Network.AllowedDomains) != 2 || cfg.Network.AllowedDomains[0] != "github.com" {
@@ -93,6 +99,10 @@ func TestConfigInvalidModes(t *testing.T) {
 	// 空 excludedCommands 条目
 	if _, err := LoadConfig([]byte(`{"excludedCommands": ["", "docker *"]}`)); err == nil {
 		t.Error("empty excludedCommands entry should fail")
+	}
+	// 空 allowRead 条目
+	if _, err := LoadConfig([]byte(`{"filesystem": {"allowRead": [""]}}`)); err == nil {
+		t.Error("empty allowRead entry should fail")
 	}
 }
 

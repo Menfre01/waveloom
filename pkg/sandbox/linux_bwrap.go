@@ -325,7 +325,6 @@ type maskSpec struct {
 func defaultMaskedFiles(home, workspace string) []string {
 	files := []string{
 		filepath.Join(home, ".waveloom", "settings.json"), // Waveloom 自身配置(含 LLM API key 明文)
-		filepath.Join(home, ".gitconfig"),
 		filepath.Join(home, ".git-credentials"),
 		filepath.Join(home, ".config", "git", "credentials"),
 		filepath.Join(home, ".bashrc"),
@@ -411,17 +410,67 @@ func collectMaskSpecs(home, workspace string, cfg *Config) []maskSpec {
 		}
 	}
 
+	// 用户显式遮蔽(denyRead / credentials.files):优先级最高,先收集。
+	// 顺序保证:显式路径先入 seen,默认清单同名路径被去重跳过;
+	// 默认段过滤(allowRead)只作用于 out[start:],显式遮蔽不受影响。
+	// REGRESSION: 原实现默认清单先收集,filterDefaultMasks 只删 out 不删 seen,
+	// allowRead 放行默认路径后,显式 denyRead 同路径被 seen 跳过而静默失效。
+	for _, p := range cfg.Filesystem.DenyRead {
+		add(expandPath(p, home, workspace))
+	}
+	for _, p := range cfg.Credentials.Files {
+		add(expandPath(p, home, workspace))
+	}
+
+	// 内置默认遮蔽:allowRead 可显式放行(取消遮蔽)
+	start := len(out)
 	for _, p := range defaultMaskedFiles(home, workspace) {
 		add(p)
 	}
 	for _, p := range defaultMaskedDirs(home, workspace) {
 		add(p)
 	}
-	for _, p := range cfg.Filesystem.DenyRead {
-		add(expandPath(p, home, workspace))
+	// filterDefaultMasks 原地过滤共享底层数组,截取保留显式遮蔽段
+	filtered := filterDefaultMasks(out[start:], home, workspace, cfg)
+	return out[:start+len(filtered)]
+}
+
+// allowReadExpanded 展开 filesystem.allowRead 为绝对路径集合(路径前缀语义同 denyRead)。
+// 根目录("/")拒绝放行:解除根下全部遮蔽(含 workspace/.git/hooks、docker.sock)过宽,
+// 且字符串匹配下 "/" 前缀 "//" 本就不会命中任何遮蔽——显式忽略,语义与 allowWrite 对齐。
+func allowReadExpanded(home, workspace string, cfg *Config) map[string]bool {
+	allowed := make(map[string]bool)
+	for _, p := range cfg.Filesystem.AllowRead {
+		abs := expandPath(p, home, workspace)
+		if abs != "" && abs != "/" {
+			allowed[abs] = true
+		}
 	}
-	for _, p := range cfg.Credentials.Files {
-		add(expandPath(p, home, workspace))
+	return allowed
+}
+
+// filterDefaultMasks 移除被 allowRead 显式放行的内置默认遮蔽。
+// 匹配语义:allowRead 条目 a 命中遮蔽 m(精确相等,或 m 是 a 的后代)即移除 m——
+// 放行一个目录等价于解除其下所有遮蔽。仅作用于内置默认清单;
+// 用户显式 denyRead / credentials.files 优先级更高,不受 allowRead 影响。
+func filterDefaultMasks(specs []maskSpec, home, workspace string, cfg *Config) []maskSpec {
+	allowed := allowReadExpanded(home, workspace, cfg)
+	if len(allowed) == 0 {
+		return specs
+	}
+	sep := string(filepath.Separator)
+	out := specs[:0]
+	for _, s := range specs {
+		hit := false
+		for a := range allowed {
+			if s.path == a || strings.HasPrefix(s.path, a+sep) {
+				hit = true
+				break
+			}
+		}
+		if !hit {
+			out = append(out, s)
+		}
 	}
 	return out
 }

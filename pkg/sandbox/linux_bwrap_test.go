@@ -287,3 +287,124 @@ func TestMatchStripPattern(t *testing.T) {
 		}
 	}
 }
+
+// TestBwrapTransform_GitconfigNotMasked 回归防护:
+// ~/.gitconfig 已移出默认遮蔽清单(2026-08 决策),否则 git 启动读配置即 EPERM,
+// 整个 git 不可用;真凭证 .git-credentials 仍须遮蔽。
+func TestBwrapTransform_GitconfigNotMasked(t *testing.T) {
+	b, home, ws := newTestBwrap(t)
+	// .gitconfig 存在且 .git-credentials 存在(后者仍须遮蔽)
+	_ = os.WriteFile(filepath.Join(home, ".gitconfig"), []byte("[user]\n\tname = test\n"), 0o600)
+	_ = os.WriteFile(filepath.Join(home, ".git-credentials"), []byte("https://token@github.com\n"), 0o600)
+
+	argv, err := b.Transform("bash", []string{"-c", "git status"}, DefaultConfig(), ws)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gitconfig := filepath.Join(home, ".gitconfig")
+	if argIndex(argv, gitconfig) >= 0 {
+		t.Errorf(".gitconfig must NOT be masked (git unusable otherwise): %v", argv)
+	}
+	assertSubsequence(t, argv, "--bind-data", "3", filepath.Join(home, ".git-credentials"))
+}
+
+func TestBwrapTransform_AllowRead(t *testing.T) {
+	b, home, ws := newTestBwrap(t)
+	allow := true
+
+	// 放行文件(~/.waveloom/settings.json)+ 放行目录(~/.ssh → 子路径遮蔽一并解除)
+	cfg := &Config{
+		AllowUnsandboxedCommands: &allow,
+		Filesystem: FilesystemConfig{
+			AllowRead: []string{"~/.waveloom/settings.json", "~/.ssh"},
+		},
+	}
+	argv, err := b.Transform("bash", []string{"-c", "ls"}, cfg, ws)
+	if err != nil {
+		t.Fatal(err)
+	}
+	settings := filepath.Join(home, ".waveloom", "settings.json")
+	if argIndex(argv, settings) >= 0 {
+		t.Errorf("allowRead file should not be masked: %v", argv)
+	}
+	sshDir := filepath.Join(home, ".ssh")
+	if argIndex(argv, sshDir) >= 0 {
+		t.Errorf("allowRead dir should not be masked: %v", argv)
+	}
+	// 未放行的默认遮蔽仍生效(~/.git-credentials 由 newTestBwrap 未创建,用 ws/.git/hooks)
+	assertSubsequence(t, argv, "--tmpfs", filepath.Join(ws, ".git", "hooks"))
+}
+
+// TestBwrapTransform_AllowReadExplicitDenyWins 验证优先级:
+// 显式 denyRead / credentials.files 不受 allowRead 影响(显式安全声明优先)。
+func TestBwrapTransform_AllowReadExplicitDenyWins(t *testing.T) {
+	b, home, ws := newTestBwrap(t)
+	allow := true
+	secretFile := filepath.Join(home, "secret.txt")
+	_ = os.WriteFile(secretFile, []byte("x"), 0o600)
+
+	cfg := &Config{
+		AllowUnsandboxedCommands: &allow,
+		Filesystem:               FilesystemConfig{AllowRead: []string{"~" + secretFile[len(home):]}},
+		Credentials:              CredentialsConfig{Files: []string{secretFile}},
+	}
+	argv, err := b.Transform("bash", []string{"-c", "ls"}, cfg, ws)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// allowRead 与 credentials.files 同时命中同一路径 → 显式遮蔽胜出
+	assertSubsequence(t, argv, "--bind-data", "3", secretFile)
+}
+
+// TestRegression_AllowReadDenyReadCollision 回归防护:
+// allowRead 放行的默认遮蔽路径若同时出现在显式 denyRead 中,显式遮蔽必须仍生效。
+// 根因:原实现默认清单先入 seen map,filterDefaultMasks 只删 out 不删 seen,
+// 后续显式 denyRead 同路径被 seen 去重跳过 → 显式遮蔽静默失效。
+func TestRegression_AllowReadDenyReadCollision(t *testing.T) {
+	b, home, ws := newTestBwrap(t)
+	allow := true
+	// allowRead=~ 放行全部家目录默认遮蔽
+	cfg := &Config{
+		AllowUnsandboxedCommands: &allow,
+		Filesystem: FilesystemConfig{
+			AllowRead: []string{"~"},
+			// 该路径同时是默认遮蔽清单成员(~/.aws/credentials)
+			DenyRead: []string{"~/.aws/credentials"},
+		},
+	}
+	awsCred := filepath.Join(home, ".aws", "credentials")
+	_ = os.MkdirAll(filepath.Join(home, ".aws"), 0o755)
+	_ = os.WriteFile(awsCred, []byte("[default]\naws_secret_access_key=x\n"), 0o600)
+
+	argv, err := b.Transform("bash", []string{"-c", "ls"}, cfg, ws)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 显式 denyRead 胜出:仍遮蔽
+	assertSubsequence(t, argv, "--bind-data", "3", awsCred)
+	// 未显式声明的默认遮蔽被 allowRead=~ 解除
+	settings := filepath.Join(home, ".waveloom", "settings.json")
+	if argIndex(argv, settings) >= 0 {
+		t.Errorf("allowRead=~ should unmask default entries: %v", argv)
+	}
+}
+
+// TestBwrapTransform_AllowReadRootIgnored 验证 allowRead="/" 被显式忽略:
+// 根目录放行过宽(解除 workspace/.git/hooks、docker.sock 等全部遮蔽)且
+// 字符串匹配下也不会命中任何遮蔽,语义与 allowWrite 根目录拒绝对齐。
+func TestBwrapTransform_AllowReadRootIgnored(t *testing.T) {
+	b, home, ws := newTestBwrap(t)
+	allow := true
+	cfg := &Config{
+		AllowUnsandboxedCommands: &allow,
+		Filesystem:               FilesystemConfig{AllowRead: []string{"//"}},
+	}
+	argv, err := b.Transform("bash", []string{"-c", "ls"}, cfg, ws)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 默认遮蔽全部保留
+	assertSubsequence(t, argv, "--bind-data", "3", filepath.Join(home, ".waveloom", "settings.json"))
+	assertSubsequence(t, argv, "--tmpfs", filepath.Join(ws, ".git", "hooks"))
+	assertSubsequence(t, argv, "--tmpfs", filepath.Join(home, ".ssh"))
+}

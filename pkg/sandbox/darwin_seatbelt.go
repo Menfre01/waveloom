@@ -127,7 +127,7 @@ func buildSeatbeltProfile(cfg *Config, workspace string) string {
 	}
 	// macOS 特有遮蔽(钥匙串/cookie/浏览器数据等——网络 on 时可被读走外传):
 	// 目录存在 → subpath deny;不存在 → 跳过
-	for _, p := range darwinMaskedDirs(home) {
+	for _, p := range darwinMaskedDirsFiltered(home, workspace, cfg) {
 		maskPath := realPath(p)
 		if _, err := os.Stat(maskPath); err == nil {
 			sb.WriteString("(deny file-read* (subpath " + sbplString(maskPath) + "))\n")
@@ -152,11 +152,12 @@ func buildSeatbeltProfile(cfg *Config, workspace string) string {
 	libraryCache := filepath.Join(home, "Library", "Caches")
 	writePaths = append(writePaths, realPath(libraryCache))
 	// 遮蔽路径集合(allowWrite 冲突检查用,四审 MED-1 对齐 bwrap)
-	maskPaths := make([]string, 0, len(maskSpecs)+len(darwinMaskedDirs(home)))
+	darwinMasked := darwinMaskedDirsFiltered(home, workspace, cfg)
+	maskPaths := make([]string, 0, len(maskSpecs)+len(darwinMasked))
 	for _, ms := range maskSpecs {
 		maskPaths = append(maskPaths, realPath(ms.path))
 	}
-	for _, p := range darwinMaskedDirs(home) {
+	for _, p := range darwinMasked {
 		maskPaths = append(maskPaths, realPath(p))
 	}
 	// allowWrite 额外可写路径(与 Linux --bind 叠加语义一致)
@@ -206,6 +207,31 @@ func darwinMaskedDirs(home string) []string {
 		filepath.Join(home, ".config", "gcloud"),
 		filepath.Join(home, ".gnupg"),
 	}
+}
+
+// darwinMaskedDirsFiltered 返回经 filesystem.allowRead 显式放行过滤后的
+// macOS 特有遮蔽目录。匹配语义同 Linux(filterDefaultMasks):allowRead 条目
+// a 命中目录 m(精确相等,或 m 是 a 的后代)即移除 m。
+func darwinMaskedDirsFiltered(home, workspace string, cfg *Config) []string {
+	allowed := allowReadExpanded(home, workspace, cfg)
+	if len(allowed) == 0 {
+		return darwinMaskedDirs(home)
+	}
+	sep := string(filepath.Separator)
+	var out []string
+	for _, p := range darwinMaskedDirs(home) {
+		hit := false
+		for a := range allowed {
+			if p == a || strings.HasPrefix(p, a+sep) {
+				hit = true
+				break
+			}
+		}
+		if !hit {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 // realPath 解析符号链接为真实路径(EvalSymlinks);失败时保留原值。
