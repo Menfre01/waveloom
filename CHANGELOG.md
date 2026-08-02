@@ -1,3 +1,30 @@
+## [v0.5.0] — 2026-08-02
+
+### 新增功能
+- **OS 级沙箱隔离层**:bubblewrap(Linux)/ Seatbelt(macOS)实现只读根、工作区可写、敏感路径遮蔽(`~/.ssh`、钥匙串、docker.sock、token 等)、环境变量剥离与网络控制(`off` 断网 / `on` 直连);`--bypass-permissions` 或 ACP 无交互自动激活,支持 `settings.json` 配置与 `--sandbox-network off|on` flag
+- **`--bypass-permissions` 二元决策**:无交互入口(one-shot/ACP)下 ASK → ALLOW,仅保留 deny 规则与高危硬拦截;TUI 交互模式维持弹窗
+- **子代理沙箱与规则继承**:bash_subagent 与主代理同等进沙箱,子代理 Guard 继承父级 deny/ask 规则
+- **`make test-sandbox` 双平台集成测试**:本机真实后端 + Linux 容器 bubblewrap 一键验证
+- **bwrap 首次使用安装引导**:缺失时按发行版给出安装命令(apt/dnf/pacman/apk/zypper),Flatpak 用户提示可能已内置
+- **`sandbox.allowRead` 配置**:显式放行内置默认遮蔽路径(根目录拒绝),修复 seen map 碰撞导致显式遮蔽静默失效;`.gitconfig` 移出默认遮蔽清单,git 恢复可用
+- **沙箱 env 注入与构建缓存重定向**:`sandbox.env` 注入 GOPATH/GOMODCACHE/GOCACHE、npm_config_cache 等构建缓存变量,值支持 `./` `~/` `/` 路径前缀语义,消除只读根下宿主缓存写入失败
+
+### 修复
+- **后台任务生命周期 4 个致命缺陷**:registry 泄漏、kill 竞态、跨会话状态残留等
+- **压缩配对完整性防线**:压缩后校验 assistant↔tool 配对,修复孤儿消息,杜绝 API 400 摧毁会话
+- **Tier3 硬限死锁**:硬限分支重试摘要 + 成功后解除硬限,会话不再永久终止
+- **压缩配对边界对齐**:Tier3 删除边界对齐工具调用配对(含并行批量),游标越界钳制防压缩失效
+- **hunk 路径容错与 diff 行号校正**:header 相对路径双重嵌套容错、ReadStateStore 路径归一化、非标准 @@ header 下 TUI diff 行号校正
+- **edit 强制 read-first**:未 read 文件被 edit 拒绝的强制规则落入实际生效系统提示(`pkg/prompt/default.md`),bash cat/诊断片段不计入 read 状态,失败消息明确归因缺 read
+
+### 重构
+- **沙箱接入全链路**:agentloop per-command 状态注入、Shell 工具包装、违规注解 `<sandbox_violations>`、逃生舱提示
+- **压缩校验条件优化**:仅在压缩实际修改时执行配对验证,`removed=0` 轮次零开销
+
+---
+
+📝 [Changelog (English)](https://github.com/Menfre01/waveloom/blob/dev/CHANGELOG.en.md)
+
 ## [v0.4.4] — 2026-07-30
 
 ### 修复

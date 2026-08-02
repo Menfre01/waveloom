@@ -1,3 +1,28 @@
+## [v0.5.0] — 2026-08-02
+
+### Added
+- **OS-level sandbox isolation**: bubblewrap (Linux) / Seatbelt (macOS) with read-only root, workspace-only writes, credential masking (`~/.ssh`, keychains, docker.sock, tokens, etc.), env var stripping, and network control (`off` offline / `on` direct); auto-activated by `--bypass-permissions` or non-interactive ACP, configurable via `settings.json` and the `--sandbox-network off|on` flag
+- **`--bypass-permissions` binary decision**: in non-interactive entries (one-shot/ACP) ASK → ALLOW, keeping only deny rules and high-risk hard blocks; TUI keeps prompts
+- **Subagent sandbox + rule inheritance**: `bash_subagent` runs sandboxed like the main agent; subagent Guard inherits parent deny/ask rules
+- **`make test-sandbox` dual-platform integration tests**: real backend on the host + bubblewrap in a Linux container, one command
+- **bwrap first-run install guide**: distro-aware install commands (apt/dnf/pacman/apk/zypper) when bwrap is missing; Flatpak users get a "may already be installed" hint
+- **`sandbox.allowRead` config**: explicitly allow paths hidden by the built-in default masking list (root rejected); fixes a `seen` map collision that silently disabled explicit masking; `.gitconfig` removed from the default mask list — git works again
+- **Sandbox env injection & build-cache redirect**: `sandbox.env` injects GOPATH/GOMODCACHE/GOCACHE, npm_config_cache, etc., with `./` `~/` `/` path-prefix semantics, eliminating host-cache write failures under the read-only root
+
+### Fixed
+- **4 fatal background-task lifecycle bugs**: registry leak, kill race, cross-session state residue, etc.
+- **Compaction pair-integrity redline**: post-compaction validation repairs orphan assistant↔tool pairings, preventing API 400 from killing the session
+- **Tier3 hard-limit deadlock**: hard-limit path now retries summarization and lifts the limit on success; sessions no longer terminate permanently
+- **Compaction pair-boundary alignment**: Tier3 deletion boundaries align with tool-call pairings (incl. parallel batches); cursor clamping prevents compaction from stalling
+- **Hunk path tolerance & diff renumbering**: relative header paths no longer double-join with file_path; ReadStateStore path normalization; TUI diff line numbers corrected for non-standard @@ headers
+- **edit read-first enforcement**: the mandatory read-before-edit rule now lands in the live system prompt (`pkg/prompt/default.md`); `bash cat`/diagnostic snippets don't count as read state; failure messages clearly attribute missing reads
+
+### Changed
+- **Sandbox wired through the whole chain**: agentloop per-command status injection, Shell tool wrapping, `<sandbox_violations>` annotations, escape-hatch hints
+- **Compaction validation only on actual modification**: zero overhead on no-op rounds
+
+---
+
 ## [v0.4.4] — 2026-07-30
 
 ### Fixed
