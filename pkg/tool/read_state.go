@@ -2,6 +2,7 @@ package tool
 import (
 	"context"
 	"os"
+	"path/filepath"
 	"sync"
 	"time"
 )
@@ -40,14 +41,16 @@ func NewReadStateStore() *ReadStateStore {
 // Record stores the read state for a file.
 func (s *ReadStateStore) Record(path, content string) {
 	s.mu.Lock()
-	s.data[path] = &FileReadState{Content: content, MTime: time.Now()}
+	// key 统一 Clean 归一化,防止相对/绝对、./、尾斜杠等写法差异导致
+	// edit 校验 miss(REGRESSION: parsePatchFiles 曾产出双重嵌套路径)。
+	s.data[filepath.Clean(path)] = &FileReadState{Content: content, MTime: time.Now()}
 	s.mu.Unlock()
 }
 
 // Get returns the stored state for a file, or nil if not recorded.
 func (s *ReadStateStore) Get(path string) *FileReadState {
 	s.mu.RLock()
-	state := s.data[path]
+	state := s.data[filepath.Clean(path)]
 	s.mu.RUnlock()
 	return state
 }
@@ -57,11 +60,15 @@ func (s *ReadStateStore) Get(path string) *FileReadState {
 // Returns a reason string when not ok.
 func (s *ReadStateStore) Validate(path string) (ok bool, reason string) {
 	s.mu.RLock()
-	state := s.data[path]
+	cleanPath := filepath.Clean(path)
+	state := s.data[cleanPath]
 	s.mu.RUnlock()
 
 	if state == nil {
-		return false, "file has not been read yet — use read tool first"
+		// 路径诊断:not-been-read 的常见根因是 hunk header 路径被错误解析
+		// (如双重嵌套),而非真的没读过。展示解析后的路径让 LLM 能识别。
+		return false, "file has not been read yet — use read tool first (resolved: " + cleanPath +
+			"; if this is a single-file edit, omit the '*** Update File:' header so the hunk targets file_path directly)"
 	}
 
 	info, err := os.Stat(path)
@@ -88,6 +95,6 @@ func (s *ReadStateStore) Validate(path string) (ok bool, reason string) {
 // Update refreshes the read state after a successful edit.
 func (s *ReadStateStore) Update(path, content string) {
 	s.mu.Lock()
-	s.data[path] = &FileReadState{Content: content, MTime: time.Now()}
+	s.data[filepath.Clean(path)] = &FileReadState{Content: content, MTime: time.Now()}
 	s.mu.Unlock()
 }

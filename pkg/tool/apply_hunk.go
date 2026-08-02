@@ -80,12 +80,29 @@ func parsePatchFiles(text string, defaultPath string) []patchFile {
 		}
 		if strings.HasPrefix(line, "*** Update File:") {
 			path := strings.TrimSpace(strings.TrimPrefix(line, "*** Update File:"))
-			// hunk header 中路径使用 Unix 约定，需在 FromSlash 前记录 / 前缀
-			//（Windows 上 filepath.IsAbs 不认 / 也不认单 \ 开头）
+			// hunk header 中路径使用 Unix 约定,需在 FromSlash 前记录 / 前缀
+			//(Windows 上 filepath.IsAbs 不认 / 也不认单 \ 开头)
 			unixAbs := strings.HasPrefix(path, "/")
 			path = filepath.FromSlash(path)
 			if !filepath.IsAbs(path) && !unixAbs && defaultPath != "" {
-				path = filepath.Join(filepath.Dir(defaultPath), path)
+				joined := filepath.Join(filepath.Dir(defaultPath), path)
+				// REGRESSION: LLM 惯用相对 workspace 的路径写 header
+				// (如 "pkg/sandbox/x_test.go"),而 file_path 是绝对路径
+				// (如 /proj/pkg/sandbox/x_test.go)。直接拼接会双重嵌套:
+				// /proj/pkg/sandbox + pkg/sandbox/x_test.go →
+				// /proj/pkg/sandbox/pkg/sandbox/x_test.go,后续 read 状态
+				// 校验必然 miss("file has not been read yet"),且错误消息
+				// 不含解析路径,LLM 无法识别,只能盲目 re-read 重试。
+				// 容错 1:拼接结果与 defaultPath 相同(header 只写文件名)→ 归一并列。
+				// 容错 2:首个文件且 basename 与 defaultPath 相同
+				// (header 写相对 workspace 路径)→ 视为同一文件。
+				if filepath.Clean(joined) == filepath.Clean(defaultPath) {
+					path = defaultPath
+				} else if len(files) == 0 && filepath.Base(joined) == filepath.Base(defaultPath) {
+					path = defaultPath
+				} else {
+					path = joined
+				}
 			}
 			files = append(files, patchFile{path: path})
 			current = &files[len(files)-1]

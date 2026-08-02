@@ -77,10 +77,22 @@ func (t *EditFile) Execute(ctx context.Context, p EditFileParams) (*ToolResult, 
 	var buf strings.Builder
 	var diffHunks []DiffHunk
 
+	// 行号校正基准:跨 hunk 跟踪同一文件的净行数变化。
+	// LLM 提供的 @@ header 行号不可信(seekHunk 按内容匹配,不校验 header);
+	// 非标准 header(如 "@@ func name" / 裸 "@@")行号从 1 开始,与实际
+	// 匹配位置无关——TUI diff view 的行号列会显示错误。
+	var lastFile string
+	var offset int
+
 	for _, r := range results {
 		if r.Error != "" {
 			failed++
 			fmt.Fprintf(&buf, "✗ %s: @@ %s — %s\n", r.File, r.Header, r.Error)
+			// REGRESSION: not-been-read 的高发根因是 hunk header 路径被错误
+			// 解析(双重嵌套),而非真的没读过。给出可操作的恢复指引。
+			if strings.Contains(r.Error, "file has not been read yet") {
+				buf.WriteString("  hint: hunk 目标与 file_path 解析不一致——单文件编辑请省略 `*** Update File:` 头,或核对 header 路径写法(绝对路径/仅文件名)\n")
+			}
 			if len(r.OldLines) > 0 {
 				buf.WriteString("  pattern:\n")
 				for _, l := range r.OldLines {
@@ -101,8 +113,16 @@ func (t *EditFile) Execute(ctx context.Context, p EditFileParams) (*ToolResult, 
 			succeeded++
 			fmt.Fprintf(&buf, "✓ %s: @@ %s — applied at line %d\n", r.File, r.Header, r.Line)
 			if dh := parseDiffHunk(r.Header, r.RawBody, r.File); dh != nil {
+				if r.File != lastFile {
+					lastFile = r.File
+					offset = 0
+				}
+				// r.Line 是 seekHunk 在已应用前面 hunk 的内容中的匹配位置
+				// (新文件行号);旧文件行号 = r.Line - offset。
+				renumberDiffHunk(dh, r.Line, offset)
 				diffHunks = append(diffHunks, *dh)
 			}
+			offset += len(r.NewLines) - len(r.OldLines)
 		}
 	}
 
@@ -230,6 +250,40 @@ func parseDiffHunk(header, body, filePath string) *DiffHunk {
 		Heading:  heading,
 		Lines:    lines,
 	}
+}
+
+// renumberDiffHunk 以 hunk 的实际匹配位置为基准重算行号与 header 范围。
+//
+// REGRESSION: parseDiffHunk 的行号来自 LLM 提供的 @@ header——标准 header
+// 用的是 LLM 猜测的行号(applyFileHunks 的 seekHunk 按内容匹配,不校验
+// header 行号),非标准 header(如 "@@ func name" / 裸 "@@")一律从 1 开始,
+// 两者都与文件中的实际匹配位置无关,导致 TUI diff view 的行号列错误。
+//
+// newFileStart 是 seekHunk 在"已应用前面 hunk 的内容"中的匹配位置
+// (HunkResult.Line,新文件 1-based 行号);offset 是同一文件此前 hunk 的
+// 净行数变化,故旧文件行号 = newFileStart - offset。
+func renumberDiffHunk(dh *DiffHunk, newFileStart, offset int) {
+	oldNum := newFileStart - offset
+	newNum := newFileStart
+	for i := range dh.Lines {
+		switch dh.Lines[i].Kind {
+		case DiffCtx:
+			dh.Lines[i].OldNum = oldNum
+			dh.Lines[i].NewNum = newNum
+			oldNum++
+			newNum++
+		case DiffDel:
+			dh.Lines[i].OldNum = oldNum
+			oldNum++
+		case DiffAdd:
+			dh.Lines[i].NewNum = newNum
+			newNum++
+		}
+	}
+	dh.OldStart = newFileStart - offset
+	dh.OldCount = oldNum - dh.OldStart
+	dh.NewStart = newFileStart
+	dh.NewCount = newNum - dh.NewStart
 }
 
 // parseHunkHeader parses "@@ -oldStart[,oldCount] +newStart[,newCount] @@ [heading]".

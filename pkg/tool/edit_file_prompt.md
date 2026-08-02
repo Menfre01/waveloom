@@ -21,7 +21,8 @@
 ```
 
 - Every patch starts with `*** Begin Patch` and ends with `*** End Patch`.
-- Every file MUST have a `*** Update File: <path>` header before its hunks — even single-file edits. Paths in headers are relative to `file_path`'s directory, not the workspace root.
+- **Single-file edits: omit `*** Update File:` entirely** — the hunk targets `file_path` directly. Only multi-file patches need a header per file.
+- Header paths in multi-file patches are resolved **relative to `file_path`'s directory** (or as-is when absolute). A workspace-relative path like `pkg/sandbox/x_test.go` with `file_path=/proj/pkg/sandbox/x_test.go` would be double-joined (`/proj/pkg/sandbox/pkg/sandbox/...`) — prefer absolute paths or bare filenames.
 - `@@ [context label]` is optional (bare `@@` is fine). Use a function name or line hint for readability.
 
 ### Basic usage
@@ -37,10 +38,10 @@
 *** End Patch
 ```
 
-**Single file with explicit header** — also valid, path in header must match `file_path`:
+**Single file with explicit header** — avoid this form; the header path must be a bare filename matching `file_path`'s basename (engine falls back to `file_path` only for the first file with the same basename):
 ```
 *** Begin Patch
-*** Update File: src/main.go
+*** Update File: main.go
 @@ func greet
  func greet() string {
 -    return "hello"
@@ -90,6 +91,8 @@
 ### Multi-file (same call)
 
 Set `file_path` to any file in the target directory — relative paths in `*** Update File:` headers resolve against its directory. E.g., with `file_path="src/main.go"`, a header `*** Update File: util.go` targets `src/util.go`.
+
+Multi-file headers must NOT be workspace-relative paths (`pkg/util.go` with `file_path` in a different directory will be mis-resolved). Use absolute paths or filenames relative to `file_path`'s directory.
 
 ```
 *** Begin Patch

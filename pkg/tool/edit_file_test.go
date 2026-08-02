@@ -2,6 +2,7 @@ package tool
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -283,6 +284,164 @@ func TestEditFile_WithoutReadState(t *testing.T) {
 	expected := "line1\nlineTWO\nline3\n"
 	if string(data) != expected {
 		t.Errorf("file content = %q, want %q", string(data), expected)
+	}
+}
+
+// TestEditFile_NotBeenReadHint — 未读文件编辑失败时,输出必须含可操作的
+// header 提示(单文件编辑省略 *** Update File: 头)。
+func TestEditFile_NotBeenReadHint(t *testing.T) {
+	dir := t.TempDir()
+	filePath := filepath.Join(dir, "main.go")
+	content := "line1\nline2\nline3\n"
+	if err := os.WriteFile(filePath, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// 注入空 ReadStateStore(有校验但未读过)→ not-been-read
+	ctx := WithReadState(context.Background(), NewReadStateStore())
+	tool := &EditFile{}
+	result, err := tool.Execute(ctx, EditFileParams{
+		FilePath: filePath,
+		Hunk: `@@
+ line1
+-line2
++lineTWO
+ line3
+`,
+	})
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if result.Error == nil {
+		t.Fatal("expected error for unread file")
+	}
+	if !strings.Contains(result.Content, "file has not been read yet") {
+		t.Errorf("output missing not-been-read error: %q", result.Content)
+	}
+	if !strings.Contains(result.Content, "hint:") ||
+		!strings.Contains(result.Content, "省略 `*** Update File:` 头") {
+		t.Errorf("output missing header hint: %q", result.Content)
+	}
+}
+
+// TestRegression_DiffHunkLineNumbersActualPosition — TUI diff view 行号回归防护。
+//
+// REGRESSION: 非标准 @@ header(如 "@@ func name" / 裸 "@@")下,parseDiffHunk
+// 的行号从 1 开始编号,而 hunk 实际匹配在文件中部——TUI 的行号列显示
+// 1,2,3... 与实际位置无关。修复后行号以 seekHunk 实际匹配位置为基准。
+func TestRegression_DiffHunkLineNumbersActualPosition(t *testing.T) {
+	dir := t.TempDir()
+	filePath := filepath.Join(dir, "main.go")
+	lines := make([]string, 60)
+	for i := range lines {
+		lines[i] = fmt.Sprintf("line%d", i+1)
+	}
+	content := strings.Join(lines, "\n") + "\n"
+	if err := os.WriteFile(filePath, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx := WithReadState(context.Background(), NewReadStateStore())
+	ReadStateFromContext(ctx).Record(filePath, content)
+
+	tool := &EditFile{}
+	result, err := tool.Execute(ctx, EditFileParams{
+		FilePath: filePath,
+		Hunk: `@@ func foo
+ line50
+-line51
++line51-changed
+ line52
+`,
+	})
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if result.Error != nil {
+		t.Fatalf("Execute() result.Error = %v", result.Error)
+	}
+	hunks := result.Meta.DiffHunks
+	if len(hunks) != 1 {
+		t.Fatalf("expected 1 hunk, got %d", len(hunks))
+	}
+	h := hunks[0]
+	if h.OldStart != 50 || h.NewStart != 50 {
+		t.Errorf("hunk start should be actual match position 50: old=%d new=%d", h.OldStart, h.NewStart)
+	}
+	// 行号:上下文 line50=50/50,删除 line51=51/-,新增= -/51,上下文 line52=52/52
+	want := []struct {
+		kind    DiffLineKind
+		old, new int
+	}{
+		{DiffCtx, 50, 50},
+		{DiffDel, 51, 0},
+		{DiffAdd, 0, 51},
+		{DiffCtx, 52, 52},
+	}
+	if len(h.Lines) != len(want) {
+		t.Fatalf("expected %d lines, got %d", len(want), len(h.Lines))
+	}
+	for i, w := range want {
+		if h.Lines[i].Kind != w.kind || h.Lines[i].OldNum != w.old || h.Lines[i].NewNum != w.new {
+			t.Errorf("line %d: got kind=%s old=%d new=%d, want kind=%s old=%d new=%d",
+				i, h.Lines[i].Kind, h.Lines[i].OldNum, h.Lines[i].NewNum, w.kind, w.old, w.new)
+		}
+	}
+}
+
+// TestRegression_DiffHunkMultiHunkNewStartOffset — 多 hunk 时新文件行号
+// 必须反映前面 hunk 的净行数变化。
+//
+// REGRESSION: 每个 hunk 独立从 1 开始编号,第二个 hunk 的 NewStart 不包含
+// 第一个 hunk 的净变化(如删 1 加 2 → +1),TUI 显示的新文件行号偏移。
+func TestRegression_DiffHunkMultiHunkNewStartOffset(t *testing.T) {
+	dir := t.TempDir()
+	filePath := filepath.Join(dir, "main.go")
+	lines := make([]string, 40)
+	for i := range lines {
+		lines[i] = fmt.Sprintf("line%d", i+1)
+	}
+	content := strings.Join(lines, "\n") + "\n"
+	if err := os.WriteFile(filePath, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx := WithReadState(context.Background(), NewReadStateStore())
+	ReadStateFromContext(ctx).Record(filePath, content)
+
+	tool := &EditFile{}
+	result, err := tool.Execute(ctx, EditFileParams{
+		FilePath: filePath,
+		Hunk: `@@
+ line10
+-line11
++line11a
++line11b
+ line12
+@@
+ line20
+-line21
++line21a
+ line22
+`,
+	})
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if result.Error != nil {
+		t.Fatalf("Execute() result.Error = %v", result.Error)
+	}
+	hunks := result.Meta.DiffHunks
+	if len(hunks) != 2 {
+		t.Fatalf("expected 2 hunks, got %d", len(hunks))
+	}
+	// 第一个 hunk:匹配 line10,净变化 +1(删 1 加 2)
+	if hunks[0].OldStart != 10 || hunks[0].NewStart != 10 {
+		t.Errorf("hunk1 start: old=%d new=%d, want 10/10", hunks[0].OldStart, hunks[0].NewStart)
+	}
+	// 第二个 hunk:内容 line20 在应用 hunk1 后位于新文件第 21 行(旧文件第 20 行)
+	if hunks[1].OldStart != 20 || hunks[1].NewStart != 21 {
+		t.Errorf("hunk2 start: old=%d new=%d, want 20/21", hunks[1].OldStart, hunks[1].NewStart)
 	}
 }
 

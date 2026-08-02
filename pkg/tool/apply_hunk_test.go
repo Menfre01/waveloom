@@ -119,6 +119,42 @@ func TestParsePatchFilesAbsolutePathPreserved(t *testing.T) {
 	}
 }
 
+// TestRegression_ParsePatchFilesWorkspaceRelativeHeader — hunk header 相对
+// workspace 路径的容错回归防护。
+//
+// REGRESSION: LLM 惯用相对 workspace 的路径写 *** Update File: 头
+// (如 "pkg/sandbox/x_test.go"),而 file_path 是绝对路径。旧逻辑直接
+// Join(Dir(file_path), header) 产生双重嵌套路径
+// (/proj/pkg/sandbox/pkg/sandbox/x_test.go),导致 read 状态校验 miss
+// ("file has not been read yet"),且错误消息不含解析路径,LLM 无法识别,
+// 只能盲目 re-read 重试。
+func TestRegression_ParsePatchFilesWorkspaceRelativeHeader(t *testing.T) {
+	defaultPath := filepath.Join(os.TempDir(), "edit-test", "pkg", "sandbox", "x_test.go")
+	// header 写相对 workspace 路径,与 defaultPath 同 basename → 容错为 defaultPath
+	text := "*** Begin Patch\n*** Update File: pkg/sandbox/x_test.go\n@@ func foo\n func foo() {}\n*** End Patch\n"
+	files := parsePatchFiles(text, defaultPath)
+	if len(files) != 1 {
+		t.Fatalf("expected 1 file, got %d", len(files))
+	}
+	if files[0].path != defaultPath {
+		t.Fatalf("workspace-relative header should resolve to defaultPath: got %q, want %q",
+			files[0].path, defaultPath)
+	}
+}
+
+// TestParsePatchFilesMultiFileDifferentBasename 确认容错不误伤多文件场景:
+// header 指向不同 basename 的文件时,仍按 file_path 目录 join。
+func TestParsePatchFilesMultiFileDifferentBasename(t *testing.T) {
+	defaultPath := filepath.Join(os.TempDir(), "edit-test", "pkg", "main.go")
+	text := "*** Begin Patch\n*** Update File: util.go\n@@ func helper\n func helper() {}\n*** End Patch\n"
+	files := parsePatchFiles(text, defaultPath)
+	expected := filepath.Join(filepath.Dir(defaultPath), "util.go")
+	if len(files) != 1 || files[0].path != expected {
+		t.Fatalf("different basename should join against defaultPath dir: got %q, want %q",
+			files[0].path, expected)
+	}
+}
+
 func TestParsePatchFilesBareHunk(t *testing.T) {
 	// Bare @@ hunk without *** Update File: — uses defaultPath
 	text := "@@ func greet\n func greet() string {\n-    return \"hello\"\n+    return \"hello, \" + name\n }\n"
