@@ -23,6 +23,19 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y bubblewrap && sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
       - name: Integration Test
         run: make test-integration
+      - name: Verify sandbox kill regression ran (fail on silent skip)
+        run: |
+          output=$(go test -tags=integration ./pkg/sandbox/ \
+            -run 'TestRegression_BwrapKillBackgroundKillsSandboxedCommand' \
+            -v -timeout 120s 2>&1 || true)
+          echo "$output"
+          if echo "$output" | grep -q -- "--- SKIP"; then
+            echo "::error title=Bwrap regression skipped::TestRegression_BwrapKillBackgroundKillsSandboxedCommand was SKIPPED — bubblewrap unusable on this runner (kill_background_task sandbox cleanup is unguarded)"
+            exit 1
+          fi
+          if echo "$output" | grep -q -- "--- FAIL"; then
+            exit 1
+          fi
 
   lint:
     name: Lint
