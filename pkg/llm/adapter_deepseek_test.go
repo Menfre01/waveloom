@@ -149,6 +149,44 @@ func TestDeepSeekBuildRequestExtraParams(t *testing.T) {
 	}
 }
 
+// TestDeepSeekBuildRequestMaxTokensOverride 验证 per-request max_tokens
+// context 覆盖写入请求 body(压缩摘要等场景需显式输出上限,
+// 否则服务端默认上限可能截断长 JSON 输出)。
+func TestDeepSeekBuildRequestMaxTokensOverride(t *testing.T) {
+	adapter := newDeepSeekAdapter(ClientConfig{
+		APIKey:  "sk-deepseek",
+		Model:   "deepseek-v4-pro",
+		BaseURL: "https://api.deepseek.com",
+	})
+
+	ctx := WithMaxTokens(context.Background(), 8000)
+	req, err := adapter.BuildRequest(ctx, []Message{{Role: RoleUser, Content: "Hi"}}, nil)
+	if err != nil {
+		t.Fatalf("BuildRequest returned error: %v", err)
+	}
+
+	var body map[string]any
+	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
+		t.Fatalf("Failed to decode request body: %v", err)
+	}
+	if body["max_tokens"] != float64(8000) {
+		t.Errorf("max_tokens = %v, want 8000 (ctx override)", body["max_tokens"])
+	}
+
+	// 无覆盖时不应写入 max_tokens
+	req2, err := adapter.BuildRequest(context.Background(), []Message{{Role: RoleUser, Content: "Hi"}}, nil)
+	if err != nil {
+		t.Fatalf("BuildRequest returned error: %v", err)
+	}
+	var body2 map[string]any
+	if err := json.NewDecoder(req2.Body).Decode(&body2); err != nil {
+		t.Fatalf("Failed to decode request body: %v", err)
+	}
+	if _, exists := body2["max_tokens"]; exists {
+		t.Errorf("max_tokens 不应在无 ctx 覆盖时出现: %v", body2["max_tokens"])
+	}
+}
+
 func TestDeepSeekReasoningEffortMapping(t *testing.T) {
 	tests := []struct {
 		input    string

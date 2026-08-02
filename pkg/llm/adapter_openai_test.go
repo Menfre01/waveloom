@@ -124,6 +124,30 @@ func TestOpenAIBuildRequestExtraParams(t *testing.T) {
 	}
 }
 
+// TestOpenAIBuildRequestMaxTokensOverride 镜像 deepseek 测试:
+// per-request max_tokens context 覆盖必须写入请求 body。
+func TestOpenAIBuildRequestMaxTokensOverride(t *testing.T) {
+	adapter := newOpenAIAdapter(ClientConfig{
+		APIKey:  "sk-test",
+		Model:   "gpt-4o",
+		BaseURL: "https://api.openai.com/v1",
+	})
+
+	ctx := WithMaxTokens(context.Background(), 8000)
+	req, err := adapter.BuildRequest(ctx, []Message{{Role: RoleUser, Content: "Hi"}}, nil)
+	if err != nil {
+		t.Fatalf("BuildRequest returned error: %v", err)
+	}
+
+	var body map[string]any
+	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
+		t.Fatalf("Failed to decode request body: %v", err)
+	}
+	if body["max_tokens"] != float64(8000) {
+		t.Errorf("max_tokens = %v, want 8000 (ctx override)", body["max_tokens"])
+	}
+}
+
 func TestOpenAIBuildRequestNoTools(t *testing.T) {
 	adapter := newOpenAIAdapter(ClientConfig{
 		APIKey:  "sk-test",

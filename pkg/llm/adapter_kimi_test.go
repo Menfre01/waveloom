@@ -136,8 +136,32 @@ func TestKimiBuildRequestFixedParamsFiltered(t *testing.T) {
 	}
 }
 
+// TestKimiBuildRequestMaxTokensOverride 镜像 deepseek/openai 测试:
+// per-request max_tokens context 覆盖必须写入请求 body
+// (且不被 kimiFixedParams 过滤——max_tokens 不在固定参数清单中)。
+func TestKimiBuildRequestMaxTokensOverride(t *testing.T) {
+	adapter := newKimiAdapter(ClientConfig{
+		APIKey: "sk-test",
+		Model:  "kimi-k3",
+	})
+
+	ctx := WithMaxTokens(context.Background(), 8000)
+	req, err := adapter.BuildRequest(ctx, []Message{{Role: RoleUser, Content: "Hi"}}, nil)
+	if err != nil {
+		t.Fatalf("BuildRequest returned error: %v", err)
+	}
+
+	var body map[string]any
+	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
+		t.Fatalf("Failed to decode request body: %v", err)
+	}
+	if body["max_tokens"] != float64(8000) {
+		t.Errorf("max_tokens = %v, want 8000 (ctx override)", body["max_tokens"])
+	}
+}
+
 func TestKimiBuildRequestMessagesNotStripped(t *testing.T) {
-	// 验证 reasoning_content 不被剥离（与 DeepSeek adapter 的关键区别）
+	// 验证 reasoning_content 不被剥离(与 DeepSeek adapter 的关键区别)
 	adapter := newKimiAdapter(ClientConfig{
 		APIKey: "sk-test",
 		Model:  "kimi-k3",
@@ -499,7 +523,6 @@ func TestKimiParseStreamEventFinalChunk(t *testing.T) {
 }
 
 // --- ClassifyError Tests ---
-
 
 // REGRESSION: include_usage=true 时 Kimi 会返回一个 choices 为空的 usage-only chunk，
 // 旧实现直接返回零值事件，导致 TUI 拿不到 token 统计。

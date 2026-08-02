@@ -45,8 +45,10 @@ const (
 	// 默认上下文窗口大小（DeepSeek V4）
 	DefaultContextLimit = 1_000_000
 
-	// Tier 3 摘要最大输出 token
-	SummaryMaxTokens = 2000
+	// Tier 3 摘要最大输出 token。
+	// 实测摘要 3K-10K 字符(混合语言 ≈ 1.5-5K tokens),2000 会被截断
+	// (服务端默认上限截断长 JSON → 校验失败 → 压缩失败)。
+	SummaryMaxTokens = 8000
 
 	// Tier 3 连续失败上限
 	MaxTier3ConsecutiveFailures = 2
@@ -738,7 +740,8 @@ func applyTier3(
 
 	// 删除 delta 范围内的消息
 	oldLen := len(*messages)
-	newMessages := make([]llm.Message, 0, tier3Cursor+1+(oldLen-scanEnd))
+	// 容量:前置 + notification + summary + 保护区(最终审 NOTE:原值少 1,多一次扩容)
+	newMessages := make([]llm.Message, 0, tier3Cursor+2+(oldLen-scanEnd))
 	newMessages = append(newMessages, (*messages)[:tier3Cursor]...)
 	// 追加摘要通知 + 摘要内容作为 user 消息
 	notification := llm.Message{
@@ -751,6 +754,11 @@ func applyTier3(
 		Content: summary,
 	}
 	newMessages = append(newMessages, summaryMsg)
+	// REGRESSION(2026-08-02 E2E):容量计算预留了保护区空间
+	// (oldLen-scanEnd)但从未 append——95% 压缩时最近 8000 tokens
+	// (保护区)被静默删除,违反 findProtectionStartIdx "最近消息不参与压缩"语义。
+	// 修复:保护区消息保留在摘要之后。
+	newMessages = append(newMessages, (*messages)[scanEnd:]...)
 
 	*messages = newMessages
 
@@ -760,8 +768,12 @@ func applyTier3(
 	// Tier 3 重建了消息数组，此前所有 decisions 对新索引均无效，直接清空。
 	*decisions = compactionDecisionSet{}
 
-	// 重置三个 cursor
-	newCursor := tier3Cursor + 1 // 摘要消息之后
+	// 重置三个 cursor。
+	// REGRESSION(2026-08-02 三审):tier3Cursor+1 指向摘要消息本身——
+	// 布局为 [:tier3Cursor] + notification + summary + 保护区,
+	// summary 占据 tier3Cursor+1。旧值导致下一轮 delta 重新包含
+	// 摘要消息(内容已在 existingSummaries 链中)→ 链膨胀。
+	newCursor := tier3Cursor + 2 // 摘要消息之后(notification + summary 各占一位)
 	watermark.Tier1Cursor = newCursor
 	watermark.Tier2Cursor = newCursor
 	watermark.Tier3Cursor = newCursor

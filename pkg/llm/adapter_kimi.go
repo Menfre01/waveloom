@@ -109,6 +109,12 @@ func (a *kimiAdapter) buildRequestBody(ctx context.Context, messages []Message, 
 		body["response_format"] = map[string]string{"type": "json_object"}
 	}
 
+	// per-request max_tokens 覆盖(如压缩摘要需显式输出上限,
+	// 否则服务端默认上限可能截断长 JSON 输出)
+	if v, ok := MaxTokensFromContext(ctx); ok {
+		body["max_tokens"] = v
+	}
+
 	return body
 }
 

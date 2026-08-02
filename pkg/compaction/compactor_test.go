@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/Menfre01/waveloom/pkg/llm"
@@ -143,11 +144,20 @@ func TestCompact_MonotonicDecisions(t *testing.T) {
 
 // mockSummarizer 是一个可注入的 Summarizer 实现，用于 Tier 3 单测。
 type mockSummarizer struct {
-	result string
-	err    error
+	mu          sync.Mutex
+	result      string
+	err         error
+	calls       int
+	chains      [][]string      // 每次调用收到的摘要链
+	deltas      [][]llm.Message // 每次调用收到的 delta 消息(验证游标/摘要范围)
 }
 
-func (m *mockSummarizer) Summarize(_ context.Context, _ []string, _ []llm.Message) (string, error) {
+func (m *mockSummarizer) Summarize(_ context.Context, existing []string, delta []llm.Message) (string, error) {
+	m.mu.Lock()
+	m.calls++
+	m.chains = append(m.chains, append([]string(nil), existing...))
+	m.deltas = append(m.deltas, append([]llm.Message(nil), delta...))
+	m.mu.Unlock()
 	if m.err != nil {
 		return "", m.err
 	}
@@ -257,6 +267,125 @@ func TestCompact_Tier3_Success(t *testing.T) {
 	w := c.Watermark()
 	if w.Tier1Cursor != w.Tier3Cursor || w.Tier2Cursor != w.Tier3Cursor {
 		t.Fatal("expected all cursors to be equal after Tier 3")
+	}
+}
+
+// TestRegression_Tier3_PreservesProtectionZone 回归防护:
+// applyTier3 重建消息数组时容量预留了保护区空间(oldLen-scanEnd)
+// 但从未 append——95% 压缩静默删除最近 8000 tokens(保护区),
+// 违反 findProtectionStartIdx "最近消息不参与压缩"语义。
+func TestRegression_Tier3_PreservesProtectionZone(t *testing.T) {
+	summaryJSON := `{"progress":{"summary":"test","files":[]},"pending":[],"pitfalls":[],"constraints":""}`
+	ms := &mockSummarizer{result: summaryJSON}
+	c := NewCompactor(DefaultCompactionConfig(), ms)
+
+	messages := []llm.Message{
+		{Role: llm.RoleSystem, Content: "system"},
+		{Role: llm.RoleUser, Content: "start"},
+	}
+	// delta 消息(索引 2 起,可被摘要)
+	for i := 0; i < 10; i++ {
+		messages = append(messages, llm.Message{
+			Role: llm.RoleUser, Content: fmt.Sprintf("delta message %d", i),
+		})
+	}
+	// 配对完整的 tool run(填充中间)
+	messages = appendToolRun(messages, 20)
+	// 保护区标记消息:放在最后一条,必然落在保护区内(不被摘要/删除)
+	marker := strings.Repeat("protection-zone-marker-", 2000) // 40K 字符 ≈ 12K tokens
+	messages = append(messages, llm.Message{Role: llm.RoleUser, Content: marker})
+
+	oldLen := len(messages)
+
+	tick := c.Compact(context.Background(), &messages, int(float64(DefaultContextLimit)*0.96))
+	if tick.Tier != 3 {
+		t.Fatalf("expected Tier 3 at 96%%, got Tier %d", tick.Tier)
+	}
+	if !tick.Tier3SummaryDone {
+		t.Fatal("expected Tier3SummaryDone=true")
+	}
+
+	// 保护区标记消息必须保留
+	found := false
+	for _, m := range messages {
+		if m.Content == marker {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatal("REGRESSION: Tier 3 压缩后保护区内消息被删除(最近 8000 tokens 丢失)")
+	}
+
+	// 消息仍应收缩(delta 删除 + 摘要插入,但保留保护区)
+	if len(messages) >= oldLen {
+		t.Fatalf("expected messages to shrink, old=%d new=%d", oldLen, len(messages))
+	}
+}
+
+// TestRegression_Tier3_CursorSkipsSummary 回归防护:
+// newCursor 曾为 tier3Cursor+1——布局 [:tier3Cursor] + notification + summary
+// 中 summary 占据 tier3Cursor+1,游标指向摘要消息本身,下一轮 delta
+// 重新包含摘要内容(已在 existingSummaries 链中)→ 链膨胀。
+func TestRegression_Tier3_CursorSkipsSummary(t *testing.T) {
+	summaryJSON := `{"progress":{"summary":"first round","files":[]},"pending":[],"pitfalls":[],"constraints":""}`
+	ms := &mockSummarizer{result: summaryJSON}
+	c := NewCompactor(DefaultCompactionConfig(), ms)
+
+	messages := []llm.Message{
+		{Role: llm.RoleSystem, Content: "system"},
+		{Role: llm.RoleUser, Content: "start"},
+	}
+	for i := 0; i < 10; i++ {
+		messages = append(messages, llm.Message{
+			Role: llm.RoleUser, Content: fmt.Sprintf("delta msg %d", i),
+		})
+	}
+	messages = appendToolRun(messages, 20)
+	// 保护区标记消息(单条 ≥ 8000 tokens,保证第二轮 delta 非空)
+	marker := strings.Repeat("protection-zone-marker-", 2000)
+	messages = append(messages, llm.Message{Role: llm.RoleUser, Content: marker})
+
+	// round 1:96% → Tier 3
+	tick1 := c.Compact(context.Background(), &messages, int(float64(DefaultContextLimit)*0.96))
+	if tick1.Tier != 3 || !tick1.Tier3SummaryDone {
+		t.Fatalf("round 1: expected Tier 3 success, got %+v", tick1)
+	}
+	// 游标应指向摘要之后:前置 2 条 + notification + summary → 4
+	if w := c.Watermark(); w.Tier3Cursor != 4 {
+		t.Fatalf("Tier3Cursor 应指向摘要之后(=4),实际 %d", w.Tier3Cursor)
+	}
+
+	// 模拟新对话轮次:摘要后追加足够大的消息(单条 ≥8000 tokens,
+	// 使保护区从它开始,摘要后的 marker 成为下一轮 delta)
+	messages = append(messages, llm.Message{Role: llm.RoleUser, Content: strings.Repeat("new turn ", 5000)})
+
+	// round 2:再次 96% → Tier 3(新消息在保护区外)
+	tick2 := c.Compact(context.Background(), &messages, int(float64(DefaultContextLimit)*0.96))
+	if tick2.Tier != 3 || !tick2.Tier3SummaryDone {
+		t.Fatalf("round 2: expected Tier 3 success, got %+v", tick2)
+	}
+
+	ms.mu.Lock()
+	defer ms.mu.Unlock()
+	if ms.calls < 2 {
+		t.Fatalf("expected ≥2 Summarize calls, got %d", ms.calls)
+	}
+	for _, m := range ms.deltas[1] {
+		if m.Content == summaryJSON {
+			t.Fatal("REGRESSION: 第二轮 delta 包含第一轮摘要消息(游标未跳过摘要)")
+		}
+	}
+	// 第二轮 delta 应包含 marker(增量语义:摘要后未覆盖的消息)
+	foundNew := false
+	for _, m := range ms.deltas[1] {
+		if strings.HasPrefix(m.Content, "protection-zone-marker-") {
+			foundNew = true
+			break
+		}
+	}
+	if !foundNew {
+		t.Fatal("第二轮 delta 应包含摘要后未覆盖的消息(marker)")
 	}
 }
 
