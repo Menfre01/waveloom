@@ -327,11 +327,18 @@ func (t *Shell) ExecuteStreaming(ctx context.Context, p ShellParams, chunkCb fun
 	// ── 启动命令 ──
 	start := time.Now()
 
-	// fallback pipe 模式：需在 Start 前获取 pipe
+	// fallback pipe 模式:需在 Start 前设置 io.Pipe(cmd.Stdout/Stderr)。
+	// 不用 cmd.StdoutPipe():其读端在 Wait 返回时被 os/exec 关闭,读 goroutine
+	// 调度延迟时管道缓冲数据随读端关闭丢失(REGRESSION: TestShell_ReadPipesStreaming
+	// 在 ubuntu-24.04 CI 稳定失败)。io.Pipe 由 os/exec 内部 copy goroutine 写入,
+	// Wait 返回即数据已全部进入管道,无竞态。
 	var stdoutPipe, stderrPipe io.ReadCloser
+	var stdoutW, stderrW io.WriteCloser
 	if !useFileFD {
-		stdoutPipe, _ = cmd.StdoutPipe()
-		stderrPipe, _ = cmd.StderrPipe()
+		stdoutPipe, stdoutW = io.Pipe()
+		stderrPipe, stderrW = io.Pipe()
+		cmd.Stdout = stdoutW
+		cmd.Stderr = stderrW
 	}
 
 	if err := cmd.Start(); err != nil {
@@ -435,7 +442,7 @@ func (t *Shell) ExecuteStreaming(ctx context.Context, p ShellParams, chunkCb fun
 		execErr = pollOutputFile(cmd, cmdCtx, done, outputFile, outputPath, emitChunk)
 	} else {
 		// fallback pipe 模式
-		execErr = readPipesStreaming(cmd, cmdCtx, done, stdoutPipe, stderrPipe, emitChunk)
+		execErr = readPipesStreaming(cmd, cmdCtx, done, stdoutPipe, stderrPipe, stdoutW, stderrW, emitChunk)
 	}
 
 	duration := time.Since(start)
@@ -515,9 +522,13 @@ loop:
 	return execErr
 }
 
-// readPipesStreaming 是 fallback 管道读取模式（文件创建失败时使用）。
-// stdoutPipe 和 stderrPipe 必须在 cmd.Start() 之前通过 cmd.StdoutPipe() / cmd.StderrPipe() 获取。
-func readPipesStreaming(cmd *exec.Cmd, cmdCtx context.Context, done <-chan error, stdoutPipe, stderrPipe io.ReadCloser, emitChunk func(string)) error {
+// readPipesStreaming 是 fallback 管道读取模式(文件创建失败时使用)。
+// stdoutPipe/stderrPipe 为 io.Pipe 读端,stdoutW/stderrW 为对应写端:
+// 调用方须在 Start 前将 cmd.Stdout/Stderr 设为写端(os/exec 内部 copy
+// goroutine 负责写入),Wait 返回即输出已全部进入管道。
+// 不使用 cmd.StdoutPipe():其读端在 Wait 返回时被 os/exec 关闭,
+// 读 goroutine 调度延迟时管道缓冲数据会随读端关闭丢失。
+func readPipesStreaming(cmd *exec.Cmd, cmdCtx context.Context, done <-chan error, stdoutPipe, stderrPipe io.Reader, stdoutW, stderrW io.Closer, emitChunk func(string)) error {
 
 	var wg sync.WaitGroup
 	readPipe := func(reader io.Reader) {
@@ -548,6 +559,10 @@ func readPipesStreaming(cmd *exec.Cmd, cmdCtx context.Context, done <-chan error
 		execErr = cmdCtx.Err()
 	case execErr = <-done:
 	}
+
+	// Wait 返回 → 子进程输出已全部写入管道;关闭写端令读 goroutine EOF 退出
+	_ = stdoutW.Close()
+	_ = stderrW.Close()
 
 	pipesDone := make(chan struct{})
 	go func() {

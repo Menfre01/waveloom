@@ -2,6 +2,7 @@ package tool
 
 import (
 	"context"
+	"io"
 	"os"
 	"os/exec"
 	"runtime"
@@ -13,7 +14,6 @@ import (
 	"github.com/Menfre01/waveloom/pkg/shellutil"
 	"github.com/Menfre01/waveloom/pkg/task"
 )
-
 
 // skipOnWindows skips the test on Windows for tests that rely on shell execution.
 func skipOnWindows(t *testing.T) {
@@ -1023,8 +1023,10 @@ func TestShell_ReadPipesStreaming(t *testing.T) {
 	}
 
 	cmd := exec.Command("echo", "pipe_hello")
-	stdoutPipe, _ := cmd.StdoutPipe()
-	stderrPipe, _ := cmd.StderrPipe()
+	stdoutPipe, stdoutW := io.Pipe()
+	stderrPipe, stderrW := io.Pipe()
+	cmd.Stdout = stdoutW
+	cmd.Stderr = stderrW
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("cmd.Start() error = %v", err)
 	}
@@ -1038,7 +1040,7 @@ func TestShell_ReadPipesStreaming(t *testing.T) {
 	var chunks []string
 	emitChunk := func(s string) { chunks = append(chunks, s) }
 
-	err := readPipesStreaming(cmd, ctx, done, stdoutPipe, stderrPipe, emitChunk)
+	err := readPipesStreaming(cmd, ctx, done, stdoutPipe, stderrPipe, stdoutW, stderrW, emitChunk)
 	if err != nil {
 		t.Fatalf("readPipesStreaming error = %v", err)
 	}

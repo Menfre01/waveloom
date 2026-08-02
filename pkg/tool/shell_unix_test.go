@@ -4,6 +4,7 @@ package tool
 
 import (
 	"context"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -50,8 +51,10 @@ func TestPollOutputFile_ContextCancel(t *testing.T) {
 func TestShell_ReadPipesStreaming_Timeout(t *testing.T) {
 	cmd := exec.Command("sleep", "100")
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	stdoutPipe, _ := cmd.StdoutPipe()
-	stderrPipe, _ := cmd.StderrPipe()
+	stdoutPipe, stdoutW := io.Pipe()
+	stderrPipe, stderrW := io.Pipe()
+	cmd.Stdout = stdoutW
+	cmd.Stderr = stderrW
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("cmd.Start() error = %v", err)
 	}
@@ -62,7 +65,7 @@ func TestShell_ReadPipesStreaming_Timeout(t *testing.T) {
 	done := make(chan error, 1)
 	go func() { done <- cmd.Wait() }()
 
-	err := readPipesStreaming(cmd, ctx, done, stdoutPipe, stderrPipe, func(s string) {})
+	err := readPipesStreaming(cmd, ctx, done, stdoutPipe, stderrPipe, stdoutW, stderrW, func(s string) {})
 	if err == nil {
 		t.Fatal("expected timeout error, got nil")
 	}
