@@ -54,21 +54,6 @@ func (b *bwrapBackend) ExtraFiles() []*os.File {
 	return []*os.File{b.nullFile}
 }
 
-// socketMaskDir 是遮蔽 socket 路径(--ro-bind 源)用的固定空目录。
-// 不能放 os.TempDir():bwrap argv 中 --tmpfs /tmp 先于遮蔽挂载执行,
-// 新 tmpfs 覆盖宿主 /tmp 后源文件不可见(bwrap 按 argv 顺序应用挂载)。
-// /var/tmp 位于 --ro-bind / / 的只读根内,保留宿主内容,不被任何贴纸覆盖。
-// 目录源是刻意选择:bwrap 对目录源 mkdir(dest) 遇 EEXIST 容错放行,
-// 不会 open 目标文件(socket open O_WRONLY 语义失败)。
-// 固定路径设计:bind 挂载后源 inode 已固定,并发操作互不影响;
-// 残留目录由系统清理(每主机最多 1 个)。
-var socketMaskDir = "/var/tmp/waveloom-socket-mask"
-
-// ensureSocketMaskDir 确保 socket 遮蔽源目录存在。
-func ensureSocketMaskDir() error {
-	return os.MkdirAll(socketMaskDir, 0o700)
-}
-
 // runCombinedDefault 默认执行器:exec.Command + CombinedOutput。
 func runCombinedDefault(name string, args ...string) ([]byte, error) {
 	return exec.Command(name, args...).CombinedOutput()
@@ -231,20 +216,15 @@ func (b *bwrapBackend) Transform(shellBin string, args []string, cfg *Config, wo
 			// fd 3 指向 /dev/null(ExtraFiles),多个遮蔽复用同一 fd(读恒空)。
 			argv = append(argv, "--bind-data", strconv.Itoa(nullFD), ms.path)
 		case maskSocketFile:
-			// socket 遮蔽:--bind-data 需 open(O_CREAT|O_WRONLY) 目标,
-			// 对 socket 语义失败(CI 实测 "Can't create file at ...: ENOENT",
-			// 本地 open 则为 ENXIO)——bind-data 不适用于 socket。
-			// --ro-bind 空文件同样失败:bwrap 对文件源仍 open 目标文件
-			// (确保存在),socket 目标逃不掉。
-			// --ro-bind 空目录:目录源走 mkdir(dest)+EEXIST 容错,不 open
-			// 目标;内核 bind 挂载不检查目标类型 → socket 路径被只读空目录
-			// 覆盖 → 容器内访问为 ENOTDIR/空,写为 EROFS,遮蔽生效。
-			// 固定路径临时文件:bind 后源 inode 固定,并发覆盖不影响已挂载内容;
-			// 残留文件由系统 /tmp 清理。
-			if err := ensureSocketMaskDir(); err != nil {
-				return nil, fmt.Errorf("sandbox: create socket mask dir: %w", err)
-			}
-			argv = append(argv, "--ro-bind", socketMaskDir, ms.path)
+			// socket 遮蔽:bwrap 无法 bind 覆盖已存在的 socket 目标——
+			// 文件源 ensure_file() open(O_CREAT|O_WRONLY) 对 socket 失败,
+			// 目录源 ensure_dir() 要求目标为目录(均实测 CI
+			// "Can't create file/mkdir /var/run/docker.sock: ENOENT")。
+			// 唯一可行:tmpfs 遮蔽父目录 —— 沙箱内 /var/run 清空,
+			// docker.sock 不可达(遮蔽目标达成)。副作用:父目录其余内容
+			// 在沙箱内不可见(安全优先,规格书 HIGH-2 docker.sock 逃逸)。
+			parent := filepath.Dir(ms.path)
+			argv = append(argv, "--tmpfs", parent)
 		case maskDir:
 			argv = append(argv, "--tmpfs", ms.path)
 		case maskMissing:

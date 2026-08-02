@@ -201,13 +201,13 @@ func TestBwrapTransform_DenyReadMasks(t *testing.T) {
 	assertSubsequence(t, argv, "--tmpfs", secretDir)
 }
 
-// TestBwrapTransform_SocketMaskRoBind 验证 socket 遮蔽走 --ro-bind 空文件。
-// REGRESSION: --bind-data 对 socket 目标 open(O_CREAT|O_WRONLY) 语义失败
-// (CI 实测 "Can't create file at /var/run/docker.sock: No such file or directory",
-// 本地 open 为 ENXIO)——bind-data 不适用于 socket;--ro-bind 空文件绕开目标
-// open(内核 bind 挂载不检查目标类型),docker.sock 等 socket 遮蔽在真实
-// Linux 上不再导致全部沙箱命令失败。
-func TestBwrapTransform_SocketMaskRoBind(t *testing.T) {
+// TestBwrapTransform_SocketMaskTmpfsParent 验证 socket 遮蔽走父目录 tmpfs。
+// REGRESSION: bwrap 无法 bind 覆盖已存在的 socket 目标——文件源
+// ensure_file() open 对 socket 失败、目录源 ensure_dir() 要求目标为目录
+// (CI 实测 "Can't create file/mkdir /var/run/docker.sock: ENOENT",三轮修复
+// --bind-data / --ro-bind 文件 / --ro-bind 目录均失败)。tmpfs 父目录是
+// bwrap 下唯一可行的 socket 遮蔽:沙箱内 /var/run 清空,docker.sock 不可达。
+func TestBwrapTransform_SocketMaskTmpfsParent(t *testing.T) {
 	b, home, ws := newTestBwrap(t)
 	sockPath := filepath.Join(home, "docker.sock")
 	fd, err := syscall.Socket(syscall.AF_UNIX, syscall.SOCK_STREAM, 0)
@@ -228,18 +228,11 @@ func TestBwrapTransform_SocketMaskRoBind(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// sockPath 的遮蔽必须是 --ro-bind <socketMaskDir> <sockPath>
-	// (普通文件遮蔽仍走 --bind-data,不能全局断言其缺席)
-	for i, a := range argv {
-		if a == sockPath {
-			if i < 2 || argv[i-1] != socketMaskDir || argv[i-2] != "--ro-bind" {
-				t.Errorf("socket %s should be masked via --ro-bind %s %s: %v", sockPath, socketMaskDir, sockPath, argv)
-			}
-		}
+	// sockPath 的遮蔽必须是 --tmpfs <父目录>(sockPath 不得以任何形式出现在 argv)
+	if idx := argIndex(argv, sockPath); idx >= 0 {
+		t.Errorf("socket %s must not appear in argv (tmpfs parent mask): %v", sockPath, argv)
 	}
-	if fi, err := os.Stat(socketMaskDir); err != nil || !fi.IsDir() {
-		t.Errorf("socket mask source should exist as dir: fi=%v err=%v", fi, err)
-	}
+	assertSubsequence(t, argv, "--tmpfs", filepath.Dir(sockPath))
 }
 
 func TestBwrapTransform_EnvVarStrip(t *testing.T) {
