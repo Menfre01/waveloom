@@ -228,17 +228,17 @@ func TestBwrapTransform_SocketMaskRoBind(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// sockPath 的遮蔽必须是 --ro-bind <socketMaskPath> <sockPath>
+	// sockPath 的遮蔽必须是 --ro-bind <socketMaskDir> <sockPath>
 	// (普通文件遮蔽仍走 --bind-data,不能全局断言其缺席)
 	for i, a := range argv {
 		if a == sockPath {
-			if i < 2 || argv[i-1] != socketMaskPath || argv[i-2] != "--ro-bind" {
-				t.Errorf("socket %s should be masked via --ro-bind %s %s: %v", sockPath, socketMaskPath, sockPath, argv)
+			if i < 2 || argv[i-1] != socketMaskDir || argv[i-2] != "--ro-bind" {
+				t.Errorf("socket %s should be masked via --ro-bind %s %s: %v", sockPath, socketMaskDir, sockPath, argv)
 			}
 		}
 	}
-	if fi, err := os.Stat(socketMaskPath); err != nil || fi.Size() != 0 {
-		t.Errorf("socket mask source should exist and be empty: fi=%v err=%v", fi, err)
+	if fi, err := os.Stat(socketMaskDir); err != nil || !fi.IsDir() {
+		t.Errorf("socket mask source should exist as dir: fi=%v err=%v", fi, err)
 	}
 }
 
