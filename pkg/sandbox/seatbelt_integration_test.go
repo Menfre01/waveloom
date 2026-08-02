@@ -1,11 +1,18 @@
+//go:build darwin
+
+// seatbelt 集成测试仅 macOS 运行(sandbox-exec 为 macOS 系统自带)。
+// 平台限定避免 Windows 编译失败:Setpgid 为 Unix 专属字段。
 package sandbox
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 )
 
 // TestSeatbeltIntegration_RealExec 真实 sandbox-exec 端到端验证。
@@ -181,5 +188,76 @@ func TestSeatbeltIntegration_NetworkOn(t *testing.T) {
 		if err != nil || !strings.Contains(out, "example") {
 			t.Errorf("network on should reach example.com: out=%q err=%v", out, err)
 		}
+	}
+}
+
+// TestRegression_SeatbeltKillBackgroundKillsSandboxedCommand — kill_background_task
+// 回归防护(seatbelt 后端)。
+//
+// REGRESSION: seatbelt 后端无 --unshare-pid/--die-with-parent 等价物,
+// sandbox-exec 与沙箱内 bash 同进程组(无 setsid),kill(-wrapperPid) 直接
+// 命中整个进程组,无需级联清理。本测试守护"杀包装器 = 杀沙箱内命令"这一
+// kill_background_task 语义,防止未来包装层引入脱离进程组的机制后失效。
+func TestRegression_SeatbeltKillBackgroundKillsSandboxedCommand(t *testing.T) {
+	ws := t.TempDir()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	_ = os.MkdirAll(filepath.Join(home, ".cache"), 0o755)
+	_ = os.MkdirAll(filepath.Join(home, "Library", "Caches"), 0o755)
+
+	allow := true
+	cfg := &Config{
+		AllowUnsandboxedCommands: &allow,
+		Network:                  NetworkConfig{Mode: NetworkModeOff},
+	}
+	b := newSeatbeltBackend()
+	if err := b.Probe(); err != nil {
+		t.Skipf("seatbelt unavailable, skipping integration: %v", err)
+	}
+
+	// 模拟 Shell 工具后台路径:Transform 包装 bash -c 长任务 + Setpgid
+	// (SetSysProcAttr),注册 PID = 包装器(sandbox-exec)的 PID。
+	// 命令必须足够长(sleep 30):命令完成后沙箱自然退出,kill 将无效。
+	marker := filepath.Join(ws, "kill-regression.marker")
+	cmdLine := fmt.Sprintf("sleep 30; echo done > %s", marker)
+	argv, err := b.Transform("/bin/bash", []string{"-c", cmdLine}, cfg, ws)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command(argv[0], argv[1:]...)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	wrapperPid := cmd.Process.Pid
+	// 失败兜底:kill 进程组,防止回归时沙箱进程泄漏到测试结束后。
+	defer func() { _ = syscall.Kill(-wrapperPid, syscall.SIGKILL) }()
+
+	// 等命令进入 sleep 阶段(沙箱已建立),贴近真实后台任务被杀时序。
+	time.Sleep(500 * time.Millisecond)
+
+	// 等价 tool.KillProcessGroupByPID:存活探测 + 进程组 SIGKILL。
+	if err := syscall.Kill(wrapperPid, syscall.Signal(0)); err != nil {
+		t.Fatalf("wrapper %d not alive before kill: %v", wrapperPid, err)
+	}
+	_ = syscall.Kill(-wrapperPid, syscall.SIGKILL)
+
+	// 包装器必须退出(后台 wait goroutine 的 cmd.Wait() 对应进程)。
+	waitCh := make(chan error, 1)
+	go func() { waitCh <- cmd.Wait() }()
+	select {
+	case <-waitCh:
+	case <-time.After(5 * time.Second):
+		t.Fatalf("wrapper (PID %d) did not exit after kill", wrapperPid)
+	}
+
+	// 核心断言:沙箱内命令必须被清理。若进程组 kill 失效,
+	// sleep 3 存活到 3 秒后写入 marker → 在此窗口内被检测到。
+	deadline := time.Now().Add(4 * time.Second)
+	for time.Now().Before(deadline) {
+		if _, err := os.Stat(marker); err == nil {
+			t.Fatal("REGRESSION: sandboxed command survived kill_background_task (marker written)")
+		}
+		time.Sleep(100 * time.Millisecond)
 	}
 }
