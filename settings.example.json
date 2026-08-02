@@ -46,6 +46,7 @@
         },
         "filesystem": {
             "allowWrite": ["~/.cache", "//tmp/build"],
+            "allowRead": ["~/.docker/run"],
             "denyRead": ["~/.ssh", "~/.env", "~/.aws", "~/.docker"]
         },
         "capabilities": {

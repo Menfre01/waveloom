@@ -242,6 +242,7 @@ export BRAVE_API_KEY="your-brave-api-key"
 | `network.mode` | 网络策略:`off`(全断网)/ `on`(直连);`proxy` 为 v2 未实现 | `off` |
 | `network.allowedDomains` | 域名白名单(v2 proxy 预留,当前不生效) | `[]` |
 | `filesystem.allowWrite` | 额外可写路径(`//abs` 绝对、`~/` 家目录、`./` 或裸名项目根);根目录与遮蔽路径冲突时拒绝 | `[]` |
+| `filesystem.allowRead` | 显式放行(取消遮蔽)内置默认遮蔽清单中的路径(如 `~/.docker/run` 恢复 docker);显式 `denyRead` / `credentials.files` 优先级更高,不受影响 | `[]` |
 | `filesystem.denyRead` | 额外遮蔽(不可读)路径,叠加在内置默认遮蔽清单之上 | `[]` |
 | `capabilities.keep` | `--cap-drop ALL` 后加回的内核能力(如 `net_raw` 供 ping) | `[]` |
 | `credentials.files` | 凭据遮蔽路径(网络 on 时强烈建议配置) | `[]` |
@@ -258,6 +259,40 @@ export BRAVE_API_KEY="your-brave-api-key"
   }
 }
 ```
+
+### 内置默认遮蔽清单
+
+沙箱启用后,以下路径**默认不可读**(无需任何配置)。`filesystem.allowRead` 可显式放行其中任意条目(放行目录 = 解除其下所有遮蔽);用户显式 `denyRead` / `credentials.files` 优先级更高。
+
+**文件级遮蔽**(读返回空):
+
+| 类别 | 路径 |
+|------|------|
+| Waveloom 配置 | `~/.waveloom/settings.json`、`<项目根>/.waveloom/settings.json` |
+| Git 真凭证 | `~/.git-credentials`、`~/.config/git/credentials` |
+| Shell 启动文件 | `~/.bashrc`、`~/.bash_profile`、`~/.profile`、`~/.zshrc`、`~/.zshenv`、`~/.bash_history` 等 `~/.*history` |
+| 包管理/网络 | `~/.npmrc`、`~/.netrc`、`~/.env`、`<项目根>/.env` |
+| Docker | `~/.docker/config.json`、`/var/run/docker.sock` |
+| 云/容器凭证 | `~/.aws/credentials`、`~/.aws/config`、`~/.kube/config`、`~/.config/gcloud`、`~/.gnupg`、`~/.pgpass`、`~/.config/containers/auth.json` |
+| 其他 | `~/.ssh/config`、`~/.config/gh/hosts.yml`、`~/.mcp.json`、`~/.claude/settings.json` |
+
+**目录级遮蔽**(整目录不可读):
+
+| 类别 | 路径 |
+|------|------|
+| 防持久化注入 | `<项目根>/.git/hooks` |
+| 凭证目录 | `~/.ssh/`、`~/.config/gh/` |
+
+**macOS 特有**(额外叠加):
+
+| 类别 | 路径 |
+|------|------|
+| 钥匙串/会话 | `~/Library/Keychains`、`~/Library/HTTPStorages`、`~/Library/Cookies` |
+| Docker Desktop | `~/.docker/run/docker.sock` |
+| 浏览器数据 | `~/Library/Application Support/Google/Chrome`、`.../Firefox`、`.../Microsoft/Edge` |
+| 云凭证 | `~/.kube/`、`~/.config/gcloud/`、`~/.gnupg/` |
+
+> 注:`~/.gitconfig` **不**在默认遮蔽清单中(git 恢复可用);`~/.git-credentials` 仍遮蔽,私有仓库 HTTPS 需手动输入凭据。环境变量剥离(内置 glob:`*TOKEN*` / `*_API_KEY` / `AWS_*` / `GH_*` 等)与路径遮蔽叠加生效。
 
 ## CLI 参数
 

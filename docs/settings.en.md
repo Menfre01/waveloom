@@ -244,6 +244,7 @@ Falls back to DuckDuckGo when not set.
 | `network.mode` | Network policy: `off` (fully offline) / `on` (direct); `proxy` is v2, not implemented | `off` |
 | `network.allowedDomains` | Domain allowlist (v2 proxy placeholder, not active yet) | `[]` |
 | `filesystem.allowWrite` | Extra writable paths (`//abs` absolute, `~/` home, `./` or bare name = project root); root and mask-conflicting paths are rejected | `[]` |
+| `filesystem.allowRead` | Explicitly unmask paths from the built-in default mask list (e.g. `~/.docker/run` restores docker); explicit `denyRead` / `credentials.files` take precedence and are unaffected | `[]` |
 | `filesystem.denyRead` | Extra masked (unreadable) paths, layered on top of the built-in default mask list | `[]` |
 | `capabilities.keep` | Kernel capabilities re-added after `--cap-drop ALL` (e.g. `net_raw` for ping) | `[]` |
 | `credentials.files` | Credential mask paths (strongly recommended when network is `on`) | `[]` |
@@ -260,6 +261,40 @@ Falls back to DuckDuckGo when not set.
   }
 }
 ```
+
+### Built-in Default Mask List
+
+When the sandbox is enabled, the following paths are **unreadable by default** (no configuration needed). `filesystem.allowRead` can explicitly unmask any of them (unmasking a directory lifts all masks beneath it); explicit `denyRead` / `credentials.files` take precedence.
+
+**File-level masks** (reads return empty):
+
+| Category | Paths |
+|----------|-------|
+| Waveloom config | `~/.waveloom/settings.json`, `<project root>/.waveloom/settings.json` |
+| Git real credentials | `~/.git-credentials`, `~/.config/git/credentials` |
+| Shell startup files | `~/.bashrc`, `~/.bash_profile`, `~/.profile`, `~/.zshrc`, `~/.zshenv`, `~/.*history` |
+| Package managers / network | `~/.npmrc`, `~/.netrc`, `~/.env`, `<project root>/.env` |
+| Docker | `~/.docker/config.json`, `/var/run/docker.sock` |
+| Cloud / container credentials | `~/.aws/credentials`, `~/.aws/config`, `~/.kube/config`, `~/.config/gcloud`, `~/.gnupg`, `~/.pgpass`, `~/.config/containers/auth.json` |
+| Other | `~/.ssh/config`, `~/.config/gh/hosts.yml`, `~/.mcp.json`, `~/.claude/settings.json` |
+
+**Directory-level masks** (whole directory unreadable):
+
+| Category | Paths |
+|----------|-------|
+| Persistent-injection guard | `<project root>/.git/hooks` |
+| Credential directories | `~/.ssh/`, `~/.config/gh/` |
+
+**macOS-specific** (layered on top):
+
+| Category | Paths |
+|----------|-------|
+| Keychain / sessions | `~/Library/Keychains`, `~/Library/HTTPStorages`, `~/Library/Cookies` |
+| Docker Desktop | `~/.docker/run/docker.sock` |
+| Browser data | `~/Library/Application Support/Google/Chrome`, `.../Firefox`, `.../Microsoft/Edge` |
+| Cloud credentials | `~/.kube/`, `~/.config/gcloud/`, `~/.gnupg/` |
+
+> Note: `~/.gitconfig` is **not** in the default mask list (git works out of the box); `~/.git-credentials` remains masked, so private-repo HTTPS clones ask for credentials interactively. Env var stripping (built-in globs: `*TOKEN*` / `*_API_KEY` / `AWS_*` / `GH_*` etc.) applies on top of path masking.
 
 ## CLI Flags
 
