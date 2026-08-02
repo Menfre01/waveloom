@@ -34,9 +34,16 @@ jobs:
 
       - name: Create GitHub Release
         run: |
-          gh release create "${{ github.ref_name }}" dist/* \
-            --title "${{ github.ref_name }}" \
-            --notes-file /tmp/release-notes.md
+          TAG="${{ github.ref_name }}"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG already exists — updating notes and assets."
+            gh release edit "$TAG" --notes-file /tmp/release-notes.md
+            gh release upload "$TAG" dist/* --clobber
+          else
+            gh release create "$TAG" dist/* \
+              --title "$TAG" \
+              --notes-file /tmp/release-notes.md
+          fi
         env:
           GH_TOKEN: ${{ github.token }}
 
