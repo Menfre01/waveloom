@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -18,7 +19,14 @@ func loadRealSession(t *testing.T) ([]llm.Message, WatermarkState) {
 	t.Helper()
 	path := os.Getenv("WAVELOOM_TEST_SESSION")
 	if path == "" {
-		path = "/Users/menfre/Workbench/waveloom/.waveloom/sessions/waveloom/3b3c061c-7f91-d255-22c0-f553c17a6770.json"
+		// 跨平台:基于用户主目录构造(Windows 上路径语义正确,
+		// 文件不存在时下方 t.Skipf 优雅跳过)
+		home, err := os.UserHomeDir()
+		if err != nil {
+			t.Skipf("无法获取用户主目录(跳过): %v", err)
+		}
+		path = filepath.Join(home, "Workbench", "waveloom", ".waveloom", "sessions",
+			"waveloom", "3b3c061c-7f91-d255-22c0-f553c17a6770.json")
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
