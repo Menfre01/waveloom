@@ -35,6 +35,37 @@ func TestRegistry_RegisterUpdate(t *testing.T) {
 	}
 }
 
+// TestRegression_KillBackgroundInterruptedNotOverwritten — kill_background_task
+// 状态覆盖回归防护。
+//
+// REGRESSION: kill_background_task 杀进程后立即 Update(TaskInterrupted),
+// 但后台 wait goroutine 在 cmd.Wait() 返回后 Update(TaskFailed/Completed)
+// 会覆盖它——被 SIGKILL 的进程必然非 0 退出码,导致"用户主动终止"的
+// interrupted 语义永远不可达,且与 kill 工具的返回结果不一致。
+// 断言:interrupted 是终态,后续 wait goroutine 的更新被忽略。
+func TestRegression_KillBackgroundInterruptedNotOverwritten(t *testing.T) {
+	r := &Registry{tasks: make(map[string]*TaskInfo)}
+	defer r.Reset()
+
+	r.Register("kill-me", &TaskInfo{
+		ID: "kill-me", PID: 1, Command: "sleep 100",
+		Status: TaskRunning, StartTime: time.Now(),
+	})
+
+	// kill_background_task:杀进程后立即标记 interrupted(exit -1)
+	r.Update("kill-me", TaskInterrupted, -1)
+	// wait goroutine:进程被 SIGKILL 退出 → failed,不得覆盖 interrupted
+	r.Update("kill-me", TaskFailed, -1)
+
+	info := r.Get("kill-me")
+	if info.Status != TaskInterrupted {
+		t.Errorf("TaskInterrupted 被后续 Update 覆盖:got %s, want %s", info.Status, TaskInterrupted)
+	}
+	if info.ExitCode != -1 {
+		t.Errorf("exit code 被覆盖:got %d, want -1", info.ExitCode)
+	}
+}
+
 func TestRegistry_CompletedSince(t *testing.T) {
 	r := &Registry{tasks: make(map[string]*TaskInfo)}
 	defer r.Reset()

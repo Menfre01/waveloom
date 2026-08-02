@@ -98,6 +98,14 @@ func (r *Registry) Update(id string, status TaskStatus, exitCode int) {
 	if !ok {
 		return
 	}
+	// REGRESSION: kill_background_task 将任务置为 TaskInterrupted 后,
+	// 后台 wait goroutine 的进程退出 Update(TaskFailed/Completed) 不得覆盖——
+	// 被 SIGKILL 的进程必然非 0 退出码,覆盖会让"用户主动终止"的语义丢失,
+	// 且与 kill 工具返回的 interrupted 状态产生窗口不一致。
+	// interrupted 是终态(进程已死或已标记中断),不再接受后续更新。
+	if t.Status == TaskInterrupted {
+		return
+	}
 	t.Status = status
 	t.ExitCode = exitCode
 	if status != TaskRunning {
