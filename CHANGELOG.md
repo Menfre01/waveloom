@@ -1,3 +1,13 @@
+## [v0.5.1] — 2026-08-02
+
+### 修复
+- **bwrap socket 遮蔽**:`/var/run/docker.sock` 等 socket 目标改用父目录 tmpfs 遮蔽(解析真实路径,兼容 `/var/run` → `/run` 符号链接)——修复 Linux 上 docker 运行时沙箱所有命令失败(bwrap 无法 bind 覆盖已存在的 socket 目标)
+- **流式管道输出竞态**:`readPipesStreaming` 改用 `io.Pipe`,消除 `cmd.Wait()` 关闭 `StdoutPipe` 读端导致短命令输出偶发丢失(慢机器/高负载环境稳定复现)
+
+---
+
+📝 [Changelog (English)](https://github.com/Menfre01/waveloom/blob/dev/CHANGELOG.en.md)
+
 ## [v0.5.0] — 2026-08-02
 
 ### 新增功能

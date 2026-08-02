@@ -1,3 +1,11 @@
+## [v0.5.1] — 2026-08-02
+
+### Fixed
+- **bwrap socket masking**: socket targets like `/var/run/docker.sock` are now masked via a tmpfs on their parent directory (resolving the real path, compatible with the `/var/run` → `/run` symlink) — fixes all sandboxed commands failing on Linux when docker is running (bwrap cannot bind-mount over an existing socket target)
+- **Streaming pipe race**: `readPipesStreaming` now uses `io.Pipe`, eliminating occasional loss of short-command output caused by `cmd.Wait()` closing the `StdoutPipe` read end (reliably reproduced on slow/high-load machines)
+
+---
+
 ## [v0.5.0] — 2026-08-02
 
 ### Added
