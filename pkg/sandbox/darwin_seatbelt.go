@@ -86,6 +86,7 @@ func (b *seatbeltBackend) Transform(shellBin string, args []string, cfg *Config,
 //	(import "system.sb")                          ← 系统基础允许
 //	(deny default)
 //	(allow process*)                              ← 进程执行
+//	(allow signal)                                ← 进程信号(Shell 中断/超时杀进程必需)
 //	(deny network*)                               ← 网络 off 时
 //	(deny file-read* (literal 文件遮蔽))           ← 敏感文件不可读
 //	(deny file-read* (subpath 目录遮蔽))           ← 敏感目录不可读(EPERM)
@@ -94,12 +95,18 @@ func (b *seatbeltBackend) Transform(shellBin string, args []string, cfg *Config,
 //
 // 注意:Seatbelt 是 first-match 语义(profile 中第一个匹配的 allow/deny 决定),
 // 遮蔽 deny 必须放在全盘 allow 之前,否则 allow 先匹配导致遮蔽失效。
+// REGRESSION: process* 通配符不含 signal 操作,(deny default) 使沙箱内
+// kill(2) 一律 EPERM——Shell 工具 Esc 中断/超时清理的 killProcessGroup 失效,
+// 命令杀不死永久卡住(实测 TestShellInterruptKillsProcessGroup 挂起)。
+// (allow signal) 放行同 UID 信号:沙箱内进程可终止宿主同 UID 进程(DoS 风险,
+// 已文档化),但 Shell 生命周期管理依赖它;bwrap 走 PID namespace 无此问题。
 func buildSeatbeltProfile(cfg *Config, workspace string) string {
 	var sb strings.Builder
 	sb.WriteString("(version 1)\n")
 	sb.WriteString("(import \"system.sb\")\n\n")
 	sb.WriteString("(deny default)\n")
-	sb.WriteString("(allow process*)\n\n")
+	sb.WriteString("(allow process*)\n")
+	sb.WriteString("(allow signal)\n\n")
 
 	// 网络:off → 全断;on → 直连
 	if cfg.Network.Mode == NetworkModeOff {

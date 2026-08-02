@@ -55,6 +55,7 @@ func TestSeatbeltProfile_Structure(t *testing.T) {
 		`(import "system.sb")`,
 		`(deny default)`,
 		`(allow process*)`,
+		`(allow signal)`, // REGRESSION: 缺 signal 放行时沙箱内 kill EPERM,Shell 中断/超时清理失效
 		`(deny network*)`, // off 模式全断
 	} {
 		if !strings.Contains(prof, want) {
