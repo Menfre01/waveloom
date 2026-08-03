@@ -39,3 +39,7 @@ Waveloom 自动运行 LSP 诊断。支持的 LSP Server:gopls(Go)、rust-analyze
 **Q: 如何添加自定义 LSP Server?**
 
 在 `settings.json` 中添加 `lsp.servers` 段,Key 为文件扩展名,Value 为 `{"command": "..."}` 。详见 [`lsp.md`](./lsp.md)。
+
+**Q: 为什么鼠标不能直接选中/复制 TUI 中的文本?**
+
+Waveloom 的 TUI 基于 Bubble Tea 渲染,鼠标事件由组件接管,无法像普通终端程序那样直接用鼠标框选文本。受此约束,目前实现了 `Shift + 鼠标拖动` 来选中文本(选中后可正常复制粘贴),这是终端协议支持的标准选中方式。完整快捷键见 [`usage.md`](./usage.md)。

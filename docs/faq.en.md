@@ -39,3 +39,7 @@ Waveloom automatically runs LSP diagnostics. Supported LSP servers: gopls (Go), 
 **Q: How do I add a custom LSP Server?**
 
 Add an `lsp.servers` section to `settings.json`, keyed by file extension with `{"command": "..."}` . See [`lsp.en.md`](./lsp.en.md).
+
+**Q: Why can't I select/copy text with the mouse directly in the TUI?**
+
+Waveloom's TUI is rendered with Bubble Tea, which takes over mouse events, so drag-selecting text with the mouse like in a regular terminal program is not possible. Due to this constraint, `Shift + mouse drag` is implemented for selecting text (you can then copy/paste normally) — the standard selection method supported by terminal protocols. See the full keybindings in [`usage.en.md`](./usage.en.md).
