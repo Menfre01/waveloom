@@ -235,7 +235,7 @@ export BRAVE_API_KEY="your-brave-api-key"
 
 | 字段 | 说明 | 默认值 |
 |------|------|--------|
-| `enabled` | TUI 常规模式是否启用沙箱;`--bypass-permissions` / ACP 无交互自动激活,无需置 true | `false` |
+| `enabled` | TUI 常规模式是否启用沙箱;`--bypass-permissions` / one-shot / ACP 无交互自动激活,无需置 true | `false` |
 | `failIfUnavailable` | 后端缺失(bwrap 未装)时是否拒绝启动 | `false` |
 | `allowUnsandboxedCommands` | 沙箱内命令失败时是否提示逃生(加入 excludedCommands) | `true` |
 | `excludedCommands` | 逃逸命令列表(前缀/精确/通配),命中不进沙箱(裸跑),但权限仍受 Guard 约束 | `[]` |

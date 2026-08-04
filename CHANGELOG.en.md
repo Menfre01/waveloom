@@ -1,3 +1,28 @@
+## [v0.6.0] — 2026-08-04
+
+### Added
+- **Full ACP v1 agent implementation**: JSON-RPC over stdio (initialize/session lifecycle/streaming/usage_update), per-session MCP integration, Terminal Auth handshake with Zed terminal-auth compatibility (`waveloom acp setup`), slash command system, per-request cancellation, error codes aligned with the official schema
+- **Unified permission model for non-interactive entries**: one-shot/ACP get an unconditional binary decision (DENY/ALLOW only, no ASK) with auto-activated sandbox; one-shot no longer registers interactive tools (ask_user_question / enter_plan_mode / exit_plan_mode); TUI `--bypass-permissions` also enters the binary decision — no more permission prompt dialogs
+- **Sandbox network defaults to `on`**: sandboxed commands get direct network access when `network.mode` is unset (non-interactive entries work out of the box with networked tools); opt out explicitly via `--sandbox-network off` or `network.mode: off`
+- **Layered registry + unified context-window parsing + subagent compaction**: TUI / one-shot / ACP share the same compaction config; subagents inherit it
+
+### Fixed
+- **one-shot piped-input injection surface**: piped stdin (non-tty) without an explicit `--bypass-permissions` keeps ASK→deny degradation (untrusted pipe content + prompt injection can no longer drive arbitrary writes/execution), with a stderr hint on degradation
+- **Binary hijack env vars hard-blocked**: the "stripped-for-checking, executed-with-injection" wash path (`LD_PRELOAD` / `DYLD_*` / `NODE_OPTIONS` etc.) is closed — the check moved to Step 0.5 (before ask rules/whitelist short-circuits), with `env` prefix and compound-command segment detection; build-arg vars like `CFLAGS` are only stripped, never mis-blocked
+- **Credential-masking warning now visible**: network `on` without `denyRead` / `credentials.files` prints a stderr warning (credentials are readable and exfiltratable), only when the sandbox is actually active
+- **ACP ignores termination signals while idle**: SIGTERM/SIGINT now exit immediately (previously blocked on stdin reads, exiting only on EOF)
+- **ACP prompt startup-window race**: `session/cancel` arriving before the goroutine is scheduled is no longer lost; shutdown / close / delete handle it uniformly
+- **ACP AUTH_REQUIRED protocol compliance**: no error frame for id-less notifications (JSON-RPC §4.2)
+- **`/model` panic without LLM config**: SetModel crashed when LoadLLM returned nil
+- **Tier3 summarization timeout protection**: stuck summaries no longer block the session; protected region/cursor fixes
+- **Windows install script**: PowerShell 5.1 compatibility + custom directory support
+- **TUI Enter latency**: OSC background-color query racing stdin caused Enter delay
+
+### Refactored
+- **Removed the default read-masking list and deprecated `allowRead`**: credential protection now relies solely on explicit `denyRead` / `credentials.files` (`~/.ssh` etc. are no longer masked by default — configure explicitly)
+
+---
+
 ## [v0.5.1] — 2026-08-02
 
 ### Fixed

@@ -237,12 +237,12 @@ Falls back to DuckDuckGo when not set.
 
 | Field | Description | Default |
 |-------|-------------|---------|
-| `enabled` | Enable the sandbox in TUI mode; auto-activated by `--bypass-permissions` / non-interactive ACP (no need to set true) | `false` |
+| `enabled` | Enable the sandbox in TUI mode; auto-activated by `--bypass-permissions` / one-shot / non-interactive ACP (no need to set true) | `false` |
 | `failIfUnavailable` | Refuse to start when the backend is missing (e.g. bwrap not installed) | `false` |
 | `allowUnsandboxedCommands` | Hint escape (add to excludedCommands) when a sandboxed command fails | `true` |
 | `excludedCommands` | Escape hatch list (prefix/exact/wildcard); matching commands run unsandboxed but still pass through Guard | `[]` |
 | `env` | Env vars injected inside the sandbox (tool-agnostic mechanism); values support path prefixes (`~/` home, `//`/`/` absolute, `./` workspace-relative), anything else is injected verbatim; keys matching the credential-strip list are ignored (strip wins) | `{}` |
-| `network.mode` | Network policy: `off` (fully offline) / `on` (direct); `proxy` is v2, not implemented | `off` |
+| `network.mode` | Network policy: `off` (fully offline) / `on` (direct); `proxy` is v2, not implemented. Defaults to `on` (2025-09 decision: non-interactive entries need networked tools out of the box; exfiltration risk is mitigated by `denyRead` / `credentials.files`) | `on` |
 | `network.allowedDomains` | Domain allowlist (v2 proxy placeholder, not active yet) | `[]` |
 | `filesystem.allowWrite` | Extra writable paths (`//abs` absolute, `~/` home, `./` or bare name = project root); root and mask-conflicting paths are rejected | `[]` |
 | `filesystem.allowRead` | **Deprecated** (2026-09): parsed only to warn and ignore; no longer has any effect. Use `denyRead` / `credentials.files` instead | `[]` |
@@ -338,8 +338,8 @@ when network is on).
 | `--locale zh-CN/en-US/auto` | UI language, auto detects from `LANG` env var | `auto` |
 | `--provider NAME` | Switch LLM provider (requires matching profile in `profiles`) | — |
 | `--log-level level` | Log level (error/warn/info/debug) | `info` |
-| `--bypass-permissions` | Non-interactive (one-shot/ACP): ASK → ALLOW, keeping deny rules and high-risk hard blocks; TUI interactive mode keeps dialogs | Off |
-| `--sandbox-network off/on` | Sandbox network mode, overrides `network.mode` in `settings.json` (on: credential masking recommended) | From config |
+| `--bypass-permissions` | one-shot (direct terminal input) / ACP: ASK → ALLOW by default (binary decision), keeping deny rules and high-risk hard blocks; one-shot **piped input** requires this flag, otherwise write/bash degrade to deny; TUI: enables the binary decision (no more prompt dialogs) | Off (default on for one-shot terminal input / ACP) |
+| `--sandbox-network off/on` | Sandbox network mode, overrides `network.mode` in `settings.json` (on: credential masking recommended) | From config (default `on`) |
 | `--tool-timeout D` | Single tool execution timeout (Go Duration format, e.g. `10m` / `600s` / `0s`, 0 to disable) | `5m` |
 | `--resume ID` | Resume a specific session | — |
 | `--continue` | Resume the most recent session | — |
