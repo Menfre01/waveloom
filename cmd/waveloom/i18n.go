@@ -455,6 +455,7 @@ var zhCN = Messages{
   waveloom                     交互式 TUI 模式
   waveloom ls                  列出最近 sessions
   waveloom mcp                 MCP Server 管理
+  waveloom acp                 以 ACP Agent 模式运行 (JSON-RPC over stdio)
   waveloom setup               首次设置向导
   waveloom completion <shell>  输出 shell 补全脚本 (bash/zsh/fish)
   waveloom --help              显示帮助
@@ -750,6 +751,7 @@ Usage:
   waveloom                     Interactive TUI mode
   waveloom ls                  List recent sessions
   waveloom mcp                 Manage MCP servers
+  waveloom acp                 Run as ACP agent (JSON-RPC over stdio)
   waveloom setup               First-time setup wizard
   waveloom completion <shell>  Output shell completion script (bash/zsh/fish)
   waveloom --help              Show help
