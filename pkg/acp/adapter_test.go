@@ -692,134 +692,6 @@ func TestConsumeEventsTurnStatsCompactionAware(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// AskUserQuestion 测试
-// ---------------------------------------------------------------------------
-
-func TestConsumeEventsAskUserQuestion(t *testing.T) {
-	sendFn, getNotifs := captureNotifs(t)
-	ad := newAdapter("test-session", sendFn)
-
-	ch := make(chan agentloop.TurnEvent, 2)
-	ctx := context.Background()
-
-	ch <- agentloop.AskUserQuestionEvent{
-		Turn: 2, ToolCallID: "tc-q",
-		Questions: []agentloop.QuestionPrompt{{
-			Question: "Which?", Header: "Pick",
-			Options: []agentloop.QuestionOptionPrompt{
-				{Label: "A", Description: "First"},
-			},
-		}},
-	}
-	ch <- agentloop.LoopDone{Reason: agentloop.ReasonCompleted}
-	close(ch)
-
-	ad.consumeEvents(ctx, ch)
-
-	notifs := getNotifs()
-	if len(notifs) != 1 {
-		t.Fatalf("expected 1, got %d", len(notifs))
-	}
-	update := parseSessionUpdate(t, notifs[0])
-	var q AskUserQuestionContent
-	_ = json.Unmarshal(update, &q)
-	if q.SessionUpdate != "_waveloom/ask_user_question" || q.ToolCallID != "tc-q" {
-		t.Errorf("ask: type=%s id=%s", q.SessionUpdate, q.ToolCallID)
-	}
-}
-
-// ---------------------------------------------------------------------------
-// TodoUpdate 测试
-// ---------------------------------------------------------------------------
-
-func TestConsumeEventsTodoUpdate(t *testing.T) {
-	sendFn, getNotifs := captureNotifs(t)
-	ad := newAdapter("test-session", sendFn)
-
-	ch := make(chan agentloop.TurnEvent, 2)
-	ctx := context.Background()
-
-	ch <- agentloop.TodoUpdateEvent{}
-	ch <- agentloop.LoopDone{Reason: agentloop.ReasonCompleted}
-	close(ch)
-
-	ad.consumeEvents(ctx, ch)
-
-	notifs := getNotifs()
-	if len(notifs) != 1 {
-		t.Fatalf("expected 1, got %d", len(notifs))
-	}
-	update := parseSessionUpdate(t, notifs[0])
-	var td TodoUpdateContent
-	_ = json.Unmarshal(update, &td)
-	if td.SessionUpdate != "_waveloom/todo_update" {
-		t.Errorf("type = %q", td.SessionUpdate)
-	}
-}
-
-// ---------------------------------------------------------------------------
-// BalanceUpdate 测试
-// ---------------------------------------------------------------------------
-
-func TestConsumeEventsBalanceUpdate(t *testing.T) {
-	sendFn, getNotifs := captureNotifs(t)
-	ad := newAdapter("test-session", sendFn)
-
-	ch := make(chan agentloop.TurnEvent, 2)
-	ctx := context.Background()
-
-	ch <- agentloop.BalanceUpdate{
-		Turn: 0,
-		Balance: &llm.BalanceInfo{
-			IsAvailable: true,
-			BalanceInfos: []llm.CurrencyBalance{
-				{Currency: "CNY", TotalBalance: "100.50", GrantedBalance: "50.00", ToppedUpBalance: "50.50"},
-			},
-		},
-	}
-	ch <- agentloop.LoopDone{Reason: agentloop.ReasonCompleted}
-	close(ch)
-
-	ad.consumeEvents(ctx, ch)
-
-	notifs := getNotifs()
-	if len(notifs) != 1 {
-		t.Fatalf("expected 1, got %d", len(notifs))
-	}
-	update := parseSessionUpdate(t, notifs[0])
-	var bal BalanceUpdateContent
-	_ = json.Unmarshal(update, &bal)
-	if !bal.IsAvailable || len(bal.Balances) != 1 {
-		t.Errorf("balance: available=%v count=%d", bal.IsAvailable, len(bal.Balances))
-	}
-}
-
-func TestConsumeEventsBalanceUpdateNil(t *testing.T) {
-	sendFn, getNotifs := captureNotifs(t)
-	ad := newAdapter("test-session", sendFn)
-
-	ch := make(chan agentloop.TurnEvent, 2)
-	ctx := context.Background()
-
-	ch <- agentloop.BalanceUpdate{Turn: 0, Balance: nil}
-	ch <- agentloop.LoopDone{Reason: agentloop.ReasonCompleted}
-	close(ch)
-
-	ad.consumeEvents(ctx, ch)
-
-	notifs := getNotifs()
-	if len(notifs) != 1 {
-		t.Fatalf("expected 1, got %d", len(notifs))
-	}
-	update := parseSessionUpdate(t, notifs[0])
-	var bal BalanceUpdateContent
-	_ = json.Unmarshal(update, &bal)
-	if bal.IsAvailable {
-		t.Error("IsAvailable should be false when Balance is nil")
-	}
-}
-
-// ---------------------------------------------------------------------------
 // ToolKind 映射测试
 // ---------------------------------------------------------------------------
 
@@ -876,35 +748,6 @@ func TestConsumeEventsToolCallStream(t *testing.T) {
 		if len(tcu.Content) != 1 || tcu.Content[0].Type != "content" {
 			t.Errorf("notif[%d]: content=%+v", i, tcu.Content)
 		}
-	}
-}
-
-func TestConsumeEventsTodoUpdateWithItems(t *testing.T) {
-	sendFn, getNotifs := captureNotifs(t)
-	ad := newAdapter("test-session", sendFn)
-
-	ch := make(chan agentloop.TurnEvent, 2)
-	ctx := context.Background()
-
-	// agentloop.TodoUpdateEvent 的 Items 是 []todo.TodoItem 类型，
-	// 在测试包中直接构造（跨包类型通过 agentloop 的别名访问）
-	ch <- agentloop.TodoUpdateEvent{
-		Items: nil, // 类型匹配即可，handleTodoUpdate 只读取字段值
-	}
-	ch <- agentloop.LoopDone{Reason: agentloop.ReasonCompleted}
-	close(ch)
-
-	ad.consumeEvents(ctx, ch)
-
-	notifs := getNotifs()
-	if len(notifs) != 1 {
-		t.Fatalf("expected 1, got %d", len(notifs))
-	}
-	update := parseSessionUpdate(t, notifs[0])
-	var td TodoUpdateContent
-	_ = json.Unmarshal(update, &td)
-	if td.SessionUpdate != "_waveloom/todo_update" {
-		t.Errorf("type = %q", td.SessionUpdate)
 	}
 }
 
@@ -984,5 +827,32 @@ func TestConsumeEventsBashFullSequence(t *testing.T) {
 	if len(final.Content) < 1 || final.Content[0].Content == nil ||
 		!strings.Contains(final.Content[0].Content.Text, "exit code 0") {
 		t.Errorf("result content = %+v, want exit code info", final.Content)
+	}
+}
+
+// TestToolCallArgText:工具参数友好提取(避免 Zed 卡片显示 raw JSON)。
+func TestToolCallArgText(t *testing.T) {
+	cases := []struct {
+		tool, args, want string
+	}{
+		{"bash", `{"command":"ls -la"}`, "ls -la"},
+		{"read", `{"file_path":"src/main.go"}`, "src/main.go"},
+		{"read", `{"file_path":"src/main.go","pattern":"func main"}`, "src/main.go | pattern: func main"},
+		{"edit", `{"file_path":"src/main.go","hunk":"..."}`, "src/main.go"},
+		{"write", `{"file_path":"src/new.go","content":"..."}`, "src/new.go"},
+		{"web_search", `{"query":"go 1.25 release"}`, "go 1.25 release"},
+		{"web_fetch", `{"url":"https://example.com"}`, "https://example.com"},
+		{"todo_create", `{"todos":[{"content":"fix bug"},{"content":"run tests"}]}`, "fix bug; run tests"},
+		{"agent", `{"description":"review code","prompt":"check the implementation for issues"}`, "review code | check the implementation for issues"},
+		{"skill", `{"name":"test-acp","arguments":"protocol"}`, "test-acp | protocol"},
+		{"kill_background_task", `{"task_id":"a3f7"}`, "a3f7"},
+		// 无法提取 → 回退原始 JSON;空参数 → 空
+		{"read", `{"offset":10}`, `{"offset":10}`},
+		{"bash", `{}`, ""},
+	}
+	for _, tc := range cases {
+		if got := toolCallArgText(tc.tool, tc.args); got != tc.want {
+			t.Errorf("toolCallArgText(%s, %s) = %q, want %q", tc.tool, tc.args, got, tc.want)
+		}
 	}
 }

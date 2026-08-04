@@ -107,12 +107,6 @@ func (a *adapter) consumeEvents(ctx context.Context, ch <-chan agentloop.TurnEve
 				a.handlePlanModeEnter(e)
 			case agentloop.PlanModeExit:
 				a.handlePlanModeExit(e)
-			case agentloop.AskUserQuestionEvent:
-				a.handleAskUserQuestion(e)
-			case agentloop.TodoUpdateEvent:
-				a.handleTodoUpdate(e)
-			case agentloop.BalanceUpdate:
-				a.handleBalanceUpdate(e)
 			case agentloop.LoopDone:
 				return e, true
 			default:
@@ -252,20 +246,113 @@ func (a *adapter) handleToolCallStart(e agentloop.ToolCallStart) {
 	a.sendUpdate(update)
 }
 
-// toolCallArgText 提取工具参数的人类可读描述(用于 tool_call 的 content)。
+// toolCallArgText 提取工具参数的人类可读描述(用于 tool_call 的 title/content)。
+// 每个工具提取主要参数,避免 Zed 卡片显示 raw JSON。
 func toolCallArgText(toolName, args string) string {
-	if toolName == "bash" {
+	if args == "" || args == "{}" || args == "null" {
+		return ""
+	}
+	var parts []string
+	switch toolName {
+	case "bash":
 		var p struct {
 			Command string `json:"command"`
 		}
 		if json.Unmarshal([]byte(args), &p) == nil && p.Command != "" {
 			return p.Command
 		}
+	case "read":
+		var p struct {
+			FilePath string `json:"file_path"`
+			Pattern  string `json:"pattern"`
+		}
+		if json.Unmarshal([]byte(args), &p) == nil {
+			if p.FilePath != "" {
+				parts = append(parts, p.FilePath)
+			}
+			if p.Pattern != "" {
+				parts = append(parts, "pattern: "+p.Pattern)
+			}
+		}
+	case "edit", "write":
+		var p struct {
+			FilePath string `json:"file_path"`
+		}
+		if json.Unmarshal([]byte(args), &p) == nil && p.FilePath != "" {
+			parts = append(parts, p.FilePath)
+		}
+	case "web_search":
+		var p struct {
+			Query string `json:"query"`
+		}
+		if json.Unmarshal([]byte(args), &p) == nil && p.Query != "" {
+			return p.Query
+		}
+	case "web_fetch":
+		var p struct {
+			URL string `json:"url"`
+		}
+		if json.Unmarshal([]byte(args), &p) == nil && p.URL != "" {
+			return p.URL
+		}
+	case "todo_create", "todo_update":
+		var p struct {
+			Todos []struct {
+				Content string `json:"content"`
+			} `json:"todos"`
+		}
+		if json.Unmarshal([]byte(args), &p) == nil && len(p.Todos) > 0 {
+			var items []string
+			for _, t := range p.Todos {
+				items = append(items, t.Content)
+			}
+			parts = append(parts, strings.Join(items, "; "))
+		}
+	case "agent":
+		var p struct {
+			Description string `json:"description"`
+			Prompt      string `json:"prompt"`
+		}
+		if json.Unmarshal([]byte(args), &p) == nil {
+			if p.Description != "" {
+				parts = append(parts, p.Description)
+			}
+			if p.Prompt != "" {
+				parts = append(parts, truncateArg(p.Prompt, 60))
+			}
+		}
+	case "skill":
+		var p struct {
+			Name      string `json:"name"`
+			Arguments string `json:"arguments"`
+		}
+		if json.Unmarshal([]byte(args), &p) == nil && p.Name != "" {
+			parts = append(parts, p.Name)
+			if p.Arguments != "" {
+				parts = append(parts, truncateArg(p.Arguments, 40))
+			}
+		}
+	case "kill_background_task":
+		var p struct {
+			TaskID string `json:"task_id"`
+		}
+		if json.Unmarshal([]byte(args), &p) == nil && p.TaskID != "" {
+			return p.TaskID
+		}
 	}
-	if args == "" || args == "{}" || args == "null" {
-		return ""
+	if len(parts) == 0 {
+		return args // 无法提取:回退原始 JSON
 	}
-	return args
+	return strings.Join(parts, " | ")
+}
+
+// truncateArg 截断长参数,保持 title 简短。
+func truncateArg(s string, max int) string {
+	runes := []rune(s)
+	if len(runes) <= max {
+		return s
+	}
+	return string(runes[:max]) + "…"
 }
 
 func (a *adapter) handleToolCallStream(e agentloop.ToolCallStream) {
@@ -381,66 +468,4 @@ func (a *adapter) handleTurnStats(e agentloop.TurnStats) {
 		Used:          used,
 		Size:          size,
 	})
-}
-
-// ---------------------------------------------------------------------------
-// Waveloom 扩展通知
-// ---------------------------------------------------------------------------
-
-func (a *adapter) handleAskUserQuestion(e agentloop.AskUserQuestionEvent) {
-	items := make([]QuestionContentItem, len(e.Questions))
-	for i, q := range e.Questions {
-		opts := make([]QuestionOptionItem, len(q.Options))
-		for j, o := range q.Options {
-			opts[j] = QuestionOptionItem{
-				Label:       o.Label,
-				Description: o.Description,
-			}
-		}
-		items[i] = QuestionContentItem{
-			Question:    q.Question,
-			Header:      q.Header,
-			Options:     opts,
-			MultiSelect: q.MultiSelect,
-		}
-	}
-	a.sendUpdate(AskUserQuestionContent{
-		SessionUpdate: "_waveloom/ask_user_question",
-		ToolCallID:    e.ToolCallID,
-		Questions:     items,
-	})
-}
-
-func (a *adapter) handleTodoUpdate(e agentloop.TodoUpdateEvent) {
-	items := make([]TodoItemContent, len(e.Items))
-	for i, item := range e.Items {
-		items[i] = TodoItemContent{
-			ID:          item.ID,
-			Content:     item.Content,
-			Status:      item.Status,
-			Description: item.Description,
-		}
-	}
-	a.sendUpdate(TodoUpdateContent{
-		SessionUpdate: "_waveloom/todo_update",
-		Items:         items,
-	})
-}
-
-func (a *adapter) handleBalanceUpdate(e agentloop.BalanceUpdate) {
-	content := BalanceUpdateContent{
-		SessionUpdate: "_waveloom/balance_update",
-	}
-	if e.Balance != nil {
-		content.IsAvailable = e.Balance.IsAvailable
-		for _, b := range e.Balance.BalanceInfos {
-			content.Balances = append(content.Balances, BalanceCurrencyItem{
-				Currency:        b.Currency,
-				TotalBalance:    b.TotalBalance,
-				GrantedBalance:  b.GrantedBalance,
-				ToppedUpBalance: b.ToppedUpBalance,
-			})
-		}
-	}
-	a.sendUpdate(content)
 }
