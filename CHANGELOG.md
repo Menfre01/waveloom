@@ -1,7 +1,7 @@
 ## [v0.6.0] — 2026-08-04
 
 ### 新增功能
-- **ACP v1 Agent 端完整实现**:JSON-RPC over stdio 协议栈(initialize/session 生命周期/流式/usage_update)、per-session MCP 集成、Terminal Auth 认证握手与 Zed 终端认证兼容(`waveloom acp setup`)、斜杠命令系统、按请求取消、错误码对齐官方 schema
+- **ACP v1 Agent 端完整实现**(Resolves #5):JSON-RPC over stdio 协议栈(initialize/session 生命周期/流式/usage_update)、per-session MCP 集成、Terminal Auth 认证握手与 Zed 终端认证兼容(`waveloom acp setup`)、斜杠命令系统、按请求取消、错误码对齐官方 schema
 - **无交互入口权限统一**:one-shot / ACP 无条件二元决策(仅 DENY/ALLOW,不产生 ASK)并自动激活沙箱;one-shot 不注册交互式工具(ask_user_question / enter_plan_mode / exit_plan_mode);TUI `--bypass-permissions` 同样进入二元决策,不再弹权限确认面板;one-shot 管道输入(stdin 非 tty)需显式 `--bypass-permissions` 才启用二元决策,否则 write/bash 降级 deny(不可信管道内容默认不放开)
 - **沙箱网络默认 on**:未配置 `network.mode` 时沙箱内直连网络(无交互入口联网工具开箱即用);断网需显式 `--sandbox-network off` 或 `network.mode: off`
 - **registry 分层支持 + 上下文窗口容量统一解析 + 子代理压缩**:TUI / one-shot / ACP 三入口压缩配置同源,子代理继承

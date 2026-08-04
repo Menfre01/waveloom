@@ -1,7 +1,7 @@
 ## [v0.6.0] — 2026-08-04
 
 ### Added
-- **Full ACP v1 agent implementation**: JSON-RPC over stdio (initialize/session lifecycle/streaming/usage_update), per-session MCP integration, Terminal Auth handshake with Zed terminal-auth compatibility (`waveloom acp setup`), slash command system, per-request cancellation, error codes aligned with the official schema
+- **Full ACP v1 agent implementation** (Resolves #5): JSON-RPC over stdio (initialize/session lifecycle/streaming/usage_update), per-session MCP integration, Terminal Auth handshake with Zed terminal-auth compatibility (`waveloom acp setup`), slash command system, per-request cancellation, error codes aligned with the official schema
 - **Unified permission model for non-interactive entries**: one-shot/ACP get an unconditional binary decision (DENY/ALLOW only, no ASK) with auto-activated sandbox; one-shot no longer registers interactive tools (ask_user_question / enter_plan_mode / exit_plan_mode); TUI `--bypass-permissions` also enters the binary decision — no more permission prompt dialogs; one-shot **piped input** (non-tty stdin) requires an explicit `--bypass-permissions` to enable the binary decision, otherwise write/bash degrade to deny (untrusted pipe content stays locked down)
 - **Sandbox network defaults to `on`**: sandboxed commands get direct network access when `network.mode` is unset (non-interactive entries work out of the box with networked tools); opt out explicitly via `--sandbox-network off` or `network.mode: off`
 - **Layered registry + unified context-window parsing + subagent compaction**: TUI / one-shot / ACP share the same compaction config; subagents inherit it
