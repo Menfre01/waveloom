@@ -411,63 +411,6 @@ type UsageUpdateContent struct {
 }
 
 // ---------------------------------------------------------------------------
-// Waveloom 扩展通知（_waveloom/* 前缀）
-// ---------------------------------------------------------------------------
-
-// AskUserQuestionContent 表示向用户发起选择题交互的通知。
-// Waveloom 扩展类型，discriminator 以 _waveloom/ 前缀区分。
-type AskUserQuestionContent struct {
-	SessionUpdate string                `json:"sessionUpdate"` // "_waveloom/ask_user_question"
-	ToolCallID    string                `json:"toolCallId"`    // 关联的工具调用 ID
-	Questions     []QuestionContentItem `json:"questions"`     // 问题列表
-}
-
-// QuestionContentItem 是单个选择题的内容。
-type QuestionContentItem struct {
-	Question    string               `json:"question"`              // 完整问题
-	Header      string               `json:"header"`                // 简短标签 ≤12 chars
-	Options     []QuestionOptionItem `json:"options"`               // 选项列表
-	MultiSelect bool                 `json:"multiSelect,omitempty"` // 是否多选
-}
-
-// QuestionOptionItem 是选择题的单个选项。
-type QuestionOptionItem struct {
-	Label       string `json:"label"`       // 显示文本
-	Description string `json:"description"` // 选项解释
-}
-
-// TodoItemContent 是 todo 项的 ACP 表示。
-type TodoItemContent struct {
-	ID          string `json:"id"`                    // 唯一标识
-	Content     string `json:"content"`               // 祈使句任务描述
-	Status      string `json:"status"`                // pending | in_progress | completed
-	Description string `json:"description,omitempty"` // 可选详情
-}
-
-// TodoUpdateContent 表示任务列表更新通知。
-// Waveloom 扩展类型。
-type TodoUpdateContent struct {
-	SessionUpdate string            `json:"sessionUpdate"` // "_waveloom/todo_update"
-	Items         []TodoItemContent `json:"items"`         // 当前完整任务列表
-}
-
-// BalanceCurrencyItem 是单个币种的余额信息。
-type BalanceCurrencyItem struct {
-	Currency        string `json:"currency"`        // CNY / USD
-	TotalBalance    string `json:"totalBalance"`    // 总可用余额
-	GrantedBalance  string `json:"grantedBalance"`  // 赠金余额
-	ToppedUpBalance string `json:"toppedUpBalance"` // 充值余额
-}
-
-// BalanceUpdateContent 表示账户余额更新通知。
-// Waveloom 扩展类型。
-type BalanceUpdateContent struct {
-	SessionUpdate string                 `json:"sessionUpdate"`        // "_waveloom/balance_update"
-	IsAvailable   bool                   `json:"isAvailable"`          // 余额信息是否可用
-	Balances      []BalanceCurrencyItem  `json:"balances,omitempty"`   // 各币种余额
-}
-
-// ---------------------------------------------------------------------------
 // ToolKind 映射
 // ---------------------------------------------------------------------------
 
