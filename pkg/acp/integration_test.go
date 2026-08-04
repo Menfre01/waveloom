@@ -133,6 +133,23 @@ func readLine(t *testing.T, scanner *bufio.Scanner) (json.RawMessage, bool) {
 	return json.RawMessage(line), true
 }
 
+// readResponse 读取下一条 JSON-RPC 响应,跳过 session/update 通知
+// (session/new 后会收到 available_commands_update 等通知)。
+func readResponse(t *testing.T, scanner *bufio.Scanner) (json.RawMessage, bool) {
+	t.Helper()
+	for {
+		raw, ok := readLine(t, scanner)
+		if !ok {
+			return nil, false
+		}
+		var notif acpNotification
+		if json.Unmarshal(raw, &notif) == nil && notif.Method == "session/update" {
+			continue
+		}
+		return raw, true
+	}
+}
+
 // ---------------------------------------------------------------------------
 // 集成测试
 // ---------------------------------------------------------------------------
@@ -195,7 +212,7 @@ func TestIntegrationSessionNew(t *testing.T) {
 	// 2. Create session
 	sendRequest(t, stdin, 2, "session/new", "")
 
-	raw, ok := readLine(t, scanner)
+	raw, ok := readResponse(t, scanner)
 	if !ok {
 		t.Fatal("no response from acp")
 	}
@@ -254,7 +271,7 @@ func TestIntegrationInitializeGuard(t *testing.T) {
 	// session/new before initialize → error
 	sendRequest(t, stdin, 1, "session/new", "")
 
-	raw, ok := readLine(t, scanner)
+	raw, ok := readResponse(t, scanner)
 	if !ok {
 		t.Fatal("no response from acp")
 	}

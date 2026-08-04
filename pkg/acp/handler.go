@@ -148,6 +148,14 @@ func (s *Server) handleSessionNew(req JSONRPCRequest) {
 	s.sessions[sessionID] = state
 	s.mu.Unlock()
 
+	// 发送 available_commands_update(客户端命令面板;命令列表由入口注入)
+	if s.commandRunner != nil {
+		if cmds := s.commandRunner.AvailableCommands(); len(cmds) > 0 {
+			ad := newAdapter(sessionID, func(msg any) error { return s.transport.Send(msg) })
+			ad.sendAvailableCommands(cmds)
+		}
+	}
+
 	slog.Info("acp: session created", "sessionId", sessionID)
 
 	s.respond(req, SessionNewResult{
@@ -178,6 +186,9 @@ func (s *Server) handleSessionPrompt(ctx context.Context, req JSONRPCRequest) {
 		return
 	}
 
+	// 注册 requestId → session($/cancel_request 按 id 取消)
+	s.registerRequest(req.ID, params.SessionID)
+
 	// 启动独立的 goroutine 执行 prompt
 	s.wg.Add(1)
 	go s.executePrompt(ctx, req.ID, state, params)
@@ -203,6 +214,36 @@ func (s *Server) handleSessionCancel(req JSONRPCRequest) {
 		return
 	}
 
+	cancelSession(state)
+
+	// session/cancel 是通知,无响应
+}
+
+// handleCancelRequest 处理 $/cancel_request 通知(LSP 风格按 requestId 取消)。
+// 官方语义:发送方取消自己发出的请求;未知 requestId 静默忽略(notification 无响应)。
+func (s *Server) handleCancelRequest(req JSONRPCRequest) {
+	var params struct {
+		RequestID any `json:"requestId"`
+	}
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		return // 参数非法:忽略(通知无响应)
+	}
+	sid, ok := s.sessionForRequest(params.RequestID)
+	if !ok {
+		return // 未知请求(已结束或不存在):忽略
+	}
+	s.mu.RLock()
+	state, ok := s.sessions[sid]
+	s.mu.RUnlock()
+	if !ok {
+		return
+	}
+	cancelSession(state)
+}
+
+// cancelSession 取消 session 的活跃 prompt(与 handleSessionCancel 共用):
+// cancelFn 直取消 / 启动窗口置 cancelPending / 空闲期忽略。
+func cancelSession(state *SessionState) {
 	state.cancelMu.Lock()
 	if state.cancelFn != nil {
 		state.cancelFn()
@@ -214,8 +255,6 @@ func (s *Server) handleSessionCancel(req JSONRPCRequest) {
 		state.cancelPending = true
 	}
 	state.cancelMu.Unlock()
-
-	// session/cancel 是通知,无响应
 }
 
 // handleSessionClose 处理 session/close 请求:取消活跃 prompt 并从注册表移除。
@@ -395,6 +434,7 @@ func (s *Server) handleSessionDelete(req JSONRPCRequest) {
 func (s *Server) executePrompt(ctx context.Context, id any, state *SessionState, params SessionPromptParams) {
 	defer state.promptMu.Unlock()
 	defer s.wg.Done()
+	defer s.unregisterRequest(id) // prompt 完成,移除 $/cancel_request 映射
 
 	// 创建可取消的 context
 	promptCtx, cancel := context.WithCancel(ctx)
@@ -424,6 +464,44 @@ func (s *Server) executePrompt(ctx context.Context, id any, state *SessionState,
 		return
 	}
 
+	// 适配器提前创建(命令拦截与 Loop 路径共用)
+	ad := newAdapterWithContextLimit(state.ID, func(msg any) error {
+		return s.transport.Send(msg)
+	}, s.contextLimit)
+
+	// 回显用户消息(Zed 会话显示 agent 实际处理的 prompt,含 resource 展开)
+	ad.sendUserMessage(userText)
+
+	// 首次 prompt 设置 session 标题(Threads 侧栏展示)
+	if !state.titleSet {
+		state.titleSet = true
+		ad.sendSessionInfo(truncateTitle(userText))
+	}
+
+	// 斜杠命令拦截(/cmd 开头且匹配注册命令):
+	//   - skill 命令 → 注入指令文本,继续 LLM
+	//   - 其他命令(help/model/provider)→ 直接文本回复,不调用 LLM
+	if s.commandRunner != nil {
+		if resultText, injectedPrompt, handled := s.commandRunner.Run(ctx, userText); handled {
+			if injectedPrompt != "" {
+				userText = injectedPrompt
+			} else {
+				if resultText != "" {
+					ad.sendUpdate(ContentChunk{
+						SessionUpdate: "agent_message_chunk",
+						MessageID:     ad.messageID,
+						Content:       ContentBlock{Type: "text", Text: resultText},
+					})
+				}
+				if id != nil {
+					s.sendResponse(id, SessionPromptResult{StopReason: "end_turn"})
+				}
+				slog.Info("acp: slash command handled", "sessionId", state.ID)
+				return
+			}
+		}
+	}
+
 	// 追加 user 消息并获取完整消息历史
 	messages, _ := state.CM.PrepareRun(userText)
 
@@ -431,9 +509,6 @@ func (s *Server) executePrompt(ctx context.Context, id any, state *SessionState,
 	eventCh := state.Loop.Run(promptCtx, messages)
 
 	// 适配事件 → session/update 通知
-	ad := newAdapterWithContextLimit(state.ID, func(msg any) error {
-		return s.transport.Send(msg)
-	}, s.contextLimit)
 	loopDone, gotReal := ad.consumeEvents(promptCtx, eventCh)
 	stopReason := ACPStopReason(string(loopDone.Reason))
 	stats := ad.Stats()
@@ -575,6 +650,19 @@ func validSessionID(id string) bool {
 		return false
 	}
 	return true
+}
+
+// truncateTitle 从用户消息生成 session 标题(单行截断,多行取首行)。
+func truncateTitle(text string) string {
+	title := text
+	if idx := strings.IndexAny(title, "\n\r"); idx >= 0 {
+		title = title[:idx]
+	}
+	runes := []rune(title)
+	if len(runes) > 60 {
+		title = string(runes[:60]) + "…"
+	}
+	return title
 }
 
 // ---------------------------------------------------------------------------

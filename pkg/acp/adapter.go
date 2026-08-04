@@ -142,6 +142,28 @@ func (a *adapter) sendUpdate(updateContent any) {
 	}
 }
 
+// sendUserMessage 回显用户消息(Zed 会话显示 agent 实际处理的 prompt)。
+// 在命令注入/skill 展开前发送原始 userText。
+func (a *adapter) sendUserMessage(text string) {
+	if text == "" {
+		return
+	}
+	a.sendUpdate(ContentChunk{
+		SessionUpdate: "user_message_chunk",
+		MessageID:     llm.NewMessageID(),
+		Content:       ContentBlock{Type: "text", Text: text},
+	})
+}
+
+// sendSessionInfo 发送 session 元数据更新(标题等)。
+func (a *adapter) sendSessionInfo(title string) {
+	update := SessionInfoUpdate{SessionUpdate: "session_info_update"}
+	if title != "" {
+		update.Title = &title
+	}
+	a.sendUpdate(update)
+}
+
 // ---------------------------------------------------------------------------
 // StreamDelta → ContentChunk (agent_message_chunk)
 // ---------------------------------------------------------------------------
@@ -204,14 +226,39 @@ func (a *adapter) handlePlanModeExit(e agentloop.PlanModeExit) {
 
 func (a *adapter) handleToolCallStart(e agentloop.ToolCallStart) {
 	kind := ToolKind(e.ToolCallName)
-	a.sendUpdate(ToolCallUpdate{
+	update := ToolCallUpdate{
 		SessionUpdate: "tool_call",
 		ToolCallID:    e.ToolCallID,
 		Kind:          kind,
 		Status:        "pending",
 		Title:         e.ToolCallName,
 		RawInput:      json.RawMessage(e.Arguments),
-	})
+	}
+	// 参数描述放 content(客户端 UI 展示用——rawInput 是机器字段,主流客户端
+	// 如 Zed 不渲染)。bash → command 文本;其他工具 → 原始参数 JSON。
+	if desc := toolCallArgText(e.ToolCallName, e.Arguments); desc != "" {
+		update.Content = []ToolCallContentItem{{
+			Type:    "content",
+			Content: &ContentBlock{Type: "text", Text: desc},
+		}}
+	}
+	a.sendUpdate(update)
+}
+
+// toolCallArgText 提取工具参数的人类可读描述(用于 tool_call 的 content)。
+func toolCallArgText(toolName, args string) string {
+	if toolName == "bash" {
+		var p struct {
+			Command string `json:"command"`
+		}
+		if json.Unmarshal([]byte(args), &p) == nil && p.Command != "" {
+			return p.Command
+		}
+	}
+	if args == "" || args == "{}" || args == "null" {
+		return ""
+	}
+	return args
 }
 
 func (a *adapter) handleToolCallStream(e agentloop.ToolCallStream) {
@@ -261,6 +308,21 @@ func (a *adapter) handleToolCallResult(e agentloop.ToolCallResult) {
 			OldText: oldText,
 			NewText: newText,
 		})
+	}
+	// locations:文件跟随(客户端"正在操作的文件"点击跳转,官方
+	// "Following the Agent" 功能)。edit/write 的 DiffHunks 提供
+	// FilePath + 行号;同文件多 hunk 去重,取首个 hunk 的起始行。
+	seen := make(map[string]bool)
+	for _, h := range e.DiffHunks {
+		if h.FilePath == "" || seen[h.FilePath] {
+			continue
+		}
+		seen[h.FilePath] = true
+		loc := ToolCallLocation{Path: h.FilePath}
+		if h.OldStart > 0 {
+			loc.Line = h.OldStart
+		}
+		update.Locations = append(update.Locations, loc)
 	}
 	a.sendUpdate(update)
 }

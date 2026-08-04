@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/Menfre01/waveloom/pkg/llm"
@@ -15,6 +16,16 @@ import (
 
 // mockLLMClient 是最小 mock,工具注册测试不需要真实 LLM 调用。
 type mockLLMClient struct{}
+
+// mockModelLister 提供固定模型列表供 /model 命令校验。
+type mockModelLister struct{}
+
+func (m *mockModelLister) ListModels(ctx context.Context) ([]llm.ModelInfo, error) {
+	return []llm.ModelInfo{
+		{ID: "deepseek-chat"},
+		{ID: "deepseek-r1"},
+	}, nil
+}
 
 func (m *mockLLMClient) SendMessage(ctx context.Context, messages []llm.Message, tools []llm.ToolSpec) (*llm.Response, error) {
 	return &llm.Response{Content: "mock response"}, nil
@@ -80,7 +91,7 @@ func TestRegression_ACPAutoAllowBinaryDecision(t *testing.T) {
 func TestRegression_ACPNoInteractiveTools(t *testing.T) {
 	registry := tool.NewRegistry()
 	guard := permission.NewGuard(permission.WithBypassMode(false))
-	registerACPBuiltinTools(registry, &mockLLMClient{}, "test-model", "test-sub", t.TempDir(), nil, nil, guard, compaction.CompactionConfig{})
+	registerACPBuiltinTools(registry, nil, &mockLLMClient{}, "test-model", "test-sub", t.TempDir(), nil, nil, guard, compaction.CompactionConfig{})
 
 	// 交互式工具(execute.go 走 UserInteractionTool 分支 → UserResponder nil → 必挂)
 	for _, name := range []string{"ask_user_question", "enter_plan_mode", "exit_plan_mode"} {
@@ -131,5 +142,61 @@ func TestResolveContextLimit(t *testing.T) {
 	// 4. 均未配置 → 默认 1M
 	if got := resolveContextLimit(0, "", ""); got != 1_000_000 {
 		t.Errorf("default = %d, want 1000000", got)
+	}
+}
+
+func TestACPCommandRunner(t *testing.T) {
+	dir := t.TempDir()
+	settingsPath := filepath.Join(dir, "settings.json")
+	if err := os.WriteFile(settingsPath, []byte(`{}`), 0o644); err != nil {
+		t.Fatalf("write settings: %v", err)
+	}
+	store := &acpSettingsStore{projectPath: settingsPath, globalPath: ""}
+
+	registry := tool.NewRegistry()
+	registry.Register(tool.Wrap(&tool.ReadFile{}))
+
+	// 无 skill loader:仅内置命令(lister 提供可用模型供 /model 校验)
+	runner := newACPCommandRunner(registry, store, &mockModelLister{}, "deepseek-chat", nil, LocaleZhCN)
+
+	// 1. 可用命令列表:含 help/model/provider,不含 TUI overlay 命令
+	cmds := runner.AvailableCommands()
+	names := map[string]bool{}
+	for _, c := range cmds {
+		names[c.Name] = true
+	}
+	for _, want := range []string{"help", "model", "provider"} {
+		if !names[want] {
+			t.Errorf("available commands should include %q, got %v", want, names)
+		}
+	}
+	for _, notWant := range []string{"theme", "locale", "rewind", "new"} {
+		if names[notWant] {
+			t.Errorf("TUI overlay command %q must NOT be registered in ACP", notWant)
+		}
+	}
+
+	// 2. /help → 文本结果
+	text, injected, handled := runner.Run(context.Background(), "/help")
+	if !handled || injected != "" || text == "" {
+		t.Errorf("/help: handled=%v text=%q injected=%q", handled, text, injected)
+	}
+
+	// 3. 未知命令 → 不拦截(走 LLM)
+	if _, _, handled := runner.Run(context.Background(), "normal question"); handled {
+		t.Error("normal text must not be handled as command")
+	}
+
+	// 4. /model <name> → 切换模型(settings 写入)
+	text, _, handled = runner.Run(context.Background(), "/model deepseek-r1")
+	if !handled {
+		t.Fatal("/model should be handled")
+	}
+	if !strings.Contains(text, "deepseek-r1") {
+		t.Errorf("/model result = %q, want mention deepseek-r1", text)
+	}
+	data, err := os.ReadFile(settingsPath)
+	if err != nil || !strings.Contains(string(data), "deepseek-r1") {
+		t.Errorf("settings should persist new model, data=%s err=%v", data, err)
 	}
 }

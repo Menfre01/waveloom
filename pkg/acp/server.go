@@ -48,10 +48,13 @@ type Server struct {
 	contextLimit int                        // 上下文窗口容量 token(usage_update size;0 = 未知)
 	compactionConfig compaction.CompactionConfig // 上下文压缩配置(settings + flag 解析)
 	summarizer       compaction.Summarizer        // Tier 3 摘要器(可能为 nil → Tier 3 跳过)
+	commandRunner    CommandRunner                // 斜杠命令执行器(ACP 场景可用命令;nil = 不启用)
 
 	// 状态
-	initialized bool            // initialize 是否已完成
-	wg          sync.WaitGroup  // 跟踪活跃的 prompt goroutine
+	initialized    bool            // initialize 是否已完成
+	wg             sync.WaitGroup  // 跟踪活跃的 prompt goroutine
+	pendingMu      sync.Mutex      // 保护 pendingRequests
+	pendingRequests map[any]string // requestId → sessionID($/cancel_request 按 id 取消)
 }
 
 // SessionState 保存单个 ACP session 的完整状态。
@@ -71,6 +74,7 @@ type SessionState struct {
 	cancelFn context.CancelFunc  // 取消当前 prompt 的 ctx
 	promptStarted bool           // prompt goroutine 已启动(区分"启动窗口"与"空闲期")
 	cancelPending bool           // cancel 在 prompt 启动前到达(executePrompt 设置 cancelFn 后消费)
+	titleSet      bool           // session 标题已设置(首次 prompt 后,Threads 侧栏)
 }
 
 // ServerConfig 是创建 Server 的配置。
@@ -87,6 +91,7 @@ type ServerConfig struct {
 	ContextLimit int                         // 上下文窗口容量 token(usage_update size;0 = 未知)
 	CompactionConfig compaction.CompactionConfig // 上下文压缩配置
 	Summarizer       compaction.Summarizer        // Tier 3 摘要器(可 nil)
+	CommandRunner    CommandRunner                 // 斜杠命令执行器(可 nil)
 }
 
 // mcpConnectFunc 与 mcp.Manager.connectFunc 同构,供测试注入 fake 连接。
@@ -97,6 +102,7 @@ func NewServer(cfg ServerConfig) *Server {
 	return &Server{
 		transport:    NewStdioTransport(),
 		sessions:     make(map[string]*SessionState),
+		pendingRequests: make(map[any]string),
 		llmClient:    cfg.LLMClient,
 		toolRegistry: cfg.ToolRegistry,
 		systemPrompt: cfg.SystemPrompt,
@@ -110,6 +116,7 @@ func NewServer(cfg ServerConfig) *Server {
 		contextLimit: cfg.ContextLimit,
 		compactionConfig: cfg.CompactionConfig,
 		summarizer:       cfg.Summarizer,
+		commandRunner:    cfg.CommandRunner,
 	}
 }
 
@@ -195,6 +202,9 @@ func (s *Server) dispatch(ctx context.Context, req JSONRPCRequest) {
 
 	case MethodSessionCancel:
 		s.handleSessionCancel(req)
+
+	case MethodCancelRequest:
+		s.handleCancelRequest(req)
 
 	case MethodSessionClose:
 		s.handleSessionClose(req)
@@ -286,4 +296,36 @@ func (s *Server) respondError(req JSONRPCRequest, code int, message string) {
 		return
 	}
 	s.sendErrorResponse(req.ID, code, message)
+}
+
+// ---------------------------------------------------------------------------
+// 按 requestId 取消($/cancel_request)的请求映射
+// ---------------------------------------------------------------------------
+
+// registerRequest 注册活跃 prompt 请求的 requestId → sessionID。
+func (s *Server) registerRequest(id any, sessionID string) {
+	if id == nil {
+		return
+	}
+	s.pendingMu.Lock()
+	s.pendingRequests[id] = sessionID
+	s.pendingMu.Unlock()
+}
+
+// unregisterRequest 移除请求映射(prompt 完成时调用)。
+func (s *Server) unregisterRequest(id any) {
+	if id == nil {
+		return
+	}
+	s.pendingMu.Lock()
+	delete(s.pendingRequests, id)
+	s.pendingMu.Unlock()
+}
+
+// sessionForRequest 按 requestId 查找对应的 sessionID。
+func (s *Server) sessionForRequest(id any) (string, bool) {
+	s.pendingMu.Lock()
+	defer s.pendingMu.Unlock()
+	sid, ok := s.pendingRequests[id]
+	return sid, ok
 }

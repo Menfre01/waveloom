@@ -3,6 +3,7 @@ package acp
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"sync"
 	"testing"
 
@@ -419,6 +420,11 @@ func TestConsumeEventsToolCallStart(t *testing.T) {
 	if tc.SessionUpdate != "tool_call" || tc.ToolCallID != "tc-001" || tc.Kind != "execute" || tc.Status != "pending" || tc.Title != "bash" {
 		t.Errorf("tool_call: update=%s id=%s kind=%s status=%s title=%s", tc.SessionUpdate, tc.ToolCallID, tc.Kind, tc.Status, tc.Title)
 	}
+	// content 必须携带参数描述(bash → command;Zed 等客户端 UI 显示用)
+	if len(tc.Content) != 1 || tc.Content[0].Content == nil ||
+		tc.Content[0].Content.Text != "go test ./..." {
+		t.Errorf("tool_call content = %+v, want command text", tc.Content)
+	}
 }
 
 func TestConsumeEventsToolCallResultSuccess(t *testing.T) {
@@ -489,12 +495,18 @@ func TestConsumeEventsToolCallResultDiff(t *testing.T) {
 		ToolCallID: "tc-003", ToolCallName: "edit",
 		Result: "done",
 		DiffHunks: []tool.DiffHunk{{
-			FilePath: "/tmp/x.go",
+			FilePath: "/tmp/x.go", OldStart: 42,
 			Lines: []tool.DiffLine{
 				{Kind: tool.DiffCtx, Content: "keep"},
 				{Kind: tool.DiffDel, Content: "old-line"},
 				{Kind: tool.DiffAdd, Content: "new-line"},
 			},
+		}, {
+			FilePath: "/tmp/x.go", OldStart: 100, // 同文件第二 hunk → 去重
+			Lines: []tool.DiffLine{{Kind: tool.DiffAdd, Content: "more"}},
+		}, {
+			FilePath: "/tmp/y.go", OldStart: 7,
+			Lines: []tool.DiffLine{{Kind: tool.DiffDel, Content: "old"}},
 		}},
 	}
 	ch <- agentloop.LoopDone{Reason: agentloop.ReasonCompleted}
@@ -528,6 +540,17 @@ func TestConsumeEventsToolCallResultDiff(t *testing.T) {
 	}
 	if diff.NewText != "keep\nnew-line" {
 		t.Errorf("newText = %q, want %q", diff.NewText, "keep\nnew-line")
+	}
+	// locations:文件跟随(客户端点击跳转)——DiffHunks 的 FilePath + OldStart,
+	// 同文件多 hunk 去重
+	if len(tcu.Locations) != 2 {
+		t.Fatalf("locations = %+v, want 2 entries (x.go deduped)", tcu.Locations)
+	}
+	if tcu.Locations[0].Path != "/tmp/x.go" || tcu.Locations[0].Line != 42 {
+		t.Errorf("locations[0] = %+v, want {/tmp/x.go line 42}", tcu.Locations[0])
+	}
+	if tcu.Locations[1].Path != "/tmp/y.go" || tcu.Locations[1].Line != 7 {
+		t.Errorf("locations[1] = %+v, want {/tmp/y.go line 7}", tcu.Locations[1])
 	}
 }
 
@@ -882,5 +905,84 @@ func TestConsumeEventsTodoUpdateWithItems(t *testing.T) {
 	_ = json.Unmarshal(update, &td)
 	if td.SessionUpdate != "_waveloom/todo_update" {
 		t.Errorf("type = %q", td.SessionUpdate)
+	}
+}
+
+// TestConsumeEventsBashFullSequence 验证 bash 工具的完整 ACP 通知序列
+// (真实场景:agentloop 对可流式工具的 Start → Stream×n → Result 事件流):
+//  1. tool_call          pending  kind=execute  title=bash  rawInput={command}
+//  2. tool_call_update   in_progress  content=流式 chunk
+//  3. tool_call_update   completed    content=最终结果
+func TestConsumeEventsBashFullSequence(t *testing.T) {
+	sendFn, getNotifs := captureNotifs(t)
+	ad := newAdapter("test-session", sendFn)
+
+	ch := make(chan agentloop.TurnEvent, 5)
+	ctx := context.Background()
+
+	ch <- agentloop.ToolCallStart{
+		ToolCallID: "tc-bash-1", ToolCallName: "bash",
+		Arguments: `{"command":"ls -la"}`,
+	}
+	ch <- agentloop.ToolCallStream{ToolCallID: "tc-bash-1", Chunk: "total 8\n"}
+	ch <- agentloop.ToolCallStream{ToolCallID: "tc-bash-1", Chunk: "drwxr-xr-x  main.go\n"}
+	ch <- agentloop.ToolCallResult{
+		ToolCallID: "tc-bash-1", ToolCallName: "bash",
+		Result: "✅ Command executed successfully (exit code 0)\n\nstdout:\ntotal 8\n...", DurationMs: 120,
+	}
+	ch <- agentloop.LoopDone{Reason: agentloop.ReasonCompleted}
+	close(ch)
+
+	ad.consumeEvents(ctx, ch)
+
+	notifs := getNotifs()
+	if len(notifs) != 4 {
+		t.Fatalf("expected 4 notifications (start+2 stream+result), got %d", len(notifs))
+	}
+
+	// 1. tool_call(pending)
+	update0 := parseSessionUpdate(t, notifs[0])
+	var tc ToolCallUpdate
+	_ = json.Unmarshal(update0, &tc)
+	if tc.SessionUpdate != "tool_call" || tc.Kind != "execute" || tc.Status != "pending" || tc.Title != "bash" {
+		t.Errorf("start: update=%s kind=%s status=%s title=%s", tc.SessionUpdate, tc.Kind, tc.Status, tc.Title)
+	}
+	// rawInput 必须原样携带工具参数 JSON
+	var raw struct {
+		Command string `json:"command"`
+	}
+	if err := json.Unmarshal(tc.RawInput, &raw); err != nil || raw.Command != "ls -la" {
+		t.Errorf("rawInput = %s, want {\"command\":\"ls -la\"}", tc.RawInput)
+	}
+	// content 参数描述(bash → command 文本,客户端 UI 显示)
+	if len(tc.Content) != 1 || tc.Content[0].Content == nil ||
+		tc.Content[0].Content.Text != "ls -la" {
+		t.Errorf("start content = %+v, want command text", tc.Content)
+	}
+
+	// 2-3. tool_call_update(in_progress + 流式 chunk)
+	for i, rawNotif := range notifs[1:3] {
+		update := parseSessionUpdate(t, rawNotif)
+		var tcu ToolCallUpdate
+		_ = json.Unmarshal(update, &tcu)
+		if tcu.SessionUpdate != "tool_call_update" || tcu.Status != "in_progress" {
+			t.Errorf("stream[%d]: update=%s status=%s", i, tcu.SessionUpdate, tcu.Status)
+		}
+		if len(tcu.Content) != 1 || tcu.Content[0].Type != "content" ||
+			tcu.Content[0].Content == nil || tcu.Content[0].Content.Type != "text" {
+			t.Errorf("stream[%d]: content=%+v", i, tcu.Content)
+		}
+	}
+
+	// 4. tool_call_update(completed + 最终结果)
+	update3 := parseSessionUpdate(t, notifs[3])
+	var final ToolCallUpdate
+	_ = json.Unmarshal(update3, &final)
+	if final.SessionUpdate != "tool_call_update" || final.Status != "completed" {
+		t.Errorf("result: update=%s status=%s", final.SessionUpdate, final.Status)
+	}
+	if len(final.Content) < 1 || final.Content[0].Content == nil ||
+		!strings.Contains(final.Content[0].Content.Text, "exit code 0") {
+		t.Errorf("result content = %+v, want exit code info", final.Content)
 	}
 }

@@ -28,7 +28,12 @@ func (m *mockLLMClient) SendMessage(ctx context.Context, messages []llm.Message,
 	return &llm.Response{Content: "mock response"}, nil
 }
 func (m *mockLLMClient) SendMessageStream(ctx context.Context, messages []llm.Message, tools []llm.ToolSpec) (<-chan llm.StreamingEvent, error) {
-	panic("not implemented in mock")
+	// 最小流:单事件 "mock response" 后结束——Loop 正常流式完成路径
+	// (原 panic 实现导致 Loop 走 panic 恢复 → ReasonToolFatal → 假绿 end_turn)
+	ch := make(chan llm.StreamingEvent, 2)
+	ch <- llm.StreamingEvent{Delta: "mock response", Done: true}
+	close(ch)
+	return ch, nil
 }
 func (m *mockLLMClient) GetBalance(ctx context.Context) (*llm.BalanceInfo, error) {
 	return nil, nil
@@ -307,6 +312,191 @@ func TestHandleSessionNewCompactor(t *testing.T) {
 		}
 		if state.CM.Compactor() == nil {
 			t.Fatal("ContextManager must have a compactor")
+		}
+	}
+}
+
+// fakeCommandRunner 是 CommandRunner 的测试替身。
+type fakeCommandRunner struct {
+	resultText string
+	injected   string
+	handled    bool
+	cmds       []AvailableCommand
+}
+
+func (f *fakeCommandRunner) Run(ctx context.Context, input string) (string, string, bool) {
+	return f.resultText, f.injected, f.handled
+}
+
+func (f *fakeCommandRunner) AvailableCommands() []AvailableCommand {
+	return f.cmds
+}
+
+func TestHandleSessionNewSendsAvailableCommands(t *testing.T) {
+	// session/new 后发送 available_commands_update(客户端命令面板)
+	s := newTestServer()
+	getResp := withCaptureTransport(s)
+	s.commandRunner = &fakeCommandRunner{cmds: []AvailableCommand{
+		{Name: "help", Description: "Show help"},
+		{Name: "model", Description: "Switch model", Input: &AvailableCommandInput{Kind: "unstructured"}},
+	}}
+
+	s.handleSessionNew(JSONRPCRequest{JSONRPC: "2.0", ID: 1, Method: MethodSessionNew})
+
+	responses := getResp()
+	var found bool
+	for _, raw := range responses {
+		var notif JSONRPCNotification
+		if json.Unmarshal(raw, &notif) != nil || notif.Method != MethodSessionUpdate {
+			continue
+		}
+		if strings.Contains(string(notif.Params), "available_commands_update") &&
+			strings.Contains(string(notif.Params), `"help"`) {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("session/new should send available_commands_update with commands")
+	}
+}
+
+func TestExecutePromptSlashCommandTextReply(t *testing.T) {
+	// 纯命令(/help 等)→ 文本回复 + end_turn,不调用 LLM
+	s := newTestServer()
+	getResp := withCaptureTransport(s)
+	s.commandRunner = &fakeCommandRunner{resultText: "Available commands: /help /model", handled: true}
+
+	s.handleSessionNew(JSONRPCRequest{JSONRPC: "2.0", ID: 1, Method: MethodSessionNew})
+	sid := getSessionID(t, getResp()[0])
+
+	s.handleSessionPrompt(context.Background(), JSONRPCRequest{JSONRPC: "2.0", ID: 2, Method: MethodSessionPrompt,
+		Params: json.RawMessage(`{"sessionId":"` + sid + `","prompt":[{"type":"text","text":"/help"}]}`)})
+
+	s.wg.Wait()
+
+	responses := getResp()
+	var msgChunk, promptResp bool
+	for _, raw := range responses {
+		var notif JSONRPCNotification
+		if json.Unmarshal(raw, &notif) == nil && notif.Method == MethodSessionUpdate {
+			if strings.Contains(string(notif.Params), "agent_message_chunk") &&
+				strings.Contains(string(notif.Params), "Available commands") {
+				msgChunk = true
+			}
+			continue
+		}
+		var resp JSONRPCResponse
+		if json.Unmarshal(raw, &resp) == nil && resp.ID == float64(2) && resp.Error == nil {
+			var result SessionPromptResult
+			if json.Unmarshal(resp.Result, &result) == nil && result.StopReason == "end_turn" {
+				promptResp = true
+			}
+		}
+	}
+	if !msgChunk {
+		t.Error("slash command should reply with agent_message_chunk text")
+	}
+	if !promptResp {
+		t.Error("slash command should respond end_turn without LLM")
+	}
+}
+
+func TestExecutePromptSlashCommandSkillInjection(t *testing.T) {
+	// skill 命令 → 注入指令文本 → 走 LLM(不是直接回复)
+	s := newTestServer()
+	getResp := withCaptureTransport(s)
+	s.commandRunner = &fakeCommandRunner{injected: "SKILL BODY: run tests\n\nTask", handled: true}
+
+	s.handleSessionNew(JSONRPCRequest{JSONRPC: "2.0", ID: 1, Method: MethodSessionNew})
+	sid := getSessionID(t, getResp()[0])
+
+	s.handleSessionPrompt(context.Background(), JSONRPCRequest{JSONRPC: "2.0", ID: 2, Method: MethodSessionPrompt,
+		Params: json.RawMessage(`{"sessionId":"` + sid + `","prompt":[{"type":"text","text":"/test-acp"}]}`)})
+
+	s.wg.Wait()
+
+	// 注入路径走 LLM:mock 返回 "mock response" → agent_message_chunk 文本
+	responses := getResp()
+	var found bool
+	for _, raw := range responses {
+		var notif JSONRPCNotification
+		if json.Unmarshal(raw, &notif) == nil && notif.Method == MethodSessionUpdate &&
+			strings.Contains(string(notif.Params), "agent_message_chunk") &&
+			strings.Contains(string(notif.Params), "mock response") {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("skill-injected prompt should go through LLM (mock response expected)")
+	}
+}
+
+func TestExecutePromptUserMessageEchoAndTitle(t *testing.T) {
+	// 回显 user_message_chunk(实际处理的 prompt)+ 首次 prompt 设置 session 标题
+	s := newTestServer()
+	getResp := withCaptureTransport(s)
+
+	s.handleSessionNew(JSONRPCRequest{JSONRPC: "2.0", ID: 1, Method: MethodSessionNew})
+	sid := getSessionID(t, getResp()[0])
+
+	s.handleSessionPrompt(context.Background(), JSONRPCRequest{JSONRPC: "2.0", ID: 2, Method: MethodSessionPrompt,
+		Params: json.RawMessage(`{"sessionId":"` + sid + `","prompt":[{"type":"text","text":"explain this code"}]}`)})
+	s.wg.Wait()
+
+	responses := getResp()
+	var userEcho, titleSet bool
+	var titleNotifs int
+	for _, raw := range responses {
+		var notif JSONRPCNotification
+		if json.Unmarshal(raw, &notif) != nil || notif.Method != MethodSessionUpdate {
+			continue
+		}
+		params := string(notif.Params)
+		if strings.Contains(params, "user_message_chunk") && strings.Contains(params, "explain this code") {
+			userEcho = true
+		}
+		if strings.Contains(params, "session_info_update") {
+			titleNotifs++
+			if strings.Contains(params, "explain this code") {
+				titleSet = true
+			}
+		}
+	}
+	if !userEcho {
+		t.Error("prompt should echo user_message_chunk with actual text")
+	}
+	if !titleSet {
+		t.Error("first prompt should set session title (session_info_update)")
+	}
+
+	// 第二次 prompt 不再重复设置标题
+	s.handleSessionPrompt(context.Background(), JSONRPCRequest{JSONRPC: "2.0", ID: 3, Method: MethodSessionPrompt,
+		Params: json.RawMessage(`{"sessionId":"` + sid + `","prompt":[{"type":"text","text":"second prompt"}]}`)})
+	s.wg.Wait()
+	totalAfter := 0
+	for _, raw := range getResp() {
+		var notif JSONRPCNotification
+		if json.Unmarshal(raw, &notif) == nil && notif.Method == MethodSessionUpdate &&
+			strings.Contains(string(notif.Params), "session_info_update") {
+			totalAfter++
+		}
+	}
+	if totalAfter != titleNotifs {
+		t.Errorf("session title should be set only once, total = %d, want %d", totalAfter, titleNotifs)
+	}
+}
+
+func TestTruncateTitle(t *testing.T) {
+	cases := []struct {
+		in, want string
+	}{
+		{"short", "short"},
+		{"first line\nsecond line", "first line"},
+		{"a" + strings.Repeat("b", 70), "a" + strings.Repeat("b", 59) + "…"},
+	}
+	for _, tc := range cases {
+		if got := truncateTitle(tc.in); got != tc.want {
+			t.Errorf("truncateTitle(%q) = %q, want %q", tc.in, got, tc.want)
 		}
 	}
 }
@@ -876,6 +1066,93 @@ func TestHandleSessionCancelBeforePrompt(t *testing.T) {
 		t.Error("promptStarted should be cleared after prompt ends")
 	}
 	state.cancelMu.Unlock()
+}
+
+func TestCancelRequestWindowPeriod(t *testing.T) {
+	// $/cancel_request(LSP 风格按 requestId)在 prompt 启动窗口期到达 →
+	// 与 session/cancel 同机制:cancelPending 置位;通知无响应。
+	s := newTestServer()
+	getResp := withCaptureTransport(s)
+
+	s.handleSessionNew(JSONRPCRequest{JSONRPC: "2.0", ID: 1, Method: MethodSessionNew})
+	sid := getSessionID(t, getResp()[0])
+	s.mu.RLock()
+	state := s.sessions[sid]
+	s.mu.RUnlock()
+
+	// 模拟活跃 prompt:注册 requestId → session + promptStarted
+	s.registerRequest(float64(2), sid) // JSON 数字 id 解析为 float64,与真实链路一致
+	state.cancelMu.Lock()
+	state.promptStarted = true
+	state.cancelMu.Unlock()
+	before := len(getResp())
+
+	s.handleCancelRequest(JSONRPCRequest{JSONRPC: "2.0", Method: MethodCancelRequest,
+		Params: json.RawMessage(`{"requestId":2}`)})
+
+	state.cancelMu.Lock()
+	pending := state.cancelPending
+	state.cancelMu.Unlock()
+	if !pending {
+		t.Error("cancelPending should be set for matching requestId")
+	}
+	if resp := getResp(); len(resp) != before {
+		t.Errorf("notification must not receive response, got %d new", len(resp)-before)
+	}
+}
+
+func TestCancelRequestUnknownID(t *testing.T) {
+	// 未知 requestId(未注册)→ 静默忽略,不置位
+	s := newTestServer()
+	getResp := withCaptureTransport(s)
+
+	s.handleSessionNew(JSONRPCRequest{JSONRPC: "2.0", ID: 1, Method: MethodSessionNew})
+	sid := getSessionID(t, getResp()[0])
+	s.mu.RLock()
+	state := s.sessions[sid]
+	s.mu.RUnlock()
+	state.cancelMu.Lock()
+	state.promptStarted = true
+	state.cancelMu.Unlock()
+	before := len(getResp())
+
+	s.handleCancelRequest(JSONRPCRequest{JSONRPC: "2.0", Method: MethodCancelRequest,
+		Params: json.RawMessage(`{"requestId":999}`)})
+
+	state.cancelMu.Lock()
+	pending := state.cancelPending
+	state.cancelMu.Unlock()
+	if pending {
+		t.Error("unknown requestId must be ignored")
+	}
+	if resp := getResp(); len(resp) != before {
+		t.Errorf("unknown requestId must not produce response, got %d new", len(resp)-before)
+	}
+}
+
+func TestCancelRequestUnregisteredAfterCompletion(t *testing.T) {
+	// prompt 完成后映射注销 → $/cancel_request 到达被忽略(空闲期)
+	s := newTestServer()
+	getResp := withCaptureTransport(s)
+
+	s.handleSessionNew(JSONRPCRequest{JSONRPC: "2.0", ID: 1, Method: MethodSessionNew})
+	sid := getSessionID(t, getResp()[0])
+	s.mu.RLock()
+	state := s.sessions[sid]
+	s.mu.RUnlock()
+
+	// 模拟 prompt 完成:注册后注销
+	s.registerRequest(2, sid)
+	s.unregisterRequest(2)
+	s.handleCancelRequest(JSONRPCRequest{JSONRPC: "2.0", Method: MethodCancelRequest,
+		Params: json.RawMessage(`{"requestId":2}`)})
+
+	state.cancelMu.Lock()
+	pending := state.cancelPending
+	state.cancelMu.Unlock()
+	if pending {
+		t.Error("cancel after completion must be ignored (mapping removed)")
+	}
 }
 
 // TestRegression_SessionIDPathTraversal:sessionId 直接 filepath.Join 曾可

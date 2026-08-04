@@ -13,6 +13,7 @@ import (
 	"github.com/Menfre01/waveloom/pkg/logging"
 	"github.com/Menfre01/waveloom/pkg/permission"
 	"github.com/Menfre01/waveloom/pkg/sandbox"
+	"github.com/Menfre01/waveloom/pkg/skill"
 	"github.com/Menfre01/waveloom/pkg/subagent"
 	"github.com/Menfre01/waveloom/pkg/tool"
 )
@@ -129,6 +130,9 @@ Options:
 	registry := tool.NewRegistry()
 	settingsProvider := &fileSettingsProvider{projectPath: projectPath, globalPath: globalPath}
 
+	// skill loader(与 TUI 一致;ACP 无会话变量,sessionID 传空)
+	skillLoader := skill.NewLoader(cwd, homeDir, "", "medium", guard)
+
 	modelName := llmSettings.Model
 	subModel := llmSettings.SubModel
 	if modelName == "" {
@@ -136,7 +140,13 @@ Options:
 	}
 
 	// 注册内置工具(注入沙箱与权限守门人;交互式工具在 ACP 下不可用,不注册)
-	registerACPBuiltinTools(registry, llmClient, modelName, subModel, cwd, settingsProvider, sandboxMgr, guard, compactionConfig)
+	registerACPBuiltinTools(registry, skillLoader, llmClient, modelName, subModel, cwd, settingsProvider, sandboxMgr, guard, compactionConfig)
+
+	// 斜杠命令执行器(ACP 可用命令:help/model/provider/skill;
+	// theme/locale/rewind 等 TUI overlay 命令不注册)
+	commandRunner := newACPCommandRunner(registry,
+		&acpSettingsStore{projectPath: projectPath, globalPath: globalPath},
+		llmClient, modelName, skillLoader, DetectLocale())
 
 	// 解析 session 目录
 	acpSessionDir := *sessionDir
@@ -172,6 +182,7 @@ Options:
 		ContextLimit: contextLimitFinal,
 		CompactionConfig: compactionConfig,
 		Summarizer:       summarizer,
+		CommandRunner:    commandRunner,
 	})
 
 	slog.Info("acp: starting server", "version", Version, "cwd", cwd, "sessionDir", acpSessionDir)
@@ -209,7 +220,7 @@ func resolveCompactionConfig(flagVal int, globalPath, projectPath string) compac
 // 工具协议对齐:依赖 UserResponder 的交互式工具(ask_user_question /
 // enter_plan_mode / exit_plan_mode)在 ACP(无交互,UserResponder=nil)下调用
 // 必挂,不注册——从 schema 层杜绝 LLM 提议不可用工具。
-func registerACPBuiltinTools(r tool.Registry, llmClient llm.Client, defaultModel, subModel string, cwd string, settings subagent.SettingsProvider, sandboxMgr *sandbox.SandboxManager, guard permission.Guard, compactionConfig compaction.CompactionConfig) *subagent.AgentTool {
+func registerACPBuiltinTools(r tool.Registry, skillLoader *skill.Loader, llmClient llm.Client, defaultModel, subModel string, cwd string, settings subagent.SettingsProvider, sandboxMgr *sandbox.SandboxManager, guard permission.Guard, compactionConfig compaction.CompactionConfig) *subagent.AgentTool {
 	r.Register(tool.Wrap(&tool.ReadFile{}))
 	r.Register(tool.Wrap(&tool.EditFile{}))
 	r.Register(tool.Wrap(&tool.WriteFile{}))
@@ -218,6 +229,11 @@ func registerACPBuiltinTools(r tool.Registry, llmClient llm.Client, defaultModel
 	r.Register(tool.Wrap(&tool.WebFetch{}))
 	r.Register(tool.Wrap(&tool.WebSearch{}))
 	r.Register(tool.Wrap(&tool.KillBackgroundTask{}))
+
+	// Skill 工具(LLM 可主动调用;与 /skill 命令同一加载路径)
+	if skillLoader != nil {
+		r.Register(tool.Wrap(tool.NewSkillTool(&skillExecutorAdapter{loader: skillLoader})))
+	}
 
 	at := &subagent.AgentTool{
 		LLMClient:       llmClient,

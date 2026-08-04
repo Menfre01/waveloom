@@ -80,8 +80,9 @@ const (
 	MethodSessionClose  = "session/close"
 	MethodSessionList   = "session/list"
 	MethodSessionDelete = "session/delete"
+	MethodCancelRequest = "$/cancel_request" // LSP 风格按 requestId 取消(官方 protocol side)
 
-	// Client 端方法（Waveloom 调用，Client 实现）
+	// Client 端方法(Waveloom 调用,Client 实现)
 	MethodSessionRequestPermission = "session/request_permission"
 
 	// 通知（Waveloom → Client）
@@ -210,6 +211,33 @@ type SessionListItem struct {
 // SessionListResult 是 session/list 的成功响应。
 type SessionListResult struct {
 	Sessions []SessionListItem `json:"sessions"`
+}
+
+// AvailableCommand 是 available_commands_update 中的单条命令。
+// 对齐官方 schema AvailableCommand{name, description, input}。
+type AvailableCommand struct {
+	Name        string                 `json:"name"`
+	Description string                 `json:"description"`
+	Input       *AvailableCommandInput `json:"input,omitempty"`
+}
+
+// AvailableCommandInput 命令输入规格(v1 仅 unstructured)。
+type AvailableCommandInput struct {
+	Kind string `json:"kind"` // "unstructured"
+}
+
+// AvailableCommandsUpdate 是命令列表更新通知(session/update 变体)。
+type AvailableCommandsUpdate struct {
+	SessionUpdate     string             `json:"sessionUpdate"` // "available_commands_update"
+	AvailableCommands []AvailableCommand `json:"availableCommands"`
+}
+
+// SessionInfoUpdate 是 session 元数据更新通知(session/update 变体)。
+// 对齐官方 schema:title/updatedAt 均可选,支持部分更新。
+type SessionInfoUpdate struct {
+	SessionUpdate string  `json:"sessionUpdate"` // "session_info_update"
+	Title         *string `json:"title,omitempty"`
+	UpdatedAt     *string `json:"updatedAt,omitempty"`
 }
 
 // ---------------------------------------------------------------------------
