@@ -85,6 +85,10 @@ func (c *ModelCommand) executeWithArgs(ctx context.Context, name string) (*Resul
 			Text: fmt.Sprintf(c.messages.ModelConfigReadFailed, err),
 		}, nil
 	}
+	// REGRESSION: settings 无 llm 段时 LoadLLM 返回 nil,SetModel 曾 nil panic。
+	if settings == nil {
+		settings = &llm.LLMSettings{}
+	}
 
 	settings.SetModel(name)
 	if err := c.store.SaveLLM(settings); err != nil {
