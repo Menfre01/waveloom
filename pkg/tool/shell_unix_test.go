@@ -43,8 +43,10 @@ func TestPollOutputFile_ContextCancel(t *testing.T) {
 	if err != context.DeadlineExceeded {
 		t.Errorf("expected DeadlineExceeded, got %v", err)
 	}
-	// sleep 进程应该被 killProcessGroup 杀死
-	_ = cmd.Wait()
+	// sleep 进程应该被 killProcessGroup 杀死。等待 goroutine 中的 Wait 完成
+	// (REGRESSION: 重复调用 cmd.Wait() 与 goroutine 并发执行 → os/exec
+	// 内部状态数据竞争,-race 稳定触发)。
+	<-done
 }
 
 // TestShell_ReadPipesStreaming_Timeout 覆盖 pipe 模式超时 kill 路径。
