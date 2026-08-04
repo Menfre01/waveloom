@@ -1470,3 +1470,26 @@ func TestExecutePromptSuccess(t *testing.T) {
 		t.Fatal("prompt response not found")
 	}
 }
+
+// TestIsDriveLetterPrefix 验证 Windows 盘符路径识别(file://C:\x / file://C:/x
+// 的 URI 解析依赖它;REGRESSION:此前无此分支,strings.Cut 无 "/" 时误报
+// "invalid file URI",Windows CI 必挂)。纯字符串判断,平台无关。
+func TestIsDriveLetterPrefix(t *testing.T) {
+	cases := []struct {
+		in   string
+		want bool
+	}{
+		{`C:\Users\test\file.txt`, true},
+		{"C:/Users/test/file.txt", true},
+		{"c:\\tmp\\x", true},
+		{`/etc/passwd`, false},
+		{"etc/passwd", false},
+		{"C", false},
+		{"C:x", true}, // 盘符相对形式(不常见但合法)
+	}
+	for _, tt := range cases {
+		if got := isDriveLetterPrefix(tt.in); got != tt.want {
+			t.Errorf("isDriveLetterPrefix(%q) = %v, want %v", tt.in, got, tt.want)
+		}
+	}
+}

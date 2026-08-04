@@ -758,8 +758,15 @@ func extractPromptText(blocks []ContentBlock, cwd string) string {
 // 仅允许 file:// 或绝对路径,且必须位于 cwd 工作区内(安全边界)。
 func readResourceLink(uri, cwd string) (string, error) {
 	path := uri
-	if strings.HasPrefix(uri, "file://") {
+	isFileURI := strings.HasPrefix(uri, "file://")
+	if isFileURI {
 		rest := strings.TrimPrefix(uri, "file://")
+		// Windows 盘符形式:file://C:\x 或 file://C:/x——直接作为路径,
+		// 不走 host 解析(REGRESSION:strings.Cut(rest, "/") 无 "/" 时误报
+		// "invalid file URI",Windows CI 必挂)。
+		if len(rest) >= 2 && isDriveLetterPrefix(rest) {
+			path = rest
+		} else
 		// 处理 file://localhost/path 形式
 		if host, p, ok := strings.Cut(rest, "/"); ok && host != "" && host != "localhost" {
 			return "", fmt.Errorf("unsupported file URI host %q", host)
@@ -769,7 +776,10 @@ func readResourceLink(uri, cwd string) (string, error) {
 			path = "/" + p
 		}
 	}
-	if !filepath.IsAbs(path) {
+	// file:// 来源的路径按 URL 语义(/ 开头即绝对):Windows 上
+	// filepath.IsAbs("/etc/passwd") 恒 false,会误报 "must be absolute"——
+	// 跳过 IsAbs,由下方 workspace 边界检查(filepath.Rel)跨平台统一拦截。
+	if !isFileURI && !filepath.IsAbs(path) {
 		return "", fmt.Errorf("resource_link path must be absolute: %q", uri)
 	}
 	// 安全边界:仅工作区内文件(cwd 为空时不限制——测试/内部使用)
@@ -784,4 +794,11 @@ func readResourceLink(uri, cwd string) (string, error) {
 		return "", err
 	}
 	return string(data), nil
+}
+
+// isDriveLetterPrefix 判断路径是否以盘符开头(C:\ 或 C:/,Windows 绝对路径)。
+func isDriveLetterPrefix(s string) bool {
+	return len(s) >= 2 &&
+		((s[0] >= 'a' && s[0] <= 'z') || (s[0] >= 'A' && s[0] <= 'Z')) &&
+		s[1] == ':'
 }
