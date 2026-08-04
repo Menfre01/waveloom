@@ -79,7 +79,9 @@ func createSandboxManager(bypassPerm bool, networkOverride, globalPath, projectP
 			return nil, false
 		}
 	}
-	// 网络 on 的凭据遮蔽为可选加固:提示用户但不阻止(内置默认遮蔽始终生效)
+	// 网络 on 的凭据遮蔽为可选加固:提示用户但不阻止。
+	// 2026-09 决策:默认不遮蔽任何路径,凭据防护由显式配置承载
+	// (推荐 denyRead / credentials.files 清单见 docs/settings.md)。
 	if cfg.Network.Mode == sandbox.NetworkModeOn &&
 		len(cfg.Credentials.Files) == 0 && len(cfg.Filesystem.DenyRead) == 0 {
 		slog.Warn("sandbox: network mode on without explicit credentials.files / denyRead — network can exfiltrate unmasked user files; configure masking for stronger protection")

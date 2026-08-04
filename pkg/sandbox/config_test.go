@@ -61,8 +61,10 @@ func TestConfigParseFull(t *testing.T) {
 	if len(cfg.Capabilities.Keep) != 1 || cfg.Capabilities.Keep[0] != "net_raw" {
 		t.Errorf("capabilities.keep = %v", cfg.Capabilities.Keep)
 	}
+	// allowRead 已废弃(2026-09):字段仍可解析(兼容旧配置)但不再生效,
+	// LoadConfig 仅告警不报错(行为由 TestConfigParseFull 的 err == nil 覆盖)
 	if len(cfg.Filesystem.AllowRead) != 1 || cfg.Filesystem.AllowRead[0] != "~/.docker/run" {
-		t.Errorf("filesystem.allowRead = %v", cfg.Filesystem.AllowRead)
+		t.Errorf("filesystem.allowRead (deprecated) should still parse = %v", cfg.Filesystem.AllowRead)
 	}
 	if len(cfg.Filesystem.DenyRead) != 1 || cfg.Filesystem.DenyRead[0] != "~/.ssh" {
 		t.Errorf("filesystem.denyRead = %v", cfg.Filesystem.DenyRead)
@@ -133,9 +135,9 @@ func TestConfigInvalidModes(t *testing.T) {
 	if _, err := LoadConfig([]byte(`{"excludedCommands": ["", "docker *"]}`)); err == nil {
 		t.Error("empty excludedCommands entry should fail")
 	}
-	// 空 allowRead 条目
-	if _, err := LoadConfig([]byte(`{"filesystem": {"allowRead": [""]}}`)); err == nil {
-		t.Error("empty allowRead entry should fail")
+	// allowRead 已废弃:空条目不再报错(告警并忽略)
+	if _, err := LoadConfig([]byte(`{"filesystem": {"allowRead": [""]}}`)); err != nil {
+		t.Errorf("deprecated allowRead should be ignored, got %v", err)
 	}
 }
 

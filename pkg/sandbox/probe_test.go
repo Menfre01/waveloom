@@ -199,7 +199,7 @@ func TestMatchExcludedPattern_MidWildcard(t *testing.T) {
 }
 
 func TestCollectMaskSpecs_Dedup(t *testing.T) {
-	// 同一路径出现在默认清单 + denyRead → 只生成一条遮蔽
+	// 同一路径在 denyRead 中重复出现 → 只生成一条遮蔽
 	home := t.TempDir()
 	ws := t.TempDir()
 	settings := filepath.Join(home, ".waveloom", "settings.json")
@@ -250,30 +250,6 @@ func TestViolationString_AllKinds(t *testing.T) {
 func TestExtractPath_None(t *testing.T) {
 	if p := extractPath("no path here"); p != "" {
 		t.Errorf("extractPath = %q, want empty", p)
-	}
-}
-
-func TestHomeHistoryFiles(t *testing.T) {
-	home := t.TempDir()
-	_ = os.WriteFile(filepath.Join(home, ".bash_history"), []byte("x"), 0o600)
-	_ = os.WriteFile(filepath.Join(home, ".zsh_history"), []byte("x"), 0o600)
-	_ = os.WriteFile(filepath.Join(home, "normal.txt"), []byte("x"), 0o600)
-	_ = os.MkdirAll(filepath.Join(home, ".dir_history"), 0o755)
-
-	files := homeHistoryFiles(home)
-	if len(files) != 2 {
-		t.Errorf("homeHistoryFiles = %v, want 2 files", files)
-	}
-	for _, f := range files {
-		if !strings.HasSuffix(f, "history") {
-			t.Errorf("unexpected file %q", f)
-		}
-	}
-}
-
-func TestHomeHistoryFiles_MissingHome(t *testing.T) {
-	if files := homeHistoryFiles(filepath.Join(t.TempDir(), "nope")); files != nil {
-		t.Errorf("missing home should return nil, got %v", files)
 	}
 }
 

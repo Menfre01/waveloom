@@ -36,11 +36,9 @@ func newTestSeatbelt(t *testing.T) (string, string) {
 	ws := t.TempDir()
 	t.Setenv("HOME", home)
 
-	// settings.json 存在 → literal 遮蔽;~/.ssh 存在 → subpath 遮蔽;
-	// ~/.env 不存在 → 跳过(与 Linux 一致)
-	_ = os.MkdirAll(filepath.Join(home, ".waveloom"), 0o755)
-	_ = os.WriteFile(filepath.Join(home, ".waveloom", "settings.json"), []byte("{}"), 0o600)
-	_ = os.MkdirAll(filepath.Join(home, ".ssh"), 0o755)
+	// 2026-09:默认读遮蔽已移除(settings.json / ~/.ssh 不再内置遮蔽)。
+	// 固定项:工作区 .git/hooks 防写 → deny file-read* + file-write*
+	_ = os.MkdirAll(filepath.Join(ws, ".git", "hooks"), 0o755)
 
 	return home, ws
 }
@@ -71,94 +69,52 @@ func TestSeatbeltProfile_Structure(t *testing.T) {
 	if !strings.Contains(prof, `(allow file-write* (subpath "`+realPath(ws)+`") (subpath "/tmp") (subpath "/private/tmp") (subpath "`+realPath(filepath.Join(home, ".cache"))+`") (subpath "`+realPath(filepath.Join(home, "Library", "Caches"))+`"))`) {
 		t.Errorf("workspace write missing:\n%s", prof)
 	}
-	// 遮蔽:文件 → literal,目录 → subpath
+	// 默认读遮蔽已移除(2026-09):settings.json / ~/.ssh 不再出现 deny 规则
 	settings := filepath.Join(home, ".waveloom", "settings.json")
-	if !strings.Contains(prof, `(deny file-read* (literal "`+realPath(settings)+`"))`) {
-		t.Errorf("file mask missing:\n%s", prof)
+	if strings.Contains(prof, `(deny file-read* (literal "`+realPath(settings)+`"))`) {
+		t.Errorf("settings.json must NOT be masked by default:\n%s", prof)
 	}
 	sshDir := filepath.Join(home, ".ssh")
-	if !strings.Contains(prof, `(deny file-read* (subpath "`+realPath(sshDir)+`"))`) {
-		t.Errorf("dir mask missing:\n%s", prof)
+	if strings.Contains(prof, `(deny file-read* (subpath "`+realPath(sshDir)+`"))`) {
+		t.Errorf("~/.ssh must NOT be masked by default:\n%s", prof)
 	}
-	// 缺失路径(~/.env)跳过
-	envPath := filepath.Join(home, ".env")
-	if strings.Contains(prof, envPath) {
-		t.Errorf("missing path should be skipped:\n%s", prof)
+	// 固定防写遮蔽:ws/.git/hooks deny file-read* + file-write*(防持久化注入)
+	hooksDir := realPath(filepath.Join(ws, ".git", "hooks"))
+	if !strings.Contains(prof, `(deny file-read* (subpath "`+hooksDir+`"))`) {
+		t.Errorf("git hooks read mask missing:\n%s", prof)
+	}
+	if !strings.Contains(prof, `(deny file-write* (subpath "`+hooksDir+`"))`) {
+		t.Errorf("git hooks write mask missing (persistent injection protection):\n%s", prof)
 	}
 }
 
-// TestDarwinMaskedDirsFiltered 直接单测 darwin 特有遮蔽目录的 allowRead 过滤:
-// 精确命中 / 父目录放行(解除其下所有遮蔽)/ 未命中保留 / 空配置原样返回。
-// 不依赖本机真实目录存在性(函数仅做字符串匹配)。
-func TestDarwinMaskedDirsFiltered(t *testing.T) {
+// TestDarwinMaskedDirs 验证固定防逃逸遮蔽仅含 docker.sock 两项
+// (2026-09:钥匙串/cookie/浏览器等凭据读遮蔽移除,改由 denyRead 显式配置)。
+func TestDarwinMaskedDirs(t *testing.T) {
 	home := t.TempDir()
-	ws := t.TempDir()
-	keychains := filepath.Join(home, "Library", "Keychains")
-
-	t.Run("empty allowRead returns all", func(t *testing.T) {
-		cfg := DefaultConfig()
-		got := darwinMaskedDirsFiltered(home, ws, cfg)
-		want := darwinMaskedDirs(home)
-		if len(got) != len(want) {
-			t.Errorf("got %d dirs, want %d", len(got), len(want))
+	dirs := darwinMaskedDirs(home)
+	want := []string{
+		"/var/run/docker.sock",
+		filepath.Join(home, ".docker", "run", "docker.sock"),
+	}
+	if len(dirs) != len(want) {
+		t.Fatalf("darwinMaskedDirs = %v, want %v", dirs, want)
+	}
+	for i := range want {
+		if dirs[i] != want[i] {
+			t.Errorf("darwinMaskedDirs[%d] = %q, want %q", i, dirs[i], want[i])
 		}
-	})
-
-	t.Run("exact match removes one", func(t *testing.T) {
-		cfg := DefaultConfig()
-		cfg.Filesystem.AllowRead = []string{"~" + keychains[len(home):]}
-		got := darwinMaskedDirsFiltered(home, ws, cfg)
-		for _, p := range got {
-			if p == keychains {
-				t.Errorf("keychains should be unmasked: %v", got)
-			}
-		}
-		if len(got) != len(darwinMaskedDirs(home))-1 {
-			t.Errorf("got %d dirs, want %d: %v", len(got), len(darwinMaskedDirs(home))-1, got)
-		}
-	})
-
-	t.Run("parent dir lifts all descendants", func(t *testing.T) {
-		cfg := DefaultConfig()
-		cfg.Filesystem.AllowRead = []string{"~/Library"}
-		got := darwinMaskedDirsFiltered(home, ws, cfg)
-		// ~/Library 放行其下全部(Keychains/HTTPStorages/Cookies/浏览器数据);
-		// home 外(/var/run/docker.sock)与非 Library 路径仍保留
-		for _, p := range got {
-			if strings.HasPrefix(p, filepath.Join(home, "Library")+string(filepath.Separator)) {
-				t.Errorf("Library dir should be unmasked: %v", got)
-			}
-		}
-		if len(got) != 5 { // /var/run/docker.sock + .docker/run + .kube + .config/gcloud + .gnupg
-			t.Errorf("got %d dirs, want 5: %v", len(got), got)
-		}
-	})
-
-	t.Run("unrelated path keeps all", func(t *testing.T) {
-		cfg := DefaultConfig()
-		cfg.Filesystem.AllowRead = []string{"~/tmp/xyz"}
-		got := darwinMaskedDirsFiltered(home, ws, cfg)
-		if len(got) != len(darwinMaskedDirs(home)) {
-			t.Errorf("unrelated allowRead should keep all: %v", got)
-		}
-	})
-
-	t.Run("tilde home lifts all", func(t *testing.T) {
-		cfg := DefaultConfig()
-		cfg.Filesystem.AllowRead = []string{"~"}
-		got := darwinMaskedDirsFiltered(home, ws, cfg)
-		// ~ 放行 home 下全部;home 外路径(/var/run/docker.sock)不受影响
-		if len(got) != 1 || got[0] != "/var/run/docker.sock" {
-			t.Errorf("allowRead=~ should keep only /var/run/docker.sock: %v", got)
-		}
-	})
+	}
 }
 
-// TestSeatbeltProfile_GitconfigNotMasked 回归防护:
-// ~/.gitconfig 移出默认遮蔽清单(2026-08 决策),否则 macOS 上 git 启动即 EPERM。
-func TestSeatbeltProfile_GitconfigNotMasked(t *testing.T) {
+// TestSeatbeltProfile_DefaultNoCredentialMask 回归防护:
+// 默认(无显式配置)不遮蔽凭据文件(.gitconfig / .git-credentials),
+// 2026-09 决策对齐 Claude Code / Codex;显式 denyRead 时遮蔽生效。
+func TestSeatbeltProfile_DefaultNoCredentialMask(t *testing.T) {
 	home, ws := newTestSeatbelt(t)
 	_ = os.WriteFile(filepath.Join(home, ".gitconfig"), []byte("[user]\n\tname = test\n"), 0o600)
+	gitCred := filepath.Join(home, ".git-credentials")
+	_ = os.WriteFile(gitCred, []byte("https://token@github.com\n"), 0o600)
 
 	allow := true
 	cfg := &Config{AllowUnsandboxedCommands: &allow, Network: NetworkConfig{Mode: NetworkModeOff}}
@@ -166,41 +122,21 @@ func TestSeatbeltProfile_GitconfigNotMasked(t *testing.T) {
 
 	gitconfig := realPath(filepath.Join(home, ".gitconfig"))
 	if strings.Contains(prof, `(deny file-read* (literal "`+gitconfig+`"))`) {
-		t.Errorf(".gitconfig must NOT be masked (git unusable otherwise):\n%s", prof)
+		t.Errorf(".gitconfig must NOT be masked by default:\n%s", prof)
 	}
-	// 真凭证仍遮蔽
-	gitCred := realPath(filepath.Join(home, ".git-credentials"))
-	if strings.Contains(prof, `(deny file-read* (literal "`+gitCred+`"))`) {
-		t.Log("git-credentials masked (expected)")
+	gitCredReal := realPath(gitCred)
+	if strings.Contains(prof, `(deny file-read* (literal "`+gitCredReal+`"))`) {
+		t.Errorf(".git-credentials must NOT be masked by default:\n%s", prof)
 	}
-}
 
-func TestSeatbeltProfile_AllowRead(t *testing.T) {
-	home, ws := newTestSeatbelt(t)
-	allow := true
-	cfg := &Config{
+	// 显式 denyRead → 遮蔽生效
+	cfg2 := &Config{
 		AllowUnsandboxedCommands: &allow,
-		Filesystem:               FilesystemConfig{AllowRead: []string{"~/.waveloom/settings.json", "~/.ssh"}},
+		Filesystem:               FilesystemConfig{DenyRead: []string{"~/.git-credentials"}},
 	}
-	prof := buildSeatbeltProfile(cfg, ws)
-
-	settings := realPath(filepath.Join(home, ".waveloom", "settings.json"))
-	if strings.Contains(prof, `(deny file-read* (literal "`+settings+`"))`) {
-		t.Errorf("allowRead file should not be masked:\n%s", prof)
-	}
-	sshDir := realPath(filepath.Join(home, ".ssh"))
-	if strings.Contains(prof, `(deny file-read* (subpath "`+sshDir+`"))`) {
-		t.Errorf("allowRead dir should not be masked:\n%s", prof)
-	}
-	// 未放行的 darwin 敏感目录(若本机存在)仍遮蔽
-	for _, p := range darwinMaskedDirs(home) {
-		if _, err := os.Stat(p); err != nil {
-			continue
-		}
-		real := realPath(p)
-		if !strings.Contains(prof, `(deny file-read* (subpath "`+real+`"))`) {
-			t.Errorf("darwin sensitive dir not masked after allowRead: %s\n%s", real, prof)
-		}
+	prof2 := buildSeatbeltProfile(cfg2, ws)
+	if !strings.Contains(prof2, `(deny file-read* (literal "`+gitCredReal+`"))`) {
+		t.Errorf("explicit denyRead should mask .git-credentials:\n%s", prof2)
 	}
 }
 
@@ -269,7 +205,7 @@ func TestSeatbeltProfile_DarwinSensitiveDirs(t *testing.T) {
 	cfg := &Config{AllowUnsandboxedCommands: &allow, Network: NetworkConfig{Mode: NetworkModeOn}}
 	prof := buildSeatbeltProfile(cfg, ws)
 
-	// macOS 特有敏感目录必须遮蔽(钥匙串/cookie/浏览器数据)
+	// 固定防逃逸目录(docker.sock)必须遮蔽
 	for _, p := range darwinMaskedDirs(home) {
 		if _, err := os.Stat(p); err != nil {
 			continue // 本机不存在 → 跳过

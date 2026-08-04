@@ -205,7 +205,8 @@ func (b *bwrapBackend) Transform(shellBin string, args []string, cfg *Config, wo
 
 	home, _ := os.UserHomeDir()
 
-	// 贴纸 C: 默认遮蔽 + denyRead + credentials.files(文件 → /dev/null,目录 → tmpfs)
+	// 贴纸 C: 显式遮蔽(denyRead/credentials.files)+ 固定防写/防逃逸
+	// (文件 → /dev/null,目录 → tmpfs)
 	maskSpecs := collectMaskSpecs(home, workspace, cfg)
 	for _, ms := range maskSpecs {
 		switch ms.kind {
@@ -241,6 +242,9 @@ func (b *bwrapBackend) Transform(shellBin string, args []string, cfg *Config, wo
 			// 实测导致所有沙箱命令失败。跳过是安全的:目标在只读根下,
 			// 沙箱内命令无法创建它(EROFS),沙箱外无文件可读;构造阶段
 			// 不 touch 文件,无 mkdir 逃逸窗口(规格书原 TOCTOU 论证不成立)。
+			// 例外:workspace/.git/hooks 位于可写 workspace 内,缺失时跳过
+			// 意味着沙箱内可创建该目录并植入 hook(git init/clone 恒建
+			// hooks 目录,实际触发窗口极小;既有语义,非本次引入)。
 			_ = ms // 保留分类便于日志/调试
 		}
 	}
@@ -328,7 +332,7 @@ func (b *bwrapBackend) Transform(shellBin string, args []string, cfg *Config, wo
 }
 
 // ============================================================================
-// 默认遮蔽清单(内置,不依赖用户配置)
+// 遮蔽清单(显式配置 + 固定防写/防逃逸)
 // ============================================================================
 
 type maskKind int
@@ -345,75 +349,8 @@ type maskSpec struct {
 	path string
 }
 
-// defaultMaskedFiles 返回默认遮蔽文件(相对 home/workspace 展开)。
-func defaultMaskedFiles(home, workspace string) []string {
-	files := []string{
-		filepath.Join(home, ".waveloom", "settings.json"), // Waveloom 自身配置(含 LLM API key 明文)
-		filepath.Join(home, ".git-credentials"),
-		filepath.Join(home, ".config", "git", "credentials"),
-		filepath.Join(home, ".bashrc"),
-		filepath.Join(home, ".bash_profile"),
-		filepath.Join(home, ".profile"),
-		filepath.Join(home, ".zshrc"),
-		filepath.Join(home, ".zshenv"),
-		filepath.Join(home, ".npmrc"),
-		filepath.Join(home, ".netrc"),
-		filepath.Join(home, ".docker", "config.json"),
-		"/var/run/docker.sock", // 四审 HIGH-2:docker.sock 可访问 = 完整逃逸
-		filepath.Join(home, ".config", "gh", "hosts.yml"),
-		filepath.Join(home, ".mcp.json"),
-		filepath.Join(home, ".claude", "settings.json"),
-		filepath.Join(home, ".aws", "credentials"),
-		filepath.Join(home, ".aws", "config"),
-		filepath.Join(home, ".ssh", "config"),
-		// 四审 MED-3:网络 on 时的可外传凭证面(kube/gcloud/gnupg/pgpass/containers)
-		filepath.Join(home, ".kube", "config"),
-		filepath.Join(home, ".config", "gcloud"),
-		filepath.Join(home, ".gnupg"),
-		filepath.Join(home, ".pgpass"),
-		filepath.Join(home, ".config", "containers", "auth.json"),
-		filepath.Join(home, ".env"),
-		// 项目配置(含 API key 明文)——二审 Medium-4:workspace 内
-		// settings.json 此前未遮蔽,网络 on 时可读走外传
-		filepath.Join(workspace, ".waveloom", "settings.json"),
-		filepath.Join(workspace, ".env"),
-	}
-	// ~/.*history:扫描 home 顶层以 history 结尾的隐藏文件
-	files = append(files, homeHistoryFiles(home)...)
-	return files
-}
-
-// homeHistoryFiles 扫描 home 目录顶层的 shell history 文件(.*history)。
-func homeHistoryFiles(home string) []string {
-	entries, err := os.ReadDir(home)
-	if err != nil {
-		return nil
-	}
-	var out []string
-	for _, e := range entries {
-		name := e.Name()
-		if e.IsDir() {
-			continue
-		}
-		if strings.HasPrefix(name, ".") && strings.HasSuffix(name, "history") {
-			out = append(out, filepath.Join(home, name))
-		}
-	}
-	return out
-}
-
-// defaultMaskedDirs 返回默认遮蔽目录(相对 home/workspace 展开)。
-func defaultMaskedDirs(home, workspace string) []string {
-	dirs := []string{
-		filepath.Join(workspace, ".git", "hooks"), // 防止持久化注入
-		filepath.Join(home, ".config", "gh"),
-		filepath.Join(home, ".ssh"), // 若存在,空覆盖整个目录
-	}
-	return dirs
-}
-
-// collectMaskSpecs 汇总遮蔽路径(默认 + denyRead + credentials.files),
-// 按存在性分类:文件 → /dev/null、目录 → tmpfs、不存在 → --file 占位。
+// collectMaskSpecs 汇总遮蔽路径(显式 denyRead + credentials.files + 固定防写/防逃逸),
+// 按存在性分类:文件 → /dev/null、目录 → tmpfs、不存在 → 跳过。
 func collectMaskSpecs(home, workspace string, cfg *Config) []maskSpec {
 	seen := make(map[string]bool)
 	var out []maskSpec
@@ -432,7 +369,7 @@ func collectMaskSpecs(home, workspace string, cfg *Config) []maskSpec {
 		case info.Mode()&os.ModeSocket != 0:
 			// socket 无法 --bind-data(open O_WRONLY socket 语义失败,实测 CI
 			// "Can't create file at ...: No such file or directory");
-			// 归入 maskSocketFile 走 --ro-bind 空文件遮蔽。
+			// 归入 maskSocketFile 走 --tmpfs 父目录遮蔽。
 			out = append(out, maskSpec{kind: maskSocketFile, path: p})
 		default:
 			out = append(out, maskSpec{kind: maskFile, path: p})
@@ -440,10 +377,6 @@ func collectMaskSpecs(home, workspace string, cfg *Config) []maskSpec {
 	}
 
 	// 用户显式遮蔽(denyRead / credentials.files):优先级最高,先收集。
-	// 顺序保证:显式路径先入 seen,默认清单同名路径被去重跳过;
-	// 默认段过滤(allowRead)只作用于 out[start:],显式遮蔽不受影响。
-	// REGRESSION: 原实现默认清单先收集,filterDefaultMasks 只删 out 不删 seen,
-	// allowRead 放行默认路径后,显式 denyRead 同路径被 seen 跳过而静默失效。
 	for _, p := range cfg.Filesystem.DenyRead {
 		add(expandPath(p, home, workspace))
 	}
@@ -451,56 +384,18 @@ func collectMaskSpecs(home, workspace string, cfg *Config) []maskSpec {
 		add(expandPath(p, home, workspace))
 	}
 
-	// 内置默认遮蔽:allowRead 可显式放行(取消遮蔽)
-	start := len(out)
-	for _, p := range defaultMaskedFiles(home, workspace) {
-		add(p)
+	// 固定内置遮蔽(防写/防逃逸,不可配置移除):
+	//   - workspace/.git/hooks:防持久化注入(hooks 被执行,写入即逃逸)
+	//     仅 workspace 非空时加入——空 workspace 下 Join 得相对路径
+	//     ".git/hooks",遮蔽目标退化(挂载到错误位置),直接跳过
+	//   - /var/run/docker.sock:可访问 = 完整逃逸(docker run -v /:/host)
+	// 2026-09 决策(对齐 Claude Code / Codex):默认凭据读遮蔽移除,
+	// 凭据防护由 denyRead / credentials.files 显式配置(推荐清单见文档)。
+	if workspace != "" {
+		add(filepath.Join(workspace, ".git", "hooks"))
 	}
-	for _, p := range defaultMaskedDirs(home, workspace) {
-		add(p)
-	}
-	// filterDefaultMasks 原地过滤共享底层数组,截取保留显式遮蔽段
-	filtered := filterDefaultMasks(out[start:], home, workspace, cfg)
-	return out[:start+len(filtered)]
-}
+	add("/var/run/docker.sock")
 
-// allowReadExpanded 展开 filesystem.allowRead 为绝对路径集合(路径前缀语义同 denyRead)。
-// 根目录("/")拒绝放行:解除根下全部遮蔽(含 workspace/.git/hooks、docker.sock)过宽,
-// 且字符串匹配下 "/" 前缀 "//" 本就不会命中任何遮蔽——显式忽略,语义与 allowWrite 对齐。
-func allowReadExpanded(home, workspace string, cfg *Config) map[string]bool {
-	allowed := make(map[string]bool)
-	for _, p := range cfg.Filesystem.AllowRead {
-		abs := expandPath(p, home, workspace)
-		if abs != "" && abs != "/" {
-			allowed[abs] = true
-		}
-	}
-	return allowed
-}
-
-// filterDefaultMasks 移除被 allowRead 显式放行的内置默认遮蔽。
-// 匹配语义:allowRead 条目 a 命中遮蔽 m(精确相等,或 m 是 a 的后代)即移除 m——
-// 放行一个目录等价于解除其下所有遮蔽。仅作用于内置默认清单;
-// 用户显式 denyRead / credentials.files 优先级更高,不受 allowRead 影响。
-func filterDefaultMasks(specs []maskSpec, home, workspace string, cfg *Config) []maskSpec {
-	allowed := allowReadExpanded(home, workspace, cfg)
-	if len(allowed) == 0 {
-		return specs
-	}
-	sep := string(filepath.Separator)
-	out := specs[:0]
-	for _, s := range specs {
-		hit := false
-		for a := range allowed {
-			if s.path == a || strings.HasPrefix(s.path, a+sep) {
-				hit = true
-				break
-			}
-		}
-		if !hit {
-			out = append(out, s)
-		}
-	}
 	return out
 }
 

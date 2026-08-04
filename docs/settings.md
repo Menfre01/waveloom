@@ -243,8 +243,8 @@ export BRAVE_API_KEY="your-brave-api-key"
 | `network.mode` | 网络策略:`off`(全断网)/ `on`(直连);`proxy` 为 v2 未实现 | `off` |
 | `network.allowedDomains` | 域名白名单(v2 proxy 预留,当前不生效) | `[]` |
 | `filesystem.allowWrite` | 额外可写路径(`//abs` 绝对、`~/` 家目录、`./` 或裸名项目根);根目录与遮蔽路径冲突时拒绝 | `[]` |
-| `filesystem.allowRead` | 显式放行(取消遮蔽)内置默认遮蔽清单中的路径(如 `~/.docker/run` 恢复 docker);显式 `denyRead` / `credentials.files` 优先级更高,不受影响 | `[]` |
-| `filesystem.denyRead` | 额外遮蔽(不可读)路径,叠加在内置默认遮蔽清单之上 | `[]` |
+| `filesystem.allowRead` | **已废弃**(2026-09):配置中出现仅告警并忽略,不再生效;凭据防护统一用 `denyRead` / `credentials.files` | `[]` |
+| `filesystem.denyRead` | 遮蔽(不可读)路径。默认不遮蔽任何路径,需显式配置(推荐清单见下文) | `[]` |
 | `capabilities.keep` | `--cap-drop ALL` 后加回的内核能力(如 `net_raw` 供 ping) | `[]` |
 | `credentials.files` | 凭据遮蔽路径(网络 on 时强烈建议配置) | `[]` |
 | `credentials.envVars` | 额外剥离的环境变量,与内置 glob(`*TOKEN*` / `*_API_KEY` 等)叠加 | `[]` |
@@ -276,39 +276,49 @@ export BRAVE_API_KEY="your-brave-api-key"
 - **npm/cargo 等**:同理配 `npm_config_cache` / `CARGO_HOME` / `PIP_CACHE_DIR` 等
 - **安全**:键命中凭据剥离(内置 glob `*TOKEN*` / `*_API_KEY` 等或 `credentials.envVars`)时**忽略注入**,剥离优先——防止配置把被剥离的敏感变量回填进沙箱
 
-### 内置默认遮蔽清单
+### 遮蔽策略(2026-09:默认不遮蔽)
 
-沙箱启用后,以下路径**默认不可读**(无需任何配置)。`filesystem.allowRead` 可显式放行其中任意条目(放行目录 = 解除其下所有遮蔽);用户显式 `denyRead` / `credentials.files` 优先级更高。
+沙箱默认**不遮蔽任何路径**(`~/.ssh`、`~/.aws`、钥匙串等均可读),对齐 Claude Code / Codex。
+凭据防护由 `filesystem.denyRead` / `credentials.files` 显式配置;网络 `on` 且未配置时启动警告
+("网络打开后能读就能外传,配置遮蔽更安全")。
 
-**文件级遮蔽**(读返回空):
+**固定内置遮蔽**(防写/防逃逸,不可配置移除):
 
-| 类别 | 路径 |
+| 路径 | 作用 |
 |------|------|
-| Waveloom 配置 | `~/.waveloom/settings.json`、`<项目根>/.waveloom/settings.json` |
-| Git 真凭证 | `~/.git-credentials`、`~/.config/git/credentials` |
-| Shell 启动文件 | `~/.bashrc`、`~/.bash_profile`、`~/.profile`、`~/.zshrc`、`~/.zshenv`、`~/.bash_history` 等 `~/.*history` |
-| 包管理/网络 | `~/.npmrc`、`~/.netrc`、`~/.env`、`<项目根>/.env` |
-| Docker | `~/.docker/config.json`、`/var/run/docker.sock` |
-| 云/容器凭证 | `~/.aws/credentials`、`~/.aws/config`、`~/.kube/config`、`~/.config/gcloud`、`~/.gnupg`、`~/.pgpass`、`~/.config/containers/auth.json` |
-| 其他 | `~/.ssh/config`、`~/.config/gh/hosts.yml`、`~/.mcp.json`、`~/.claude/settings.json` |
+| `<项目根>/.git/hooks` | 防持久化注入(hooks 被执行,写入即逃逸);Linux tmpfs 空覆盖,Seatbelt deny read+write |
+| `/var/run/docker.sock` | 防逃逸(docker 可挂载宿主根);macOS 另有 `~/.docker/run/docker.sock` |
 
-**目录级遮蔽**(整目录不可读):
+**推荐凭据遮蔽配置**(网络 `on` 强烈建议,按需增减):
 
-| 类别 | 路径 |
-|------|------|
-| 防持久化注入 | `<项目根>/.git/hooks` |
-| 凭证目录 | `~/.ssh/`、`~/.config/gh/` |
+```json
+{
+  "sandbox": {
+    "network": { "mode": "on" },
+    "filesystem": {
+      "denyRead": [
+        "~/.waveloom/settings.json", "~/.git-credentials", "~/.config/git/credentials",
+        "~/.bashrc", "~/.bash_profile", "~/.profile", "~/.zshrc", "~/.zshenv",
+        "~/.npmrc", "~/.netrc", "~/.docker/config.json",
+        "~/.config/gh/hosts.yml", "~/.mcp.json", "~/.claude/settings.json",
+        "~/.aws", "~/.ssh", "~/.kube/config", "~/.config/gcloud", "~/.gnupg",
+        "~/.pgpass", "~/.config/containers/auth.json", "~/.env",
+        ".waveloom/settings.json", ".env"
+      ]
+    },
+    "credentials": {
+      "files": ["~/.ssh", "~/.aws/credentials"],
+      "envVars": ["GH_TOKEN", "NPM_TOKEN", "AWS_ACCESS_KEY_ID"]
+    }
+  }
+}
+```
 
-**macOS 特有**(额外叠加):
+macOS 额外建议追加:`~/Library/Keychains`、`~/Library/HTTPStorages`、
+`~/Library/Cookies`、`~/Library/Application Support/Google/Chrome`、
+`.../Firefox`、`.../Microsoft/Edge`(钥匙串/cookie/浏览器会话,网络 on 时可读走外传)。
 
-| 类别 | 路径 |
-|------|------|
-| 钥匙串/会话 | `~/Library/Keychains`、`~/Library/HTTPStorages`、`~/Library/Cookies` |
-| Docker Desktop | `~/.docker/run/docker.sock` |
-| 浏览器数据 | `~/Library/Application Support/Google/Chrome`、`.../Firefox`、`.../Microsoft/Edge` |
-| 云凭证 | `~/.kube/`、`~/.config/gcloud/`、`~/.gnupg/` |
-
-> 注:`~/.gitconfig` **不**在默认遮蔽清单中(git 恢复可用);`~/.git-credentials` 仍遮蔽,私有仓库 HTTPS 需手动输入凭据。环境变量剥离(内置 glob:`*TOKEN*` / `*_API_KEY` / `AWS_*` / `GH_*` 等)与路径遮蔽叠加生效。
+> 注:环境变量剥离(内置 glob:`*TOKEN*` / `*_API_KEY` / `AWS_*` / `GH_*` 等)为独立防线,始终生效,与路径遮蔽配置无关。
 
 ## CLI 参数
 

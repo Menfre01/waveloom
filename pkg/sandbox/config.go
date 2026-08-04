@@ -3,6 +3,7 @@ package sandbox
 import (
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"strings"
 )
 
@@ -70,11 +71,12 @@ type FilesystemConfig struct {
 	// AllowWrite 额外可写路径(默认仅工作区)。
 	// 路径前缀语义://abs 绝对路径、~/ 家目录、./ 或裸名 项目根。
 	AllowWrite []string `json:"allowWrite"`
-	// AllowRead 显式放行(取消遮蔽)路径,仅作用于内置默认遮蔽清单。
-	// 用户显式 denyRead / credentials.files 优先级更高,不受 allowRead 影响。
-	// 路径前缀语义同 denyRead(//abs / ~/ / ./ 或裸名)。
+	// AllowRead 已废弃(2026-09:默认读遮蔽移除后无作用对象)。
+	// 保留字段仅为解析旧配置并告警,不再有任何行为。
+	// Deprecated: 使用 denyRead / credentials.files 显式遮蔽。
 	AllowRead []string `json:"allowRead"`
-	// DenyRead 遮蔽(不可读)路径,叠加在内置默认遮蔽之上。
+	// DenyRead 遮蔽(不可读)路径。默认不遮蔽任何路径,需显式配置;
+	// 推荐清单(云凭证/shell 启动文件等)见 docs/settings.md。
 	DenyRead []string `json:"denyRead"`
 }
 
@@ -118,6 +120,11 @@ func LoadConfig(data []byte) (*Config, error) {
 			return nil, fmt.Errorf("sandbox config: invalid json: %w", err)
 		}
 	}
+	if len(cfg.Filesystem.AllowRead) > 0 {
+		// 2026-09:allowRead 废弃(默认读遮蔽移除后无作用对象)。
+		// 告警并忽略——不阻断旧配置加载,但提示用户迁移到 denyRead。
+		slog.Warn("sandbox config: filesystem.allowRead is deprecated and ignored; use filesystem.denyRead / credentials.files instead", "allowRead", cfg.Filesystem.AllowRead)
+	}
 	if err := cfg.Validate(); err != nil {
 		return nil, err
 	}
@@ -138,9 +145,10 @@ func (c *Config) AllowUnsandboxed() bool {
 //  1. network.mode 必须是 off/on/proxy(proxy 为 v2,当前拒绝)
 //  2. excludedCommands 不允许空条目
 //
-// 注:网络 on 的凭据遮蔽(credentials.files / filesystem.denyRead)为**可选加固**,
-// 不阻塞启用——内置默认遮蔽清单始终生效;未显式遮蔽时由调用方提示用户
-// ("网络打开后能读就能外传,配置遮蔽更安全",见 createSandboxManager)。
+// 注:沙箱默认不遮蔽任何路径(2026-09 决策,对齐 Claude Code / Codex)。
+// 网络 on 的凭据遮蔽(credentials.files / filesystem.denyRead)为**可选加固**,
+// 不阻塞启用;未显式遮蔽时由调用方提示用户
+// ("网络打开后能读就能外传,配置遮蔽更安全",见 cmd/waveloom/sandbox_setup.go)。
 func (c *Config) Validate() error {
 	switch c.Network.Mode {
 	case NetworkModeOff, NetworkModeOn:
@@ -153,11 +161,6 @@ func (c *Config) Validate() error {
 	for _, cmd := range c.ExcludedCommands {
 		if strings.TrimSpace(cmd) == "" {
 			return fmt.Errorf("sandbox config: excludedCommands contains empty entry")
-		}
-	}
-	for _, p := range c.Filesystem.AllowRead {
-		if strings.TrimSpace(p) == "" {
-			return fmt.Errorf("sandbox config: filesystem.allowRead contains empty entry")
 		}
 	}
 	for k, v := range c.Env {

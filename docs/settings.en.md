@@ -245,8 +245,8 @@ Falls back to DuckDuckGo when not set.
 | `network.mode` | Network policy: `off` (fully offline) / `on` (direct); `proxy` is v2, not implemented | `off` |
 | `network.allowedDomains` | Domain allowlist (v2 proxy placeholder, not active yet) | `[]` |
 | `filesystem.allowWrite` | Extra writable paths (`//abs` absolute, `~/` home, `./` or bare name = project root); root and mask-conflicting paths are rejected | `[]` |
-| `filesystem.allowRead` | Explicitly unmask paths from the built-in default mask list (e.g. `~/.docker/run` restores docker); explicit `denyRead` / `credentials.files` take precedence and are unaffected | `[]` |
-| `filesystem.denyRead` | Extra masked (unreadable) paths, layered on top of the built-in default mask list | `[]` |
+| `filesystem.allowRead` | **Deprecated** (2026-09): parsed only to warn and ignore; no longer has any effect. Use `denyRead` / `credentials.files` instead | `[]` |
+| `filesystem.denyRead` | Masked (unreadable) paths. Nothing is masked by default — configure explicitly (recommended list below) | `[]` |
 | `capabilities.keep` | Kernel capabilities re-added after `--cap-drop ALL` (e.g. `net_raw` for ping) | `[]` |
 | `credentials.files` | Credential mask paths (strongly recommended when network is `on`) | `[]` |
 | `credentials.envVars` | Extra env vars to strip, layered on built-in globs (`*TOKEN*` / `*_API_KEY` etc.) | `[]` |
@@ -278,39 +278,53 @@ Falls back to DuckDuckGo when not set.
 - **npm/cargo etc.**: configure `npm_config_cache` / `CARGO_HOME` / `PIP_CACHE_DIR` the same way
 - **Security**: keys matching the credential-strip rules (built-in globs `*TOKEN*` / `*_API_KEY` etc. or `credentials.envVars`) are **ignored** — strip wins, preventing the config from re-injecting stripped secrets into the sandbox
 
-### Built-in Default Mask List
+### Masking Strategy (2026-09: nothing masked by default)
 
-When the sandbox is enabled, the following paths are **unreadable by default** (no configuration needed). `filesystem.allowRead` can explicitly unmask any of them (unmasking a directory lifts all masks beneath it); explicit `denyRead` / `credentials.files` take precedence.
+The sandbox masks **no paths by default** (`~/.ssh`, `~/.aws`, keychains, etc. are all
+readable), aligned with Claude Code / Codex. Credential protection is configured
+explicitly via `filesystem.denyRead` / `credentials.files`; when network is `on` without
+any mask, a startup warning is emitted ("network can exfiltrate unmasked files; configure
+masking for stronger protection").
 
-**File-level masks** (reads return empty):
+**Fixed built-in masks** (write-protection / escape prevention, cannot be removed):
 
-| Category | Paths |
-|----------|-------|
-| Waveloom config | `~/.waveloom/settings.json`, `<project root>/.waveloom/settings.json` |
-| Git real credentials | `~/.git-credentials`, `~/.config/git/credentials` |
-| Shell startup files | `~/.bashrc`, `~/.bash_profile`, `~/.profile`, `~/.zshrc`, `~/.zshenv`, `~/.*history` |
-| Package managers / network | `~/.npmrc`, `~/.netrc`, `~/.env`, `<project root>/.env` |
-| Docker | `~/.docker/config.json`, `/var/run/docker.sock` |
-| Cloud / container credentials | `~/.aws/credentials`, `~/.aws/config`, `~/.kube/config`, `~/.config/gcloud`, `~/.gnupg`, `~/.pgpass`, `~/.config/containers/auth.json` |
-| Other | `~/.ssh/config`, `~/.config/gh/hosts.yml`, `~/.mcp.json`, `~/.claude/settings.json` |
+| Path | Purpose |
+|------|---------|
+| `<project root>/.git/hooks` | Persistent-injection guard (hooks execute on write — escape); Linux: tmpfs overlay, Seatbelt: deny read+write |
+| `/var/run/docker.sock` | Escape prevention (docker can mount host root); macOS also masks `~/.docker/run/docker.sock` |
 
-**Directory-level masks** (whole directory unreadable):
+**Recommended credential masking config** (strongly advised when network is `on`):
 
-| Category | Paths |
-|----------|-------|
-| Persistent-injection guard | `<project root>/.git/hooks` |
-| Credential directories | `~/.ssh/`, `~/.config/gh/` |
+```json
+{
+  "sandbox": {
+    "network": { "mode": "on" },
+    "filesystem": {
+      "denyRead": [
+        "~/.waveloom/settings.json", "~/.git-credentials", "~/.config/git/credentials",
+        "~/.bashrc", "~/.bash_profile", "~/.profile", "~/.zshrc", "~/.zshenv",
+        "~/.npmrc", "~/.netrc", "~/.docker/config.json",
+        "~/.config/gh/hosts.yml", "~/.mcp.json", "~/.claude/settings.json",
+        "~/.aws", "~/.ssh", "~/.kube/config", "~/.config/gcloud", "~/.gnupg",
+        "~/.pgpass", "~/.config/containers/auth.json", "~/.env",
+        ".waveloom/settings.json", ".env"
+      ]
+    },
+    "credentials": {
+      "files": ["~/.ssh", "~/.aws/credentials"],
+      "envVars": ["GH_TOKEN", "NPM_TOKEN", "AWS_ACCESS_KEY_ID"]
+    }
+  }
+}
+```
 
-**macOS-specific** (layered on top):
+macOS: additionally consider `~/Library/Keychains`, `~/Library/HTTPStorages`,
+`~/Library/Cookies`, `~/Library/Application Support/Google/Chrome`, `.../Firefox`,
+`.../Microsoft/Edge` (keychains / cookies / browser sessions can be read and exfiltrated
+when network is on).
 
-| Category | Paths |
-|----------|-------|
-| Keychain / sessions | `~/Library/Keychains`, `~/Library/HTTPStorages`, `~/Library/Cookies` |
-| Docker Desktop | `~/.docker/run/docker.sock` |
-| Browser data | `~/Library/Application Support/Google/Chrome`, `.../Firefox`, `.../Microsoft/Edge` |
-| Cloud credentials | `~/.kube/`, `~/.config/gcloud/`, `~/.gnupg/` |
-
-> Note: `~/.gitconfig` is **not** in the default mask list (git works out of the box); `~/.git-credentials` remains masked, so private-repo HTTPS clones ask for credentials interactively. Env var stripping (built-in globs: `*TOKEN*` / `*_API_KEY` / `AWS_*` / `GH_*` etc.) applies on top of path masking.
+> Note: env var stripping (built-in globs: `*TOKEN*` / `*_API_KEY` / `AWS_*` / `GH_*` etc.)
+> is an independent defense that is always active, regardless of path masking config.
 
 ## CLI Flags
 

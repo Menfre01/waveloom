@@ -135,13 +135,20 @@ func buildSeatbeltProfile(cfg *Config, workspace string) string {
 			sb.WriteString("(deny file-read* (literal " + sbplString(maskPath) + "))\n")
 		case maskDir:
 			sb.WriteString("(deny file-read* (subpath " + sbplString(maskPath) + "))\n")
+			// 固定防写项(ws/.git/hooks):对齐 Linux tmpfs 语义(读+写均不可),
+			// 防持久化注入——workspace 在可写白名单内,仅 deny read 时 hooks
+			// 仍可被写入(hook 被执行 = 逃逸),必须显式 deny file-write*。
+			if ms.path == filepath.Join(workspace, ".git", "hooks") {
+				sb.WriteString("(deny file-write* (subpath " + sbplString(maskPath) + "))\n")
+			}
 		case maskMissing:
 			// 跳过
 		}
 	}
-	// macOS 特有遮蔽(钥匙串/cookie/浏览器数据等——网络 on 时可被读走外传):
-	// 目录存在 → subpath deny;不存在 → 跳过
-	for _, p := range darwinMaskedDirsFiltered(home, workspace, cfg) {
+	// 固定防逃逸遮蔽(docker.sock):目录存在 → subpath deny;不存在 → 跳过。
+	// 2026-09 决策(对齐 Claude Code / Codex):钥匙串/cookie/浏览器数据等
+	// 凭据读遮蔽移除,凭据防护由 denyRead / credentials.files 显式配置。
+	for _, p := range darwinMaskedDirs(home) {
 		maskPath := realPath(p)
 		if _, err := os.Stat(maskPath); err == nil {
 			sb.WriteString("(deny file-read* (subpath " + sbplString(maskPath) + "))\n")
@@ -166,7 +173,7 @@ func buildSeatbeltProfile(cfg *Config, workspace string) string {
 	libraryCache := filepath.Join(home, "Library", "Caches")
 	writePaths = append(writePaths, realPath(libraryCache))
 	// 遮蔽路径集合(allowWrite 冲突检查用,四审 MED-1 对齐 bwrap)
-	darwinMasked := darwinMaskedDirsFiltered(home, workspace, cfg)
+	darwinMasked := darwinMaskedDirs(home)
 	maskPaths := make([]string, 0, len(maskSpecs)+len(darwinMasked))
 	for _, ms := range maskSpecs {
 		maskPaths = append(maskPaths, realPath(ms.path))
@@ -203,49 +210,15 @@ func buildSeatbeltProfile(cfg *Config, workspace string) string {
 	return sb.String()
 }
 
-// darwinMaskedDirs 返回 macOS 特有的敏感目录(相对 home 展开)。
-// 与 Linux 默认清单互补:这些路径承载钥匙串密码、HTTP cookie、
-// 浏览器会话等,网络 on 时未遮蔽即可读走外传。
+// darwinMaskedDirs 返回 macOS 固定防逃逸遮蔽目录(相对 home 展开)。
+// 2026-09 决策:默认凭据读遮蔽移除(钥匙串/cookie/浏览器数据/kube/gcloud/
+// gnupg 不再内置遮蔽,改由 denyRead / credentials.files 显式配置),
+// 仅保留 docker.sock 防逃逸面(可访问 = 完整逃逸,与 Linux 对齐)。
 func darwinMaskedDirs(home string) []string {
 	return []string{
-		filepath.Join(home, "Library", "Keychains"),           // 钥匙串(所有密码)
-		filepath.Join(home, "Library", "HTTPStorages"),        // HTTP cookie 存储
-		filepath.Join(home, "Library", "Cookies"),             // cookie
-		"/var/run/docker.sock",                                // 四审 HIGH-2:docker 逃逸面
-		filepath.Join(home, ".docker", "run", "docker.sock"),  // Docker Desktop socket
-		filepath.Join(home, "Library", "Application Support", "Google", "Chrome"),
-		filepath.Join(home, "Library", "Application Support", "Firefox"),
-		filepath.Join(home, "Library", "Application Support", "Microsoft", "Edge"),
-		// 四审 MED-3:网络 on 可外传凭证面
-		filepath.Join(home, ".kube"),
-		filepath.Join(home, ".config", "gcloud"),
-		filepath.Join(home, ".gnupg"),
+		"/var/run/docker.sock",                               // 四审 HIGH-2:docker 逃逸面
+		filepath.Join(home, ".docker", "run", "docker.sock"), // Docker Desktop socket
 	}
-}
-
-// darwinMaskedDirsFiltered 返回经 filesystem.allowRead 显式放行过滤后的
-// macOS 特有遮蔽目录。匹配语义同 Linux(filterDefaultMasks):allowRead 条目
-// a 命中目录 m(精确相等,或 m 是 a 的后代)即移除 m。
-func darwinMaskedDirsFiltered(home, workspace string, cfg *Config) []string {
-	allowed := allowReadExpanded(home, workspace, cfg)
-	if len(allowed) == 0 {
-		return darwinMaskedDirs(home)
-	}
-	sep := string(filepath.Separator)
-	var out []string
-	for _, p := range darwinMaskedDirs(home) {
-		hit := false
-		for a := range allowed {
-			if p == a || strings.HasPrefix(p, a+sep) {
-				hit = true
-				break
-			}
-		}
-		if !hit {
-			out = append(out, p)
-		}
-	}
-	return out
 }
 
 // realPath 解析符号链接为真实路径(EvalSymlinks);失败时保留原值。
