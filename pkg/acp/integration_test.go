@@ -200,6 +200,94 @@ func TestIntegrationInitialize(t *testing.T) {
 	t.Log("✓ initialize")
 }
 
+func TestIntegrationInitializeAuthMethods(t *testing.T) {
+	// 无配置启动(隔离 HOME,不带 --settings):agent 必须照常应答
+	// initialize 并声明 terminal 认证方法(注册表 CI auth-check 要求)。
+	stdin, scanner, cleanup := startACP(t, "")
+	defer cleanup()
+
+	sendRequest(t, stdin, 1, "initialize", `{"protocolVersion":1,"clientInfo":{"name":"ACP Registry Validator","version":"1.0.0"}}`)
+
+	raw, ok := readLine(t, scanner)
+	if !ok {
+		t.Fatal("no response from acp")
+	}
+	var resp acpJSONRPCResponse
+	if err := json.Unmarshal(raw, &resp); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if resp.Error != nil {
+		t.Fatalf("initialize error: %+v", resp.Error)
+	}
+
+	var result struct {
+		AuthMethods []struct {
+			ID   string   `json:"id"`
+			Type string   `json:"type"`
+			Args []string `json:"args"`
+		} `json:"authMethods"`
+	}
+	if err := json.Unmarshal(resp.Result, &result); err != nil {
+		t.Fatalf("unmarshal result: %v", err)
+	}
+	if len(result.AuthMethods) != 1 {
+		t.Fatalf("authMethods: expected 1, got %d", len(result.AuthMethods))
+	}
+	m := result.AuthMethods[0]
+	if m.Type != "terminal" {
+		t.Errorf("auth method type = %q, want terminal", m.Type)
+	}
+	if len(m.Args) != 1 || m.Args[0] != "setup" {
+		t.Errorf("auth method args = %v, want [setup]", m.Args)
+	}
+
+	t.Logf("✓ initialize authMethods: type=%s args=%v", m.Type, m.Args)
+}
+
+func TestIntegrationAuthRequired(t *testing.T) {
+	// 无配置:session/prompt 返回 -32000 AUTH_REQUIRED(终端认证未完成)。
+	stdin, scanner, cleanup := startACP(t, "")
+	defer cleanup()
+
+	// 1. Initialize
+	sendRequest(t, stdin, 1, "initialize", "")
+	readLine(t, scanner) // consume response
+
+	// 2. session/new
+	sendRequest(t, stdin, 2, "session/new", "")
+	raw, ok := readResponse(t, scanner)
+	if !ok {
+		t.Fatal("no response from acp")
+	}
+	var newResp acpJSONRPCResponse
+	json.Unmarshal(raw, &newResp)
+	if newResp.Error != nil {
+		t.Fatalf("session/new error: %+v", newResp.Error)
+	}
+	var result struct {
+		SessionID string `json:"sessionId"`
+	}
+	json.Unmarshal(newResp.Result, &result)
+
+	// 3. session/prompt → -32000 AUTH_REQUIRED
+	sendRequest(t, stdin, 3, "session/prompt",
+		`{"sessionId":"`+result.SessionID+`","prompt":[{"type":"text","text":"hello"}]}`)
+	raw, ok = readResponse(t, scanner)
+	if !ok {
+		t.Fatal("no response from acp")
+	}
+	var promptResp acpJSONRPCResponse
+	json.Unmarshal(raw, &promptResp)
+	if promptResp.Error == nil {
+		t.Fatal("expected AUTH_REQUIRED error for unconfigured LLM")
+	}
+	if promptResp.Error.Code != -32000 {
+		t.Errorf("error code = %d, want -32000 (AUTH_REQUIRED)", promptResp.Error.Code)
+	}
+
+	t.Logf("✓ prompt → -32000 AUTH_REQUIRED: %s", promptResp.Error.Message)
+}
+
 func TestIntegrationSessionNew(t *testing.T) {
 	settingsPath := filepath.Join("testdata", "settings.json")
 	stdin, scanner, cleanup := startACP(t, settingsPath)

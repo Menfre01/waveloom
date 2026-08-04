@@ -63,7 +63,17 @@ func (s *Server) handleInitialize(req JSONRPCRequest) {
 			Title:   "Waveloom",
 			Version: s.buildVersion,
 		},
-		AuthMethods: []any{},
+		// Terminal 认证:客户端以 base 启动配置追加 args 启动交互式
+		// 配置向导(`waveloom acp setup` = runSetup,退出码 0 表示成功),
+		// 随后重连并重新 initialize。注册表 CI 要求 authMethods 非空且
+		// 含 type "agent"/"terminal" 之一(auth-check)。
+		AuthMethods: []AuthMethod{{
+			ID:          "terminal-setup",
+			Name:        "Log in from the terminal",
+			Description: "Run the interactive setup wizard (waveloom acp setup) to configure the API key and provider",
+			Type:        "terminal",
+			Args:        []string{"setup"},
+		}},
 	}
 
 	s.respond(req, result)
@@ -499,6 +509,16 @@ func (s *Server) executePrompt(ctx context.Context, id any, state *SessionState,
 				return
 			}
 		}
+	}
+
+	// 未配置 LLM(终端认证待完成):返回 AUTH_REQUIRED(-32000),客户端
+	// 据此触发 authMethods 中的 terminal 登录流(`waveloom acp setup`)。
+	// 斜杠命令(help 等)在上一段已处理,无需 LLM 的命令不受影响。
+	if s.llmClient == nil {
+		s.sendErrorResponse(id, ErrAuthRequired,
+			"authentication required: run 'waveloom acp setup' to configure the API key and provider")
+		slog.Info("acp: prompt rejected, AUTH_REQUIRED", "sessionId", state.ID)
+		return
 	}
 
 	// 追加 user 消息并获取完整消息历史

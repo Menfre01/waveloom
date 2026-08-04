@@ -51,7 +51,7 @@ waveloom acp [options]
 | `mcpCapabilities.sse` | `true` | `type:"sse"` 映射为 http 处理（Waveloom 既有 SSE 处理方式） |
 | `mcpCapabilities.stdio` | 隐式 | ACP v1 规定 stdio 为 All Agents MUST（无声明字段），已支持 |
 | `sessionCapabilities` | resume/close/list/delete | 全量声明 |
-| `auth` / `authMethods` | 空 | 无认证流程，`-32000 AuthRequired` 不触发 |
+| `auth` / `authMethods` | terminal | 终端认证:客户端以 base 启动配置追加 `args` 启动 `waveloom acp setup` 交互式向导,退出码 0 表示成功 |
 | `agentInfo` | `waveloom` + 构建版本 | 标识实现 |
 
 ## 通知兼容表（Agent → Client，`session/update` 变体）
@@ -113,14 +113,18 @@ TUI overlay 类命令（`theme`/`locale`/`rewind`/`new`）不注册。
 | `-32601` | Method not found | |
 | `-32602` | Invalid params | |
 | `-32603` | Internal error | |
-| `-32000` | AuthRequired | 对齐官方；当前 authMethods 为空，不触发 |
+| `-32000` | AuthRequired | 对齐官方;未配置 LLM 时 `session/prompt` 返回,提示先完成终端登录流 |
 | `-32001` | SessionBusy | **Waveloom 自定义**（官方 -32001 未占用）：同 session 重复 prompt / 重复 load |
 | `-32002` | ResourceNotFound | 对齐官方：session 不存在 |
 
 ## 行为约定
 
-- **权限（二元决策）**：ACP v1 无权限确认协议，入口自动 `EnableAutoAllow`——Guard 进入二元决策，
-  ASK → ALLOW，仅 DENY/ALLOW 两态；deny 规则、RiskHigh、PathDangerous 硬拦截保留（fail-closed 底线）。
+- **权限(二元决策)**:ACP v1 无权限确认协议,入口自动 `EnableAutoAllow`——Guard 进入二元决策,
+  ASK → ALLOW,仅 DENY/ALLOW 两态;deny 规则、RiskHigh、PathDangerous 硬拦截保留(fail-closed 底线)。
+- **终端认证(Terminal Auth)**:`initialize` 声明 `authMethods`(type `terminal`,args `["setup"]`);
+  未配置 API key 时 agent 仍正常启动(`waveloom acp` 不退出),`session/prompt` 返回 `-32000`
+  AUTH_REQUIRED 引导客户端触发登录流;`/help` 等无需 LLM 的斜杠命令不受影响。登录完成后
+  客户端重连并重新 initialize 即可使用。
 - **沙箱**:无交互自动激活(即使配置关闭);后端不可用时默认警告 + 降级运行(二元决策不受影响);
   若配置 `failIfUnavailable: true` 且后端不可用则拒绝启动(Windows 平台不支持不阻断)。
 - **上下文压缩**：与 TUI 同源（四层 watermark 压缩）；`usage_update.size` = 上下文窗口容量，
@@ -141,12 +145,52 @@ TUI overlay 类命令（`theme`/`locale`/`rewind`/`new`）不注册。
 | prompt 图片/音频输入 | ❌ | 能力声明 `false` |
 | `session/request_permission` | ❌ | 无权限 UI；二元决策替代 |
 | `usage_update.cost` | ❌ | 字段未填充 |
-| 认证流程 | ❌ | `authMethods` 为空数组 |
 | tool_call `terminal` 内容项 | ❌ | 不产生 |
-| `session/cancel` 成功响应 | ⚠️ | 按通知语义实现（成功无响应）；错误路径仍返回错误 |
+| `session/cancel` 成功响应 | ⚠️ | 按通知语义实现(成功无响应);错误路径仍返回错误 |
+
+## Zed 集成
+
+Waveloom 已通过 ACP v1 接入 [Zed](https://zed.dev)(Agent Panel / Threads Sidebar 验证可用)。
+waveloom 不在 ACP Registry 中,以 **Custom Agent** 方式注册(Agent Settings →
+External Agents → Add Agent → Add Custom Agent,或直接编辑 settings 文件):
+
+```json
+{
+  "agent_servers": {
+    "waveloom": {
+      "type": "custom",
+      "command": "waveloom",
+      "args": ["acp"]
+    }
+  }
+}
+```
+
+`command` 需为 PATH 中的可执行名或绝对路径;如需指定工作目录/额外 flag,追加到 `args`
+(如 `["acp", "--model", "deepseek-chat"]`)。
+
+### 在 Zed 中可用的能力
+
+| 能力 | 说明 |
+|------|------|
+| 新建线程 | Agent Panel / Threads Sidebar 新线程菜单选择 waveloom;可用 `agent: new external agent thread` 绑定快捷键 |
+| 工具卡片 | title 直接显示参数描述(如 `bash: ls -la`);edit/write 的 diff 块与 locations 支持点击跳转 |
+| 斜杠命令面板 | `/help`、`/model`、`/provider`、`/skill`(available_commands_update) |
+| 上下文用量 | `usage_update`(used/size)同步上下文占用与窗口容量 |
+| 会话导入 | Thread History → Import Threads 导入 waveloom 持久化 session(session/list + load) |
+| MCP 转发 | Zed 配置的 MCP server 可经 ACP 转发(waveloom 支持 stdio/http/sse) |
+
+> 配置边界:外部 Agent 的模型/认证/计费由 waveloom 自己负责(读 waveloom 的
+> settings.json),与 Zed 的 LLM provider 配置相互独立。
+
+### 调试
+
+Zed 命令面板 `dev: open acp logs` 可查看 Zed ↔ waveloom 的完整 ACP 消息;
+waveloom 自身日志在 `~/.waveloom/logs`。
 
 ## 参考
 
-- 官方协议规范：<https://agentclientprotocol.com>（schema v1）
-- 实现源码：`pkg/acp/`（server / handler / transport / adapter / mcp）
-- 入口：`cmd/waveloom/acp.go`、`cmd/waveloom/acp_command.go`
+- 官方协议规范:<https://agentclientprotocol.com>(schema v1)
+- Zed External Agents 文档:<https://zed.dev/docs/ai/external-agents>
+- 实现源码:`pkg/acp/`(server / handler / transport / adapter / mcp)
+- 入口:`cmd/waveloom/acp.go`、`cmd/waveloom/acp_command.go`

@@ -125,15 +125,29 @@ type ImplementationInfo struct {
 	Version string `json:"version"`
 }
 
-// AgentAuthCapabilities Agent 认证能力（默认为空对象）。
+// AgentAuthCapabilities Agent 认证能力(默认为空对象)。
 type AgentAuthCapabilities struct{}
+
+// AuthMethod 描述一种 ACP 认证方式(initialize 的 authMethods 数组元素)。
+// v1 支持两种类型:
+//   - "agent":Agent 自管 OAuth 流程(本地 HTTP 回调 + 浏览器)
+//   - "terminal":客户端以 base 启动配置追加 args 在终端启动交互式登录流,
+//     退出码 0 表示成功,随后客户端重连并重新 initialize(Waveloom 采用此方式)
+type AuthMethod struct {
+	ID          string            `json:"id"`
+	Name        string            `json:"name"`
+	Description string            `json:"description,omitempty"`
+	Type        string            `json:"type"` // "agent" | "terminal"
+	Args        []string          `json:"args,omitempty"`
+	Env         map[string]string `json:"env,omitempty"`
+}
 
 // InitializeResult 是 initialize 请求的成功响应。
 type InitializeResult struct {
 	ProtocolVersion   int                  `json:"protocolVersion"`
 	AgentCapabilities AgentCapabilities    `json:"agentCapabilities"`
 	AgentInfo         *ImplementationInfo  `json:"agentInfo,omitempty"`
-	AuthMethods       []any                `json:"authMethods"`
+	AuthMethods       []AuthMethod         `json:"authMethods"`
 }
 
 // AgentCapabilities Agent 能力声明。

@@ -53,7 +53,7 @@ waveloom acp [options]
 | `mcpCapabilities.sse` | `true` | `type:"sse"` is mapped to http (matching Waveloom's existing SSE handling) |
 | `mcpCapabilities.stdio` | implicit | ACP v1 requires stdio for All Agents MUST (no declaration field); supported |
 | `sessionCapabilities` | resume/close/list/delete | Fully declared |
-| `auth` / `authMethods` | empty | No authentication flow; `-32000 AuthRequired` never triggered |
+| `auth` / `authMethods` | terminal | Terminal auth: the client launches `waveloom acp setup` (base launch config + descriptor `args`) in an interactive terminal; exit status 0 signals success |
 | `agentInfo` | `waveloom` + build version | Implementation identification |
 
 ## Notifications (Agent → Client, `session/update` variants)
@@ -116,7 +116,7 @@ TUI-overlay commands (`theme`/`locale`/`rewind`/`new`) are not registered.
 | `-32601` | Method not found | |
 | `-32602` | Invalid params | |
 | `-32603` | Internal error | |
-| `-32000` | AuthRequired | Aligned with official schema; never triggered (authMethods empty) |
+| `-32000` | AuthRequired | Aligned with official schema; returned by `session/prompt` when the LLM is not configured, prompting the client to run the terminal login flow |
 | `-32001` | SessionBusy | **Waveloom-specific** (official -32001 is unused): concurrent prompt on the same session / duplicate load |
 | `-32002` | ResourceNotFound | Aligned with official schema: session not found |
 
@@ -125,6 +125,11 @@ TUI-overlay commands (`theme`/`locale`/`rewind`/`new`) are not registered.
 - **Permissions (binary decisions)**: ACP v1 has no permission-confirmation protocol, so the entry
   point auto-enables `EnableAutoAllow` — the Guard operates in binary mode (ASK → ALLOW; only
   DENY/ALLOW). Deny rules, RiskHigh and PathDangerous hard blocks are preserved (fail-closed baseline).
+- **Terminal auth**: `initialize` declares `authMethods` (type `terminal`, args `["setup"]`).
+  Without an API key the agent still starts normally (`waveloom acp` does not exit), and
+  `session/prompt` returns `-32000` AUTH_REQUIRED to trigger the client's login flow; slash
+  commands that need no LLM (e.g. `/help`) keep working. After login the client reconnects and
+  re-initializes.
 - **Sandbox**: auto-activated in non-interactive mode (even if disabled in config); if the backend is
   unavailable it warns and degrades by default (binary decisions are unaffected); with
   `failIfUnavailable: true` configured it refuses to start when the backend is unavailable
@@ -149,12 +154,52 @@ TUI-overlay commands (`theme`/`locale`/`rewind`/`new`) are not registered.
 | Image/audio prompt input | ❌ | Declared `false` in promptCapabilities |
 | `session/request_permission` | ❌ | No permission UI; binary decisions instead |
 | `usage_update.cost` | ❌ | Field never populated |
-| Authentication flow | ❌ | `authMethods` is an empty array |
 | tool_call `terminal` content items | ❌ | Never produced |
 | `session/cancel` success response | ⚠️ | Implemented with notification semantics (no response on success); error paths still return errors |
+
+## Zed integration
+
+Waveloom has been verified in [Zed](https://zed.dev) over ACP v1 (Agent Panel / Threads Sidebar).
+It is not in the ACP Registry, so register it as a **Custom Agent** (Agent Settings →
+External Agents → Add Agent → Add Custom Agent, or edit your settings file directly):
+
+```json
+{
+  "agent_servers": {
+    "waveloom": {
+      "type": "custom",
+      "command": "waveloom",
+      "args": ["acp"]
+    }
+  }
+}
+```
+
+`command` must be an executable on your PATH or an absolute path; append extra flags to `args`
+(e.g. `["acp", "--model", "deepseek-chat"]`).
+
+### What works in Zed
+
+| Capability | Notes |
+|------------|-------|
+| New threads | Select waveloom from the new-thread menu in the Agent Panel / Threads Sidebar; bind `agent: new external agent thread` for a keybinding |
+| Tool cards | `title` shows the argument description directly (e.g. `bash: ls -la`); edit/write diff blocks and `locations` support click-to-jump |
+| Slash command palette | `/help`, `/model`, `/provider`, `/skill` (via `available_commands_update`) |
+| Context usage | `usage_update` (used/size) syncs context consumption and window capacity |
+| Thread import | Thread History → Import Threads restores persisted waveloom sessions (`session/list` + `session/load`) |
+| MCP forwarding | Zed-configured MCP servers may be forwarded over ACP (waveloom supports stdio/http/sse) |
+
+> Configuration boundary: model/auth/billing for external agents are owned by waveloom itself
+> (read from waveloom's settings.json), independent of Zed's LLM provider configuration.
+
+### Debugging
+
+`dev: open acp logs` in the Zed command palette shows the full ACP message exchange between
+Zed and waveloom; waveloom's own logs are in `~/.waveloom/logs`.
 
 ## References
 
 - Official protocol spec: <https://agentclientprotocol.com> (schema v1)
+- Zed External Agents docs: <https://zed.dev/docs/ai/external-agents>
 - Implementation source: `pkg/acp/` (server / handler / transport / adapter / mcp)
 - Entry points: `cmd/waveloom/acp.go`, `cmd/waveloom/acp_command.go`

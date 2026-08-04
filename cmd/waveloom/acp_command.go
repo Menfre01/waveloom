@@ -107,8 +107,11 @@ func newACPCommandRunner(registry tool.Registry, settingsStore slashcommand.Sett
 
 	// /help
 	r.Register(slashcommand.NewHelpCommand(r, sm))
-	// /model(有参切换模型;无参在 ACP 下返回提示)
-	r.Register(slashcommand.NewModelCommand(settingsStore, lister, currentModel, sm))
+	// /model(有参切换模型;无参在 ACP 下返回提示)。
+	// 未配置 LLM 时 lister 为 nil(终端认证场景),不注册避免 nil 解引用。
+	if lister != nil {
+		r.Register(slashcommand.NewModelCommand(settingsStore, lister, currentModel, sm))
+	}
 	// /provider(有参切换 provider)
 	r.Register(slashcommand.NewProviderCommand(settingsStore, sm))
 

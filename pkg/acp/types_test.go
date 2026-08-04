@@ -118,7 +118,12 @@ func TestInitializeResultMarshaling(t *testing.T) {
 			Title:   "Waveloom",
 			Version: "dev",
 		},
-		AuthMethods: []any{},
+		AuthMethods: []AuthMethod{{
+			ID:   "terminal-setup",
+			Name: "Log in from the terminal",
+			Type: "terminal",
+			Args: []string{"setup"},
+		}},
 	}
 
 	data, err := json.Marshal(result)

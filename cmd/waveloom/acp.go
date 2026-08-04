@@ -20,6 +20,14 @@ import (
 
 // runACP 处理 waveloom acp 子命令,以 ACP Agent 模式运行。
 func runACP(args []string) {
+	// Terminal 认证入口:ACP 客户端按 authMethods 描述以 `waveloom acp setup`
+	// 启动交互式配置向导(与 `waveloom setup` 同一实现)。退出码 0 表示
+	// 登录成功,客户端随后重连并重新 initialize。
+	if len(args) > 0 && args[0] == "setup" {
+		runSetup(DetectLocale())
+		return
+	}
+
 	fs := flag.NewFlagSet("acp", flag.ExitOnError)
 	sessionDir := fs.String("session-dir", "", "ACP session 存储目录(默认 ~/.waveloom/acp-sessions)")
 	settingsPath := fs.String("settings", "", "显式指定 settings.json 路径")
@@ -105,8 +113,14 @@ Options:
 	// 加载 LLM Client
 	llmClient, llmClientCfg, llmSettings, err := createLLMClient(globalPath, projectPath, *model, *provider, DetectLocale())
 	if err != nil {
-		slog.Error("acp: create LLM client", "err", err)
-		os.Exit(1)
+		// 未配置(终端认证场景):不退出——server 必须照常应答 initialize
+		// (authMethods 声明 terminal 认证),session/prompt 返回 -32000
+		// AUTH_REQUIRED 引导客户端触发登录流。
+		fmt.Fprintln(os.Stderr, "⚠ acp: LLM not configured ("+err.Error()+") — run 'waveloom acp setup' to configure; prompts return AUTH_REQUIRED until then")
+		slog.Warn("acp: LLM not configured, AUTH_REQUIRED mode", "err", err)
+		llmClient = nil
+		llmClientCfg = llm.ClientConfig{}
+		llmSettings = nil
 	}
 
 	// Tier 3 摘要专用 Client(开启 JSON 模式,与 TUI 一致)
@@ -133,10 +147,14 @@ Options:
 	// skill loader(与 TUI 一致;ACP 无会话变量,sessionID 传空)
 	skillLoader := skill.NewLoader(cwd, homeDir, "", "medium", guard)
 
-	modelName := llmSettings.Model
-	subModel := llmSettings.SubModel
-	if modelName == "" {
-		modelName = "deepseek-chat"
+	modelName := "deepseek-chat"
+	var subModel string
+	if llmSettings != nil {
+		modelName = llmSettings.Model
+		subModel = llmSettings.SubModel
+		if modelName == "" {
+			modelName = "deepseek-chat"
+		}
 	}
 
 	// 注册内置工具(注入沙箱与权限守门人;交互式工具在 ACP 下不可用,不注册)

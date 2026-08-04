@@ -146,6 +146,18 @@ func TestHandleInitialize(t *testing.T) {
 		!result.AgentCapabilities.McpCapabilities.SSE {
 		t.Error("McpCapabilities should declare http + sse (MCP support implemented)")
 	}
+	// Terminal 认证声明(注册表 CI auth-check 要求 authMethods 非空,
+	// 且至少一个方法 type 为 "agent"/"terminal")
+	if len(result.AuthMethods) != 1 {
+		t.Fatalf("authMethods: expected 1 terminal method, got %d", len(result.AuthMethods))
+	}
+	m := result.AuthMethods[0]
+	if m.Type != "terminal" || m.ID == "" || m.Name == "" {
+		t.Errorf("auth method: type=%q id=%q name=%q, want terminal auth with id/name", m.Type, m.ID, m.Name)
+	}
+	if len(m.Args) != 1 || m.Args[0] != "setup" {
+		t.Errorf("auth method args = %v, want [setup] (waveloom acp setup)", m.Args)
+	}
 }
 
 func TestHandleInitializeInvalidParams(t *testing.T) {
@@ -483,6 +495,35 @@ func TestExecutePromptUserMessageEchoAndTitle(t *testing.T) {
 	}
 	if totalAfter != titleNotifs {
 		t.Errorf("session title should be set only once, total = %d, want %d", totalAfter, titleNotifs)
+	}
+}
+
+func TestExecutePromptAuthRequired(t *testing.T) {
+	// 未配置 LLM(终端认证场景):session/prompt 返回 -32000 AUTH_REQUIRED,
+	// 不启动 Loop;斜杠命令等无需 LLM 的路径不受影响。
+	s := newTestServer()
+	s.llmClient = nil
+	getResp := withCaptureTransport(s)
+
+	s.handleSessionNew(JSONRPCRequest{JSONRPC: "2.0", ID: 1, Method: MethodSessionNew})
+	sid := getSessionID(t, getResp()[0])
+
+	s.handleSessionPrompt(context.Background(), JSONRPCRequest{JSONRPC: "2.0", ID: 2, Method: MethodSessionPrompt,
+		Params: json.RawMessage(`{"sessionId":"` + sid + `","prompt":[{"type":"text","text":"explain this code"}]}`)})
+	s.wg.Wait()
+
+	var authErr *JSONRPCError
+	for _, raw := range getResp() {
+		var resp JSONRPCResponse
+		if json.Unmarshal(raw, &resp) == nil && resp.ID == float64(2) {
+			authErr = resp.Error
+		}
+	}
+	if authErr == nil {
+		t.Fatal("expected AUTH_REQUIRED error response for unconfigured LLM")
+	}
+	if authErr.Code != ErrAuthRequired {
+		t.Errorf("error code = %d, want %d (AUTH_REQUIRED)", authErr.Code, ErrAuthRequired)
 	}
 }
 

@@ -140,7 +140,7 @@ Waveloom 适用于任何文本项目。编辑后 LSP 诊断自动验证 Go、Rus
 | [`prefix-cache`](./prefix-cache.md) | DeepSeek 缓存原理、四级水位线 |
 | [`environment`](./environment.md) | 工具链探测 |
 | [`mcp`](./mcp.md) | MCP 客户端、配置源、CLI 管理 |
-| [`acp`](./acp.md) | ACP Agent 模式、协议兼容性清单 |
+| [`acp`](./acp.md) | ACP Agent 模式(Zed 接入)、协议兼容性清单 |
 | [`faq`](./faq.md) | 常见问题 |
 | [`lsp`](./lsp.md) | LSP 诊断、语言检测、配置 |
 
