@@ -417,7 +417,7 @@ func TestConsumeEventsToolCallStart(t *testing.T) {
 	if err := json.Unmarshal(update1, &tc); err != nil {
 		t.Fatalf("unmarshal tool_call: %v", err)
 	}
-	if tc.SessionUpdate != "tool_call" || tc.ToolCallID != "tc-001" || tc.Kind != "execute" || tc.Status != "pending" || tc.Title != "bash" {
+	if tc.SessionUpdate != "tool_call" || tc.ToolCallID != "tc-001" || tc.Kind != "execute" || tc.Status != "pending" || tc.Title != "bash: go test ./..." {
 		t.Errorf("tool_call: update=%s id=%s kind=%s status=%s title=%s", tc.SessionUpdate, tc.ToolCallID, tc.Kind, tc.Status, tc.Title)
 	}
 	// content 必须携带参数描述(bash → command;Zed 等客户端 UI 显示用)
@@ -944,7 +944,7 @@ func TestConsumeEventsBashFullSequence(t *testing.T) {
 	update0 := parseSessionUpdate(t, notifs[0])
 	var tc ToolCallUpdate
 	_ = json.Unmarshal(update0, &tc)
-	if tc.SessionUpdate != "tool_call" || tc.Kind != "execute" || tc.Status != "pending" || tc.Title != "bash" {
+	if tc.SessionUpdate != "tool_call" || tc.Kind != "execute" || tc.Status != "pending" || tc.Title != "bash: ls -la" {
 		t.Errorf("start: update=%s kind=%s status=%s title=%s", tc.SessionUpdate, tc.Kind, tc.Status, tc.Title)
 	}
 	// rawInput 必须原样携带工具参数 JSON

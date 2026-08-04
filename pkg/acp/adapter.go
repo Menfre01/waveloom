@@ -226,17 +226,24 @@ func (a *adapter) handlePlanModeExit(e agentloop.PlanModeExit) {
 
 func (a *adapter) handleToolCallStart(e agentloop.ToolCallStart) {
 	kind := ToolKind(e.ToolCallName)
+	// title 是 Zed 卡片的主显示文本(label)——生态惯例携带参数描述
+	// (如 "bash: ls -la");content 作为补充(展开/其他客户端)。
+	desc := toolCallArgText(e.ToolCallName, e.Arguments)
+	title := e.ToolCallName
+	if desc != "" {
+		title = e.ToolCallName + ": " + desc
+	}
 	update := ToolCallUpdate{
 		SessionUpdate: "tool_call",
 		ToolCallID:    e.ToolCallID,
 		Kind:          kind,
 		Status:        "pending",
-		Title:         e.ToolCallName,
+		Title:         title,
 		RawInput:      json.RawMessage(e.Arguments),
 	}
 	// 参数描述放 content(客户端 UI 展示用——rawInput 是机器字段,主流客户端
 	// 如 Zed 不渲染)。bash → command 文本;其他工具 → 原始参数 JSON。
-	if desc := toolCallArgText(e.ToolCallName, e.Arguments); desc != "" {
+	if desc != "" {
 		update.Content = []ToolCallContentItem{{
 			Type:    "content",
 			Content: &ContentBlock{Type: "text", Text: desc},
