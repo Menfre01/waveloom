@@ -215,7 +215,7 @@ func NewGuard(opts ...GuardOption) *GuardImpl {
 // 第一阶段 bypass 模式即触发二元决策;第二阶段沙箱接入后收紧为
 // "bypass + 沙箱激活 + 无交互 + per-command 标志"。
 func (g *GuardImpl) Check(ctx context.Context, toolName string, input json.RawMessage) DecisionResult {
-	// Step 0: 内置白名单 — 直接放行，不经过规则/安全检查/默认策略
+	// Step 0: 内置白名单 — 直接放行,不经过规则/安全检查/默认策略
 	if g.builtinAllow[toolName] {
 		slog.Debug("perm step0 builtin allow", "tool", toolName)
 		g.denialTracker.RecordAllow()
@@ -226,7 +226,26 @@ func (g *GuardImpl) Check(ctx context.Context, toolName string, input json.RawMe
 		}
 	}
 
-	// Step 1: deny 规则检查（最高优先级）
+	// Step 0.5: 二进制劫持变量硬拦截(bash 工具)。
+	// 必须在 Step 1/2/2.5 之前:ask 规则在二元决策下 ALLOW、skill 白名单
+	// 先于 shellSafetyCheck 返回,均会短路"剥离后检查"——LD_PRELOAD=... 等
+	// 检查时被剥离(只见 git status)、执行时注入(洗白,五审 High-5/二审 M1)。
+	if toolName == "bash" {
+		var bashParams struct {
+			Command string `json:"command"`
+		}
+		if json.Unmarshal(input, &bashParams) == nil && HasBinaryHijackVars(bashParams.Command) {
+			slog.Info("perm step0.5 hijack vars deny", "tool", toolName)
+			g.denialTracker.RecordDenial()
+			return DecisionResult{
+				Decision: DecisionDeny,
+				Reason:   ReasonSafety,
+				Message:  "⚠️ Command uses binary hijack env vars (LD_PRELOAD / DYLD_* / NODE_OPTIONS etc.) — hard block",
+			}
+		}
+	}
+
+	// Step 1: deny 规则检查(最高优先级)
 	if result, found := g.ruleEngine.CheckDeny(toolName, input); found {
 		slog.Info("perm step1 rule deny", "tool", toolName, "pattern", result.Rule)
 		g.denialTracker.RecordDenial()
@@ -392,6 +411,8 @@ func (g *GuardImpl) shellSafetyCheck(input json.RawMessage) DecisionResult {
 	}
 
 	// ── 预处理:剥离危险环境变量 + 注释行 ──
+	// 硬拦截已在 Check() Step 0.5 完成(防 ask 规则/白名单短路);
+	// 此处仅剥离(含 buildArgVars 构建参数变量),供后续安全分级使用。
 	safeCmd := StripBinaryHijackVars(cmd)
 	safeCmd = StripCommentLines(safeCmd)
 

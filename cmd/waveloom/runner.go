@@ -38,11 +38,19 @@ func runOneShot(cfg CLIConfig, llmClient llm.Client, registry tool.Registry, gua
 		Compactor:    cm.Compactor(), // 与 TUI 一致:长管道任务同样启用上下文压缩
 	}
 
-	// oneshot 无交互(UserResponder=nil):无条件注入 autoAllow 二元决策
+	// oneshot 无交互(UserResponder=nil):注入 autoAllow 二元决策
 	// (仅 DENY/ALLOW,不产生 ASK——ask 无处安放,降级 deny 只会浪费一轮)。
-	// 2025-09 决策:对齐 ACP 入口,无需显式 --bypass-permissions;
+	// 2025-09 决策:终端直接输入无需显式 --bypass-permissions(对齐 ACP);
+	// 五审 High-1 收紧:stdin 管道输入可能含不可信内容(提示注入可驱动任意
+	// 写/执行),未显式 --bypass-permissions 时保留 ASK→deny 降级。
 	// deny 规则 / RiskHigh / PathDangerous 硬拦截在二元决策下保留(fail-closed)。
-	enableOneShotBinaryDecision(guard)
+	if cfg.BypassPerm || !isPiped() {
+		enableOneShotBinaryDecision(guard)
+	} else {
+		// 管道输入降级提示:write/bash 等默认策略 ASK → 无 responder 降级
+		// deny,agent 会空转重试——显式告知用户原因与出路(二审 M5)。
+		fmt.Fprintln(os.Stderr, "⚠ one-shot: piped stdin without --bypass-permissions — write/bash tools degrade to deny; add --bypass-permissions or allow rules to enable them")
+	}
 	loopCfg.Guard = guard
 	// 注入沙箱管理器:agentloop 为每命令注入 per-command 沙箱状态,
 	// Shell 工具据此决定是否 bwrap 包装

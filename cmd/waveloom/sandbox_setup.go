@@ -80,17 +80,21 @@ func createSandboxManager(bypassPerm bool, networkOverride, globalPath, projectP
 			return nil, false
 		}
 	}
+	if !cfg.Enabled && !bypassPerm {
+		return nil, false
+	}
+
 	// 网络 on 的凭据遮蔽为可选加固:提示用户但不阻止。
-	// 网络默认 on(2025-09 决策),未配置遮蔽时每次会话都会触发该提示。
-	// 2026-09 决策:默认不遮蔽任何路径,凭据防护由显式配置承载
-	// (推荐 denyRead / credentials.files 清单见 docs/settings.md)。
+	// 仅在沙箱实际激活(本段之后)前提示;沙箱未启用时网络模式无意义,
+	// 避免默认 on + 未启用场景每次启动刷屏(二审 M4)。
+	// 网络默认 on(2025-09 决策);2026-09 决策:默认不遮蔽任何路径,
+	// 凭据防护由显式配置承载(推荐 denyRead / credentials.files 见 docs/settings.md)。
 	if cfg.Network.Mode == sandbox.NetworkModeOn &&
 		len(cfg.Credentials.Files) == 0 && len(cfg.Filesystem.DenyRead) == 0 {
 		slog.Warn("sandbox: network mode on without explicit credentials.files / denyRead — network can exfiltrate unmasked user files; configure masking for stronger protection")
-	}
-
-	if !cfg.Enabled && !bypassPerm {
-		return nil, false
+		// 五审 M6:slog 默认只写日志文件,TUI/one-shot/ACP 用户零感知——
+		// 网络 on + 无遮蔽 = 凭据可读可外传,必须 stderr 可见(对齐 109 行先例)。
+		fmt.Fprintf(os.Stderr, "⚠ sandbox: network on without credential masking (denyRead / credentials.files) — ~/.ssh, ~/.aws, settings.json etc. are readable and can be exfiltrated; configure masking for stronger protection\n")
 	}
 
 	mgr = sandbox.NewManager(cfg, cwd)

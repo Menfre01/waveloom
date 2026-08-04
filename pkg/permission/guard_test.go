@@ -266,6 +266,65 @@ func TestGuard_BinaryDecision_PathAskBecomesAllow(t *testing.T) {
 	}
 }
 
+// TestRegression_BinaryHijackVarsDenyInBinaryDecision 验证劫持变量命中在
+// 二元决策下仍 DENY(五审 High-5):LD_PRELOAD=/tmp/evil.so git status 剥离后
+// 检查只见 git status → 曾 ALLOW,实际执行带注入;ASK 弹窗是旧的人工兜底,
+// 二元决策下已无兜底 → 升级为硬拦截,不受 autoAllow 影响。
+func TestRegression_BinaryHijackVarsDenyInBinaryDecision(t *testing.T) {
+	dir := testGuardDir(t)
+	g := NewGuard(WithWorkingDirs(dir), WithAutoAllowMode(true))
+
+	result := g.Check(sandboxedCtx(), "bash",
+		json.RawMessage(`{"command": "LD_PRELOAD=/tmp/evil.so git status"}`))
+	if result.Decision != DecisionDeny {
+		t.Errorf("autoAllow + hijack vars: Decision = %s, want %s (msg: %s)", result.Decision, DecisionDeny, result.Message)
+	}
+	if result.Reason != ReasonSafety {
+		t.Errorf("autoAllow + hijack vars: Reason = %s, want %s", result.Reason, ReasonSafety)
+	}
+
+	// 对照:安全 env 赋值不受影响(仍走正常流程)
+	result = g.Check(sandboxedCtx(), "bash",
+		json.RawMessage(`{"command": "FOO=bar git status"}`))
+	if result.Decision == DecisionDeny {
+		t.Errorf("safe env assignment should not be denied: %s", result.Message)
+	}
+
+	// 对照:构建参数变量(CFLAGS 等)不硬拦截,仅剥离(二审 M2 防误伤)。
+	result = g.Check(sandboxedCtx(), "bash",
+		json.RawMessage(`{"command": "CFLAGS=-O2 make build"}`))
+	if result.Decision == DecisionDeny {
+		t.Errorf("build arg vars (CFLAGS) must not be hard-blocked: %s", result.Message)
+	}
+
+	// env 前缀形式同样拦截
+	result = g.Check(sandboxedCtx(), "bash",
+		json.RawMessage(`{"command": "env LD_PRELOAD=/tmp/evil.so git status"}`))
+	if result.Decision != DecisionDeny {
+		t.Errorf("autoAllow + env-prefix hijack: Decision = %s, want %s", result.Decision, DecisionDeny)
+	}
+}
+
+// TestRegression_HijackVarsDenyBeforeAskRule 验证 Step 0.5 在 ask 规则之前:
+// 二元决策下 ask 规则短路为 ALLOW,若劫持检查在 Step 2 之后会整体失守
+// (二审 M1)。ask:bash 规则 + LD_PRELOAD → 必须 DENY。
+func TestRegression_HijackVarsDenyBeforeAskRule(t *testing.T) {
+	dir := testGuardDir(t)
+	g := NewGuard(
+		WithWorkingDirs(dir),
+		WithAutoAllowMode(true),
+		WithRules([]RuleEntry{
+			{Rule: Rule{Behavior: RuleAsk, ToolName: "bash"}, Source: SourceConfig, Scope: ScopeConfig},
+		}),
+	)
+
+	result := g.Check(sandboxedCtx(), "bash",
+		json.RawMessage(`{"command": "LD_PRELOAD=/tmp/evil.so git status"}`))
+	if result.Decision != DecisionDeny {
+		t.Errorf("ask rule + hijack vars: Decision = %s, want %s (Step 0.5 必须先于 Step 2 短路)", result.Decision, DecisionDeny)
+	}
+}
+
 func TestGuard_BinaryDecision_DenyRuleStillDeny(t *testing.T) {
 	dir := testGuardDir(t)
 	g := NewGuard(

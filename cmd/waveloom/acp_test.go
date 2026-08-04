@@ -31,7 +31,13 @@ func (m *mockLLMClient) SendMessage(ctx context.Context, messages []llm.Message,
 	return &llm.Response{Content: "mock response"}, nil
 }
 func (m *mockLLMClient) SendMessageStream(ctx context.Context, messages []llm.Message, tools []llm.ToolSpec) (<-chan llm.StreamingEvent, error) {
-	panic("not implemented in mock")
+	// 最小流式实现:一轮文本 + Done(供真实走 agentloop 的接线测试使用,
+	// 如 TestRegression_OneShotAutoAllowWiring)。
+	ch := make(chan llm.StreamingEvent, 2)
+	ch <- llm.StreamingEvent{Delta: "mock response"}
+	ch <- llm.StreamingEvent{Done: true, FinishReason: "stop", Model: "mock"}
+	close(ch)
+	return ch, nil
 }
 func (m *mockLLMClient) GetBalance(ctx context.Context) (*llm.BalanceInfo, error) {
 	return nil, nil

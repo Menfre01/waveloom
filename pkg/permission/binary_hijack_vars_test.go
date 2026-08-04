@@ -70,6 +70,40 @@ func TestStripBinaryHijackVars_PYTHONPATH(t *testing.T) {
 	}
 }
 
+func TestHasBinaryHijackVars(t *testing.T) {
+	cases := []struct {
+		name string
+		cmd  string
+		want bool
+	}{
+		{"LD_PRELOAD 开头", "LD_PRELOAD=/tmp/evil.so git status", true},
+		{"DYLD 注入", `DYLD_INSERT_LIBRARIES=/tmp/x.dylib ls`, true},
+		{"NODE_OPTIONS", "NODE_OPTIONS='--require /tmp/evil.js' node app.js", true},
+		{"env 前缀", "env LD_PRELOAD=/tmp/evil.so git status", true},
+		{"env 前缀多赋值", "env FOO=bar LD_PRELOAD=/tmp/evil.so git status", true},
+		{"env -i 前缀", "env -i LD_PRELOAD=/tmp/evil.so git status", true},
+		{"引号值", `LD_PRELOAD="/tmp/evil.so" git status`, true},
+		{"多赋值混合", "LD_PRELOAD=/tmp/x.so FOO=bar git status", true},
+		{"复合命令 &&", "cd /tmp && LD_PRELOAD=/tmp/evil.so ls", true},
+		{"复合命令 ;", "true; LD_PRELOAD=/tmp/evil.so ls", true},
+		{"复合命令管道", "echo x | LD_PRELOAD=/tmp/evil.so ls", true},
+		{"注释行后", "# comment\nLD_PRELOAD=/tmp/evil.so ls", true},
+		{"引号内分隔符不切分", `echo "a;b" LD_PRELOAD=x`, false}, // 引号内是字面量
+		{"安全变量", "FOO=bar git status", false},
+		{"构建参数变量不拦截", "CFLAGS=-O2 make build", false}, // 仅剥离,不硬拦截(二审 M2)
+		{"无赋值", "git status", false},
+		{"参数中含等号", "echo LD_PRELOAD=x", false},
+		{"参数位置非赋值", "echo LD_PRELOAD=x", false},
+	}
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := HasBinaryHijackVars(tt.cmd); got != tt.want {
+				t.Errorf("HasBinaryHijackVars(%q) = %v, want %v", tt.cmd, got, tt.want)
+			}
+		})
+	}
+}
+
 func stringsTrimSpace(s string) string {
 	i, j := 0, len(s)-1
 	for i <= j && (s[i] == ' ' || s[i] == '\t') {

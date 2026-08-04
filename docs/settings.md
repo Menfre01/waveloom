@@ -332,7 +332,7 @@ macOS 额外建议追加:`~/Library/Keychains`、`~/Library/HTTPStorages`、
 | `--locale zh-CN/en-US/auto` | 界面语言，auto 从 `LANG` 环境变量检测 | `auto` |
 | `--provider NAME` | 切换 LLM Provider（需在 `profiles` 中配置对应 profile） | — |
 | `--log-level level` | 日志级别(error/warn/info/debug) | `info` |
-| `--bypass-permissions` | 无交互入口(one-shot/ACP)下 ASK → ALLOW,保留 deny 规则与高危硬拦截;TUI 交互模式维持弹窗 | 关闭 |
+| `--bypass-permissions` | one-shot(终端直接输入)/ ACP 默认 ASK → ALLOW(二元决策),保留 deny 规则与高危硬拦截;one-shot **管道输入**需显式开启,否则 write/bash 降级 deny;TUI 交互模式开启后不再弹窗 | 关闭(one-shot 终端输入/ACP 默认启用) |
 | `--sandbox-network off/on` | 沙箱网络模式,覆盖 `settings.json` 的 `network.mode`(on 建议配置凭据遮蔽) | 取配置(默认 `on`) |
 | `--tool-timeout D` | 单个工具执行超时(Go Duration 格式,如 `10m` / `600s` / `0s`,0 禁用) | `5m` |
 | `--resume ID` | 恢复指定会话 | — |
