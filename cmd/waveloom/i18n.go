@@ -145,7 +145,7 @@ type Messages struct {
 	SetupAPIKeyInvalidFmt string // 含 %v
 	SetupProviderOther   string
 	SetupBaseURLDesc     string
-	SetupSubModelDesc    string // 含 %s — 子代理模型推荐值
+	SetupSubModelDesc    string // 含 %s — 子模型推荐值
 	SetupDoneTitle       string
 	SetupDoneConfigSaved string
 	SetupDoneReady       string
@@ -370,11 +370,11 @@ var zhCN = Messages{
 	SetupStepProvider:    "Step %d/%d — 选择 Provider",
 	SetupStepAPIKey:      "Step %d/%d — API Key",
 	SetupStepModel:       "Step %d/%d — 模型名称",
-	SetupStepSubModel:    "Step %d/%d — 子代理模型",
+	SetupStepSubModel:    "Step %d/%d — 子模型",
 	SetupStepBaseURL:     "Step %d/%d — API 端点",
 	SetupStepTheme:       "Step %d/%d — 主题",
 	SetupProviderOther:   "Other (OpenAI-compatible)",
-	SetupSubModelDesc:    "%s (Recommended) — 子代理默认模型",
+	SetupSubModelDesc:    "%s (Recommended) — 子模型默认模型",
 	SetupBaseURLDesc:     "兼容 OpenAI API 的服务地址，如 http://localhost:11434/v1",
 	SetupAPIKeyEmptyError: "API Key 不能为空",
 	SetupAPIKeyInvalidFmt: "API Key 验证失败: %v",
@@ -388,7 +388,7 @@ var zhCN = Messages{
 	SetupSummaryLanguage: "语言",
 	SetupSummaryProvider: "Provider",
 	SetupSummaryModel:    "模型",
-	SetupSummarySubModel: "子代理模型",
+	SetupSummarySubModel: "子模型",
 
 	SetupStepContextLimit:    "Step %d/%d — 上下文窗口",
 	SetupContextLimitDesc:    "模型上下文窗口上限(token)。默认 1M 适配 DeepSeek V4,切换其他模型建议按实际情况调整,防止上下文溢出或过早压缩。",
@@ -667,12 +667,12 @@ var enUS = Messages{
 	SetupStepProvider:    "Step %d/%d — Select Provider",
 	SetupStepAPIKey:      "Step %d/%d — API Key",
 	SetupStepModel:       "Step %d/%d — Model Name",
-	SetupStepSubModel:    "Step %d/%d — Subagent Model",
+	SetupStepSubModel:    "Step %d/%d — Sub Model",
 	SetupStepBaseURL:     "Step %d/%d — API Endpoint",
 	SetupStepTheme:       "Step %d/%d — Theme",
 	SetupProviderOther:   "Other (OpenAI-compatible)",
 	SetupBaseURLDesc:     "OpenAI-compatible API endpoint, e.g. http://localhost:11434/v1",
-	SetupSubModelDesc:    "%s (Recommended) — default model for subagents",
+	SetupSubModelDesc:    "%s (Recommended) — default sub model",
 	SetupAPIKeyEmptyError: "API Key cannot be empty",
 	SetupAPIKeyInvalidFmt: "API key validation failed: %v",
 	SetupDoneTitle:       "Setup Complete!",
@@ -689,7 +689,7 @@ var enUS = Messages{
 	SetupSummaryLanguage: "Language",
 	SetupSummaryProvider: "Provider",
 	SetupSummaryModel:    "Model",
-	SetupSummarySubModel: "Subagent Model",
+	SetupSummarySubModel: "Sub Model",
 	SetupSummaryBaseURL:  "API Endpoint",
 	SetupSummaryAPIKey:   "API Key",
 	SetupConfirmSave:     "Save",

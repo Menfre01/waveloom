@@ -33,6 +33,14 @@ type setupState struct {
 	configPath   string
 	lc           *Messages
 	contextLimit string // "200K" / "1M" 等
+	// darkBackground 启动时检测的终端背景色(仅 runSetup 在 NewProgram
+	// 之前查询一次)。修复:handleStepComplete 的 "auto" 分支曾再次调用
+	// lipgloss.HasDarkBackground——该函数会 MakeRaw + 发送 OSC 背景色
+	// 查询并阻塞等待响应,而查询响应与 bubbletea 事件循环在同一个
+	// stdin 上竞争读取:响应被抢走时查询超时(界面"卡住一会"),
+	// 偶发成功(偶尔行)。lipgloss 文档明确要求 Bubble Tea 程序改用
+	// tea.BackgroundColorMsg 或启动前一次性检测,不得在事件循环内查询。
+	darkBackground bool
 }
 
 // ---------------------------------------------------------------------------
@@ -64,6 +72,9 @@ func newSetupModel(loc Locale) *setupModel {
 			baseURL:      "https://api.deepseek.com",
 			lc:           lc,
 			contextLimit: "1M",
+			// 默认深色;runSetup 在 NewProgram 前用真实检测值覆盖。
+			// 不得在事件循环内再查询(见 setupState.darkBackground 注释)。
+			darkBackground: true,
 		},
 	}
 }
@@ -82,6 +93,13 @@ func (m *setupModel) Init() tea.Cmd {
 }
 
 func (m *setupModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	// 诊断日志(debug 级别):记录每条消息与表单状态,用于排查
+	// "第一次 Enter 不前进"等交互问题。复现:waveloom setup --log-level debug
+	slog.Debug("setup: msg",
+		"type", fmt.Sprintf("%T", msg),
+		"step", m.step,
+		"formState", m.form.State,
+	)
 	if m.quitting {
 		return m, tea.Quit
 	}
@@ -111,6 +129,7 @@ func (m *setupModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = ws.Width
 		m.height = ws.Height
 		if prevW == 0 || abs(ws.Width-prevW) > 4 {
+			slog.Debug("setup: rebuild form on resize", "prevW", prevW, "newW", ws.Width, "step", m.step)
 			m.buildForm()
 			initCmd := m.formInitCmd
 			m.formInitCmd = nil
@@ -133,7 +152,9 @@ func (m *setupModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// 状态转换
 	switch m.form.State {
 	case huh.StateCompleted:
+		slog.Debug("setup: form completed", "fromStep", m.step)
 		m.handleStepComplete()
+		slog.Debug("setup: step advanced", "toStep", m.step, "theme", m.state.theme)
 		if m.step < 7 {
 			m.buildForm()
 			initCmd := m.formInitCmd
@@ -155,6 +176,8 @@ func abs(n int) int {
 }
 
 func (m *setupModel) View() tea.View {
+	formViewStr := m.form.View()
+	slog.Debug("setup: render", "step", m.step, "formViewLen", len(formViewStr), "formState", m.form.State)
 	if m.quitting {
 		return tea.NewView("")
 	}
@@ -170,7 +193,7 @@ func (m *setupModel) View() tea.View {
 	}
 
 	// Form(左缩进 4 列)
-	formView := lipgloss.NewStyle().PaddingLeft(4).Render(m.form.View())
+	formView := lipgloss.NewStyle().PaddingLeft(4).Render(formViewStr)
 	parts = append(parts, formView)
 
 	// 底部快捷键提示
@@ -199,7 +222,7 @@ func (m *setupModel) handleStepComplete() {
 		case "lightcolorblind":
 			applyTheme(lightColorBlindPalette)
 		case "auto":
-			if lipgloss.HasDarkBackground(os.Stdin, os.Stdout) {
+			if m.state.darkBackground {
 				applyTheme(darkPalette)
 			} else {
 				applyTheme(lightPalette)
@@ -396,7 +419,7 @@ func (m *setupModel) buildForm() {
 			Description(contextDesc).
 			Options(
 				huh.NewOption("1M (DeepSeek V4 / Kimi K3, Recommended)", "1M"),
-				huh.NewOption("200K (GPT-4o / Claude 等)", "200K"),
+				huh.NewOption("200K", "200K"),
 				huh.NewOption("128K", "128K"),
 				huh.NewOption("32K", "32K"),
 			).
@@ -561,12 +584,17 @@ func setupHuhTheme() huh.Theme {
 // ---------------------------------------------------------------------------
 
 func runSetup(loc Locale) {
-	if lipgloss.HasDarkBackground(os.Stdin, os.Stdout) {
+	// 终端背景色只在启动时(NewProgram 之前)检测一次并缓存;
+	// 不要在 bubbletea 事件循环内重复调用 HasDarkBackground
+	// (MakeRaw + OSC 查询会与事件循环竞争 stdin 读取,导致阻塞)。
+	darkBackground := lipgloss.HasDarkBackground(os.Stdin, os.Stdout)
+	if darkBackground {
 		applyTheme(darkPalette)
 	} else {
 		applyTheme(lightPalette)
 	}
 	m := newSetupModel(loc)
+	m.state.darkBackground = darkBackground
 	p := tea.NewProgram(m)
 	if _, err := p.Run(); err != nil {
 		slog.Error("setup error", "err", err)
