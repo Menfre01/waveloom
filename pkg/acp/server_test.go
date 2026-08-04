@@ -3,7 +3,12 @@ package acp
 import (
 	"context"
 	"encoding/json"
+	"io"
+	"os"
+	"os/signal"
+	"runtime"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -362,4 +367,59 @@ func getSID(t *testing.T, raw json.RawMessage) string {
 	var result SessionNewResult
 	_ = json.Unmarshal(resp.Result, &result)
 	return result.SessionID
+}
+
+// TestRegression_RunRespondsToSIGTERM 验证空闲等待 stdin 时收到终止信号
+// Run 立即返回(五审 High-4:此前 Receive 阻塞在主循环、信号只 cancel ctx,
+// SIGTERM 后进程不退出,仅 stdin EOF 才关)。
+// Unix-only:Windows 无 SIGTERM 语义。
+func TestRegression_RunRespondsToSIGTERM(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("SIGTERM semantics are Unix-specific")
+	}
+	pr, pw, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pr.Close()
+	defer pw.Close()
+
+	registry := tool.NewRegistry()
+	s := NewServer(ServerConfig{
+		LLMClient:    &mockLLMClient{},
+		ToolRegistry: registry,
+		SystemPrompt: "test",
+		BuildVersion: "test",
+		CWD:          "/tmp",
+	})
+	s.transport = NewStdioTransportIO(pr, io.Discard)
+
+	// 兜底捕获:若 Run 尚未注册 signal.Notify,信号落入本 channel 而非
+	// 默认处理器(默认 SIGTERM 会终止测试进程)。
+	guardCh := make(chan os.Signal, 1)
+	signal.Notify(guardCh, syscall.SIGTERM)
+	defer signal.Stop(guardCh)
+
+	done := make(chan error, 1)
+	go func() { done <- s.Run() }()
+
+	// 等待 Run 进入 Receive 阻塞(空闲)
+	time.Sleep(100 * time.Millisecond)
+
+	proc, err := os.FindProcess(os.Getpid())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := proc.Signal(syscall.SIGTERM); err != nil {
+		t.Fatal(err)
+	}
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Errorf("Run returned error after SIGTERM: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Run did not return after SIGTERM (Receive blocks despite ctx cancel)")
+	}
 }

@@ -214,6 +214,13 @@ func (s *Server) handleSessionPrompt(ctx context.Context, req JSONRPCRequest) {
 		return
 	}
 
+	// 同步置"已接受"标志(cancelMu 保护):覆盖 go executePrompt 调度前的
+	// cancel 竞态窗口——此窗口内 cancelSession 凭 promptQueued 置
+	// cancelPending,不再被当空闲期忽略(五审 High-6)。
+	state.cancelMu.Lock()
+	state.promptQueued = true
+	state.cancelMu.Unlock()
+
 	// 注册 requestId → session($/cancel_request 按 id 取消)
 	s.registerRequest(req.ID, params.SessionID)
 
@@ -275,11 +282,12 @@ func cancelSession(state *SessionState) {
 	state.cancelMu.Lock()
 	if state.cancelFn != nil {
 		state.cancelFn()
-	} else if state.promptStarted {
+	} else if state.promptStarted || state.promptQueued {
 		// REGRESSION: cancel 与 prompt 启动竞态——prompt goroutine 已启动但
-		// cancelFn 尚未设置的窗口内到达的 cancel 曾被静默丢弃。置位后由
-		// executePrompt 在设置 cancelFn 时消费。空闲期(无活跃 prompt)的
-		// cancel 忽略,避免误取消下一个 prompt。
+		// cancelFn 尚未设置的窗口内到达的 cancel 曾被静默丢弃;promptQueued
+		// 进一步覆盖"goroutine 尚未调度"的窗口(handleSessionPrompt 同步置位,
+		// 五审 High-6)。置位后由 executePrompt 在设置 cancelFn 时消费。
+		// 空闲期(无活跃 prompt)的 cancel 忽略,避免误取消下一个 prompt。
 		state.cancelPending = true
 	}
 	state.cancelMu.Unlock()
@@ -305,12 +313,9 @@ func (s *Server) handleSessionClose(req JSONRPCRequest) {
 		return
 	}
 
-	// 取消活跃 prompt(goroutine 自然收尾,wg 跟踪)
-	state.cancelMu.Lock()
-	if state.cancelFn != nil {
-		state.cancelFn()
-	}
-	state.cancelMu.Unlock()
+	// 取消活跃 prompt(goroutine 自然收尾,wg 跟踪)。
+	// cancelSession 覆盖 promptQueued 启动窗口(二审 M1)。
+	cancelSession(state)
 	// 关闭 per-session MCP 连接
 	if state.MCPManager != nil {
 		if err := state.MCPManager.Stop(); err != nil {
@@ -435,11 +440,8 @@ func (s *Server) handleSessionDelete(req JSONRPCRequest) {
 
 	// 进程内:取消活跃 prompt + 移除注册表(磁盘 session 可能不在 map 中)
 	if state, ok := s.removeSession(params.SessionID); ok {
-		state.cancelMu.Lock()
-		if state.cancelFn != nil {
-			state.cancelFn()
-		}
-		state.cancelMu.Unlock()
+		// cancelSession 覆盖 promptQueued 启动窗口(二审 M1)。
+		cancelSession(state)
 		if state.MCPManager != nil {
 			if err := state.MCPManager.Stop(); err != nil {
 				slog.Warn("acp: mcp stop", "sessionId", params.SessionID, "err", err)
@@ -468,6 +470,7 @@ func (s *Server) executePrompt(ctx context.Context, id any, state *SessionState,
 	promptCtx, cancel := context.WithCancel(ctx)
 	state.cancelMu.Lock()
 	state.promptStarted = true
+	state.promptQueued = false // 启动窗口结束:已接受状态由 cancelFn 承载
 	state.cancelFn = cancel
 	// 消费 cancel 竞态标志:prompt 启动前到达的 cancel 立即生效
 	cancelPending := state.cancelPending
@@ -534,8 +537,13 @@ func (s *Server) executePrompt(ctx context.Context, id any, state *SessionState,
 	// 据此触发 authMethods 中的 terminal 登录流(`waveloom acp setup`)。
 	// 斜杠命令(help 等)在上一段已处理,无需 LLM 的命令不受影响。
 	if s.llmClient == nil {
-		s.sendErrorResponse(id, ErrAuthRequired,
-			"authentication required: run 'waveloom acp setup' to configure the API key and provider")
+		// REGRESSION: notification(id==nil)不得回响应(JSON-RPC §4.2)——此前
+		// 无条件 sendErrorResponse 会对无 id 的 prompt 通知回 id:null 错误帧,
+		// 规范型客户端视为协议违规。
+		if id != nil {
+			s.sendErrorResponse(id, ErrAuthRequired,
+				"authentication required: run 'waveloom acp setup' to configure the API key and provider")
+		}
 		slog.Info("acp: prompt rejected, AUTH_REQUIRED", "sessionId", state.ID)
 		return
 	}

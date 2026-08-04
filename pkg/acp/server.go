@@ -73,6 +73,7 @@ type SessionState struct {
 	cancelMu sync.Mutex          // 保护 cancelFn
 	cancelFn context.CancelFunc  // 取消当前 prompt 的 ctx
 	promptStarted bool           // prompt goroutine 已启动(区分"启动窗口"与"空闲期")
+	promptQueued  bool           // prompt 已接受但 goroutine 未设置 cancelFn(启动窗口,五审 High-6)
 	cancelPending bool           // cancel 在 prompt 启动前到达(executePrompt 设置 cancelFn 后消费)
 	titleSet      bool           // session 标题已设置(首次 prompt 后,Threads 侧栏)
 }
@@ -121,6 +122,12 @@ func NewServer(cfg ServerConfig) *Server {
 }
 
 // Run 启动 Server 主循环，阻塞直到 stdin 关闭或收到终止信号。
+// receiveResult 包装 transport.Receive 的返回,供主循环与信号终止竞速选择。
+type receiveResult struct {
+	raw []byte
+	err error
+}
+
 func (s *Server) Run() error {
 	// 信号处理:优雅关闭
 	sigCh := make(chan os.Signal, 1)
@@ -140,14 +147,29 @@ func (s *Server) Run() error {
 		}
 	}()
 
-	// 主读取循环
+	// 主读取循环。Receive 阻塞在 stdin 读取,无法被 ctx 中断——
+	// 放入 goroutine + select,信号到达时立即退出(五审 High-4:
+	// 此前空闲进程收 SIGTERM 2.5s 不退,仅 stdin EOF 才关)。
+	// 串行安全:每轮循环上一个 goroutine 已返回,reader 无并发读。
+	receiveCh := make(chan receiveResult, 1)
 	for {
 		// 检查是否收到终止信号
 		if ctx.Err() != nil {
 			return s.shutdown()
 		}
 
-		raw, err := s.transport.Receive()
+		go func() {
+			raw, err := s.transport.Receive()
+			receiveCh <- receiveResult{raw: raw, err: err}
+		}()
+		var raw []byte
+		var err error
+		select {
+		case res := <-receiveCh:
+			raw, err = res.raw, res.err
+		case <-ctx.Done():
+			return s.shutdown()
+		}
 		if err != nil {
 			if errors.Is(err, ErrLineTooLong) {
 				// 超长行可恢复:回 parse error 后继续(DoS 防护,不关闭连接)
@@ -237,11 +259,9 @@ func (s *Server) shutdown() error {
 	s.mu.Unlock()
 
 	for _, state := range sessions {
-		state.cancelMu.Lock()
-		if state.cancelFn != nil {
-			state.cancelFn()
-		}
-		state.cancelMu.Unlock()
+		// cancelSession 覆盖 promptQueued 启动窗口(二审 M1):仅判 cancelFn
+		// 会让"已接受但 goroutine 未调度"的 prompt 跑完整轮,wg.Wait() 阻塞。
+		cancelSession(state)
 		// 关闭 per-session MCP 连接(未关闭的 session 在 shutdown 时兜底)
 		if state.MCPManager != nil {
 			if err := state.MCPManager.Stop(); err != nil {
