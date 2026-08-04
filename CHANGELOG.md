@@ -2,17 +2,13 @@
 
 ### 新增功能
 - **ACP v1 Agent 端完整实现**:JSON-RPC over stdio 协议栈(initialize/session 生命周期/流式/usage_update)、per-session MCP 集成、Terminal Auth 认证握手与 Zed 终端认证兼容(`waveloom acp setup`)、斜杠命令系统、按请求取消、错误码对齐官方 schema
-- **无交互入口权限统一**:one-shot / ACP 无条件二元决策(仅 DENY/ALLOW,不产生 ASK)并自动激活沙箱;one-shot 不注册交互式工具(ask_user_question / enter_plan_mode / exit_plan_mode);TUI `--bypass-permissions` 同样进入二元决策,不再弹权限确认面板
+- **无交互入口权限统一**:one-shot / ACP 无条件二元决策(仅 DENY/ALLOW,不产生 ASK)并自动激活沙箱;one-shot 不注册交互式工具(ask_user_question / enter_plan_mode / exit_plan_mode);TUI `--bypass-permissions` 同样进入二元决策,不再弹权限确认面板;one-shot 管道输入(stdin 非 tty)需显式 `--bypass-permissions` 才启用二元决策,否则 write/bash 降级 deny(不可信管道内容默认不放开)
 - **沙箱网络默认 on**:未配置 `network.mode` 时沙箱内直连网络(无交互入口联网工具开箱即用);断网需显式 `--sandbox-network off` 或 `network.mode: off`
 - **registry 分层支持 + 上下文窗口容量统一解析 + 子代理压缩**:TUI / one-shot / ACP 三入口压缩配置同源,子代理继承
 
 ### 修复
-- **one-shot 管道输入注入面**:stdin 非 tty 且未显式 `--bypass-permissions` 时保留 ASK→deny 降级(不可信管道内容 + 提示注入不再驱动任意写/执行),降级时 stderr 提示出路
 - **二进制劫持变量硬拦截**:`LD_PRELOAD` / `DYLD_*` / `NODE_OPTIONS` 等剥离后检查、原样执行的"洗白"路径封死——检查提升至 Step 0.5(防 ask 规则/白名单短路),支持 `env` 前缀与复合命令分段检测;`CFLAGS` 等构建参数变量仅剥离不误伤
 - **凭据遮蔽缺失警告用户可见**:网络 on 且未配置 `denyRead` / `credentials.files` 时 stderr 提示(凭据可读可外传),仅沙箱实际激活时提示
-- **ACP 空闲不响应终止信号**:SIGTERM/SIGINT 立即退出(此前阻塞在 stdin 读取,仅 EOF 才关)
-- **ACP prompt 启动窗口竞态**:`session/cancel` 在 goroutine 调度前到达不再丢失;shutdown / close / delete 统一覆盖
-- **ACP AUTH_REQUIRED 协议合规**:无 id 的 notification 不再回错误帧(JSON-RPC §4.2)
 - **`/model` 无 LLM 配置 panic**:LoadLLM 返回 nil 时 SetModel 崩溃
 - **Tier3 摘要超时保护**:摘要卡死不再阻塞会话,保护区/游标修复
 - **Windows 安装脚本**:PS 5.1 兼容 + 自定义目录支持
