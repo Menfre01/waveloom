@@ -123,6 +123,14 @@ func TestInitializeResultMarshaling(t *testing.T) {
 			Name: "Log in from the terminal",
 			Type: "terminal",
 			Args: []string{"setup"},
+			Meta: map[string]any{
+				"terminal-auth": map[string]any{
+					"label":   "waveloom acp setup",
+					"command": "waveloom",
+					"args":    []string{"setup"},
+					"env":     map[string]any{},
+				},
+			},
 		}},
 	}
 

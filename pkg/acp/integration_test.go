@@ -222,9 +222,10 @@ func TestIntegrationInitializeAuthMethods(t *testing.T) {
 
 	var result struct {
 		AuthMethods []struct {
-			ID   string   `json:"id"`
-			Type string   `json:"type"`
-			Args []string `json:"args"`
+			ID   string         `json:"id"`
+			Type string         `json:"type"`
+			Args []string       `json:"args"`
+			Meta map[string]any `json:"_meta"`
 		} `json:"authMethods"`
 	}
 	if err := json.Unmarshal(resp.Result, &result); err != nil {
@@ -240,8 +241,21 @@ func TestIntegrationInitializeAuthMethods(t *testing.T) {
 	if len(m.Args) != 1 || m.Args[0] != "setup" {
 		t.Errorf("auth method args = %v, want [setup]", m.Args)
 	}
+	// Zed 兼容扩展:meta.terminal-auth 必须可解析且携带完整登录命令
+	// (stable Zed 点击登录按钮依赖此字段构造终端进程)。
+	ta, ok := m.Meta["terminal-auth"].(map[string]any)
+	if !ok {
+		t.Fatalf("auth method _meta.terminal-auth missing: %#v", m.Meta)
+	}
+	if ta["command"] != "waveloom" {
+		t.Errorf("meta.terminal-auth command = %v, want waveloom", ta["command"])
+	}
+	args, ok := ta["args"].([]any)
+	if !ok || len(args) != 1 || args[0] != "setup" {
+		t.Errorf("meta.terminal-auth args = %#v, want [setup]", ta["args"])
+	}
 
-	t.Logf("✓ initialize authMethods: type=%s args=%v", m.Type, m.Args)
+	t.Logf("✓ initialize authMethods: type=%s args=%v meta.terminal-auth=%v", m.Type, m.Args, ta)
 }
 
 func TestIntegrationAuthRequired(t *testing.T) {

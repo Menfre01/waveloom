@@ -140,6 +140,13 @@ type AuthMethod struct {
 	Type        string            `json:"type"` // "agent" | "terminal"
 	Args        []string          `json:"args,omitempty"`
 	Env         map[string]string `json:"env,omitempty"`
+	// Meta 客户端特定扩展(ACP 规范 _meta 约定,见 Extensibility 章节)。
+	// Waveloom 填充 "terminal-auth" 供 Zed 使用:Zed 对标准 terminal 认证
+	// 有 acp-beta feature flag 门控(普通用户默认关闭),点击登录按钮时
+	// 只解析 _meta.terminal-auth {label, command, args, env} 构造登录终端
+	// (crates/agent_servers/src/acp.rs 的 meta_terminal_auth_task);
+	// acp-beta 放开后标准路径优先,此字段仍可保留作为兼容层。
+	Meta map[string]any `json:"_meta,omitempty"`
 }
 
 // InitializeResult 是 initialize 请求的成功响应。

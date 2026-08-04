@@ -53,7 +53,7 @@ waveloom acp [options]
 | `mcpCapabilities.sse` | `true` | `type:"sse"` is mapped to http (matching Waveloom's existing SSE handling) |
 | `mcpCapabilities.stdio` | implicit | ACP v1 requires stdio for All Agents MUST (no declaration field); supported |
 | `sessionCapabilities` | resume/close/list/delete | Fully declared |
-| `auth` / `authMethods` | terminal | Terminal auth: the client launches `waveloom acp setup` (base launch config + descriptor `args`) in an interactive terminal; exit status 0 signals success |
+| `auth` / `authMethods` | terminal | Terminal auth: the client launches the interactive setup wizard (base launch config + descriptor `args`) in a terminal; exit status 0 signals success. Also carries a `_meta.terminal-auth` extension for Zed compatibility (see below) |
 | `agentInfo` | `waveloom` + build version | Implementation identification |
 
 ## Notifications (Agent → Client, `session/update` variants)
@@ -125,11 +125,18 @@ TUI-overlay commands (`theme`/`locale`/`rewind`/`new`) are not registered.
 - **Permissions (binary decisions)**: ACP v1 has no permission-confirmation protocol, so the entry
   point auto-enables `EnableAutoAllow` — the Guard operates in binary mode (ASK → ALLOW; only
   DENY/ALLOW). Deny rules, RiskHigh and PathDangerous hard blocks are preserved (fail-closed baseline).
-- **Terminal auth**: `initialize` declares `authMethods` (type `terminal`, args `["setup"]`).
-  Without an API key the agent still starts normally (`waveloom acp` does not exit), and
-  `session/prompt` returns `-32000` AUTH_REQUIRED to trigger the client's login flow; slash
-  commands that need no LLM (e.g. `/help`) keep working. After login the client reconnects and
-  re-initializes.
+- **Terminal auth**: `initialize` declares `authMethods` (type `terminal`, args `["setup"]`, plus a
+  Zed-compatible `_meta.terminal-auth`: `{label, command: "waveloom", args: ["setup"], env}`).
+  Zed gates the standard terminal-auth path behind the `acp-beta` feature flag (off by default for
+  regular users); when the flag is off, clicking "Log in from the terminal" only parses
+  `_meta.terminal-auth` to build the login terminal. With that field present, stable Zed launches
+  the public `waveloom setup` command in a terminal (exit 0 = success, then it reconnects and
+  re-initializes); once the flag ships, Zed uses the standard path (settings `agent_servers`
+  config + appended args → `waveloom acp setup`, the same implementation) with identical behavior.
+  Both paths share `runSetup` and locale resolution (CLI `--locale` > settings > environment).
+  Without an API key the agent still starts normally
+  (`waveloom acp` does not exit), and `session/prompt` returns `-32000` AUTH_REQUIRED to trigger
+  the client's login flow; slash commands that need no LLM (e.g. `/help`) keep working.
 - **Sandbox**: auto-activated in non-interactive mode (even if disabled in config); if the backend is
   unavailable it warns and degrades by default (binary decisions are unaffected); with
   `failIfUnavailable: true` configured it refuses to start when the backend is unavailable
@@ -183,11 +190,18 @@ External Agents → Add Agent → Add Custom Agent, or edit your settings file d
 | Capability | Notes |
 |------------|-------|
 | New threads | Select waveloom from the new-thread menu in the Agent Panel / Threads Sidebar; bind `agent: new external agent thread` for a keybinding |
+| Terminal login | With no API key configured, the thread prompts "Log in from the terminal"; clicking it launches the `waveloom setup` wizard in a terminal — exit 0 makes Zed reconnect and re-initialize |
 | Tool cards | `title` shows the argument description directly (e.g. `bash: ls -la`); edit/write diff blocks and `locations` support click-to-jump |
-| Slash command palette | `/help`, `/model`, `/provider`, `/skill` (via `available_commands_update`) |
+| Slash command palette | `/help`, `/model`, `/provider`, `/skill` (via `available_commands_update`) — **currently broken on the Zed side**, see known issue below |
 | Context usage | `usage_update` (used/size) syncs context consumption and window capacity |
 | Thread import | Thread History → Import Threads restores persisted waveloom sessions (`session/list` + `session/load`) |
 | MCP forwarding | Zed-configured MCP servers may be forwarded over ACP (waveloom supports stdio/http/sse) |
+
+> **Known issue (Zed side)**: Zed's slash-command palette is broken for custom ACP agents — the
+> agent sends a valid `available_commands_update` (no decode error), yet Zed still reports
+> "Available commands: none" and intercepts slash messages. Waveloom's payload is verified via
+> local E2E (help/provider/model/skill) and command interception is covered by unit tests.
+> Tracking: [zed-industries/zed#53161](https://github.com/zed-industries/zed/issues/53161).
 
 > Configuration boundary: model/auth/billing for external agents are owned by waveloom itself
 > (read from waveloom's settings.json), independent of Zed's LLM provider configuration.

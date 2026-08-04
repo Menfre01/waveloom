@@ -73,6 +73,25 @@ func (s *Server) handleInitialize(req JSONRPCRequest) {
 			Description: "Run the interactive setup wizard (waveloom acp setup) to configure the API key and provider",
 			Type:        "terminal",
 			Args:        []string{"setup"},
+			// Zed 兼容扩展(meta 路径):stable Zed 的 terminal auth 标准路径
+			// 被 acp-beta feature flag 门控(普通用户默认关),点击登录按钮
+			// 时只解析 _meta.terminal-auth {label, command, args, env} 构造
+			// SpawnInTerminal——缺此字段则按钮点击静默无效果。提供后 stable
+			// Zed 点击 "Log in from the terminal" 即在终端拉起
+			// `waveloom setup`(公开一等公民命令,与 acp setup 同一实现,
+			// 写入 ~/.waveloom/settings.json),退出码 0 → Zed 重连并重新
+			// initialize。meta 路径是独立 spawn,不追加 agent_servers 的
+			// base args,故 args 不带 "acp" 前缀。
+			// 参考 zed-industries/zed:agent_servers/src/acp.rs
+			// (meta_terminal_auth_task + terminal_auth_task)。
+			Meta: map[string]any{
+				"terminal-auth": map[string]any{
+					"label":   "waveloom acp setup",
+					"command": "waveloom",
+					"args":    []string{"setup"},
+					"env":     map[string]any{},
+				},
+			},
 		}},
 	}
 

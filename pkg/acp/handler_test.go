@@ -158,6 +158,20 @@ func TestHandleInitialize(t *testing.T) {
 	if len(m.Args) != 1 || m.Args[0] != "setup" {
 		t.Errorf("auth method args = %v, want [setup] (waveloom acp setup)", m.Args)
 	}
+	// Zed 兼容扩展:stable Zed(acp-beta flag 关闭)点击登录按钮只解析
+	// _meta.terminal-auth {label, command, args, env} 构造登录终端。
+	ta, ok := m.Meta["terminal-auth"].(map[string]any)
+	if !ok {
+		t.Fatalf("auth method meta: want _meta.terminal-auth for Zed compatibility, got %#v", m.Meta)
+	}
+	if ta["label"] != "waveloom acp setup" || ta["command"] != "waveloom" {
+		t.Errorf("meta.terminal-auth label/command = %q/%q, want waveloom acp setup/waveloom",
+			ta["label"], ta["command"])
+	}
+	// 经 JSON round-trip 后 args 为 []any
+	if args, ok := ta["args"].([]any); !ok || len(args) != 1 || args[0] != "setup" {
+		t.Errorf("meta.terminal-auth args = %#v, want [setup] (waveloom setup)", ta["args"])
+	}
 }
 
 func TestHandleInitializeInvalidParams(t *testing.T) {

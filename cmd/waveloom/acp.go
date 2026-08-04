@@ -19,12 +19,24 @@ import (
 )
 
 // runACP 处理 waveloom acp 子命令,以 ACP Agent 模式运行。
+// 子命令 `waveloom acp setup` 是标准 terminal auth 路径的登录入口
+// (客户端 base args ["acp"] + authMethod args ["setup"] 追加而成);
+// Zed 的 _meta.terminal-auth 兼容路径直接 spawn 公开命令 `waveloom setup`。
+// 两条路径对齐同一实现:runSetup + 相同 flag(--locale)/settings locale
+// 解析(见下),保证登录向导行为完全一致。
 func runACP(args []string) {
 	// Terminal 认证入口:ACP 客户端按 authMethods 描述以 `waveloom acp setup`
 	// 启动交互式配置向导(与 `waveloom setup` 同一实现)。退出码 0 表示
 	// 登录成功,客户端随后重连并重新 initialize。
 	if len(args) > 0 && args[0] == "setup" {
-		runSetup(DetectLocale())
+		// 与顶层 `waveloom setup` 对齐:解析 --locale(默认 auto)并经
+		// resolveLocaleWithSettings 走 CLI > settings > 环境 的优先级,
+		// 而非 acp 主入口的 DetectLocale()(仅环境探测)。
+		fs := flag.NewFlagSet("acp setup", flag.ExitOnError)
+		locale := fs.String("locale", "auto", "界面语言 (zh-CN/en-US/auto),auto 从 LANG 环境变量自动检测")
+		_ = fs.Parse(args[1:]) // ExitOnError:解析失败(含 --help)已退出
+		globalPath, projectPath := resolveSettingsPaths("")
+		runSetup(resolveLocaleWithSettings(*locale, projectPath, globalPath))
 		return
 	}
 
@@ -38,8 +50,15 @@ func runACP(args []string) {
 
 	fs.Usage = func() {
 		fmt.Fprintf(os.Stderr, `Usage: waveloom acp [options]
+       waveloom acp setup
 
 以 ACP (Agent Client Protocol) Agent 模式运行,通过 stdio 与 ACP Client 通信。
+
+子命令:
+  setup   交互式配置向导(与 waveloom setup 同一实现;标准 terminal auth
+          登录入口——客户端点击 "Log in from the terminal" 时以
+          base args + authMethod args 追加启动,退出码 0 表示成功;
+          支持 --locale,解析优先级与 waveloom setup 一致)
 
 Options:
 `)
