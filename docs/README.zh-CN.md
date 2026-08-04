@@ -82,8 +82,11 @@ waveloom
 | 权限模型 | 8 步决策管线,5 层工具输出安全(Unicode 清洗 → 注入扫描 → 边界标记 → 风险分级 → 安全截断),4 级命令安全分类(RiskNone/RiskLow/RiskMedium/RiskHigh) | 8 源规则合并 + LLM 分类器自动审批 | Policy + Approver,9 阶段执行管线,shellsafe readOnly 检测 |
 | Hook | PreToolUse / PostToolUse / Notification / Stop,permission_mode 字段,默认 fail-open(exit 2 显式拦截) | 原生 hooks:PreToolUse, PostToolUse 等 | — |
 | TUI 打磨 | 流式推理、rich diff、权限对话框、`@` 模糊选择器、`/` 面板、i18n、主题切换 — 专业级 | 原生 TUI(Ink/React),标杆水平 | 功能完备的 TUI,不同 UX 范式 |
+
 **选 Waveloom 如果**：追求专业终端体验，需要多 Provider 支持（DeepSeek / Kimi / OpenAI），想要 `.claude/skills/` + `.claude/plugins/` 开箱即用，不想白烧缓存未命中费用。
+
 **选 Claude Code 如果**：用 Anthropic API、需要 coordinator 模式、重度依赖 Claude 生态。
+
 **选 Reasonix 如果**：需要桌面 GUI、QQ Bot 集成、或更大的社区生态。
 
 ---

@@ -472,7 +472,7 @@ var zhCN = Messages{
   --max-turns N           最大 turn 数（0=无限制）
   --system-prompt TEXT    系统提示词
   --context-limit N       上下文窗口 token 上限，支持 1M / 200k / 1048576 等格式（默认: 1M）
-  --bypass-permissions    跳过权限检查（CI/测试）
+  --bypass-permissions    跳过权限检查(TUI 交互确认;one-shot/ACP 默认启用)
   --tool-timeout D         单个工具执行超时（Go Duration 格式，如 10m / 600s / 0s，0 禁用，默认 10m）
   --provider NAME         LLM Provider（kimi / deepseek / openai），覆盖配置文件并查找 profiles 中匹配配置
   --resume ID             恢复指定 session ID 的对话
@@ -768,7 +768,7 @@ Options:
   --max-turns N           Max turns (0=unlimited)
   --system-prompt TEXT    System prompt
   --context-limit N       Context window token limit, supports 1M / 200k / 1048576 etc. (default: 1M)
-  --bypass-permissions    Skip permission checks (CI/testing)
+  --bypass-permissions    Skip permission checks (TUI prompts; one-shot/ACP enable by default)
   --tool-timeout D         Single tool execution timeout (Go Duration format, e.g. 10m / 600s / 0s, 0 disables, default 10m)
   --provider NAME         LLM Provider (kimi / deepseek / openai), overrides config file and looks up matching entry in profiles
   --resume ID             Resume session by ID

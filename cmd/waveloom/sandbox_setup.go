@@ -44,7 +44,8 @@ func loadSandboxSection(path string) ([]byte, error) {
 //
 // 激活判定(任一满足):
 //  1. settings.json 显式 enabled: true(TUI 常规模式)
-//  2. --bypass-permissions 入口自动激活(one-shot / ACP 无交互)
+//  2. --bypass-permissions(TUI)或 one-shot / ACP 无交互入口自动激活
+//     (oneshot 无条件激活,无需显式 flag——2025-09 决策,对齐 ACP)
 //
 // 返回 nil 表示沙箱未启用或不可用(调用方降级运行)。
 // failIfUnavailable: true 且依赖缺失时返回 fatal=true(调用方拒绝启动)。
@@ -80,6 +81,7 @@ func createSandboxManager(bypassPerm bool, networkOverride, globalPath, projectP
 		}
 	}
 	// 网络 on 的凭据遮蔽为可选加固:提示用户但不阻止。
+	// 网络默认 on(2025-09 决策),未配置遮蔽时每次会话都会触发该提示。
 	// 2026-09 决策:默认不遮蔽任何路径,凭据防护由显式配置承载
 	// (推荐 denyRead / credentials.files 清单见 docs/settings.md)。
 	if cfg.Network.Mode == sandbox.NetworkModeOn &&

@@ -91,7 +91,7 @@ _waveloom() {
         '--theme[主题]:theme:(auto dark light darkcolorblind lightcolorblind)'
         '--locale[界面语言]:locale:(auto zh-CN en-US)'
         '--log-level[日志级别]:level:(debug info warn error)'
-        '--bypass-permissions[跳过权限检查]'
+        '--bypass-permissions[跳过权限检查(TUI;one-shot/ACP 默认启用)]'
         '--tool-timeout[单工具执行超时]:duration'
         '--resume[恢复指定会话]:session_id'
         '--continue[恢复最近会话]'
@@ -141,7 +141,7 @@ complete -c waveloom -l context-limit -d "上下文窗口大小" -r
 complete -c waveloom -l theme -d "主题" -a "auto dark light darkcolorblind lightcolorblind"
 complete -c waveloom -l locale -d "界面语言" -a "auto zh-CN en-US"
 complete -c waveloom -l log-level -d "日志级别" -a "debug info warn error"
-complete -c waveloom -l bypass-permissions -d "跳过权限检查"
+complete -c waveloom -l bypass-permissions -d "跳过权限检查(TUI;one-shot/ACP 默认启用)"
 complete -c waveloom -l tool-timeout -d "单工具执行超时" -r
 complete -c waveloom -l resume -d "恢复指定会话" -r
 complete -c waveloom -l continue -d "恢复最近会话"

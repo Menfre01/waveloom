@@ -38,20 +38,18 @@ func runOneShot(cfg CLIConfig, llmClient llm.Client, registry tool.Registry, gua
 		Compactor:    cm.Compactor(), // 与 TUI 一致:长管道任务同样启用上下文压缩
 	}
 
-	// bypass 模式:无条件注入 autoAllow 二元决策(仅 DENY/ALLOW,不产生 ASK)。
-	// --bypass-permissions 即"不要确认"的显式声明,与沙箱可用性无关;
-	// 沙箱兜底是额外保障而非前置条件(用户决策:bypass 即二元决策)。
-	if cfg.BypassPerm {
-		if impl, ok := guard.(*permission.GuardImpl); ok {
-			impl.EnableAutoAllow()
-		}
-	}
+	// oneshot 无交互(UserResponder=nil):无条件注入 autoAllow 二元决策
+	// (仅 DENY/ALLOW,不产生 ASK——ask 无处安放,降级 deny 只会浪费一轮)。
+	// 2025-09 决策:对齐 ACP 入口,无需显式 --bypass-permissions;
+	// deny 规则 / RiskHigh / PathDangerous 硬拦截在二元决策下保留(fail-closed)。
+	enableOneShotBinaryDecision(guard)
 	loopCfg.Guard = guard
 	// 注入沙箱管理器:agentloop 为每命令注入 per-command 沙箱状态,
 	// Shell 工具据此决定是否 bwrap 包装
 	loopCfg.SandboxMgr = sandboxMgr
 
-	// 单次模式无 UserResponder，ask 降级为 deny
+	// 单次模式无 UserResponder:autoAllow 注入后正常无 ASK;若 guard 非
+	// GuardImpl(注入失败)则 ask 降级为 deny(execute.go 兜底,不打断循环)
 	loop := agentloop.New(llmClient, registry, loopCfg)
 	if hookRunner != nil {
 		loop.SetHookRunner(hookRunner)
@@ -154,4 +152,14 @@ func readStdin() (string, error) {
 		return "", err
 	}
 	return string(data), nil
+}
+
+// enableOneShotBinaryDecision 为 oneshot 入口注入 autoAllow 二元决策
+// (仅 DENY/ALLOW,不产生 ASK)。oneshot 无 UserResponder,ask 无处安放;
+// 2025-09 决策:无条件注入(无需显式 --bypass-permissions),对齐 ACP 入口。
+// deny 规则 / RiskHigh / PathDangerous 硬拦截在二元决策下保留(fail-closed)。
+func enableOneShotBinaryDecision(guard permission.Guard) {
+	if impl, ok := guard.(*permission.GuardImpl); ok {
+		impl.EnableAutoAllow()
+	}
 }

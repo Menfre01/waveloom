@@ -41,8 +41,8 @@ func WithBypassMode(enabled bool) GuardOption {
 }
 
 // WithAutoAllowMode 启用 auto-allow 二元决策模式(仅 DENY/ALLOW,不产生 ASK)。
-// 由 --bypass-permissions / ACP 无交互入口在沙箱激活成功后注入;
-// 生效条件:autoAllowMode + context 中 per-command 沙箱状态 active。
+// 由 --bypass-permissions 各入口(one-shot / ACP / TUI)注入;
+// 生效条件:仅 autoAllowMode,与 context 中 per-command 沙箱状态无关。
 func WithAutoAllowMode(enabled bool) GuardOption {
 	return func(g *GuardImpl) {
 		g.autoAllowMode = enabled
@@ -95,7 +95,7 @@ type GuardImpl struct {
 
 	workingDirs       []string
 	bypassMode        bool
-	autoAllowMode     bool // 二元决策:沙箱激活 + 无交互(bypass/ACP 入口注入)
+	autoAllowMode     bool // 二元决策:bypass 入口注入(one-shot / ACP / TUI)
 	toolRiskClass     map[string]ToolRiskClass
 	builtinAllow      map[string]bool   // 内置白名单工具，Check() 第 0 步直接放行
 	projectConfigPath string            // settings.json 路径（落盘用）
@@ -507,9 +507,9 @@ func (g *GuardImpl) currentMode() PermissionMode {
 }
 
 // binaryDecision 返回是否处于二元决策模式(仅 DENY/ALLOW,不产生 ASK)。
-// 由无交互入口(--bypass-permissions one-shot / ACP)注入 autoAllowMode 触发,
+// 由 --bypass-permissions 各入口(one-shot / ACP / TUI)注入 autoAllowMode 触发,
 // 与沙箱可用性无关(用户显式声明"不要确认",沙箱兜底是额外保障而非前置条件)。
-// TUI 交互模式不注入 autoAllowMode,维持 ASK 弹窗。
+// TUI 的 --bypass-permissions 同样注入(2025-09 决策:bypass 即二元决策)。
 func (g *GuardImpl) binaryDecision() bool {
 	return g.autoAllowMode
 }

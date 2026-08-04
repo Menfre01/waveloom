@@ -128,8 +128,11 @@ func main() {
 	homeDir, _ = os.UserHomeDir()
 	skillLoader := skill.NewLoader(cwd, homeDir, "", "medium", guard)
 
-	// 5.5.1 沙箱管理器(可选):--bypass-permissions 或显式 enabled 时激活
-	sandboxMgr, sandboxFatal := createSandboxManager(cfg.BypassPerm, cfg.SandboxNetwork, globalPath, projectPath, cwd)
+	// 5.5.1 沙箱管理器(可选):--bypass-permissions、oneshot(无交互,无条件
+	// 激活,对齐 ACP)或显式 enabled 时激活。
+	// REGRESSION: oneshot 必须无条件激活沙箱——此前仅 --bypass-permissions
+	// 触发,普通 one-shot 管道运行无 OS 级兜底。无法单测:main 流程耦合 flag 解析。
+	sandboxMgr, sandboxFatal := createSandboxManager(cfg.BypassPerm || cfg.OneShot != "", cfg.SandboxNetwork, globalPath, projectPath, cwd)
 	if sandboxFatal {
 		os.Exit(1) // failIfUnavailable: true 且后端不可用 → 拒绝启动
 	}
@@ -146,7 +149,10 @@ func main() {
 		cfg.ContextLimit = compactionConfig.ContextLimit
 	}
 
-	agentTool := registerBuiltinTools(registry, skillLoader, llmClient, llmSettings.Model, llmSettings.SubModel, cwd, settingsProvider, sandboxMgr, guard, compactionConfig)
+	// oneshot 无交互(无 UserResponder):交互式工具(ask_user_question /
+	// enter_plan_mode / exit_plan_mode)不注册,从 schema 层杜绝 LLM 提议
+	// 不可用工具(对齐 ACP registerACPBuiltinTools 的取舍)。
+	agentTool := registerBuiltinTools(registry, skillLoader, llmClient, llmSettings.Model, llmSettings.SubModel, cwd, settingsProvider, sandboxMgr, guard, compactionConfig, cfg.OneShot == "")
 	// 8.5 启动 MCP Manager — 连接配置的 MCP Server，注册工具代理
 	mcpManager := mcp.NewManager(registry)
 	mcpManager.Start(context.Background(), mcp.LoadConfigs(cwd, homeDir))
@@ -353,7 +359,11 @@ waitLoop:
 }
 
 // registerBuiltinTools 注册内置工具。
- func registerBuiltinTools(r tool.Registry, skillLoader *skill.Loader, llmClient llm.Client, defaultModel, subModel string, cwd string, settings subagent.SettingsProvider, sandboxMgr *sandbox.SandboxManager, guard permission.Guard, compactionConfig compaction.CompactionConfig) *subagent.AgentTool {
+// interactive=false(one-shot 无交互入口)时不注册依赖 UserResponder 的
+// 交互式工具(ask_user_question / enter_plan_mode / exit_plan_mode)——它们在
+// 无 UserResponder 下调用必挂(execute.go 返回 recoverable error),不注册
+// 可从 schema 层杜绝 LLM 提议不可用工具(对齐 ACP registerACPBuiltinTools)。
+func registerBuiltinTools(r tool.Registry, skillLoader *skill.Loader, llmClient llm.Client, defaultModel, subModel string, cwd string, settings subagent.SettingsProvider, sandboxMgr *sandbox.SandboxManager, guard permission.Guard, compactionConfig compaction.CompactionConfig, interactive bool) *subagent.AgentTool {
 	r.Register(tool.Wrap(&tool.ReadFile{}))
 	r.Register(tool.Wrap(&tool.EditFile{}))
 	r.Register(tool.Wrap(&tool.WriteFile{}))
@@ -367,12 +377,14 @@ waitLoop:
 		r.Register(tool.Wrap(tool.NewSkillTool(&skillExecutorAdapter{loader: skillLoader})))
 	}
 
-	// AskUserQuestion — LLM 向用户发起选择题式交互决策（TUI 模式）
-	r.Register(tool.Wrap(&tool.AskUserQuestion{}))
-
-	// Plan mode — enter / exit
-	r.Register(tool.Wrap(&tool.EnterPlanMode{}))
-	r.Register(tool.Wrap(&tool.ExitPlanMode{}))
+	// AskUserQuestion — LLM 向用户发起选择题式交互决策(TUI 模式)
+	// Plan mode — enter / exit(TUI 模式)
+	// 两者依赖 UserResponder,仅交互入口注册。
+	if interactive {
+		r.Register(tool.Wrap(&tool.AskUserQuestion{}))
+		r.Register(tool.Wrap(&tool.EnterPlanMode{}))
+		r.Register(tool.Wrap(&tool.ExitPlanMode{}))
+	}
 
 	// Kill background task
 	r.Register(tool.Wrap(&tool.KillBackgroundTask{}))

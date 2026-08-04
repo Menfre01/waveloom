@@ -639,10 +639,14 @@ func (m *model) msg() *Messages {
 func (m *model) wireLoop() {
 	guard := m.guard
 	if m.bypassPerm {
-		// TUI 有交互:bypass 但 NOT autoAllow(二元决策仅限无交互入口)。
+		// TUI bypass 与 one-shot/ACP 入口一致:注入 autoAllow 二元决策
+		// (仅 DENY/ALLOW,不产生 ASK 弹窗)。EnableBypass 保留 Step 6 短路
+		// 与 ModeBypass 显示;EnableAutoAllow 将 Step 2/3 的 ASK 一并二元化
+		// (2025-09 决策:--bypass-permissions 即"不要确认",TUI 有交互也不弹窗)。
 		// 在已创建的 guard 上启用,保留用户 deny 规则。
 		if impl, ok := guard.(*permission.GuardImpl); ok {
 			impl.EnableBypass()
+			impl.EnableAutoAllow()
 		}
 	}
 	m.loop = agentloop.New(m.llmClient, m.registry, agentloop.Config{
