@@ -19,8 +19,9 @@ func TestConfigDefaults(t *testing.T) {
 	if !cfg.AllowUnsandboxed() {
 		t.Error("AllowUnsandboxed() = false, want true (default)")
 	}
-	if cfg.Network.Mode != NetworkModeOff {
-		t.Errorf("Network.Mode = %q, want %q", cfg.Network.Mode, NetworkModeOff)
+	// REGRESSION: 2025-09 决策默认网络改为 on(无交互入口需联网工具开箱即用)。
+	if cfg.Network.Mode != NetworkModeOn {
+		t.Errorf("Network.Mode = %q, want %q", cfg.Network.Mode, NetworkModeOn)
 	}
 
 	// 空 JSON 也走默认值

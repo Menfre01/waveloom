@@ -58,7 +58,7 @@ func parseCLI() CLIConfig {
 	flag.BoolVar(&cfg.ContinueSession, "continue", false, "恢复最近一个 session 的对话")
 	flag.StringVar(&cfg.LogLevel, "log-level", "info", "日志级别 (error/warn/info/debug)")
 	flag.BoolVar(&cfg.BypassPerm, "bypass-permissions", false, "跳过权限检查(CI/测试)")
-	flag.StringVar(&cfg.SandboxNetwork, "sandbox-network", "", "沙箱网络模式 off/on(覆盖 settings.json 的 sandbox.network.mode;on 仍需配置凭据遮蔽)")
+	flag.StringVar(&cfg.SandboxNetwork, "sandbox-network", "", "沙箱网络模式 off/on(默认 on,覆盖 settings.json 的 sandbox.network.mode;on 建议配置凭据遮蔽)")
 	flag.StringVar(&cfg.ToolTimeoutRaw, "tool-timeout", "", "单个工具执行超时(Go Duration 格式,如 5m/600s/0s,0=禁用,默认 5m)")
 	flag.StringVar(&cfg.Provider, "provider", "", "LLM Provider 名称（kimi/deepseek/openai），查找 profiles 中匹配配置")
 

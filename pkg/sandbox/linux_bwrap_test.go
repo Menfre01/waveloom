@@ -62,6 +62,8 @@ func newTestBwrap(t *testing.T) (*bwrapBackend, string, string) {
 func TestBwrapTransform_OffMode_StickerOrder(t *testing.T) {
 	b, home, ws := newTestBwrap(t)
 	cfg := DefaultConfig()
+	// 显式 off:2025-09 起默认网络为 on(见 TestConfigDefaults),off 行为需显式声明
+	cfg.Network.Mode = NetworkModeOff
 	// 通用 env 注入(配置驱动):路径值展开为 workspace 相对,URL 原样
 	cfg.Env = map[string]string{
 		"GOPATH":     "./.waveloom-gopath",
@@ -78,7 +80,7 @@ func TestBwrapTransform_OffMode_StickerOrder(t *testing.T) {
 	if argv[0] != "bwrap" {
 		t.Errorf("argv[0] = %q, want bwrap", argv[0])
 	}
-	assertSubsequence(t, argv, "--unshare-user", "--unshare-pid", "--unshare-net") // off 模式默认断网
+	assertSubsequence(t, argv, "--unshare-user", "--unshare-pid", "--unshare-net") // off 模式全断网
 
 	// 贴纸顺序:A(ro-bind /)→ tmpfs /tmp 提前清空 → B(bind ws)→ C(遮蔽)
 	assertSubsequence(t, argv, "--ro-bind", "/", "/", "--tmpfs", "/tmp")

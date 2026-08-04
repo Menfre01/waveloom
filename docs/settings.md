@@ -240,7 +240,7 @@ export BRAVE_API_KEY="your-brave-api-key"
 | `allowUnsandboxedCommands` | 沙箱内命令失败时是否提示逃生(加入 excludedCommands) | `true` |
 | `excludedCommands` | 逃逸命令列表(前缀/精确/通配),命中不进沙箱(裸跑),但权限仍受 Guard 约束 | `[]` |
 | `env` | 沙箱内注入的环境变量(通用机制,不绑定任何工具);值支持路径前缀(`~/` 家目录、`//`/`/` 绝对、`./` workspace 相对),其他按字面量注入;键命中凭据剥离清单时忽略(剥离优先) | `{}` |
-| `network.mode` | 网络策略:`off`(全断网)/ `on`(直连);`proxy` 为 v2 未实现 | `off` |
+| `network.mode` | 网络策略:`off`(全断网)/ `on`(直连);`proxy` 为 v2 未实现。默认 `on`(2025-09 决策:无交互入口需联网工具开箱即用;凭据外传风险由 `denyRead` / `credentials.files` 遮蔽兜底) | `on` |
 | `network.allowedDomains` | 域名白名单(v2 proxy 预留,当前不生效) | `[]` |
 | `filesystem.allowWrite` | 额外可写路径(`//abs` 绝对、`~/` 家目录、`./` 或裸名项目根);根目录与遮蔽路径冲突时拒绝 | `[]` |
 | `filesystem.allowRead` | **已废弃**(2026-09):配置中出现仅告警并忽略,不再生效;凭据防护统一用 `denyRead` / `credentials.files` | `[]` |
@@ -333,7 +333,7 @@ macOS 额外建议追加:`~/Library/Keychains`、`~/Library/HTTPStorages`、
 | `--provider NAME` | 切换 LLM Provider（需在 `profiles` 中配置对应 profile） | — |
 | `--log-level level` | 日志级别(error/warn/info/debug) | `info` |
 | `--bypass-permissions` | 无交互入口(one-shot/ACP)下 ASK → ALLOW,保留 deny 规则与高危硬拦截;TUI 交互模式维持弹窗 | 关闭 |
-| `--sandbox-network off/on` | 沙箱网络模式,覆盖 `settings.json` 的 `network.mode`(on 建议配置凭据遮蔽) | 取配置 |
+| `--sandbox-network off/on` | 沙箱网络模式,覆盖 `settings.json` 的 `network.mode`(on 建议配置凭据遮蔽) | 取配置(默认 `on`) |
 | `--tool-timeout D` | 单个工具执行超时(Go Duration 格式,如 `10m` / `600s` / `0s`,0 禁用) | `5m` |
 | `--resume ID` | 恢复指定会话 | — |
 | `--continue` | 恢复最近一次会话 | — |

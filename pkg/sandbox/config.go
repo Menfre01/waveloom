@@ -12,9 +12,9 @@ import (
 // ============================================================================
 
 const (
-	// NetworkModeOff 全断网(--unshare-net,默认)。
+	// NetworkModeOff 全断网(--unshare-net)。
 	NetworkModeOff = "off"
-	// NetworkModeOn 沙箱内直连网络(v1,需显式配置凭据防护)。
+	// NetworkModeOn 沙箱内直连网络(v1,默认;需显式配置凭据防护)。
 	NetworkModeOn = "on"
 	// NetworkModeProxy 沙箱外本地代理 + 域名过滤(v2,未实现)。
 	NetworkModeProxy = "proxy"
@@ -98,7 +98,9 @@ type CredentialsConfig struct {
 // 默认值与解析
 // ============================================================================
 
-// DefaultConfig 返回沙箱默认配置:不启用、降级运行、允许逃逸、断网。
+// DefaultConfig 返回沙箱默认配置:不启用、降级运行、允许逃逸、联网。
+// 网络默认 on(2025-09 决策:无交互入口(ACP/oneshot)需联网工具开箱即用;
+// 数据外传风险由凭据遮蔽(可选)与权限系统 deny 规则兜底)。
 func DefaultConfig() *Config {
 	allow := true
 	return &Config{
@@ -106,7 +108,7 @@ func DefaultConfig() *Config {
 		FailIfUnavailable:        false,
 		AllowUnsandboxedCommands: &allow,
 		Network: NetworkConfig{
-			Mode: NetworkModeOff,
+			Mode: NetworkModeOn,
 		},
 	}
 }
