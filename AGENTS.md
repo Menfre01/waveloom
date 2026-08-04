@@ -177,3 +177,14 @@ Release notes 以用户可感知的功能变化为描述单位，分类汇总：
 6. **审查双语文档** — 检查 `CONTRIBUTING` / `SECURITY` / `docs/` 下中英双语是否同步
 7. **文档提交** — 如有文档修改，先 commit（类型 `docs`）
 8. **打 tag 并推送** — `git tag vX.Y.Z && git push origin dev && git push origin vX.Y.Z`
+
+**Release 重发(发布后修复缺陷)**:
+
+- 重发仅用于发布产物含用户可感知缺陷;首次发布特性内缺陷按用户无感原则不重发
+- **操作顺序(关键:先删 release,再动 tag,否则 release 会变草稿)**:
+  1. `gh release delete vX.Y.Z --yes` — 先删旧 release(连带资产;不删 tag)
+  2. 本地移动 tag:`git tag -f vX.Y.Z <新commit>`(变更已 commit 到 dev)
+  3. 删远端 tag ref:`gh api -X DELETE repos/<owner>/<repo>/git/refs/tags/vX.Y.Z`
+  4. 推送新 tag:`git push origin vX.Y.Z` → workflow 走 create 分支,正式发布
+- **坑(实测踩过)**:先删远端 tag 再 push,会把已发布 release 打成 `untagged + draft`;workflow 幂等 edit 分支不会 publish,网页不可见。若已发生:删草稿 release(`gh release delete --yes`)+ `gh run rerun <run-id>`(view 失败 → create 分支)
+- 重发后必须验证:`gh release view vX.Y.Z --json isDraft,publishedAt,url`(isDraft=false 且 url 为正常 release 页)
