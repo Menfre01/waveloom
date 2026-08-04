@@ -43,11 +43,10 @@ func (s *Server) handleInitialize(req JSONRPCRequest) {
 				Audio:           false,
 				EmbeddedContext: true,
 			},
-			// MCP 能力降级声明:ACP 侧未实现 MCP 工具代理(mcpServers 忽略),
-			// 声明与实现保持一致,避免客户端误用。
 			McpCapabilities: &McpCapabilities{
-				// 完整声明(2026-08 MCP 支持实现):stdio 为 All Agents MUST,
-				// http/sse 由 mcp.Manager 支持;session/new 的 mcpServers 已接线。
+				// stdio 为 All Agents MUST(隐式,无声明字段);http/sse 由
+				// mcp.Manager 支持——session/new 的 mcpServers 已接线
+				// (mcp.go parseMcpServers:stdio/http/sse 三种变体)。
 				HTTP: true,
 				SSE:  true,
 			},

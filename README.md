@@ -144,6 +144,7 @@ Waveloom works with any text-based project. Post-edit LSP diagnostics automatica
 | [`environment`](./docs/environment.en.md) | Toolchain probing |
 | [`mcp`](./docs/mcp.en.md) | MCP client, config sources, CLI management |
 | [`mcp-ide-setup`](./docs/mcp-ide-setup-en.md) | Connect IntelliJ IDEA / VS Code MCP Server |
+| [`acp`](./docs/acp.en.md) | ACP (Agent Client Protocol) agent mode, protocol compatibility |
 | [`faq`](./docs/faq.en.md) | Frequently asked questions |
 | [`lsp`](./docs/lsp.en.md) | LSP diagnostics, language detection, configuration |
 
