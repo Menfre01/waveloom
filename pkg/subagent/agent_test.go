@@ -9,9 +9,30 @@ import (
 	"testing"
 
 	"github.com/Menfre01/waveloom/pkg/agentloop"
+	"github.com/Menfre01/waveloom/pkg/compaction"
 	"github.com/Menfre01/waveloom/pkg/llm"
 	"github.com/Menfre01/waveloom/pkg/tool"
 )
+
+func TestAgentTool_NewCompactor(t *testing.T) {
+	// REGRESSION: 子代理 loop 曾无 Compactor——50 turn 上限不限制每轮 token
+	// 增量(大文件/大输出),长任务撞窗口导致 API 400 失败。修复后子代理
+	// 持有独立压缩器(Tier 1/2 零成本生效,Tier 3 nil summarizer 跳过)。
+	a := &AgentTool{}
+	if c := a.newCompactor(); c == nil {
+		t.Fatal("newCompactor must return non-nil (zero config → normalize)")
+	}
+
+	// 配置与父级同源(入口 resolveCompactionConfig 传入)
+	a2 := &AgentTool{CompactionConfig: compaction.CompactionConfig{ContextLimit: 128_000}}
+	tc, ok := a2.newCompactor().(*compaction.TieredCompactor)
+	if !ok {
+		t.Fatalf("newCompactor type = %T, want *TieredCompactor", a2.newCompactor())
+	}
+	if got := tc.ContextLimit(); got != 128_000 {
+		t.Errorf("ContextLimit = %d, want 128000", got)
+	}
+}
 
 // ---------------------------------------------------------------------------
 // ---------------------------------------------------------------------------

@@ -140,7 +140,6 @@ func TestResolveSettingsPaths_Explicit(t *testing.T) {
 	}
 }
 
-
 // ---------------------------------------------------------------------------
 // buildSystemPrompt
 // ---------------------------------------------------------------------------
@@ -372,8 +371,10 @@ func TestParseCLI_ThemeLightColorBlind(t *testing.T) {
 
 func TestParseCLI_ContextLimitDefault(t *testing.T) {
 	cfg := parseCLIForTest([]string{"test"})
-	if cfg.ContextLimit != 1000000 {
-		t.Errorf("expected default ContextLimit=1000000, got %d", cfg.ContextLimit)
+	// 未指定 → 0,由 main.go 从 settings 的 compaction.context_limit_tokens 回退
+	// (再默认 1M),保证 HUD 显示与压缩阈值一致
+	if cfg.ContextLimit != 0 {
+		t.Errorf("expected ContextLimit=0 (unset, resolved by main), got %d", cfg.ContextLimit)
 	}
 }
 
@@ -386,8 +387,8 @@ func TestParseCLI_ContextLimitCustom(t *testing.T) {
 
 func TestParseCLI_ContextLimitInvalid(t *testing.T) {
 	cfg := parseCLIForTest([]string{"--context-limit", "xyz", "test"})
-	if cfg.ContextLimit != 1000000 {
-		t.Errorf("expected fallback ContextLimit=1000000, got %d", cfg.ContextLimit)
+	if cfg.ContextLimit != 0 {
+		t.Errorf("expected ContextLimit=0 (fallback to settings), got %d", cfg.ContextLimit)
 	}
 }
 

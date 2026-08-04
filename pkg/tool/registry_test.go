@@ -2,6 +2,7 @@ package tool
 
 import (
 	"context"
+	"fmt"
 	"runtime"
 	"encoding/json"
 	"strings"
@@ -308,5 +309,132 @@ func TestFormatToolPrompts_PromptNotInDescription(t *testing.T) {
 	}
 	if specs[0].Prompt == "" {
 		t.Error("Prompt should be stored in spec.Prompt")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// 分层注册表测试(NewChildRegistry)
+// ---------------------------------------------------------------------------
+
+func TestChildRegistryGetParentFallback(t *testing.T) {
+	base := NewRegistry()
+	base.Register(Wrap(&ReadFile{}))
+
+	child := NewChildRegistry(base)
+
+	// child 可见父级工具(Get 兜底)
+	if _, ok := child.Get("read"); !ok {
+		t.Error("child should see parent tools via Get fallback")
+	}
+	// 父级不可见 child 本地工具(反向隔离)
+	child.Register(Wrap(&WebFetch{}))
+	if _, ok := base.Get("web_fetch"); ok {
+		t.Error("parent must not see child-local tools")
+	}
+}
+
+func TestChildRegistryListMergeAndShadow(t *testing.T) {
+	base := NewRegistry()
+	base.Register(Wrap(&ReadFile{}))
+	base.Register(Wrap(&Shell{AllowBg: true})) // "bash"
+
+	child := NewChildRegistry(base)
+	// 本地 MCP 风格工具(mcp__ 前缀,与内置不冲突)
+	child.Register(Wrap(&WebFetch{}))
+	// 本地 shadow 父级同名工具(与父级 "bash" 同名)
+	child.Register(Wrap(&mockTypedTool{
+		name:   "bash",
+		desc:   "child bash",
+		schema: json.RawMessage(`{}`),
+		execute: func(ctx context.Context, p mockParams) (*ToolResult, error) { return &ToolResult{}, nil },
+	}))
+
+	names := map[string]bool{}
+	for _, spec := range child.List() {
+		names[spec.Name] = true
+	}
+	if !names["read"] || !names["web_fetch"] {
+		t.Errorf("child List should include parent + local tools, got %v", names)
+	}
+	// shadow 工具在 List 中只出现一次(去重)
+	if len(names) != 3 {
+		t.Errorf("expected 3 unique tools after shadow dedup, got %d: %v", len(names), names)
+	}
+	// 父级 List 不受 child 影响
+	if n := len(base.List()); n != 2 {
+		t.Errorf("parent List should be unchanged, got %d", n)
+	}
+}
+
+func TestChildRegistryShadowGetLocalFirst(t *testing.T) {
+	base := NewRegistry()
+	base.Register(Wrap(&Shell{AllowBg: true}))
+
+	child := NewChildRegistry(base)
+	child.Register(Wrap(&mockTypedTool{
+		name:   "bash",
+		desc:   "child bash",
+		schema: json.RawMessage(`{}`),
+		execute: func(ctx context.Context, p mockParams) (*ToolResult, error) { return &ToolResult{}, nil },
+	})) // 同名 shadow
+
+	got, ok := child.Get("bash")
+	if !ok {
+		t.Fatal("shadowed tool should still be Get-able")
+	}
+	if got.Description() != "child bash" {
+		t.Error("Get should return local tool (shadow semantics)")
+	}
+}
+
+func TestChildRegistryIsolation(t *testing.T) {
+	// 两个 child 互不可见对方本地工具(per-session 隔离核心语义)
+	base := NewRegistry()
+	base.Register(Wrap(&ReadFile{}))
+
+	childA := NewChildRegistry(base)
+	childB := NewChildRegistry(base)
+	childA.Register(Wrap(&WebFetch{}))
+	childB.Register(Wrap(&WebSearch{}))
+
+	if _, ok := childA.Get("web_search"); ok {
+		t.Error("childA must not see childB's local tools")
+	}
+	if _, ok := childB.Get("web_fetch"); ok {
+		t.Error("childB must not see childA's local tools")
+	}
+	if _, ok := childA.Get("read"); !ok {
+		t.Error("both children should share parent tools")
+	}
+}
+
+func TestChildRegistryConcurrentRegister(t *testing.T) {
+	// MCP 工具异步注册 vs 并发读取:必须无数据竞争(-race 验证)
+	base := NewRegistry()
+	base.Register(Wrap(&ReadFile{}))
+	child := NewChildRegistry(base)
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for i := 0; i < 50; i++ {
+			// 每个循环注册不同名字的本地工具(模拟 MCP 工具名)
+			child.Register(Wrap(&mockTypedTool{
+				name:   fmt.Sprintf("mcp__srv__t%d", i),
+				desc:   "mcp tool",
+				schema: json.RawMessage(`{}`),
+				execute: func(ctx context.Context, p mockParams) (*ToolResult, error) { return &ToolResult{}, nil },
+			}))
+		}
+	}()
+
+	for {
+		select {
+		case <-done:
+			return
+		default:
+			_, _ = child.Get("read")
+			_ = child.List()
+		}
 	}
 }

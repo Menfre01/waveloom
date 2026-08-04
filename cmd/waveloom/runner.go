@@ -35,6 +35,7 @@ func runOneShot(cfg CLIConfig, llmClient llm.Client, registry tool.Registry, gua
 		TodoState:    todoState,
 		Model:        model,
 		LSPManager:   lspManager,
+		Compactor:    cm.Compactor(), // 与 TUI 一致:长管道任务同样启用上下文压缩
 	}
 
 	// bypass 模式:无条件注入 autoAllow 二元决策(仅 DENY/ALLOW,不产生 ASK)。

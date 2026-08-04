@@ -221,7 +221,17 @@ func (l *Loop) SetHookRunner(runner *hook.Runner) {
 	l.hookRunner = runner
 }
 
-// SetPlanFile 设置 plan 文件路径（用户快捷键进入 plan 模式时由 TUI 调用）。
+// TodoState 返回 Loop 配置的 session 级 todo 状态(未配置时为 nil)。
+func (l *Loop) TodoState() *todo.TodoState {
+	return l.config.TodoState
+}
+
+// Compactor 返回 Loop 配置的上下文压缩器(未配置时为 nil)。
+func (l *Loop) Compactor() compaction.Compactor {
+	return l.config.Compactor
+}
+
+// SetPlanFile 设置 plan 文件路径(用户快捷键进入 plan 模式时由 TUI 调用)。
 func (l *Loop) SetPlanFile(planFile string) {
 	l.config.PlanFile = planFile
 }
@@ -283,6 +293,11 @@ func (l *Loop) Run(ctx context.Context, messages []llm.Message) <-chan TurnEvent
 	ch := make(chan TurnEvent, 32)
 
 	go func() {
+		// REGRESSION: lastChanceTodoInjected 曾跨 prompt 残留——同 session
+		// 第二个 prompt 的完成前提醒被跳过。Loop 是 session 级持久组件,
+		// 每次 Run(单次 prompt)开始时重置,保证每轮都注入提醒。
+		l.lastChanceTodoInjected = false
+
 		// goroutine 结束时触发 Stop/Notification hooks。
 		// blocked 返回值在此场景无意义（goroutine 即将退出），仅记录日志。
 		defer func() {

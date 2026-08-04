@@ -2036,7 +2036,7 @@ func TestRunGuardAskUserAllows(t *testing.T) {
 		choices: map[string]permission.UserChoice{
 			"tool_a": {Decision: permission.DecisionAllow}}}
 	loop := New(client, registry, Config{
-		
+
 		Guard:           guard,
 		UserResponder:   user})
 
@@ -2072,7 +2072,7 @@ func TestRunGuardAskUserDenies(t *testing.T) {
 		choices: map[string]permission.UserChoice{
 			"tool_a": {Decision: permission.DecisionDeny}}}
 	loop := New(client, registry, Config{
-		
+
 		Guard:           guard,
 		UserResponder:   user})
 
@@ -2107,7 +2107,7 @@ func TestRunGuardAskNoResponder(t *testing.T) {
 		results: map[string]permission.DecisionResult{
 			"tool_a": {Decision: permission.DecisionAsk, Reason: permission.ReasonDefault}}}
 	loop := New(client, registry, Config{
-		
+
 		Guard:           guard,
 		// UserResponder 为 nil
 	})
@@ -2143,7 +2143,7 @@ func TestRunGuardAskRemember(t *testing.T) {
 		choices: map[string]permission.UserChoice{
 			"tool_a": {Decision: permission.DecisionAllow, RememberScope: permission.ScopeSession}}}
 	loop := New(client, registry, Config{
-		
+
 		Guard:           guard,
 		UserResponder:   user})
 
@@ -2175,7 +2175,7 @@ func TestRunGuardDenyAndRemember(t *testing.T) {
 		choices: map[string]permission.UserChoice{
 			"danger_tool": {Decision: permission.DecisionDeny, RememberScope: permission.ScopeSession}}}
 	loop := New(client, registry, Config{
-		
+
 		Guard:           guard,
 		UserResponder:   user})
 
@@ -2207,7 +2207,7 @@ func TestRunGuardRememberScopeConfig(t *testing.T) {
 		choices: map[string]permission.UserChoice{
 			"tool_a": {Decision: permission.DecisionAllow, RememberScope: permission.ScopeConfig}}}
 	loop := New(client, registry, Config{
-		
+
 		Guard:           guard,
 		UserResponder:   user})
 
@@ -2245,7 +2245,7 @@ func TestRunGuardAskNoRemember(t *testing.T) {
 		choices: map[string]permission.UserChoice{
 			"tool_a": {Decision: permission.DecisionAllow, RememberScope: ""}}}
 	loop := New(client, registry, Config{
-		
+
 		Guard:           guard,
 		UserResponder:   user})
 
@@ -3115,7 +3115,6 @@ func TestBuildToolMessages_FatalOverridesBackoff(t *testing.T) {
 	}
 }
 
-
 func TestBuildToolMessages_NormalModeTerminateAt8(t *testing.T) {
 	// 正常模式：连续 8 次才终止
 	l := New(nil, nil, Config{})
@@ -3154,8 +3153,6 @@ func TestBuildToolMessages_NormalModeTerminateAt8(t *testing.T) {
 		t.Errorf("round 8: expected ReasonToolFatal, got %s", reason)
 	}
 }
-
-
 
 // ============================================================================
 // 15. ToolCallResult.IsError 测试
@@ -3331,7 +3328,6 @@ func TestExecuteToolCalls_ContextCancelledDuringSerialSend(t *testing.T) {
 	}
 }
 
-
 // TestRegression_StaleTodoOnComplete 验证 LLM 忘记最后一次 todo_update 时，
 // Loop 在终止前注入最后机会提醒，防止 todo 列表残留。
 func TestRegression_StaleTodoOnComplete(t *testing.T) {
@@ -3430,6 +3426,57 @@ func TestRegression_StaleTodoOnComplete_NoInfiniteLoop(t *testing.T) {
 	}
 	if !hasReminder {
 		t.Error("expected last-chance reminder in messages, not found")
+	}
+}
+
+// TestRegression_LastChanceTodoResetAcrossRuns 验证 lastChanceTodoInjected
+// 在每次 Run(单次 prompt)开始时重置——同 session 第二个 prompt 的完成前
+// 提醒恢复生效(修复前标志跨 prompt 残留,第二轮不再提醒)。
+func TestRegression_LastChanceTodoResetAcrossRuns(t *testing.T) {
+	ts := todo.NewTodoState()
+	ts.Apply(todo.TodoWriteParams{
+		Todos: []todo.TodoItem{
+			{Content: "Do something", Status: "in_progress"}}})
+
+	// 每次 Run:文本响应 → 触发 last-chance 提醒(continue)→ 再文本响应 → 完成
+	client := &mockLLMClient{
+		responses: []*llm.Response{
+			makeTextResponse("I'm done with everything."),
+			makeTextResponse("Yes, really done."),
+			makeTextResponse("Second run done."),
+			makeTextResponse("Second run confirmed.")}}
+
+	registry := newTestRegistry()
+	loop := New(client, registry, Config{
+		TodoState: ts})
+
+	reminderIn := func(ev LoopDone) bool {
+		for _, msg := range ev.Messages {
+			if strings.Contains(msg.Content, "You are about to finish, but your todo list still has incomplete tasks") {
+				return true
+			}
+		}
+		return false
+	}
+
+	// 第一次 Run:提醒注入
+	finalEv1 := drainEvents(loop.Run(context.Background(), []llm.Message{
+		{Role: llm.RoleUser, Content: "do something"}}))
+	if finalEv1.Err != nil {
+		t.Fatalf("first run error: %v", finalEv1.Err)
+	}
+	if !reminderIn(finalEv1) {
+		t.Fatal("first run: expected last-chance reminder")
+	}
+
+	// 第二次 Run(同 Loop 同 TodoState):提醒必须再次注入
+	finalEv2 := drainEvents(loop.Run(context.Background(), []llm.Message{
+		{Role: llm.RoleUser, Content: "do something again"}}))
+	if finalEv2.Err != nil {
+		t.Fatalf("second run error: %v", finalEv2.Err)
+	}
+	if !reminderIn(finalEv2) {
+		t.Error("second run: last-chance reminder should be re-injected (lastChanceTodoInjected reset per Run)")
 	}
 }
 

@@ -138,7 +138,15 @@ func main() {
 	registry := tool.NewRegistry()
 	settingsProvider := &fileSettingsProvider{projectPath: projectPath, globalPath: globalPath}
 
-	agentTool := registerBuiltinTools(registry, skillLoader, llmClient, llmSettings.Model, llmSettings.SubModel, cwd, settingsProvider, sandboxMgr, guard)
+	// 窗口容量与压缩配置统一解析(与 ACP 入口同源,单一实现):
+	// 默认 → settings 覆盖 → flag(--context-limit)覆盖 ContextLimit。
+	// 三条路径(压缩阈值/HUD 显示/ACP size)+ 子代理压缩同值。
+	compactionConfig := resolveCompactionConfig(cfg.ContextLimit, globalPath, projectPath)
+	if cfg.ContextLimit == 0 {
+		cfg.ContextLimit = compactionConfig.ContextLimit
+	}
+
+	agentTool := registerBuiltinTools(registry, skillLoader, llmClient, llmSettings.Model, llmSettings.SubModel, cwd, settingsProvider, sandboxMgr, guard, compactionConfig)
 	// 8.5 启动 MCP Manager — 连接配置的 MCP Server，注册工具代理
 	mcpManager := mcp.NewManager(registry)
 	mcpManager.Start(context.Background(), mcp.LoadConfigs(cwd, homeDir))
@@ -245,16 +253,7 @@ waitLoop:
 		systemPrompt += "\n\n" + toolPrompts
 	}
 
-	// 合并 compaction 配置：默认值 + settings.json 覆盖
-	compactionConfig := compaction.DefaultCompactionConfig()
-	if cs := compaction.LoadCompactionSettings(globalPath); cs != nil {
-		cs.ApplyToConfig(&compactionConfig)
-	}
-	if cs := compaction.LoadCompactionSettings(projectPath); cs != nil {
-		cs.ApplyToConfig(&compactionConfig)
-	}
-
-	// 合并工具超时：优先级 CLI > project settings.json > global settings.json > 默认 5m
+	// 合并工具超时:优先级 CLI > project settings.json > global settings.json > 默认 5m
 	if cfg.ToolTimeout == 0 {
 		if d, ok, _ := agentloop.LoadToolTimeout(projectPath); ok {
 			cfg.ToolTimeout = d
@@ -294,13 +293,19 @@ waitLoop:
 				fmt.Print(messagesFor(loc).CLINoRecentSession)
 			}
 		}
-		if cfg.ResumeSessionID != "" {
-			sessionPath := filepath.Join(sessionDir, cfg.ResumeSessionID+".json")
-			if !ctxMgr.LoadFromFile(sessionPath) {
-				slog.Error("session not found", "id", cfg.ResumeSessionID, "path", sessionPath)
-				os.Exit(1)
-			}
-			isResume = true
+	if cfg.ResumeSessionID != "" {
+		sessionPath := filepath.Join(sessionDir, cfg.ResumeSessionID+".json")
+		if !ctxMgr.LoadFromFile(sessionPath) {
+			slog.Error("session not found", "id", cfg.ResumeSessionID, "path", sessionPath)
+			os.Exit(1)
+		}
+		// REGRESSION: LoadFromFile 会用磁盘持久化的 watermark.ContextLimit 整体
+		// 覆盖 compactor 阈值,导致恢复会话的压缩阈值=旧值、HUD=新值(flag/settings
+		// 覆盖被静默废弃)。加载后重放当前窗口容量。
+		if c, ok := ctxMgr.Compactor().(interface{ SetContextLimit(int) }); ok {
+			c.SetContextLimit(cfg.ContextLimit)
+		}
+		isResume = true
 				fmt.Printf(messagesFor(loc).CLIResumedSession, cfg.ResumeSessionID)
 		} else {
 			sessionPath := filepath.Join(sessionDir, session.NewSessionID()+".json")
@@ -348,7 +353,7 @@ waitLoop:
 }
 
 // registerBuiltinTools 注册内置工具。
- func registerBuiltinTools(r tool.Registry, skillLoader *skill.Loader, llmClient llm.Client, defaultModel, subModel string, cwd string, settings subagent.SettingsProvider, sandboxMgr *sandbox.SandboxManager, guard permission.Guard) *subagent.AgentTool {
+ func registerBuiltinTools(r tool.Registry, skillLoader *skill.Loader, llmClient llm.Client, defaultModel, subModel string, cwd string, settings subagent.SettingsProvider, sandboxMgr *sandbox.SandboxManager, guard permission.Guard, compactionConfig compaction.CompactionConfig) *subagent.AgentTool {
 	r.Register(tool.Wrap(&tool.ReadFile{}))
 	r.Register(tool.Wrap(&tool.EditFile{}))
 	r.Register(tool.Wrap(&tool.WriteFile{}))
@@ -381,6 +386,7 @@ waitLoop:
      		WorkspaceDir: cwd,
      		SandboxMgr:   sandboxMgr,
      		Guard:        guard,
+     		CompactionConfig: compactionConfig,
      	}
 	r.Register(tool.Wrap(at))
 

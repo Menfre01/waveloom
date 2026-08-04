@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/Menfre01/waveloom/pkg/agentloop"
+	"github.com/Menfre01/waveloom/pkg/compaction"
 	"github.com/Menfre01/waveloom/pkg/llm"
 	"github.com/Menfre01/waveloom/pkg/permission"
 	"github.com/Menfre01/waveloom/pkg/sandbox"
@@ -52,6 +53,7 @@ type AgentTool struct {
 	WorkspaceDir    string // 工作目录,用于分类器路径检查
 	SandboxMgr      *sandbox.SandboxManager // 沙箱管理器(可选):子代理 bash 同样进沙箱
 	Guard           permission.Guard         // 父级权限 Guard(规则继承,三审 High-1)
+	CompactionConfig compaction.CompactionConfig // 压缩配置(与主 loop/HUD/ACP 同源;子代理用独立 compactor 实例)
 
 	mu sync.RWMutex // 保护 LLMClient 的并发读写(SetClient 与 executeFork/executeCold)
 
@@ -75,6 +77,13 @@ func (a *AgentTool) SetClient(client llm.Client) {
 	a.mu.Lock()
 	a.LLMClient = client
 	a.mu.Unlock()
+}
+
+// newCompactor 创建子代理专用压缩器(独立实例,不复用父级——watermark/turn
+// 计数会污染)。summarizer 为 nil → Tier 3 跳过(Tier3SkippedNoSummarizer),
+// Tier 1/2(snip/prune)零成本生效。配置零值 → normalize 兜底 1M。
+func (a *AgentTool) newCompactor() compaction.Compactor {
+	return compaction.NewCompactor(a.CompactionConfig, nil)
 }
 
 // saveSubagentTranscript 将 subagent 事件持久化为 JSONL 文件和 metadata。
@@ -390,6 +399,7 @@ func (a *AgentTool) executeFork(ctx context.Context, p AgentParams) (*tool.ToolR
 		ToolTimeout:   agentloop.DefaultToolTimeout,
 		Model:         model,
 		TodoState:     nil,
+		Compactor:     a.newCompactor(),
 	})
 
 	startTime := time.Now()
@@ -482,6 +492,7 @@ func (a *AgentTool) executeCold(ctx context.Context, p AgentParams) (*tool.ToolR
 		ToolTimeout:   agentloop.DefaultToolTimeout,
 		Model:         model,
 		TodoState:     nil,
+		Compactor:     a.newCompactor(),
 	})
 
 	startTime := time.Now()

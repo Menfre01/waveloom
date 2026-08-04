@@ -50,7 +50,7 @@ func parseCLI() CLIConfig {
 	flag.StringVar(&cfg.Model, "model", "", "LLM 模型名称（默认从环境变量 LLM_MODEL 读取）")
 	flag.IntVar(&cfg.MaxTurns, "max-turns", 0, "最大 turn 数（0=无限制）")
 	flag.StringVar(&cfg.SystemPrompt, "system-prompt", "", "系统提示词")
-	flag.StringVar(&contextLimitRaw, "context-limit", "1M", "上下文窗口 token 上限")
+	flag.StringVar(&contextLimitRaw, "context-limit", "", "上下文窗口 token 上限(默认读 settings 的 compaction.context_limit_tokens,再默认 1M)")
 	flag.StringVar(&cfg.Theme, "theme", "auto", "主题模式 (auto/dark/light)，auto 自动检测终端背景色")
 	flag.StringVar(&cfg.Locale, "locale", "auto", "界面语言 (zh-CN/en-US/auto)，auto 从 LANG 环境变量自动检测")
 	flag.StringVar(&cfg.SettingsPath, "settings", "", "显式指定项目配置文件路径（默认: .waveloom/settings.json）")
@@ -74,12 +74,16 @@ func parseCLI() CLIConfig {
 	cfg.ShowHelp = *help || *h
 	cfg.ShowVersion = *version
 
-	// 解析上下文窗口大小（支持 1M / 200k / 1048576 等格式）
-	var parseErr error
-	cfg.ContextLimit, parseErr = parseTokenLimit(contextLimitRaw)
-	if parseErr != nil {
-		slog.Warn("cannot parse --context-limit, falling back to 1M", "value", contextLimitRaw, "err", parseErr)
-		cfg.ContextLimit = 1000000
+	// 解析上下文窗口大小(支持 1M / 200k / 1048576 等格式)。
+	// 未指定(空)时置 0,由 main.go 从 settings 的 compaction.context_limit_tokens
+	// 回退(再默认 1M),保证 HUD 显示与压缩阈值一致(setup 向导写入生效)。
+	if contextLimitRaw != "" {
+		var parseErr error
+		cfg.ContextLimit, parseErr = parseTokenLimit(contextLimitRaw)
+		if parseErr != nil {
+			slog.Warn("cannot parse --context-limit, falling back to settings", "value", contextLimitRaw, "err", parseErr)
+			cfg.ContextLimit = 0
+		}
 	}
 
 	// 解析工具超时
@@ -115,6 +119,9 @@ func parseCLI() CLIConfig {
 			}
 		case "mcp":
 			runMCPCommand(args[1:])
+		case "acp":
+			runACP(args[1:])
+			os.Exit(0)
 		default:
 			cfg.OneShot = args[0]
 		}

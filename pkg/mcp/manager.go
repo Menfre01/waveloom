@@ -43,6 +43,11 @@ func WithLogger(l *log.Logger) ManagerOption {
 	}
 }
 
+// SetConnectFunc 覆盖连接函数(测试注入 fake 连接;生产环境保持默认 mcp.Connect)。
+func (m *Manager) SetConnectFunc(fn func(ctx context.Context, name string, config ServerConfig) (*Client, error)) {
+	m.connectFunc = fn
+}
+
 // IDEContextProvider 返回 IDE 上下文提供者，供 system prompt 构建使用。
 func (m *Manager) IDEContextProvider() *IDEContextProvider {
 	return m.ideCtx
