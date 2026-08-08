@@ -1,3 +1,13 @@
+## [v0.6.1] — 2026-08-08
+
+### 新增功能
+- **deepseek-v4-flash 自动适配 Responses API + 服务端 web_search**:模型为 `deepseek-v4-flash` 时自动切换 Responses API 协议(`POST /v1/responses`,LLM 请求不再走 Chat Completions),web_search 转为服务端内置搜索(不再依赖不稳定的 DuckDuckGo HTML 解析),服务端自动执行搜索并注入结果上下文;TUI 展示服务端搜索段落(状态 + 真实耗时,支持 Enter 展开)。其他模型(如 `deepseek-v4-pro`)保持 Chat Completions + 本地 DuckDuckGo/Brave 搜索不变
+- **proplan 模型选择值**:`--model proplan` 或 `/model` 选择后,plan mode 使用 pro 模型、日常任务使用 flash 模型(对齐 Claude Code 的 opusplan alias);200k 上下文守卫(plan 上下文超窗自动降级 flash);选择持久化到 `profiles.<provider>.curr_model`,切换 provider 互不污染
+
+---
+
+📝 [Changelog (English)](https://github.com/Menfre01/waveloom/blob/dev/CHANGELOG.en.md)
+
 ## [v0.6.0] — 2026-08-04
 
 ### 新增功能

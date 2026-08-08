@@ -115,7 +115,10 @@ waveloom
 ## FAQ
 
 **Q: How do I switch models?**
-Type `/model` in interactive mode, or `waveloom --model deepseek-v4-flash`.
+Type `/model` in interactive mode, or `waveloom --model deepseek-v4-flash`. Select `proplan` to use the pro model in plan mode and the flash model for regular tasks (`/model proplan`).
+
+**Q: Does web_search work with deepseek-v4-flash?**
+Yes — with `deepseek-v4-flash`, Waveloom automatically switches to the DeepSeek Responses API and `web_search` becomes a server-side built-in search (no DuckDuckGo/Brave dependency). Other models keep the local search backends.
 
 **Q: How do I switch LLM providers?**
 Type `/provider` to open the interactive provider picker (overlay with ↑↓ select / Enter confirm / Esc cancel), or `/provider kimi` to switch directly. Profiles are configured in `settings.json` under `llm.profiles`.

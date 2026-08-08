@@ -1,3 +1,11 @@
+## [v0.6.1] — 2026-08-08
+
+### Added
+- **deepseek-v4-flash auto-adapts to the Responses API + server-side web_search**: when the model is `deepseek-v4-flash`, LLM requests automatically switch to the Responses API protocol (`POST /v1/responses` instead of Chat Completions); `web_search` becomes a server-side built-in search (no more reliance on unstable DuckDuckGo HTML parsing) — the server executes the search and injects results into context; the TUI shows a server-side search paragraph (status + real duration, Enter to expand). Other models (e.g. `deepseek-v4-pro`) keep Chat Completions + local DuckDuckGo/Brave search unchanged
+- **`proplan` model choice**: selecting `--model proplan` or `/model proplan` uses the pro model in plan mode and the flash model for regular tasks (aligned with Claude Code's opusplan alias); 200k context guard (plan context over the window auto-degrades to flash); the choice persists to `profiles.<provider>.curr_model`, isolated across provider switches
+
+---
+
 ## [v0.6.0] — 2026-08-04
 
 ### Added
