@@ -47,7 +47,7 @@ func parseCLI() CLIConfig {
 		printHelpWithAutoDetect()
 	}
 
-	flag.StringVar(&cfg.Model, "model", "", "LLM 模型名称（默认从环境变量 LLM_MODEL 读取）")
+	flag.StringVar(&cfg.Model, "model", "", "LLM 模型名称(默认从环境变量 LLM_MODEL 读取;proplan = plan 用 model、日常用 sub_model)")
 	flag.IntVar(&cfg.MaxTurns, "max-turns", 0, "最大 turn 数（0=无限制）")
 	flag.StringVar(&cfg.SystemPrompt, "system-prompt", "", "系统提示词")
 	flag.StringVar(&contextLimitRaw, "context-limit", "", "上下文窗口 token 上限(默认读 settings 的 compaction.context_limit_tokens,再默认 1M)")

@@ -115,7 +115,7 @@ waveloom
 ## FAQ
 
 **Q: How do I switch models?**
-Type `/model` in interactive mode, or `waveloom --model deepseek-v4-flash`. Select `proplan` to use the pro model in plan mode and the flash model for regular tasks (`/model proplan`).
+Type `/model` in interactive mode, or `waveloom --model deepseek-v4-flash`. Select `proplan` to use the pro model in plan mode and the flash model for regular tasks (`/model proplan`). Requires `model` (plan mode) and `sub_model` (regular tasks) configured in `settings.json`; it falls back to a plain model error otherwise.
 
 **Q: Does web_search work with deepseek-v4-flash?**
 Yes — with `deepseek-v4-flash`, Waveloom automatically switches to the DeepSeek Responses API and `web_search` becomes a server-side built-in search (no DuckDuckGo/Brave dependency). Other models keep the local search backends.

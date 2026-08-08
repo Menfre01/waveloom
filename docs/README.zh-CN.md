@@ -114,7 +114,7 @@ waveloom
 ## 常见问题
 
 **Q: 怎么切换模型?**
-输入 `/model` 选择,或 `waveloom --model deepseek-v4-flash`。选择 `proplan` 后,plan mode 使用 pro 模型、日常任务使用 flash 模型(`/model proplan`)。
+输入 `/model` 选择,或 `waveloom --model deepseek-v4-flash`。选择 `proplan` 后,plan mode 使用 pro 模型、日常任务使用 flash 模型(`/model proplan`)。需在 `settings.json` 中配置 `model`(plan 模式用)与 `sub_model`(日常任务用),未配置时无法选择 proplan。
 
 **Q: deepseek-v4-flash 下 web_search 还能用吗?**
 可以——`deepseek-v4-flash` 下 Waveloom 自动切换 DeepSeek Responses API,web_search 转为服务端内置搜索(不依赖 DuckDuckGo/Brave)。其他模型保持本地搜索后端。
