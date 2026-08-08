@@ -1,3 +1,13 @@
+## [v0.6.2] — 2026-08-09
+
+### 修复
+- **deepseek-v4-flash 思考链与搜索上下文修复**:非流式模式下思考链不再丢失(Responses API reasoning 内容块解析修正);多轮对话中服务端搜索结果上下文正确保留(web_search_call item 原样回传);内容过滤截断(content_filter)与长度截断(max_output_tokens)正确区分
+- **服务端搜索回传跨 resume 保留**:带 web_search_calls 的 assistant 消息不再被消息清洗误删,恢复会话后搜索上下文仍可回传
+
+---
+
+📝 [Changelog (English)](https://github.com/Menfre01/waveloom/blob/dev/CHANGELOG.en.md)
+
 ## [v0.6.1] — 2026-08-08
 
 ### 新增功能

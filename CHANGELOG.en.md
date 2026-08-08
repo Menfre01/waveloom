@@ -1,3 +1,11 @@
+## [v0.6.2] — 2026-08-09
+
+### Fixed
+- **deepseek-v4-flash reasoning & search-context fixes**: non-streaming reasoning content is no longer lost (Responses API reasoning content-block parsing corrected); server-side search results context is preserved across turns (web_search_call items are echoed back as-is); content-filter truncation is now correctly distinguished from max_output_tokens truncation
+- **Server-side search calls survive resume**: assistant messages carrying web_search_calls are no longer dropped by message validation, so search context can still be echoed back after resuming a session
+
+---
+
 ## [v0.6.1] — 2026-08-08
 
 ### Added
