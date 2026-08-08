@@ -28,14 +28,16 @@ type mockLLMClient struct {
 	mu           sync.Mutex
 	responses    []*llm.Response
 	errors       []error     // SendMessage / SendMessageStream 首帧错误
-	streamErrors []error     // 流中错误（ev.Err != nil），nil 表示无流错误
+	streamErrors []error     // 流中错误(ev.Err != nil),nil 表示无流错误
 	callCount    int
+	models       []string    // 每次调用的 model 覆盖(从 ctx 提取,proplan 测试用)
 }
 
 func (m *mockLLMClient) SendMessage(ctx context.Context, messages []llm.Message, tools []llm.ToolSpec) (*llm.Response, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
+	m.models = append(m.models, llm.ModelOverrideFromContext(ctx))
 	idx := m.callCount
 	m.callCount++
 
@@ -53,6 +55,7 @@ func (m *mockLLMClient) SendMessageStream(ctx context.Context, messages []llm.Me
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
+	m.models = append(m.models, llm.ModelOverrideFromContext(ctx))
 	idx := m.callCount
 	m.callCount++
 
@@ -3580,5 +3583,241 @@ func TestCollectLSPDiagnostics_Sanitized(t *testing.T) {
 			t.Error("unexpected injection warning in sanitized output")
 		}
 	}
+}
+
+// ---------------------------------------------------------------------------
+// proplan 模型选择值(llm.ModelChoiceProPlan)测试
+// ---------------------------------------------------------------------------
+
+// proPlanLoop 构造一个 Model="proplan" 的 loop,返回 client(含模型记录)与 loop。
+func proPlanLoop(t *testing.T, plan bool, sub, planModel string) (*mockLLMClient, *Loop) {
+	t.Helper()
+	client := &mockLLMClient{}
+	loop := New(client, newTestRegistry(), Config{
+		Model:     llm.ModelChoiceProPlan,
+		SubModel:  sub,
+		PlanModel: planModel,
+		MaxTurns:  2,
+	})
+	if plan {
+		loop.SetPlanMode("plan.md")
+	}
+	return client, loop
+}
+
+// TestProPlanChoice_Disabled 回归:Model 非 proplan 时,全场景使用 Model(现状不变)。
+func TestProPlanChoice_Disabled(t *testing.T) {
+	client := &mockLLMClient{}
+	loop := New(client, newTestRegistry(), Config{Model: "deepseek-v4-pro", MaxTurns: 2})
+	loop.SetPlanMode("plan.md")
+	drainEvents(loop.Run(context.Background(), []llm.Message{
+		{Role: llm.RoleUser, Content: "do something"},
+	}))
+	client.mu.Lock()
+	defer client.mu.Unlock()
+	if len(client.models) != 1 || client.models[0] != "deepseek-v4-pro" {
+		t.Errorf("models = %v, want [deepseek-v4-pro]", client.models)
+	}
+}
+
+// TestProPlanChoice_NormalUsesSubModel:proplan 选择时,非 plan 模式用 SubModel。
+func TestProPlanChoice_NormalUsesSubModel(t *testing.T) {
+	client, loop := proPlanLoop(t, false, "flash-x", "pro-x")
+	drainEvents(loop.Run(context.Background(), []llm.Message{
+		{Role: llm.RoleUser, Content: "do something"},
+	}))
+	client.mu.Lock()
+	defer client.mu.Unlock()
+	if len(client.models) != 1 || client.models[0] != "flash-x" {
+		t.Errorf("models = %v, want [flash-x]", client.models)
+	}
+}
+
+// TestProPlanChoice_PlanUsesPlanModel:proplan 选择时,plan mode 用 PlanModel。
+func TestProPlanChoice_PlanUsesPlanModel(t *testing.T) {
+	client, loop := proPlanLoop(t, true, "flash-x", "pro-x")
+	drainEvents(loop.Run(context.Background(), []llm.Message{
+		{Role: llm.RoleUser, Content: "do something"},
+	}))
+	client.mu.Lock()
+	defer client.mu.Unlock()
+	if len(client.models) != 1 || client.models[0] != "pro-x" {
+		t.Errorf("models = %v, want [pro-x]", client.models)
+	}
+}
+
+// TestProPlanChoice_PlanExitRestoresDaily:退出 plan 后恢复 SubModel。
+func TestProPlanChoice_PlanExitRestoresDaily(t *testing.T) {
+	client, loop := proPlanLoop(t, true, "flash-x", "pro-x")
+	loop.ResetPlanMode()
+	drainEvents(loop.Run(context.Background(), []llm.Message{
+		{Role: llm.RoleUser, Content: "do something"},
+	}))
+	client.mu.Lock()
+	defer client.mu.Unlock()
+	if len(client.models) != 1 || client.models[0] != "flash-x" {
+		t.Errorf("models = %v, want [flash-x] after plan exit", client.models)
+	}
+}
+
+// TestProPlanChoice_PlanOver200kDegrades:plan 中上下文 ≥ 200k tokens 时降回 SubModel
+// (对齐 Claude Code exceeds200kTokens 守卫)。
+func TestProPlanChoice_PlanOver200kDegrades(t *testing.T) {
+	client := &mockLLMClient{
+		responses: []*llm.Response{
+			{Content: "first", Usage: &llm.UsageInfo{PromptTokens: 250_000}}, // 第一轮上报大上下文
+			{Content: "done"},
+		},
+	}
+	loop := New(client, newTestRegistry(), Config{
+		Model:     llm.ModelChoiceProPlan,
+		SubModel:  "flash-x",
+		PlanModel: "pro-x",
+		MaxTurns:  3,
+	})
+	// 第一轮:非 plan,lastPromptTokens=0 → SubModel
+	drainEvents(loop.Run(context.Background(), []llm.Message{
+		{Role: llm.RoleUser, Content: "do something"},
+	}))
+	// 第二轮:进入 plan,lastPromptTokens=250k ≥ 200k → 守卫降级 SubModel
+	loop.SetPlanMode("plan.md")
+	drainEvents(loop.Run(context.Background(), []llm.Message{
+		{Role: llm.RoleUser, Content: "continue"},
+	}))
+
+	client.mu.Lock()
+	defer client.mu.Unlock()
+	want := []string{"flash-x", "flash-x"} // 第一轮 flash;plan 后超 200k → 仍 flash
+	if len(client.models) != 2 {
+		t.Fatalf("models = %v, want %v", client.models, want)
+	}
+	for i, m := range want {
+		if client.models[i] != m {
+			t.Errorf("models[%d] = %q, want %q", i, client.models[i], m)
+		}
+	}
+}
+
+// TestProPlanChoice_PlanUnder200kUsesPro:plan 中上下文 < 200k 用 PlanModel,
+// 且上一轮用量由 API 上报(非估算)驱动。
+func TestProPlanChoice_PlanUnder200kUsesPro(t *testing.T) {
+	client := &mockLLMClient{
+		responses: []*llm.Response{
+			{Content: "first", Usage: &llm.UsageInfo{PromptTokens: 50_000}},
+			{Content: "done"},
+		},
+	}
+	loop := New(client, newTestRegistry(), Config{
+		Model:     llm.ModelChoiceProPlan,
+		SubModel:  "flash-x",
+		PlanModel: "pro-x",
+		MaxTurns:  3,
+	})
+	drainEvents(loop.Run(context.Background(), []llm.Message{
+		{Role: llm.RoleUser, Content: "do something"},
+	}))
+	loop.SetPlanMode("plan.md")
+	drainEvents(loop.Run(context.Background(), []llm.Message{
+		{Role: llm.RoleUser, Content: "continue"},
+	}))
+
+	client.mu.Lock()
+	defer client.mu.Unlock()
+	want := []string{"flash-x", "pro-x"} // 第一轮 flash;plan 后 50k < 200k → pro
+	if len(client.models) != 2 {
+		t.Fatalf("models = %v, want %v", client.models, want)
+	}
+	for i, m := range want {
+		if client.models[i] != m {
+			t.Errorf("models[%d] = %q, want %q", i, client.models[i], m)
+		}
+	}
+}
+
+// TestProPlanChoice_ResumeEstimate:lastPromptTokens=0(如 resume 后)时按消息
+// 估算上下文,≥ 200k 则 plan 降级。
+func TestProPlanChoice_ResumeEstimate(t *testing.T) {
+	client := &mockLLMClient{}
+	loop := New(client, newTestRegistry(), Config{
+		Model:     llm.ModelChoiceProPlan,
+		SubModel:  "flash-x",
+		PlanModel: "pro-x",
+		MaxTurns:  1,
+	})
+	loop.SetPlanMode("plan.md")
+	// ~700k ASCII 字符 ≈ 210k tokens(0.3 token/字符)× 1.3 安全系数 ≈ 273k > 200k 守卫阈值
+	big := strings.Repeat("a", 700_000)
+	drainEvents(loop.Run(context.Background(), []llm.Message{
+		{Role: llm.RoleUser, Content: big},
+	}))
+	client.mu.Lock()
+	defer client.mu.Unlock()
+	if len(client.models) != 1 || client.models[0] != "flash-x" {
+		t.Errorf("models = %v, want [flash-x] (estimated ≥200k → degraded)", client.models)
+	}
+}
+
+// TestProPlanChoice_AnchorFallback:锚点缺失时互备兜底,API 永不收到 "proplan"。
+func TestProPlanChoice_AnchorFallback(t *testing.T) {
+	t.Run("missing sub model in plan mode", func(t *testing.T) {
+		client, loop := proPlanLoop(t, true, "", "pro-x")
+		drainEvents(loop.Run(context.Background(), []llm.Message{
+			{Role: llm.RoleUser, Content: "do something"},
+		}))
+		client.mu.Lock()
+		defer client.mu.Unlock()
+		if len(client.models) != 1 || client.models[0] != "pro-x" {
+			t.Errorf("models = %v, want [pro-x] (fallback to plan anchor)", client.models)
+		}
+	})
+
+	t.Run("missing plan model in normal mode", func(t *testing.T) {
+		client, loop := proPlanLoop(t, false, "flash-x", "")
+		drainEvents(loop.Run(context.Background(), []llm.Message{
+			{Role: llm.RoleUser, Content: "do something"},
+		}))
+		client.mu.Lock()
+		defer client.mu.Unlock()
+		if len(client.models) != 1 || client.models[0] != "flash-x" {
+			t.Errorf("models = %v, want [flash-x] (fallback to sub anchor)", client.models)
+		}
+	})
+
+	t.Run("both anchors empty sends nothing", func(t *testing.T) {
+		client := &mockLLMClient{}
+		loop := New(client, newTestRegistry(), Config{
+			Model:    llm.ModelChoiceProPlan,
+			MaxTurns: 1,
+		})
+		loop.SetPlanMode("plan.md")
+		drainEvents(loop.Run(context.Background(), []llm.Message{
+			{Role: llm.RoleUser, Content: "do something"},
+		}))
+		client.mu.Lock()
+		defer client.mu.Unlock()
+		if len(client.models) != 1 || client.models[0] != "" {
+			t.Errorf("models = %v, want [\"\"] (no override, client default)", client.models)
+		}
+	})
+
+	t.Run("self-referential anchors send nothing", func(t *testing.T) {
+		// 畸形手改配置:两个锚点都写成 "proplan" 自身 → 最终不注入 override
+		client := &mockLLMClient{}
+		loop := New(client, newTestRegistry(), Config{
+			Model:     llm.ModelChoiceProPlan,
+			PlanModel: llm.ModelChoiceProPlan,
+			SubModel:  llm.ModelChoiceProPlan,
+			MaxTurns:  1,
+		})
+		loop.SetPlanMode("plan.md")
+		drainEvents(loop.Run(context.Background(), []llm.Message{
+			{Role: llm.RoleUser, Content: "do something"},
+		}))
+		client.mu.Lock()
+		defer client.mu.Unlock()
+		if len(client.models) != 1 || client.models[0] != "" {
+			t.Errorf("models = %v, want [\"\"] (self-referential anchors must not leak proplan)", client.models)
+		}
+	})
 }
 

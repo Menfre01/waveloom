@@ -16,6 +16,7 @@ type SlashMessages struct {
 	ModelConfigReadFailed string // 含 %v
 	ModelConfigSaveFailed string // 含 %v
 	ModelSwitched         string // 含 %s
+	ModelProPlanAnchorMissing string // proplan 需要 model 与 sub_model 锚点
 
 	// ── /theme ──
 	ThemeDescription string

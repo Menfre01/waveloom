@@ -286,9 +286,12 @@ type model struct {
 	commandPickerDismissValue string
 	commandPickerLastValue    string
 
-	// HUD 会话级累积（footer 显示用，跨 loop 不归零）
+	// HUD 会话级累积(footer 显示用,跨 loop 不归零)
 	hudModel          string
-	hudThinkingEffort string // thinking 档位，空表示关闭
+	modelChoice       string // 当前模型选择(具体模型名或 llm.ModelChoiceProPlan);/model 更新
+	planModel         string // proplan 语义:plan mode 锚点(settings.model)
+	subModel          string // proplan 语义:日常锚点(settings.sub_model)
+	hudThinkingEffort string // thinking 档位,空表示关闭
 	hudPromptTokens   int
 	hudComplTokens    int
 	hudTurns          int
@@ -502,7 +505,7 @@ func colorHex(c color.Color) string {
 // ---------------------------------------------------------------------------
 
 // newTUIModel 创建 TUI model，依赖由外部注入（LLM client / tool registry / guard / expander / locale）。
-func newTUIModel(llmClient llm.Client, registry tool.Registry, guard permission.Guard, sandboxMgr *sandbox.SandboxManager, expander *reference.Expander, modelName string, theme string, contextLimit int, maxTurns int, toolTimeout time.Duration, toolTimeoutSource string, loc Locale, todoState *todo.TodoState, hookRunner *hook.Runner) *model {
+func newTUIModel(llmClient llm.Client, registry tool.Registry, guard permission.Guard, sandboxMgr *sandbox.SandboxManager, expander *reference.Expander, modelChoice, planModel, subModel string, theme string, contextLimit int, maxTurns int, toolTimeout time.Duration, toolTimeoutSource string, loc Locale, todoState *todo.TodoState, hookRunner *hook.Runner) *model {
 	cwd, _ := os.Getwd()
 	cm := session.New(buildSystemPrompt(cwd, loc))
 	lc := messagesFor(loc)
@@ -590,6 +593,11 @@ func newTUIModel(llmClient llm.Client, registry tool.Registry, guard permission.
 		glamourR = nil
 	}
 
+	dailyDisplay := modelChoice
+	if modelChoice == llm.ModelChoiceProPlan {
+		dailyDisplay = subModel // footer 日常显示实际使用的模型
+	}
+
 	return &model{
 		cm:                cm,
 		llmClient:         llmClient,
@@ -599,7 +607,10 @@ func newTUIModel(llmClient llm.Client, registry tool.Registry, guard permission.
 		expander:          expander,
 		hookRunner:        hookRunner,
 		cwd:               cwd,
-		hudModel:          normalizeWidth(modelName),
+		hudModel:          normalizeWidth(dailyDisplay),
+		modelChoice:       modelChoice,
+		planModel:         planModel,
+		subModel:          subModel,
 		contextLimit:      contextLimit,
 		maxTurns:          maxTurns,
 		toolTimeout:       toolTimeout,
@@ -664,10 +675,16 @@ func (m *model) wireLoop() {
 			}
 		},
 		TodoState:   m.todoState,
-		Model:       m.hudModel,
+		Model:       m.modelChoice,
+		SubModel:    m.subModel,
+		PlanModel:   m.planModel,
 		LSPManager:  m.lspManager,
 	})
 	m.loop.SetHookRunner(m.hookRunner)
+	// 重建(如 /model、/provider 切换)时恢复 plan 状态,避免静默降级为日常模型
+	if m.inPlanMode && m.planFile != "" {
+		m.loop.RestorePlanMode(m.planFile)
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -964,7 +981,11 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.inPlanMode = true
 		m.planEnteredByUser = false
 		m.planPairID = msg.PairID
+		m.planFile = msg.PlanFile // 补存 plan 文件路径(wireLoop 重建后 RestorePlanMode 用)
 		m.planStartSent = true
+		if m.modelChoice == llm.ModelChoiceProPlan {
+			m.hudModel = normalizeWidth(m.planModel) // footer 即时切换为 plan 模型
+		}
 		m.input.Placeholder = m.msg().InputPlanModePlaceholder
 		return m, nil
 
@@ -973,6 +994,9 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.inPlanMode = false
 			m.planEnteredByUser = false
 			m.planStartSent = false
+			if m.modelChoice == llm.ModelChoiceProPlan {
+				m.hudModel = normalizeWidth(m.subModel) // 恢复日常模型显示
+			}
 			m.input.Placeholder = m.msg().InputPlaceholder
 		}
 		return m, nil
@@ -4301,8 +4325,7 @@ func (m *model) handleSlashCommand(input string) tea.Cmd {
 				m.input.Blur()
 			}
 		case slashcommand.SideEffectModelSwitched:
-			m.hudModel = normalizeWidth(se.Detail)
-			m.reconfigureLLMClient(se.Detail)
+			m.reconfigureLLMClient(se.Detail) // hudModel 在 reconfigure 成功路径内更新(锚点缺失时不残留)
 
 		case slashcommand.SideEffectInvokeSkill:
 			skillBody := se.Detail // 由 SkillCommand.Execute 通过 SkillExecutor 获取
@@ -4403,15 +4426,32 @@ func (m *model) reconfigureLLMClient(newModel string) {
 	if err != nil {
 		return
 	}
-	// 先解析 profile（provider 专属字段覆盖顶层残留），再应用 /model 显式
-	// 指定的模型，保证显式切换的模型优先级最高。
+	// 先解析 profile(provider 专属字段覆盖顶层残留),再应用 /model 显式
+	// 指定的模型,保证显式切换的模型优先级最高。
 	settings.ResolveProfile()
-	settings.Model = newModel
+	// 同步最新锚点(磁盘可能被手改或 /provider 切换过,TUI 内存字段可能过期)
+	m.planModel = settings.Model
+	m.subModel = settings.SubModel
 	client, _, err := llm.NewClientFromLLMSettings(settings)
 	if err != nil {
 		return
 	}
 	m.llmClient = client
+	// /model 切换:更新当前选择(具体模型名或 proplan)。锚点缺失时拒绝切换。
+	// 磁盘持久化由 slashcommand.ModelCommand 完成(profiles.<provider>.curr_model)。
+	// 防御:锚点缺失或自指(== proplan)时拒绝(命令层已兜底,防未来其他调用路径)
+	if newModel == llm.ModelChoiceProPlan &&
+		(m.planModel == "" || m.subModel == "" ||
+			m.planModel == llm.ModelChoiceProPlan || m.subModel == llm.ModelChoiceProPlan) {
+		slog.Warn("proplan rejected: missing model/sub_model anchors", "planModel", m.planModel, "subModel", m.subModel)
+		return
+	}
+	m.modelChoice = newModel
+	if newModel == llm.ModelChoiceProPlan {
+		m.hudModel = normalizeWidth(m.subModel)
+	} else {
+		m.hudModel = normalizeWidth(newModel)
+	}
 	m.rebuildSlashRegistry()
 	if m.agentTool != nil {
 		m.agentTool.SetClient(client)
@@ -4432,9 +4472,28 @@ func (m *model) reconfigureLLMClientForProvider(newProvider string, settings *ll
 			return
 		}
 	}
-	// 先设置 provider，再解析 profile（新 provider 的专属字段覆盖顶层残留）
+	// 先设置 provider,再解析 profile(新 provider 的专属字段覆盖顶层残留)
 	settings.Provider = newProvider
 	settings.ResolveProfile()
+	// 重算 proplan 锚点与当前选择(profile 的 curr_model 已解析;顶层残留不携带)
+	m.planModel = settings.Model
+	m.subModel = settings.SubModel
+	// 防御:锚点缺失或自指(== proplan)时回退到该 provider 的 model,
+	// 与 reconfigureLLMClient 的自指校验对齐(畸形手改配置防泄漏)
+	if settings.CurrModel == llm.ModelChoiceProPlan &&
+		(settings.Model == "" || settings.SubModel == "" ||
+			settings.Model == llm.ModelChoiceProPlan || settings.SubModel == llm.ModelChoiceProPlan) {
+		// 新 provider 锚点缺失 → 回退到该 provider 的 model,防互备兜底静默升 pro
+		slog.Warn("proplan anchors missing for provider, falling back to model", "provider", newProvider)
+		m.modelChoice = settings.Model
+		if m.modelChoice == llm.ModelChoiceProPlan {
+			m.modelChoice = "" // 畸形锚点(自指):回退空,用 client 默认,防 "proplan" 泄漏
+		}
+	} else if settings.CurrModel != "" {
+		m.modelChoice = settings.CurrModel
+	} else {
+		m.modelChoice = settings.Model
+	}
 	client, _, err := llm.NewClientFromLLMSettings(settings)
 	if err != nil {
 		slog.Warn("failed to create LLM client for new provider", "err", err)
@@ -4443,8 +4502,14 @@ func (m *model) reconfigureLLMClientForProvider(newProvider string, settings *ll
 	m.llmClient = client
 
 	// 更新 HUD 显示的模型名
-	if settings.Model != "" {
-		m.hudModel = normalizeWidth(settings.Model)
+	if m.modelChoice == llm.ModelChoiceProPlan {
+		m.hudModel = normalizeWidth(m.subModel)
+	} else if m.modelChoice != "" {
+		m.hudModel = normalizeWidth(m.modelChoice)
+	} else if settings.Model != "" && settings.Model != llm.ModelChoiceProPlan {
+		m.hudModel = normalizeWidth(settings.Model) // 空选择 → 显示该 provider 的 model,防旧 provider 名残留
+	} else {
+		m.hudModel = "" // 畸形锚点(自指):清空显示,防 "proplan" 残留
 	}
 	m.hudThinkingEffort = resolveThinkingEffort(settings)
 
@@ -4502,6 +4567,12 @@ func (s *tuiSettingsStore) LoadLLM() (*llm.LLMSettings, error) {
 		panic(fmt.Sprintf("settings parse error in %s: %v", s.projectPath, err))
 	}
 	return llm.MergeLLMSettings(global, project), nil
+}
+
+// LoadProjectLLM 直接读取项目 settings.json 的 llm 段(不合并全局)。
+// 写入路径的目标:避免合并结果写回时复制全局配置到项目文件。
+func (s *tuiSettingsStore) LoadProjectLLM() (*llm.LLMSettings, error) {
+	return llm.LoadSettingsIfExists(s.projectPath)
 }
 
 func (s *tuiSettingsStore) SaveLLM(settings *llm.LLMSettings) error {
@@ -4684,6 +4755,7 @@ func slashMessagesFrom(lc *Messages) *slashcommand.SlashMessages {
 		ModelConfigReadFailed:  lc.SlashModelConfigReadFailed,
 		ModelConfigSaveFailed:  lc.SlashModelConfigSaveFailed,
 		ModelSwitched:          lc.SlashModelSwitched,
+		ModelProPlanAnchorMissing: lc.SlashModelProPlanAnchorMissing,
 
 		ThemeDescription:       lc.SlashThemeDescription,
 		LocaleDescription:      lc.SlashLocaleDescription,
@@ -4742,8 +4814,8 @@ func newSlashRegistry(creator slashcommand.SessionCreator, store slashcommand.Se
 // ---------------------------------------------------------------------------
 
 // runTUI 启动交互式 TUI 模式。依赖由 main() 统一初始化后传入，无需重复创建。
-func runTUI(llmClient llm.Client, registry tool.Registry, guard permission.Guard, sandboxMgr *sandbox.SandboxManager, expander *reference.Expander, modelName string, theme string, contextLimit int, maxTurns int, toolTimeout time.Duration, toolTimeoutSource string, bypassPerm bool, ctxMgr *session.ContextManager, isResume bool, sessionDir string, globalPath string, projectPath string, agentsMdText string, loc Locale, todoState *todo.TodoState, hookRunner *hook.Runner, agentTool *subagent.AgentTool, mcpManager *mcp.Manager, lspManager *lsp.Manager) {
-	m := newTUIModel(llmClient, registry, guard, sandboxMgr, expander, modelName, theme, contextLimit, maxTurns, toolTimeout, toolTimeoutSource, loc, todoState, hookRunner)
+func runTUI(llmClient llm.Client, registry tool.Registry, guard permission.Guard, sandboxMgr *sandbox.SandboxManager, expander *reference.Expander, modelChoice, planModel, subModel string, theme string, contextLimit int, maxTurns int, toolTimeout time.Duration, toolTimeoutSource string, bypassPerm bool, ctxMgr *session.ContextManager, isResume bool, sessionDir string, globalPath string, projectPath string, agentsMdText string, loc Locale, todoState *todo.TodoState, hookRunner *hook.Runner, agentTool *subagent.AgentTool, mcpManager *mcp.Manager, lspManager *lsp.Manager) {
+	m := newTUIModel(llmClient, registry, guard, sandboxMgr, expander, modelChoice, planModel, subModel, theme, contextLimit, maxTurns, toolTimeout, toolTimeoutSource, loc, todoState, hookRunner)
 	m.mcpManager = mcpManager
 	m.lspManager = lspManager
 	m.agentTool = agentTool
@@ -4770,7 +4842,7 @@ func runTUI(llmClient llm.Client, registry tool.Registry, guard permission.Guard
 	homeDir, _ := os.UserHomeDir()
 	skillLoader := skill.NewLoader(m.cwd, homeDir, ctxMgr.SessionID(), "medium", guard)
 	m.slashMessages = slashMessagesFrom(m.lc)
-	m.slashRegistry = newSlashRegistry(sessionCreator, store, lister, modelName, skillLoader, registry, m.slashMessages)
+	m.slashRegistry = newSlashRegistry(sessionCreator, store, lister, modelChoice, skillLoader, registry, m.slashMessages)
 	m.skillLoader = skillLoader
 
 	m.bypassPerm = bypassPerm
@@ -4815,6 +4887,9 @@ func runTUI(llmClient llm.Client, registry tool.Registry, guard permission.Guard
 			m.planStartSent = true // 消息历史中已有 [plan:start],避免 doTurn 重复注入
 			m.planPairID = extractPlanPairID(ctxMgr.Messages()) // 从消息历史中提取配对 ID
 			m.input.Placeholder = m.msg().InputPlanModePlaceholder
+			if m.modelChoice == llm.ModelChoiceProPlan {
+				m.hudModel = normalizeWidth(m.planModel) // resume 即处于 plan:footer 直接显示 pro
+			}
 			// 恢复 Guard 的 plan 模式状态(权限守门人)
 			m.guard.EnterPlanMode(planFile)
 			// Loop 状态推迟到 wireLoop() 之后恢复(此时 m.loop 尚为 nil)

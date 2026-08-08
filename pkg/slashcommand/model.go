@@ -72,8 +72,9 @@ func (c *ModelCommand) executeWithArgs(ctx context.Context, name string) (*Resul
 		}, nil
 	}
 
-	// 校验 name 是否在可用列表中
-	if !modelInList(models, name) {
+	// 校验 name 是否在可用列表中。proplan 是特殊选择值(不在 provider
+	// 模型列表中,对齐 Claude Code 的 opusplan alias),跳过列表校验。
+	if name != llm.ModelChoiceProPlan && !modelInList(models, name) {
 		return &Result{
 			Text: fmt.Sprintf(c.messages.ModelUnknown, name),
 		}, nil
@@ -90,8 +91,40 @@ func (c *ModelCommand) executeWithArgs(ctx context.Context, name string) (*Resul
 		settings = &llm.LLMSettings{}
 	}
 
-	settings.SetModel(name)
-	if err := c.store.SaveLLM(settings); err != nil {
+	// proplan 需要 model/sub_model 锚点(plan 与日常模型来源)。缺失时拒绝,
+	// 防磁盘持久化 proplan 后启动报错或 "proplan" 泄漏到 API。
+	// 锚点可能只配置在 profile 内(Merge 白名单不含 SubModel),需解析 profile
+	// 后判断;校验用副本,持久化仍用原 settings,避免合并结果污染项目文件。
+	resolved := *settings
+	resolved.ResolveProfile()
+	if name == llm.ModelChoiceProPlan &&
+		(resolved.Model == "" || resolved.SubModel == "" ||
+			resolved.Model == llm.ModelChoiceProPlan || resolved.SubModel == llm.ModelChoiceProPlan) {
+		return &Result{
+			Text: c.messages.ModelProPlanAnchorMissing,
+		}, nil
+	}
+
+	// 持久化:写入目标 = 项目文件自身(LoadProjectLLM,不合并全局),防止
+	// 全局配置被复制进项目文件 / 空 profile 覆盖全局完整配置。
+	project, err := c.store.LoadProjectLLM()
+	if err != nil {
+		return &Result{
+			Text: fmt.Sprintf(c.messages.ModelConfigReadFailed, err),
+		}, nil
+	}
+	if project == nil {
+		project = &llm.LLMSettings{}
+	}
+	// 项目文件已有该 provider 的 profile → 写 profile.curr_model;
+	// 无 → 写顶层 curr_model(合并时全局完整 profile 保留,顶层作 fallback,
+	// 避免创建空 profile 覆盖全局)。
+	if p := project.Profiles[settings.Provider]; p != nil {
+		p.CurrModel = name
+	} else {
+		project.CurrModel = name
+	}
+	if err := c.store.SaveLLM(project); err != nil {
 		return &Result{
 			Text: fmt.Sprintf(c.messages.ModelConfigSaveFailed, err),
 		}, nil

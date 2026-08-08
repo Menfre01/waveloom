@@ -123,9 +123,19 @@ func (c *ProviderCommand) executeWithArgs(name string) (*Result, error) {
 
 	oldProvider := settings.Provider
 
-	settings.Provider = name
-
-	if err := c.store.SaveLLM(settings); err != nil {
+	// 持久化:写入目标 = 项目文件自身(不合并全局),防止全局配置被复制进
+	// 项目文件。profile 仍来自合并结果(全局 profile 继续生效)。
+	project, err := c.store.LoadProjectLLM()
+	if err != nil {
+		return &Result{
+			Text: fmt.Sprintf(c.messages.ProviderConfigReadFailed, err),
+		}, nil
+	}
+	if project == nil {
+		project = &llm.LLMSettings{}
+	}
+	project.Provider = name
+	if err := c.store.SaveLLM(project); err != nil {
 		return &Result{
 			Text: fmt.Sprintf(c.messages.ProviderConfigSaveFailed, err),
 		}, nil

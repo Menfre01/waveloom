@@ -206,6 +206,29 @@ func TestNewClientFromLLMSettings(t *testing.T) {
 	}
 }
 
+// TestRegression_CurrModelNotInClientConfig 防护:"proplan" 选择值(或任何
+// curr_model)绝不进入 llm.Client 配置——client 的 Model 只来自 settings.Model
+// (pro 锚点),否则 API 请求会携带 "proplan" 字符串。
+func TestRegression_CurrModelNotInClientConfig(t *testing.T) {
+	s := &LLMSettings{
+		APIKey:    "sk-test",
+		Provider:  "deepseek",
+		Model:     "deepseek-v4-pro",
+		CurrModel: ModelChoiceProPlan,
+	}
+	client, cfg, err := NewClientFromLLMSettings(s)
+	if err != nil {
+		t.Fatalf("NewClientFromLLMSettings: %v", err)
+	}
+	_ = client
+	if cfg.Model != "deepseek-v4-pro" {
+		t.Errorf("cfg.Model = %q, want deepseek-v4-pro (curr_model must not leak into client)", cfg.Model)
+	}
+	if cfg.Model == ModelChoiceProPlan {
+		t.Fatal("ModelChoiceProPlan leaked into client config")
+	}
+}
+
 func TestNewClientFromLLMSettingsMissingAPIKey(t *testing.T) {
 	_ = os.Unsetenv("LLM_API_KEY")
 
@@ -862,7 +885,6 @@ func TestMergeLLMSettings(t *testing.T) {
 	})
 }
 
-
 func TestResolveProfile(t *testing.T) {
 	t.Run("profiles nil no-op", func(t *testing.T) {
 		s := &LLMSettings{Provider: "kimi", Model: "keep-me"}
@@ -1192,4 +1214,251 @@ func TestWriteDefaultSettingsIdempotent(t *testing.T) {
 	}
 }
 
+// TestCurrModelJSONRoundTrip 验证 curr_model 字段的序列化往返(顶层 + profile 内)。
+func TestCurrModelJSONRoundTrip(t *testing.T) {
+	s := &LLMSettings{
+		Provider:  "deepseek",
+		Model:     "deepseek-v4-pro",
+		SubModel:  "deepseek-v4-flash",
+		CurrModel: ModelChoiceProPlan,
+		Profiles: map[string]*LLMSettings{
+			"deepseek": {Model: "deepseek-v4-pro", SubModel: "deepseek-v4-flash", CurrModel: "deepseek-v4-flash"},
+		},
+	}
+	data, err := json.Marshal(s)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	var restored LLMSettings
+	if err := json.Unmarshal(data, &restored); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	if restored.CurrModel != ModelChoiceProPlan {
+		t.Errorf("top-level CurrModel = %q, want %q", restored.CurrModel, ModelChoiceProPlan)
+	}
+	if restored.Profiles["deepseek"].CurrModel != "deepseek-v4-flash" {
+		t.Errorf("profile CurrModel = %q, want deepseek-v4-flash", restored.Profiles["deepseek"].CurrModel)
+	}
+
+	// omitempty:空值不序列化
+	empty := &LLMSettings{Provider: "deepseek", Model: "deepseek-v4-pro"}
+	data, _ = json.Marshal(empty)
+	if strings.Contains(string(data), "curr_model") {
+		t.Errorf("empty CurrModel should be omitted, got %s", data)
+	}
+}
+
+// TestResolveProfileCurrModel 验证 curr_model 与 Model 同构:profile 非空覆盖顶层;
+// profile 无 curr_model 时顶层生效(无清空规则)。
+func TestResolveProfileCurrModel(t *testing.T) {
+	s := &LLMSettings{
+		Provider:  "deepseek",
+		CurrModel: "deepseek-v4-flash",
+		Profiles: map[string]*LLMSettings{
+			"deepseek": {CurrModel: ModelChoiceProPlan},
+		},
+	}
+	s.ResolveProfile()
+	if s.CurrModel != ModelChoiceProPlan {
+		t.Errorf("CurrModel = %q, want %q (profile overrides top-level)", s.CurrModel, ModelChoiceProPlan)
+	}
+
+	// profile 无 curr_model → 顶层生效(与 Model 行为一致,无清空规则)
+	s2 := &LLMSettings{
+		Provider:  "deepseek",
+		CurrModel: "deepseek-v4-flash",
+		Profiles: map[string]*LLMSettings{
+			"deepseek": {Model: "deepseek-v4-pro"},
+		},
+	}
+	s2.ResolveProfile()
+	if s2.CurrModel != "deepseek-v4-flash" {
+		t.Errorf("CurrModel = %q, want deepseek-v4-flash (top-level fallback)", s2.CurrModel)
+	}
+}
+
+// TestRegression_EmptyProviderOmitted 回归:空 Provider 序列化不再输出
+// "provider": ""(曾导致 profile 落盘大量空 provider 字段,纯噪声)。
+func TestRegression_EmptyProviderOmitted(t *testing.T) {
+	empty := &LLMSettings{Model: "deepseek-v4-pro"}
+	data, _ := json.Marshal(empty)
+	if strings.Contains(string(data), `"provider"`) {
+		t.Errorf("empty Provider should be omitted, got %s", data)
+	}
+
+	// 非空 Provider 正常落盘(omitempty 不影响有值场景)
+	withProvider := &LLMSettings{Provider: "deepseek", Model: "deepseek-v4-pro"}
+	data, _ = json.Marshal(withProvider)
+	if !strings.Contains(string(data), `"provider":"deepseek"`) {
+		t.Errorf("non-empty Provider must be serialized, got %s", data)
+	}
+}
+
+// TestSetCurrModelForProvider 验证 /model 持久化目标:写入当前 provider 的 profile,
+// 不存在则自动创建;omitempty 序列化仅落盘 curr_model 字段。
+func TestSetCurrModelForProvider(t *testing.T) {
+	s := &LLMSettings{Provider: "deepseek", Model: "deepseek-v4-pro"}
+	s.SetCurrModelForProvider("deepseek", "deepseek-v4-flash")
+
+	p := s.Profiles["deepseek"]
+	if p == nil {
+		t.Fatal("profile not created")
+	}
+	if p.CurrModel != "deepseek-v4-flash" {
+		t.Errorf("profile CurrModel = %q, want deepseek-v4-flash", p.CurrModel)
+	}
+	// 顶层 Model 锚点不受影响
+	if s.Model != "deepseek-v4-pro" {
+		t.Errorf("top-level Model = %q, want deepseek-v4-pro (anchor untouched)", s.Model)
+	}
+
+	// 序列化:自动创建的 profile 仅含 curr_model(与 setup 新格式一致,无冗余 provider)
+	data, err := json.Marshal(s)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(data, &m); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	profiles := m["profiles"].(map[string]any)
+	ds := profiles["deepseek"].(map[string]any)
+	if len(ds) != 1 || ds["curr_model"] != "deepseek-v4-flash" {
+		t.Errorf("created profile should only serialize curr_model, got %v", ds)
+	}
+
+	// 复用现有 profile(保留其他字段)
+	s2 := &LLMSettings{
+		Provider: "kimi",
+		Profiles: map[string]*LLMSettings{
+			"kimi": {Model: "kimi-k3", APIKey: "sk-kimi"},
+		},
+	}
+	s2.SetCurrModelForProvider("kimi", ModelChoiceProPlan)
+	if s2.Profiles["kimi"].CurrModel != ModelChoiceProPlan {
+		t.Errorf("reused profile CurrModel = %q", s2.Profiles["kimi"].CurrModel)
+	}
+	if s2.Profiles["kimi"].APIKey != "sk-kimi" {
+		t.Error("reused profile lost APIKey")
+	}
+}
+
+// TestMergeCurrModel 验证 MergeLLMSettings 全路径携带 curr_model:
+// 同 provider override 覆盖 / providerChanged 以 override 为准 / copyProfile 保留。
+func TestMergeCurrModel(t *testing.T) {
+	t.Run("same provider override wins", func(t *testing.T) {
+		base := &LLMSettings{Provider: "deepseek", CurrModel: "deepseek-v4-pro"}
+		override := &LLMSettings{Provider: "deepseek", CurrModel: "deepseek-v4-flash"}
+		got := MergeLLMSettings(base, override)
+		if got.CurrModel != "deepseek-v4-flash" {
+			t.Errorf("CurrModel = %q, want deepseek-v4-flash", got.CurrModel)
+		}
+	})
+
+	t.Run("provider changed uses override", func(t *testing.T) {
+		base := &LLMSettings{Provider: "deepseek", CurrModel: "deepseek-v4-flash"}
+		override := &LLMSettings{Provider: "kimi", CurrModel: "kimi-k3"}
+		got := MergeLLMSettings(base, override)
+		if got.CurrModel != "kimi-k3" {
+			t.Errorf("CurrModel = %q, want kimi-k3", got.CurrModel)
+		}
+	})
+
+	t.Run("provider changed empty curr_model", func(t *testing.T) {
+		// 项目切换 provider 且未配 curr_model → 不继承全局残留
+		base := &LLMSettings{Provider: "deepseek", CurrModel: "deepseek-v4-flash"}
+		override := &LLMSettings{Provider: "kimi", Model: "kimi-k3"}
+		got := MergeLLMSettings(base, override)
+		if got.CurrModel != "" {
+			t.Errorf("CurrModel = %q, want empty (no cross-provider carry)", got.CurrModel)
+		}
+	})
+
+	t.Run("copyProfile preserves curr_model", func(t *testing.T) {
+		base := &LLMSettings{Provider: "deepseek"}
+		override := &LLMSettings{
+			Provider: "deepseek",
+			Profiles: map[string]*LLMSettings{
+				"deepseek": {Model: "deepseek-v4-pro", CurrModel: ModelChoiceProPlan},
+			},
+		}
+		got := MergeLLMSettings(base, override)
+		if got.Profiles["deepseek"].CurrModel != ModelChoiceProPlan {
+			t.Errorf("copied profile CurrModel = %q, want %q", got.Profiles["deepseek"].CurrModel, ModelChoiceProPlan)
+		}
+		// 深拷贝:修改 merged 不污染 override
+		got.Profiles["deepseek"].CurrModel = "mutated"
+		if override.Profiles["deepseek"].CurrModel != ModelChoiceProPlan {
+			t.Error("copyProfile not deep: override mutated")
+		}
+	})
+}
+
+// TestRegression_ProfileSubModelSurvivesMerge 回归:profile 内的 sub_model 在
+// 全局+项目配置合并(/model 持久化路径)后必须保留。
+// 曾因 copyProfile 未复制 SubModel,导致 /model 写回时项目文件的
+// profiles.<provider>.sub_model 被残缺副本覆盖消失(proplan 锚点丢失)。
+func TestRegression_ProfileSubModelSurvivesMerge(t *testing.T) {
+	global := &LLMSettings{
+		Provider: "deepseek",
+		Profiles: map[string]*LLMSettings{
+			"deepseek": {APIKey: "sk-global", Model: "deepseek-v4-pro", SubModel: "deepseek-v4-flash"},
+			"kimi":     {APIKey: "sk-global-kimi", Model: "kimi-k3"},
+		},
+	}
+	project := &LLMSettings{
+		Provider: "deepseek",
+		Profiles: map[string]*LLMSettings{
+			"deepseek": {APIKey: "sk-project", Model: "deepseek-v4-pro", SubModel: "deepseek-v4-flash"},
+		},
+	}
+	merged := MergeLLMSettings(global, project)
+
+	// 项目 profile 覆盖全局同名 profile,copyProfile 后 sub_model 必须保留
+	ds := merged.Profiles["deepseek"]
+	if ds == nil {
+		t.Fatal("deepseek profile missing after merge")
+	}
+	if ds.SubModel != "deepseek-v4-flash" {
+		t.Errorf("merged deepseek profile SubModel = %q, want deepseek-v4-flash", ds.SubModel)
+	}
+	// 全局独有 profile 保留且 sub_model 不丢
+	if merged.Profiles["kimi"] == nil {
+		t.Fatal("kimi profile lost after merge")
+	}
+	if merged.Profiles["kimi"].Model != "kimi-k3" {
+		t.Errorf("kimi profile Model = %q, want kimi-k3", merged.Profiles["kimi"].Model)
+	}
+}
+
+// TestMergeSubModelTopLevel 验证 Merge 标量分支携带 SubModel:
+// 同 provider 顶层覆盖 + providerChanged 以 override 为准。
+func TestMergeSubModelTopLevel(t *testing.T) {
+	t.Run("same provider override wins", func(t *testing.T) {
+		base := &LLMSettings{Provider: "deepseek", SubModel: "deepseek-v4-pro"}
+		override := &LLMSettings{Provider: "deepseek", SubModel: "deepseek-v4-flash"}
+		got := MergeLLMSettings(base, override)
+		if got.SubModel != "deepseek-v4-flash" {
+			t.Errorf("SubModel = %q, want deepseek-v4-flash", got.SubModel)
+		}
+	})
+
+	t.Run("provider changed uses override", func(t *testing.T) {
+		base := &LLMSettings{Provider: "deepseek", SubModel: "deepseek-v4-flash"}
+		override := &LLMSettings{Provider: "kimi", SubModel: "kimi-k2.7-code-highspeed"}
+		got := MergeLLMSettings(base, override)
+		if got.SubModel != "kimi-k2.7-code-highspeed" {
+			t.Errorf("SubModel = %q, want kimi-k2.7-code-highspeed", got.SubModel)
+		}
+	})
+
+	t.Run("same provider base fallback", func(t *testing.T) {
+		base := &LLMSettings{Provider: "deepseek", SubModel: "deepseek-v4-flash"}
+		override := &LLMSettings{Provider: "deepseek"} // 未配 sub_model → 继承 base
+		got := MergeLLMSettings(base, override)
+		if got.SubModel != "deepseek-v4-flash" {
+			t.Errorf("SubModel = %q, want deepseek-v4-flash (base fallback)", got.SubModel)
+		}
+	})
+}
 

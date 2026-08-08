@@ -176,6 +176,19 @@ Options:
 		}
 	}
 
+	// proplan 语义:解析主 Loop 模型选择(--model > curr_model > model)。
+	// ACP 无 plan 工具 → proplan 恒走日常分支(sub_model)。
+	var modelChoice, planModel string
+	if llmSettings != nil {
+		var err error
+		modelChoice, planModel, subModel, err = resolveModelChoice(*model, llmSettings)
+		if err != nil {
+			// 锚点缺失:降级为 settings.model,proplan 语义不可用但不阻断启动
+			fmt.Fprintln(os.Stderr, "⚠ acp: "+err.Error())
+			modelChoice = llmSettings.Model
+		}
+	}
+
 	// 注册内置工具(注入沙箱与权限守门人;交互式工具在 ACP 下不可用,不注册)
 	registerACPBuiltinTools(registry, skillLoader, llmClient, modelName, subModel, cwd, settingsProvider, sandboxMgr, guard, compactionConfig)
 
@@ -220,6 +233,9 @@ Options:
 		CompactionConfig: compactionConfig,
 		Summarizer:       summarizer,
 		CommandRunner:    commandRunner,
+		ModelChoice:      modelChoice,
+		PlanModel:        planModel,
+		SubModel:         subModel,
 	})
 
 	slog.Info("acp: starting server", "version", Version, "cwd", cwd, "sessionDir", acpSessionDir)

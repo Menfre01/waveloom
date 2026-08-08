@@ -703,18 +703,26 @@ func resolveThinkingEffort(settings *llm.LLMSettings) string {
 
 // commitModelSwitch 确认模型切换：写 settings + 热替换。
 func (m *model) commitModelSwitch(modelID string) {
-	settings, err := m.settingsStore.LoadLLM()
+	// 写入目标 = 项目文件自身(不合并全局),防全局配置复制进项目文件;
+	// 语义与 /model 命令一致:写 curr_model(model 锚点不被修改)。
+	settings, err := m.settingsStore.LoadProjectLLM()
 	if err != nil {
 		settings = &llm.LLMSettings{}
 	}
+	if settings == nil {
+		settings = &llm.LLMSettings{}
+	}
 
-	settings.SetModel(modelID)
+	if p := settings.Profiles[settings.Provider]; p != nil {
+		p.CurrModel = modelID
+	} else {
+		settings.CurrModel = modelID
+	}
 	if err := m.settingsStore.SaveLLM(settings); err != nil {
 		slog.Warn("failed to save LLM settings", "err", err)
 	}
-	m.hudModel = normalizeWidth(modelID)
 	m.hudThinkingEffort = resolveThinkingEffort(settings)
-	m.reconfigureLLMClient(modelID)
+	m.reconfigureLLMClient(modelID) // hudModel 在 reconfigure 成功路径统一更新(失败不残留)
 
 	// 追加系统通知
 	lc := m.msg()
@@ -855,25 +863,29 @@ func (m *model) handleProviderPickerKey(msg tea.KeyPressMsg) (bool, tea.Cmd) {
 
 // commitProviderSwitch 确认 provider 切换：写 settings + 热替换 LLM Client。
 func (m *model) commitProviderSwitch(name string) {
-	settings, err := m.settingsStore.LoadLLM()
+	// 写入目标 = 项目文件自身(不合并全局),只改 Provider 选择;
+	// 不再 ResolveProfile 后保存(profile 值会提升到顶层,污染项目文件)。
+	settings, err := m.settingsStore.LoadProjectLLM()
 	if err != nil {
 		slog.Warn("failed to load LLM settings for provider switch", "err", err)
 		return
 	}
+	if settings == nil {
+		settings = &llm.LLMSettings{}
+	}
 
 	oldProvider := settings.Provider
 	settings.Provider = name
-	settings.ResolveProfile()
 	if err := m.settingsStore.SaveLLM(settings); err != nil {
 		slog.Warn("failed to save LLM settings", "err", err)
 	}
 
-	m.reconfigureLLMClientForProvider(name, settings)
+	m.reconfigureLLMClientForProvider(name, nil) // 内存热替换:内部重新合并+ResolveProfile,不保存
 
 	lc := m.msg()
 	text := fmt.Sprintf(lc.ProviderSwitched, oldProvider, name)
-	if settings.Model != "" {
-		text += "\n" + fmt.Sprintf(lc.ProviderModelNotice, settings.Model)
+	if m.planModel != "" {
+		text += "\n" + fmt.Sprintf(lc.ProviderModelNotice, m.planModel)
 	}
 	m.paras = append(m.paras, Paragraph{
 		Type:      paraSystem,

@@ -24,7 +24,8 @@ func testMessagesZhCN() *SlashMessages {
 		ModelConfigReadFailed: "读取配置失败: %v",
 		ModelConfigSaveFailed: "保存配置失败: %v",
 		ModelSwitched:          "模型已切换为 %s。",
-		ThemeDescription:       "选择主题（Auto / Dark / Light）",
+		ModelProPlanAnchorMissing: "proplan 需要配置 model 与 sub_model 锚点。",
+		ThemeDescription:       "选择主题(Auto / Dark / Light)",
 		LocaleDescription:     "切换语言（zh-CN / en-US）",
 		HelpDescription:       "显示所有可用命令",
 		HelpText:              "使用技巧:\n\nwaveloom --continue",
@@ -40,10 +41,11 @@ type mockSessionCreator struct {
 func (m *mockSessionCreator) NewSession() error { return m.err }
 
 type mockSettingsStore struct {
-	settings      *llm.LLMSettings
-	loadErr       error
-	savedSettings *llm.LLMSettings
-	saveErr       error
+	settings        *llm.LLMSettings // LoadLLM 返回(合并结果)
+	projectSettings *llm.LLMSettings // LoadProjectLLM 返回(项目文件,写入目标)
+	loadErr         error
+	savedSettings   *llm.LLMSettings
+	saveErr         error
 }
 
 func (m *mockSettingsStore) LoadLLM() (*llm.LLMSettings, error) {
@@ -51,6 +53,13 @@ func (m *mockSettingsStore) LoadLLM() (*llm.LLMSettings, error) {
 		return nil, m.loadErr
 	}
 	return m.settings, nil
+}
+
+func (m *mockSettingsStore) LoadProjectLLM() (*llm.LLMSettings, error) {
+	if m.loadErr != nil {
+		return nil, m.loadErr
+	}
+	return m.projectSettings, nil
 }
 
 func (m *mockSettingsStore) SaveLLM(settings *llm.LLMSettings) error {
@@ -206,6 +215,13 @@ func TestModelCommandNoArgsAPIError(t *testing.T) {
 func TestModelCommandWithArgsSuccess(t *testing.T) {
 	store := &mockSettingsStore{
 		settings: &llm.LLMSettings{Model: "deepseek-v4-pro", Provider: "deepseek"},
+		projectSettings: &llm.LLMSettings{
+			Model:    "deepseek-v4-pro",
+			Provider: "deepseek",
+			Profiles: map[string]*llm.LLMSettings{
+				"deepseek": {Model: "deepseek-v4-pro"},
+			},
+		},
 	}
 	lister := &mockModelLister{
 		models: []llm.ModelInfo{
@@ -231,8 +247,12 @@ func TestModelCommandWithArgsSuccess(t *testing.T) {
 	if store.savedSettings == nil {
 		t.Fatal("SaveLLM should have been called")
 	}
-	if store.savedSettings.Model != "deepseek-v4-flash" {
-		t.Errorf("saved Model = %q, want deepseek-v4-flash", store.savedSettings.Model)
+	// 新语义:/model 写 profiles.<provider>.curr_model,model 锚点不被修改
+	if store.savedSettings.Profiles["deepseek"].CurrModel != "deepseek-v4-flash" {
+		t.Errorf("saved profile curr_model = %q, want deepseek-v4-flash", store.savedSettings.Profiles["deepseek"].CurrModel)
+	}
+	if store.savedSettings.Model != "deepseek-v4-pro" {
+		t.Errorf("saved Model = %q, want deepseek-v4-pro (anchor untouched)", store.savedSettings.Model)
 	}
 }
 
@@ -531,6 +551,7 @@ func TestProviderCommandWithArgsFromProfile(t *testing.T) {
 				"openai": {Model: "gpt-4o", BaseURL: "https://api.openai.com/v1"},
 			},
 		},
+		projectSettings: &llm.LLMSettings{Provider: "deepseek"},
 	}
 	msg := testMessagesZhCNFull()
 	cmd := NewProviderCommand(store, msg)
@@ -557,9 +578,8 @@ func TestProviderCommandWithArgsFromProfile(t *testing.T) {
 
 func TestProviderCommandWithArgsKnownProviderNoProfile(t *testing.T) {
 	store := &mockSettingsStore{
-		settings: &llm.LLMSettings{
-			Provider: "deepseek",
-		},
+		settings:        &llm.LLMSettings{Provider: "deepseek"},
+		projectSettings: &llm.LLMSettings{Provider: "deepseek"},
 	}
 	msg := testMessagesZhCNFull()
 	cmd := NewProviderCommand(store, msg)

@@ -37,9 +37,14 @@ type SessionCreator interface {
 // ── /model 所需 ──
 
 // SettingsStore 抽象 settings.json 中 llm section 的读写。
-// SaveLLM 内部实现全量 read-modify-write，确保其他 section 不丢失。
+// SaveLLM 内部实现全量 read-modify-write,确保其他 section 不丢失。
 type SettingsStore interface {
 	LoadLLM() (*llm.LLMSettings, error)
+	// LoadProjectLLM 直接读取项目 settings.json 的 llm 段(不合并全局)。
+	// 写入路径必须用它作为修改目标:若用 LoadLLM(合并结果)写回项目文件,
+	// 会把全局配置(其他 profile、api_key、base_url)复制进项目文件,且
+	// 项目空 profile 会覆盖全局完整配置(双配置互相污染)。
+	LoadProjectLLM() (*llm.LLMSettings, error)
 	SaveLLM(settings *llm.LLMSettings) error
 }
 

@@ -99,7 +99,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	// 4.5 创建 Tier 3 摘要专用 Client（开启 JSON 模式）
+	// 4.5 创建 Tier 3 摘要专用 Client(开启 JSON 模式)
 	summarizerClient := llmClient
 	summaryCfg := llmClientCfg
 	summaryCfg.ResponseFormat = "json_object"
@@ -107,7 +107,14 @@ func main() {
 		summarizerClient = sc
 	}
 
-	// 5.3 加载 Guard（权限系统，合并全局和项目权限规则）
+	// 4.6 解析主 Loop 模型选择(--model > curr_model > model;proplan 校验锚点)
+	modelChoice, planModel, subModel, err := resolveModelChoice(cfg.Model, llmSettings)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "✗", err)
+		os.Exit(1)
+	}
+
+	// 5.3 加载 Guard(权限系统,合并全局和项目权限规则)
 	// 必须在 skill loader 之前创建，skill 的 allowed-tools 白名单需注册到 Guard。
 	guard := createGuard(globalPath, projectPath)
 
@@ -347,15 +354,15 @@ waitLoop:
 
 	// 16. 分支：无 prompt → 交互式 TUI，有 prompt → 单次执行
 	if cfg.OneShot == "" {
-		// 16.5 加载 Hook Runner（RTK 等 hooks）
+		// 16.5 加载 Hook Runner(RTK 等 hooks)
 		hookRunner := loadHookRunner()
- 		runTUI(llmClient, registry, guard, sandboxMgr, expander, llmSettings.Model, cfg.Theme, cfg.ContextLimit, cfg.MaxTurns, cfg.ToolTimeout, cfg.ToolTimeoutSource, cfg.BypassPerm, ctxMgr, isResume, sessionDir, globalPath, projectPath, agentsMdText, loc, todoState, hookRunner, agentTool, mcpManager, lspManager)
+		runTUI(llmClient, registry, guard, sandboxMgr, expander, modelChoice, planModel, subModel, cfg.Theme, cfg.ContextLimit, cfg.MaxTurns, cfg.ToolTimeout, cfg.ToolTimeoutSource, cfg.BypassPerm, ctxMgr, isResume, sessionDir, globalPath, projectPath, agentsMdText, loc, todoState, hookRunner, agentTool, mcpManager, lspManager)
 		return
 	}
 
-	// 16.5 加载 Hook Runner（RTK 等 hooks）
+	// 16.5 加载 Hook Runner(RTK 等 hooks)
 	hookRunner := loadHookRunner()
- 	runOneShot(cfg, llmClient, registry, guard, sandboxMgr, expander, cwd, ctxMgr, agentsMdText, loc, todoState, llmSettings.Model, hookRunner, agentTool, mcpManager, lspManager)
+	runOneShot(cfg, llmClient, registry, guard, sandboxMgr, expander, cwd, ctxMgr, agentsMdText, loc, todoState, modelChoice, planModel, subModel, hookRunner, agentTool, mcpManager, lspManager)
 }
 
 // registerBuiltinTools 注册内置工具。
@@ -452,18 +459,50 @@ func createLLMClient(globalPath, projectPath, cliModel, cliProvider string, loc 
 		if cliProvider != "" {
 			merged.Provider = cliProvider
 		}
-		// 先解析 profile（provider 专属字段覆盖顶层残留），再应用 CLI 显式
-		// 指定的模型，保证 --model 优先级高于 profile。
+		// 先解析 profile(provider 专属字段覆盖顶层残留),再应用 CLI 显式
+		// 指定的模型,保证 --model 优先级高于 profile。
 		merged.ResolveProfile()
-		if cliModel != "" {
-			merged.Model = cliModel
-		}
+		applyCliModel(merged, cliModel)
 	}
 	client, cfg, err := llm.NewClientFromLLMSettings(merged)
 	if err != nil {
 		return nil, llm.ClientConfig{}, nil, err
 	}
 	return client, cfg, merged, nil
+}
+
+// applyCliModel 应用 --model 覆盖到合并后的 settings。
+// llm.ModelChoiceProPlan 是特殊选择值(不是模型名):不覆盖 merged.Model,
+// 保持 settings 的 pro 锚点 —— client / summarizer client / subagent 锚点
+// 全部使用 pro,天然安全("proplan" 字符串绝不进入 Client 配置)。
+func applyCliModel(merged *llm.LLMSettings, cliModel string) {
+	if cliModel != "" && cliModel != llm.ModelChoiceProPlan {
+		merged.Model = cliModel
+	}
+}
+
+// resolveModelChoice 解析主 Loop 的模型选择与 proplan 锚点。
+// 优先级:--model > curr_model(profile 已解析)> model(空值回退)。
+// 返回 (modelChoice, planModel, subModel, err):
+//   - modelChoice 为具体模型名或 llm.ModelChoiceProPlan(传给 Loop 的 Config.Model)
+//   - planModel/subModel 为 proplan 语义的锚点(settings model/sub_model)
+//   - choice == proplan 时校验锚点非空且非 proplan 自身(锚点自指会泄漏到 API)
+func resolveModelChoice(cliModel string, s *llm.LLMSettings) (string, string, string, error) {
+	choice := s.CurrModel
+	if cliModel != "" {
+		choice = cliModel
+	}
+	if choice == "" {
+		choice = s.Model // curr_model 为空 → 自动使用 model 配置
+	}
+	planModel, subModel := s.Model, s.SubModel
+	if choice == llm.ModelChoiceProPlan {
+		if planModel == "" || subModel == "" ||
+			planModel == llm.ModelChoiceProPlan || subModel == llm.ModelChoiceProPlan {
+			return "", "", "", fmt.Errorf("proplan 需要非空的 model 与 sub_model 锚点(锚点不能为 proplan 自身)")
+		}
+	}
+	return choice, planModel, subModel, nil
 }
 
 // createGuard 创建权限守门人，合并全局和项目权限规则。

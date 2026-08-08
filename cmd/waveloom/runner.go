@@ -24,7 +24,7 @@ import (
 )
 
 // runOneShot 执行单次/管道模式（无 TUI，纯文本输出）。
-func runOneShot(cfg CLIConfig, llmClient llm.Client, registry tool.Registry, guard permission.Guard, sandboxMgr *sandbox.SandboxManager, expander *reference.Expander, cwd string, cm *session.ContextManager, agentsMdText string, loc Locale, todoState *todo.TodoState, model string, hookRunner *hook.Runner, agentTool *subagent.AgentTool, mcpManager *mcp.Manager, lspManager *lsp.Manager) {
+func runOneShot(cfg CLIConfig, llmClient llm.Client, registry tool.Registry, guard permission.Guard, sandboxMgr *sandbox.SandboxManager, expander *reference.Expander, cwd string, cm *session.ContextManager, agentsMdText string, loc Locale, todoState *todo.TodoState, model string, planModel, subModel string, hookRunner *hook.Runner, agentTool *subagent.AgentTool, mcpManager *mcp.Manager, lspManager *lsp.Manager) {
 	lc := messagesFor(loc)
 	// Context Manager 已管理 system prompt，Loop 无需重复注入
 	loopCfg := agentloop.Config{
@@ -34,6 +34,8 @@ func runOneShot(cfg CLIConfig, llmClient llm.Client, registry tool.Registry, gua
 		AgentsMD:     agentsMdText,
 		TodoState:    todoState,
 		Model:        model,
+		PlanModel:    planModel, // proplan 语义:plan mode 锚点(one-shot 无 plan 工具,恒走 SubModel)
+		SubModel:     subModel,  // proplan 语义:日常锚点
 		LSPManager:   lspManager,
 		Compactor:    cm.Compactor(), // 与 TUI 一致:长管道任务同样启用上下文压缩
 	}

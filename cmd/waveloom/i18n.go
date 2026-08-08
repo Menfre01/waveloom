@@ -177,6 +177,7 @@ type Messages struct {
 	SlashModelConfigReadFailed string // 含 %v
 	SlashModelConfigSaveFailed string // 含 %v
 	SlashModelSwitched         string // 含 %s
+	SlashModelProPlanAnchorMissing string // proplan 需要 model 与 sub_model 锚点
 	SlashThemeDescription      string
 	SlashLocaleDescription     string
 	SlashHelpDescription       string
@@ -409,7 +410,8 @@ var zhCN = Messages{
 	SlashModelConfigReadFailed: "读取配置失败: %v",
 	SlashModelConfigSaveFailed: "保存配置失败: %v",
 	SlashModelSwitched:         "模型已切换为 %s。",
-	SlashThemeDescription:      "选择主题（Auto / Dark / Light / ColorBlind）",
+	SlashModelProPlanAnchorMissing: "proplan 需要配置 model 与 sub_model 锚点(settings.json llm 段)。",
+	SlashThemeDescription:      "选择主题(Auto / Dark / Light / ColorBlind)",
 	SlashLocaleDescription:     "切换语言（zh-CN / en-US）",
 	SlashHelpDescription:       "显示所有可用命令",
 	SlashHelpText: `使用技巧:
@@ -706,6 +708,7 @@ var enUS = Messages{
 	SlashModelConfigReadFailed: "Failed to read config: %v",
 	SlashModelConfigSaveFailed: "Failed to save config: %v",
 	SlashModelSwitched:         "Model switched to %s.",
+	SlashModelProPlanAnchorMissing: "proplan requires model and sub_model anchors (settings.json llm section).",
 	SlashThemeDescription:      "Select theme (Auto / Dark / Light / ColorBlind)",
 	SlashLocaleDescription:     "Switch language (zh-CN / en-US)",
 	SlashHelpDescription:       "Show all available commands",

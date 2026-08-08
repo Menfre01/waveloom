@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/Menfre01/waveloom/pkg/compaction"
@@ -81,6 +82,12 @@ type Config struct {
 	// 用于 subagent 按任务复杂度选择不同模型。
 	Model string
 
+	// SubModel / PlanModel 是 proplan 选择值(llm.ModelChoiceProPlan)的锚点:
+	// Model == "proplan" 时,plan mode 用 PlanModel(pro),其余用 SubModel(flash)。
+	// 两者均非空时由入口校验保证;Loop 层仍做互备兜底,绝不将 "proplan" 发到 API。
+	SubModel  string
+	PlanModel string
+
 	// LSPManager LSP diagnostic manager
 	LSPManager *lsp.Manager
 }
@@ -118,6 +125,11 @@ type LoopState struct {
 // 达到后 loop 强制终止，避免 LLM 陷入无限重试探测。
 // 阈值设为 8 轮：其中第 3、第 5 轮会注入提醒消息引导 LLM 改变策略，// 8 轮后仍未改变则判定为死循环强制终止。
 const maxConsecutiveSameError = 8
+
+// planProMaxContextTokens 是 plan mode 使用 PlanModel 的上下文上限(对齐
+// Claude Code 的 exceeds200kTokens 守卫):plan 中上下文 ≥ 此值时降回 SubModel,
+// 避免超长上下文使用 pro 模型烧钱。
+const planProMaxContextTokens = 200_000
 
 // warnThresholds 定义需要注入提醒消息的连续失败轮次。
 // 阶梯:3 → 5 → 8(终止)
@@ -168,10 +180,14 @@ type Loop struct {
 	// plan 模式状态（仅在 Run goroutine 内访问，无竞态）
 	plan        bool   // 当前是否在 plan 模式
 	prePlanMode bool   // 进入 plan 前的 bypassMode 状态
-	planPairID  string // START/END 配对 ID（4 位 hex，如 "a3f7"）
-	approvedPlan string // 审批通过的 plan 内容（用于 executeToolCalls 在 tool 消息后注入 [plan:end]）
+	planPairID  string // START/END 配对 ID(4 位 hex,如 "a3f7")
+	approvedPlan string // 审批通过的 plan 内容(用于 executeToolCalls 在 tool 消息后注入 [plan:end])
 
-	// ── 退避追踪（会话级，跨 Run() 持久化）──
+	// lastPromptTokens 最近一轮 API 返回的 prompt tokens(200k 守卫用)。
+	// 首轮为 0;resume 后由 estimateContextTokens 估算兜底。
+	lastPromptTokens int
+
+	// ── 退避追踪(会话级,跨 Run() 持久化)──
 
 	// lastErrorKind 记录上一轮工具错误的 Kind。
 	lastErrorKind string
@@ -366,11 +382,12 @@ func (l *Loop) Run(ctx context.Context, messages []llm.Message) <-chan TurnEvent
 			l.injectTodoStatus(&messagesForTurn)
 
 			var lastPromptTokens int      // 本轮 API 返回的 prompt_tokens
-			var lastUsage       *llm.UsageInfo // 暂存 usage，压缩后统一推送 TurnStats
+			var lastUsage       *llm.UsageInfo // 暂存 usage,压缩后统一推送 TurnStats
 			var lastModel       string         // 暂存 model
 			sendCtx := ctx
-			if l.config.Model != "" {
-				sendCtx = llm.WithModelOverride(ctx, l.config.Model)
+			model := l.resolveModel(messagesForTurn)
+			if model != "" {
+				sendCtx = llm.WithModelOverride(ctx, model)
 			}
 			streamCh, err := l.llmClient.SendMessageStream(sendCtx, messagesForTurn, toLLMToolSpecs(l.toolRegistry.List()))
 			if err != nil {
@@ -525,6 +542,8 @@ func (l *Loop) Run(ctx context.Context, messages []llm.Message) <-chan TurnEvent
 			if lastModel != "" {
 				assistantMsg.Model = lastModel
 			}
+			// 同步上一轮上下文用量到 Loop 字段(供下一轮请求前的 200k 守卫判断)
+			l.lastPromptTokens = lastPromptTokens
 			if len(toolCalls) > 0 {
 				assistantMsg.FinishReason = "tool_calls"
 			} else {
@@ -739,6 +758,57 @@ func (l *Loop) shouldContinue(state *LoopState) bool {
 		return true
 	}
 	return state.TurnCount < l.config.MaxTurns
+}
+
+// resolveModel 解析本轮请求使用的模型。
+// Model == llm.ModelChoiceProPlan 时启用 proplan 语义(对齐 Claude Code opusplan):
+//   plan mode 且上下文 < planProMaxContextTokens → PlanModel(pro)
+//   其余 → SubModel(flash)
+// 锚点缺失时互备兜底,两者皆空 → 空(不注入 override,用 client 默认)。
+// 不变量:返回值绝不等于 llm.ModelChoiceProPlan —— "proplan" 字符串不进 API。
+func (l *Loop) resolveModel(messagesForTurn []llm.Message) string {
+	model := l.config.Model
+	if model != llm.ModelChoiceProPlan {
+		return model
+	}
+	ctxTokens := l.lastPromptTokens
+	if ctxTokens == 0 && len(messagesForTurn) > 0 {
+		// resume 后 lastPromptTokens 为 0(API 用量未知),按消息内容估算兜底
+		ctxTokens = estimateContextTokens(messagesForTurn)
+	}
+	if l.plan && ctxTokens < planProMaxContextTokens {
+		model = l.config.PlanModel
+	} else {
+		model = l.config.SubModel
+	}
+	// 锚点互备 + 自指防线:任一锚点缺失或为 proplan 自身时用另一锚点兜底;
+	// 最终值绝不为 "proplan"(畸形手改配置的最终防线)
+	if model == "" || model == llm.ModelChoiceProPlan {
+		model = l.config.PlanModel
+		if model == "" || model == llm.ModelChoiceProPlan {
+			model = l.config.SubModel
+		}
+	}
+	if model == llm.ModelChoiceProPlan {
+		model = "" // 双锚点均自指:不注入 override,用 client 默认
+	}
+	return model
+}
+
+// estimateContextTokens 粗略估算消息列表的 token 消耗(200k 守卫的 resume 兜底)。
+// 与 tool.EstimateTokens 同一估算口径(ASCII ≈ 0.3 token/字符,非 ASCII ≈ 0.6)。
+func estimateContextTokens(msgs []llm.Message) int {
+	var sb strings.Builder
+	for _, m := range msgs {
+		sb.WriteString(m.Content)
+		sb.WriteString(m.ReasoningContent)
+		for _, tc := range m.ToolCalls {
+			sb.WriteString(tc.Arguments)
+		}
+	}
+	// 安全系数 1.3:文本估算不含 role 标记、消息边界与 tool schema 的 token
+	// 开销(二审审查建议),保守偏向降级,防 resume 首轮超窗仍误用 pro。
+	return tool.EstimateTokens(sb.String()) * 13 / 10
 }
 
 // toLLMToolSpecs 将 tool.ToolSpec 切片转换为 llm.ToolSpec 切片。

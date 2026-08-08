@@ -49,6 +49,9 @@ type Server struct {
 	compactionConfig compaction.CompactionConfig // 上下文压缩配置(settings + flag 解析)
 	summarizer       compaction.Summarizer        // Tier 3 摘要器(可能为 nil → Tier 3 跳过)
 	commandRunner    CommandRunner                // 斜杠命令执行器(ACP 场景可用命令;nil = 不启用)
+	modelChoice      string                       // 主 Loop 模型选择(可为 llm.ModelChoiceProPlan)
+	planModel        string                       // proplan 语义:plan mode 锚点(pro)
+	subModel         string                       // proplan 语义:日常锚点(flash)
 
 	// 状态
 	initialized    bool            // initialize 是否已完成
@@ -93,6 +96,9 @@ type ServerConfig struct {
 	CompactionConfig compaction.CompactionConfig // 上下文压缩配置
 	Summarizer       compaction.Summarizer        // Tier 3 摘要器(可 nil)
 	CommandRunner    CommandRunner                 // 斜杠命令执行器(可 nil)
+	ModelChoice      string                        // 主 Loop 模型选择(可为 llm.ModelChoiceProPlan)
+	PlanModel        string                        // proplan 语义:plan mode 锚点(pro)
+	SubModel         string                        // proplan 语义:日常锚点(flash)
 }
 
 // mcpConnectFunc 与 mcp.Manager.connectFunc 同构,供测试注入 fake 连接。
@@ -118,6 +124,9 @@ func NewServer(cfg ServerConfig) *Server {
 		compactionConfig: cfg.CompactionConfig,
 		summarizer:       cfg.Summarizer,
 		commandRunner:    cfg.CommandRunner,
+		modelChoice:      cfg.ModelChoice,
+		planModel:        cfg.PlanModel,
+		subModel:         cfg.SubModel,
 	}
 }
 

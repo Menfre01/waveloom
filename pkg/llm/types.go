@@ -166,13 +166,18 @@ func DefaultRetryPolicy() RetryPolicy {
 type ProviderType string
 
 const (
-	ProviderOpenAI   ProviderType = "openai"    // 标准 OpenAI 协议，也是默认兜底
+	ProviderOpenAI   ProviderType = "openai"    // 标准 OpenAI 协议,也是默认兜底
 	ProviderDeepSeek ProviderType = "deepseek"
 	ProviderKimi     ProviderType = "kimi"
 	// 后续扩展:
 	// ProviderAnthropic ProviderType = "anthropic"
 	// ProviderOllama    ProviderType = "ollama"
 )
+
+// ModelChoiceProPlan 是特殊模型选择值(对齐 Claude Code 的 opusplan alias):
+// 选择后主 Loop 在 plan mode 使用 Model(pro),普通模式使用 SubModel(flash)。
+// 仅作为 curr_model / --model 的选择值,绝不进入 Client 配置或 API 请求。
+const ModelChoiceProPlan = "proplan"
 
 // ClientConfig 在构造 Client 时传入，运行期不可变。
 type ClientConfig struct {
@@ -412,7 +417,6 @@ type ModelInfo struct {
 	Object  string `json:"object"`   // 对象类型，其值为 "model"
 	OwnedBy string `json:"owned_by"` // 拥有该模型的组织
 }
-
 
 // ---------------------------------------------------------------------------
 // NewMessageID — 消息 ID 生成

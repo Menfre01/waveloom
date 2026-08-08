@@ -72,6 +72,11 @@ func (s *acpSettingsStore) LoadLLM() (*llm.LLMSettings, error) {
 	return llm.MergeLLMSettings(global, project), nil
 }
 
+// LoadProjectLLM 直接读取项目 settings.json 的 llm 段(不合并全局)。
+func (s *acpSettingsStore) LoadProjectLLM() (*llm.LLMSettings, error) {
+	return llm.LoadSettingsIfExists(s.projectPath)
+}
+
 func (s *acpSettingsStore) SaveLLM(settings *llm.LLMSettings) error {
 	return writeFullSettings(s.projectPath, settings, "", "")
 }

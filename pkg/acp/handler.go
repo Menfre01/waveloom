@@ -145,6 +145,9 @@ func (s *Server) handleSessionNew(req JSONRPCRequest) {
 		SandboxMgr:   s.sandboxMgr,
 		TodoState:    todoState,
 		Compactor:    cm.Compactor(), // 上下文压缩在 Loop 内每轮执行(与 TUI 一致)
+		Model:        s.modelChoice, // proplan 语义:主 Loop 模型选择
+		PlanModel:    s.planModel,   // plan mode 锚点(ACP 无 plan 工具,恒走 SubModel)
+		SubModel:     s.subModel,    // 日常锚点
 	})
 
 	state := &SessionState{
@@ -642,6 +645,9 @@ func (s *Server) loadSessionFromDisk(sessionID string) (*SessionState, error) {
 		SandboxMgr:   s.sandboxMgr,
 		TodoState:    todoState,
 		Compactor:    cm.Compactor(),
+		Model:        s.modelChoice,
+		PlanModel:    s.planModel,
+		SubModel:     s.subModel,
 	})
 
 	return &SessionState{

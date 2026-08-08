@@ -195,7 +195,6 @@ func TestTrimParas_OverLimit(t *testing.T) {
 	}
 }
 
-
 // ---------------------------------------------------------------------------
 // displayWidth
 // ---------------------------------------------------------------------------
@@ -1055,6 +1054,7 @@ type stubSettingsStore struct {
 }
 
 func (s *stubSettingsStore) LoadLLM() (*llm.LLMSettings, error) { return s.llm, nil }
+func (s *stubSettingsStore) LoadProjectLLM() (*llm.LLMSettings, error) { return s.llm, nil }
 func (s *stubSettingsStore) SaveLLM(*llm.LLMSettings) error      { return nil }
 
 // stubModelLister 实现 slashcommand.ModelLister。

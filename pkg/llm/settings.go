@@ -14,9 +14,10 @@ import (
 // 所有 LLM Client 的构造参数均通过此结构表达,支持任意嵌套的 extra_params。
 type LLMSettings struct {
 	APIKey      string                  `json:"api_key,omitempty"` // API Key;为空时回退到 LLM_API_KEY 环境变量
-	Provider    string                  `json:"provider"`          // "openai" / "deepseek" / "kimi",默认 "deepseek"
+	Provider    string                  `json:"provider,omitempty"` // "openai" / "deepseek" / "kimi",默认 "deepseek";omitempty 防空 profile 落盘 "provider": ""
 	Model       string                  `json:"model,omitempty"`   // 模型名称
 	SubModel    string                  `json:"sub_model,omitempty"`    // 子代理默认模型(explore 等轻量任务)
+	CurrModel   string                  `json:"curr_model,omitempty"`   // 主 Loop 当前模型选择(具体模型名或 ModelChoiceProPlan);空 → 用 Model
 	BaseURL     string                  `json:"base_url,omitempty"`     // API 端点,留空使用默认
 	Timeout     string                  `json:"timeout,omitempty"`      // 单次请求超时,Go Duration 格式(如 "600s"),默认 600s
 	Retry       *RetrySettings          `json:"retry,omitempty"`        // 重试策略,留空使用默认
@@ -48,6 +49,9 @@ func (s *LLMSettings) ResolveProfile() {
 	}
 	if p.SubModel != "" {
 		s.SubModel = p.SubModel
+	}
+	if p.CurrModel != "" {
+		s.CurrModel = p.CurrModel
 	}
 	if p.BaseURL != "" {
 		s.BaseURL = p.BaseURL
@@ -123,6 +127,24 @@ func (s *LLMSettings) SetModel(name string) {
 	}
 }
 
+// SetCurrModelForProvider 持久化当前模型选择到指定 provider 的 profile。
+// profile 不存在时自动创建(omitempty 序列化仅落盘 curr_model 字段,不污染
+// 其他配置)。各 provider 的选择互相隔离:切换 provider 后 ResolveProfile
+// 自动恢复该 provider 的选择。顶层 CurrModel 仅供手工配置作兜底。
+func (s *LLMSettings) SetCurrModelForProvider(provider, name string) {
+	if s.Profiles == nil {
+		s.Profiles = map[string]*LLMSettings{}
+	}
+	p := s.Profiles[provider]
+	if p == nil {
+		// 与新 setup 格式一致:profile 只含实际配置字段,不冗余 provider
+		// (provider 身份由 profiles map key 决定;omitempty 保证仅 curr_model 落盘)
+		p = &LLMSettings{}
+		s.Profiles[provider] = p
+	}
+	p.CurrModel = name
+}
+
 // NewClientFromSettings 从 settings.json 文件构造 Client。
 func NewClientFromSettings(path string) (Client, error) {
 	settings, err := LoadSettings(path)
@@ -165,6 +187,8 @@ func MergeLLMSettings(base, override *LLMSettings) *LLMSettings {
 			APIKey:      override.APIKey,
 			Provider:    override.Provider,
 			Model:       override.Model,
+			SubModel:    override.SubModel,
+			CurrModel:   override.CurrModel,
 			BaseURL:     override.BaseURL,
 			Timeout:     override.Timeout,
 			Retry:       override.Retry,
@@ -189,6 +213,8 @@ func MergeLLMSettings(base, override *LLMSettings) *LLMSettings {
 			APIKey:   base.APIKey,
 			Provider: base.Provider,
 			Model:    base.Model,
+			SubModel: base.SubModel,
+			CurrModel: base.CurrModel,
 			BaseURL:  base.BaseURL,
 			Timeout:  base.Timeout,
 			Retry:    base.Retry,
@@ -218,6 +244,12 @@ func MergeLLMSettings(base, override *LLMSettings) *LLMSettings {
 		}
 		if override.Model != "" {
 			merged.Model = override.Model
+		}
+		if override.SubModel != "" {
+			merged.SubModel = override.SubModel
+		}
+		if override.CurrModel != "" {
+			merged.CurrModel = override.CurrModel
 		}
 		if override.BaseURL != "" {
 			merged.BaseURL = override.BaseURL
@@ -272,6 +304,8 @@ func copyProfile(p *LLMSettings) *LLMSettings {
 		APIKey:      p.APIKey,
 		Provider:    p.Provider,
 		Model:       p.Model,
+		SubModel:    p.SubModel,
+		CurrModel:   p.CurrModel,
 		BaseURL:     p.BaseURL,
 		Timeout:     p.Timeout,
 		ExtraParams: nil,

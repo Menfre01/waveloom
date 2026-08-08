@@ -39,6 +39,8 @@ func runOneShotForTest(t *testing.T, cfg CLIConfig, guard permission.Guard) {
 		LocaleEnUS,
 		todo.NewTodoState(),
 		"test-model",
+		"", // planModel(proplan 锚点,测试不启用)
+		"", // subModel(proplan 锚点,测试不启用)
 		nil, // hookRunner
 		&subagent.AgentTool{},
 		nil, // mcpManager
