@@ -405,6 +405,9 @@ func (l *Loop) Run(ctx context.Context, messages []llm.Message) <-chan TurnEvent
 			var contentBuf, reasoningBuf string
 			var toolCalls []llm.ToolCall
 			var streamModel string
+			// 服务端 web_search 起始时间表(call_id → 起始时间),completed 时
+			// 计算真实搜索耗时(替代虚拟事件的 0ms 假时长)
+			webSearchStartedAt := make(map[string]time.Time)
 			for ev := range streamCh {
 				if ev.Err != nil {
 					l.verbose("  ← STREAM ERROR: %v\n", ev.Err)
@@ -467,7 +470,7 @@ func (l *Loop) Run(ctx context.Context, messages []llm.Message) <-chan TurnEvent
 						ContentDelta:   ev.Delta,
 						ReasoningDelta: ev.ReasoningDelta,
 					}) {
-						// ctx 已取消，排空 streamCh 防止 LLM 流生产者 goroutine 泄漏
+						// ctx 已取消,排空 streamCh 防止 LLM 流生产者 goroutine 泄漏
 						go func() {
 							for range streamCh {
 								// drain
@@ -477,12 +480,35 @@ func (l *Loop) Run(ctx context.Context, messages []llm.Message) <-chan TurnEvent
 					}
 				}
 
+				// 服务端 web_search 状态 → 虚拟 ToolCall 事件(TUI 进度对齐)。
+				// Responses API 模式下搜索由服务端自动执行并注入上下文,
+				// 此事件仅用于 TUI 展示,不进入 toolCalls(无需本地执行)。
+				if ev.WebSearchStatus != "" {
+					if virtual := webSearchVirtualEvent(ev, state.TurnCount+1, webSearchStartedAt); virtual != nil {
+						if !sendEvent(ctx, ch, virtual) {
+							// ctx 已取消,排空 streamCh 防止生产者 goroutine 泄漏
+							go func() {
+								for range streamCh {
+									// drain
+								}
+							}()
+							break
+						}
+					}
+				}
+
 				if ev.Done {
 					toolCalls = ev.ToolCalls
 					if ev.Usage != nil {
 						lastPromptTokens = ev.Usage.PromptTokens
 						lastUsage = ev.Usage
-						lastModel = streamModel
+						// Responses API 的终态事件(completed)携带 model;
+						// chat 模式终态无 model,回退首帧捕获的 streamModel
+						if ev.Model != "" {
+							lastModel = ev.Model
+						} else {
+							lastModel = streamModel
+						}
 					}
 					break
 				}
@@ -828,7 +854,65 @@ func toLLMToolSpecs(specs []tool.ToolSpec) []llm.ToolSpec {
 	return result
 }
 
-// verbose 打印调试日志。仅 Debug 级别时才格式化，避免热路径浪费。
+// webSearchVirtualEvent 将服务端 web_search 状态转为虚拟 ToolCall 事件。
+// Responses API(deepseek-v4-flash)模式下搜索由服务端自动执行:
+// - in_progress → ToolCallStart:创建 web_search 段落 + spinner(TUI 进度反馈)
+// - completed → ToolCallResult:段落完成,展示搜索结果注入说明
+// - searching 中间态无附加信息,忽略
+// 虚拟事件不进入 toolCalls 列表,不会触发本地执行或产生 tool 消息。
+func webSearchVirtualEvent(ev llm.StreamingEvent, turn int, startedAt map[string]time.Time) TurnEvent {
+	switch ev.WebSearchStatus {
+	case "in_progress":
+		startedAt[ev.WebSearchCallID] = time.Now()
+		return ToolCallStart{
+			Turn:         turn,
+			ToolCallID:   ev.WebSearchCallID,
+			ToolCallName: "web_search",
+			Arguments:    "{}",
+			ServerSide:   true,
+		}
+	case "searching":
+		// 兜底:in_progress 事件丢失时(服务端可能省略),用 searching 补记起点,
+		// 确保 completed 时能计算真实耗时而非 0ms;同时补发 ToolCallStart
+		// 创建段落,否则 completed 的 ToolCallResult 无匹配段落被 TUI 静默丢弃
+		if _, ok := startedAt[ev.WebSearchCallID]; !ok {
+			startedAt[ev.WebSearchCallID] = time.Now()
+			return ToolCallStart{
+				Turn:         turn,
+				ToolCallID:   ev.WebSearchCallID,
+				ToolCallName: "web_search",
+				Arguments:    "{}",
+				ServerSide:   true,
+			}
+		}
+		return nil
+	case "completed":
+		var durationMs int64
+		if start, ok := startedAt[ev.WebSearchCallID]; ok {
+			durationMs = time.Since(start).Milliseconds()
+			delete(startedAt, ev.WebSearchCallID)
+		}
+		// 服务端实际执行的搜索词(防御性解析;DeepSeek 文档未承诺该字段)
+		query := strings.Join(ev.WebSearchQueries, ", ")
+		result := "Server-side search completed"
+		if query != "" {
+			result += fmt.Sprintf(" — %q", query)
+		}
+		return ToolCallResult{
+			Turn:         turn,
+			ToolCallID:   ev.WebSearchCallID,
+			ToolCallName: "web_search",
+			DurationMs:   durationMs,
+			ServerSide:   true,
+			Result: result + "\n\n" +
+				"Search results have been injected into context by DeepSeek Responses API.",
+		}
+	default:
+		return nil
+	}
+}
+
+// verbose 打印调试日志。仅 Debug 级别时才格式化,避免热路径浪费。
 func (l *Loop) verbose(format string, args ...any) {
 	if !slog.Default().Enabled(context.Background(), slog.LevelDebug) {
 		return

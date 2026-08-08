@@ -610,10 +610,6 @@ func TestNewClientUnknownProvider(t *testing.T) {
 	}
 }
 
-
-
-
-
 // --- Retry-After Header Tests ---
 
 func TestParseRetryAfter(t *testing.T) {
@@ -930,8 +926,6 @@ func TestNewClientExplicitOpenAIProvider(t *testing.T) {
 		t.Errorf("expected openAIAdapter for ProviderOpenAI, got %T", cl.adapter)
 	}
 }
-
-
 
 // --- ValidateToolNames Edge Cases ---
 
@@ -1795,7 +1789,6 @@ func TestRetryConcurrentSafety(t *testing.T) {
 	}
 }
 
-
 // --- Streaming Tests ---
 
 func TestSendMessageStreamContent(t *testing.T) {
@@ -2592,5 +2585,263 @@ func TestSendMessageStreamWithCustomHeaders(t *testing.T) {
 	}
 	if capturedReq.Header.Get("X-Request-ID") != "req-stream" {
 		t.Errorf("X-Request-ID = %q, want req-stream", capturedReq.Header.Get("X-Request-ID"))
+	}
+}
+
+// --- Responses API 流式终态(readStream)---
+
+// TestReadStreamResponsesCompleted 验证 Responses API 流以 response.completed 事件
+// 终止(无 data: [DONE]),usage/tool_calls 累积正确。
+func TestReadStreamResponsesCompleted(t *testing.T) {
+	handler := func(req *http.Request) (*http.Response, error) {
+		sseBody :=
+			"data: {\"type\":\"response.created\",\"response\":{\"object\":\"response\",\"model\":\"deepseek-v4-flash\"}}\n\n" +
+				"data: {\"type\":\"response.output_text.delta\",\"delta\":\"Hello\"}\n\n" +
+				"data: {\"type\":\"response.output_item.added\",\"output_index\":1,\"item\":{\"type\":\"function_call\",\"id\":\"fc_1\",\"call_id\":\"call_1\",\"name\":\"read_file\",\"arguments\":\"\"}}\n\n" +
+				"data: {\"type\":\"response.function_call_arguments.delta\",\"output_index\":1,\"delta\":\"{\\\"path\\\":\\\"a.go\\\"}\"}\n\n" +
+				"data: {\"type\":\"response.completed\",\"response\":{\"object\":\"response\",\"status\":\"completed\",\"model\":\"deepseek-v4-flash\",\"usage\":{\"input_tokens\":10,\"output_tokens\":5,\"total_tokens\":15}}}\n\n"
+		return &http.Response{
+			StatusCode: 200,
+			Body:       io.NopCloser(strings.NewReader(sseBody)),
+			Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+		}, nil
+	}
+
+	adapter := newDeepSeekAdapter(ClientConfig{Model: ModelDeepSeekV4Flash, APIKey: "sk-test"})
+	c := newClientWithAdapter(ClientConfig{APIKey: "sk-test"}, adapter).(*client)
+	c.httpClient = &http.Client{Transport: &mockHTTPTransport{handler: handler}}
+
+	ch, err := c.SendMessageStream(context.Background(), []Message{
+		{Role: RoleUser, Content: "Hi"},
+	}, nil)
+	if err != nil {
+		t.Fatalf("SendMessageStream returned error: %v", err)
+	}
+
+	var fullContent string
+	var doneEvent *StreamingEvent
+	for ev := range ch {
+		if ev.Done {
+			doneEvent = &ev
+			break
+		}
+		fullContent += ev.Delta
+	}
+
+	if fullContent != "Hello" {
+		t.Errorf("fullContent = %q, want %q", fullContent, "Hello")
+	}
+	if doneEvent == nil {
+		t.Fatal("expected Done event from response.completed")
+		return
+	}
+	if doneEvent.FinishReason != "stop" {
+		t.Errorf("FinishReason = %q, want stop", doneEvent.FinishReason)
+	}
+	if doneEvent.Err != nil {
+		t.Errorf("unexpected error: %v", doneEvent.Err)
+	}
+	if len(doneEvent.ToolCalls) != 1 {
+		t.Fatalf("ToolCalls len = %d, want 1", len(doneEvent.ToolCalls))
+	}
+	tc := doneEvent.ToolCalls[0]
+	if tc.ID != "call_1" || tc.Name != "read_file" || tc.Arguments != `{"path":"a.go"}` {
+		t.Errorf("ToolCall = %+v, want call_1/read_file with full arguments", tc)
+	}
+	if doneEvent.Usage == nil || doneEvent.Usage.PromptTokens != 10 {
+		t.Errorf("Usage = %+v, want prompt 10", doneEvent.Usage)
+	}
+	// REGRESSION: 终态事件携带的 model 必须透传到 final(event.created 首帧
+	// 被增量过滤器丢弃,若此处不复制 Model 将永远为空)
+	if doneEvent.Model != "deepseek-v4-flash" {
+		t.Errorf("Model = %q, want deepseek-v4-flash", doneEvent.Model)
+	}
+}
+
+// TestReadStreamResponsesWebSearch 验证 web_search_call 状态事件透传到 channel,
+// 流仍以 completed 正常终止。
+func TestReadStreamResponsesWebSearch(t *testing.T) {
+	handler := func(req *http.Request) (*http.Response, error) {
+		sseBody :=
+			"data: {\"type\":\"response.web_search_call.in_progress\",\"item\":{\"type\":\"web_search_call\",\"id\":\"ws_1\",\"status\":\"in_progress\"}}\n\n" +
+				"data: {\"type\":\"response.web_search_call.completed\",\"item\":{\"type\":\"web_search_call\",\"id\":\"ws_1\",\"status\":\"completed\"}}\n\n" +
+				"data: {\"type\":\"response.completed\",\"response\":{\"object\":\"response\",\"status\":\"completed\"}}\n\n"
+		return &http.Response{
+			StatusCode: 200,
+			Body:       io.NopCloser(strings.NewReader(sseBody)),
+			Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+		}, nil
+	}
+
+	adapter := newDeepSeekAdapter(ClientConfig{Model: ModelDeepSeekV4Flash, APIKey: "sk-test"})
+	c := newClientWithAdapter(ClientConfig{APIKey: "sk-test"}, adapter).(*client)
+	c.httpClient = &http.Client{Transport: &mockHTTPTransport{handler: handler}}
+
+	ch, err := c.SendMessageStream(context.Background(), []Message{
+		{Role: RoleUser, Content: "search"},
+	}, nil)
+	if err != nil {
+		t.Fatalf("SendMessageStream returned error: %v", err)
+	}
+
+	var statuses []string
+	for ev := range ch {
+		if ev.WebSearchStatus != "" {
+			statuses = append(statuses, ev.WebSearchStatus)
+		}
+		if ev.Done {
+			if ev.Err != nil {
+				t.Errorf("unexpected error: %v", ev.Err)
+			}
+			break
+		}
+	}
+	if len(statuses) != 2 || statuses[0] != "in_progress" || statuses[1] != "completed" {
+		t.Errorf("statuses = %v, want [in_progress completed]", statuses)
+	}
+}
+
+// TestReadStreamResponsesFailed 验证 response.failed 事件 → Done + Err 传播。
+func TestReadStreamResponsesFailed(t *testing.T) {
+	handler := func(req *http.Request) (*http.Response, error) {
+		sseBody :=
+			"data: {\"type\":\"response.output_text.delta\",\"delta\":\"partial\"}\n\n" +
+				"data: {\"type\":\"response.failed\",\"response\":{\"object\":\"response\",\"status\":\"failed\",\"error\":{\"code\":\"server_error\",\"message\":\"upstream failed\"}}}\n\n"
+		return &http.Response{
+			StatusCode: 200,
+			Body:       io.NopCloser(strings.NewReader(sseBody)),
+			Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+		}, nil
+	}
+
+	adapter := newDeepSeekAdapter(ClientConfig{Model: ModelDeepSeekV4Flash, APIKey: "sk-test"})
+	c := newClientWithAdapter(ClientConfig{APIKey: "sk-test"}, adapter).(*client)
+	c.httpClient = &http.Client{Transport: &mockHTTPTransport{handler: handler}}
+
+	ch, err := c.SendMessageStream(context.Background(), []Message{
+		{Role: RoleUser, Content: "Hi"},
+	}, nil)
+	if err != nil {
+		t.Fatalf("SendMessageStream returned error: %v", err)
+	}
+
+	var doneEvent *StreamingEvent
+	for ev := range ch {
+		if ev.Done {
+			doneEvent = &ev
+			break
+		}
+	}
+	if doneEvent == nil {
+		t.Fatal("expected Done event from response.failed")
+		return
+	}
+	if doneEvent.Err == nil {
+		t.Fatal("expected Err from response.failed")
+	}
+	if !strings.Contains(doneEvent.Err.Error(), "upstream failed") {
+		t.Errorf("Err = %v, want include upstream failed", doneEvent.Err)
+	}
+}
+
+// TestReadStreamResponsesToolCallReplace 验证 delta 累积 + done 完整参数的组合:
+// done 事件(ToolCallReplace)必须覆盖而非拼接,否则 arguments 重复。
+func TestReadStreamResponsesToolCallReplace(t *testing.T) {
+	handler := func(req *http.Request) (*http.Response, error) {
+		sseBody :=
+			"data: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"type\":\"function_call\",\"id\":\"fc_1\",\"call_id\":\"call_1\",\"name\":\"read_file\",\"arguments\":\"\"}}\n\n" +
+				"data: {\"type\":\"response.function_call_arguments.delta\",\"output_index\":0,\"delta\":\"{\\\"path\\\":\"}\n\n" +
+				"data: {\"type\":\"response.function_call_arguments.done\",\"output_index\":0,\"arguments\":\"{\\\"path\\\":\\\"a.go\\\"}\"}\n\n" +
+				"data: {\"type\":\"response.completed\",\"response\":{\"object\":\"response\",\"status\":\"completed\"}}\n\n"
+		return &http.Response{
+			StatusCode: 200,
+			Body:       io.NopCloser(strings.NewReader(sseBody)),
+			Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+		}, nil
+	}
+
+	adapter := newDeepSeekAdapter(ClientConfig{Model: ModelDeepSeekV4Flash, APIKey: "sk-test"})
+	c := newClientWithAdapter(ClientConfig{APIKey: "sk-test"}, adapter).(*client)
+	c.httpClient = &http.Client{Transport: &mockHTTPTransport{handler: handler}}
+
+	ch, err := c.SendMessageStream(context.Background(), []Message{
+		{Role: RoleUser, Content: "Hi"},
+	}, nil)
+	if err != nil {
+		t.Fatalf("SendMessageStream returned error: %v", err)
+	}
+
+	var doneEvent *StreamingEvent
+	for ev := range ch {
+		if ev.Done {
+			doneEvent = &ev
+			break
+		}
+	}
+	if doneEvent == nil {
+		t.Fatal("expected Done event")
+		return
+	}
+	if len(doneEvent.ToolCalls) != 1 {
+		t.Fatalf("ToolCalls len = %d, want 1", len(doneEvent.ToolCalls))
+	}
+	got := doneEvent.ToolCalls[0].Arguments
+	want := `{"path":"a.go"}`
+	if got != want {
+		t.Errorf("Arguments = %q, want %q (done 应覆盖 delta 累积,不重复拼接)", got, want)
+	}
+}
+
+// TestReadStreamResponsesMultipleFunctionCalls 验证多个 function_call 分散在
+// 非连续 output_index(中间夹 message item)时,accumulator 按 maxIndex 完整遍历,
+// 按 output_index 升序返回且参数不串位。
+func TestReadStreamResponsesMultipleFunctionCalls(t *testing.T) {
+	handler := func(req *http.Request) (*http.Response, error) {
+		sseBody :=
+			"data: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"type\":\"function_call\",\"id\":\"fc_1\",\"call_id\":\"call_1\",\"name\":\"read_file\",\"arguments\":\"\"}}\n\n" +
+				"data: {\"type\":\"response.function_call_arguments.delta\",\"output_index\":0,\"delta\":\"{\\\"path\\\":\\\"a.go\\\"}\"}\n\n" +
+				// index 1 是 message item(不产生 ToolCall)
+				"data: {\"type\":\"response.output_item.added\",\"output_index\":2,\"item\":{\"type\":\"function_call\",\"id\":\"fc_2\",\"call_id\":\"call_2\",\"name\":\"web_fetch\",\"arguments\":\"\"}}\n\n" +
+				"data: {\"type\":\"response.function_call_arguments.delta\",\"output_index\":2,\"delta\":\"{\\\"url\\\":\\\"https://x.dev\\\"}\"}\n\n" +
+				"data: {\"type\":\"response.completed\",\"response\":{\"object\":\"response\",\"status\":\"completed\"}}\n\n"
+		return &http.Response{
+			StatusCode: 200,
+			Body:       io.NopCloser(strings.NewReader(sseBody)),
+			Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+		}, nil
+	}
+
+	adapter := newDeepSeekAdapter(ClientConfig{Model: ModelDeepSeekV4Flash, APIKey: "sk-test"})
+	c := newClientWithAdapter(ClientConfig{APIKey: "sk-test"}, adapter).(*client)
+	c.httpClient = &http.Client{Transport: &mockHTTPTransport{handler: handler}}
+
+	ch, err := c.SendMessageStream(context.Background(), []Message{
+		{Role: RoleUser, Content: "Hi"},
+	}, nil)
+	if err != nil {
+		t.Fatalf("SendMessageStream returned error: %v", err)
+	}
+
+	var doneEvent *StreamingEvent
+	for ev := range ch {
+		if ev.Done {
+			doneEvent = &ev
+			break
+		}
+	}
+	if doneEvent == nil {
+		t.Fatal("expected Done event")
+		return
+	}
+	if len(doneEvent.ToolCalls) != 2 {
+		t.Fatalf("ToolCalls len = %d, want 2", len(doneEvent.ToolCalls))
+	}
+	tc1 := doneEvent.ToolCalls[0]
+	if tc1.ID != "call_1" || tc1.Name != "read_file" || tc1.Arguments != `{"path":"a.go"}` {
+		t.Errorf("ToolCalls[0] = %+v, want call_1/read_file", tc1)
+	}
+	tc2 := doneEvent.ToolCalls[1]
+	if tc2.ID != "call_2" || tc2.Name != "web_fetch" || tc2.Arguments != `{"url":"https://x.dev"}` {
+		t.Errorf("ToolCalls[1] = %+v, want call_2/web_fetch(参数不得串位)", tc2)
 	}
 }

@@ -3821,3 +3821,87 @@ func TestProPlanChoice_AnchorFallback(t *testing.T) {
 	})
 }
 
+// --- webSearchVirtualEvent(Responses API 服务端搜索 → 虚拟 ToolCall 事件)---
+
+func TestWebSearchVirtualEvent(t *testing.T) {
+	tests := []struct {
+		name    string
+		ev      llm.StreamingEvent
+		wantNil bool
+		queries []string
+	}{
+		{
+			name: "in_progress → ToolCallStart",
+			ev:   llm.StreamingEvent{WebSearchStatus: "in_progress", WebSearchCallID: "ws_1"},
+		},
+		{
+			name:    "searching → nil(段落已存在,无附加信息)",
+			ev:      llm.StreamingEvent{WebSearchStatus: "searching", WebSearchCallID: "ws_1"},
+			wantNil: true,
+		},
+		{
+			name: "searching 兜底(无 in_progress)→ ToolCallStart",
+			ev:   llm.StreamingEvent{WebSearchStatus: "searching", WebSearchCallID: "ws_2"},
+		},
+		{
+			name: "completed → ToolCallResult",
+			ev:   llm.StreamingEvent{WebSearchStatus: "completed", WebSearchCallID: "ws_1"},
+		},
+		{
+			name:    "completed with queries → Result 含搜索词",
+			ev:      llm.StreamingEvent{WebSearchStatus: "completed", WebSearchCallID: "ws_1"},
+			queries: []string{"go 1.25", "deepseek api"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			startedAt := make(map[string]time.Time)
+			// 100ms 前开始,确保 time.Since 的毫秒取整 > 0
+			startedAt["ws_1"] = time.Now().Add(-100 * time.Millisecond)
+			ev := tt.ev
+			ev.WebSearchQueries = tt.queries
+			got := webSearchVirtualEvent(ev, 3, startedAt)
+			if tt.wantNil {
+				if got != nil {
+					t.Fatalf("webSearchVirtualEvent = %#v, want nil", got)
+				}
+				return
+			}
+			if got == nil {
+				t.Fatal("webSearchVirtualEvent = nil, want event")
+			}
+			switch ev := got.(type) {
+			case ToolCallStart:
+				if ev.Turn != 3 || ev.ToolCallID != tt.ev.WebSearchCallID || ev.ToolCallName != "web_search" {
+					t.Errorf("ToolCallStart = %+v, want turn=3 id=%s name=web_search", ev, tt.ev.WebSearchCallID)
+				}
+				if !ev.ServerSide {
+					t.Error("ToolCallStart.ServerSide = false, want true")
+				}
+			case ToolCallResult:
+				if ev.Turn != 3 || ev.ToolCallID != tt.ev.WebSearchCallID || ev.ToolCallName != "web_search" {
+					t.Errorf("ToolCallResult = %+v, want turn=3 id=%s name=web_search", ev, tt.ev.WebSearchCallID)
+				}
+				if !ev.ServerSide {
+					t.Error("ToolCallResult.ServerSide = false, want true")
+				}
+				if ev.DurationMs <= 0 {
+					t.Errorf("DurationMs = %d, want > 0(实际搜索耗时,替代假 0ms)", ev.DurationMs)
+				}
+				// W3: 虚拟 Result 必须含 \n\n 分隔符,兼容 TUI parseWebSearchBody 头部/正文分离
+				if !strings.Contains(ev.Result, "\n\n") {
+					t.Errorf("Result 缺少 \\n\\n 分隔符: %q", ev.Result)
+				}
+				if len(tt.queries) > 0 {
+					if !strings.Contains(ev.Result, `"go 1.25, deepseek api"`) {
+						t.Errorf("Result 应包含服务端搜索词: %q", ev.Result)
+					}
+				}
+			default:
+				t.Fatalf("unexpected event type %T", got)
+			}
+		})
+	}
+}
+

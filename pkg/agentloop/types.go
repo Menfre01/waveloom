@@ -37,12 +37,15 @@ func (StreamDelta) TurnEvent() {}
 // ToolCallStart — 工具调用开始
 // ---------------------------------------------------------------------------
 
-// ToolCallStart 表示 LLM 请求执行一个工具，Loop 即将执行。
+// ToolCallStart 表示 LLM 请求执行一个工具,Loop 即将执行。
 type ToolCallStart struct {
 	Turn         int    // 当前 turn 序号
 	ToolCallID   string // 工具调用唯一 ID
 	ToolCallName string // 工具名
 	Arguments    string // JSON 编码的调用参数
+	// ServerSide 标记该事件为服务端自动执行的虚拟事件(Responses API 的
+	// web_search_call),非本地工具调用;TUI 据此区分渲染样式。
+	ServerSide bool
 }
 
 func (ToolCallStart) TurnEvent() {}
@@ -80,9 +83,12 @@ type ToolCallResult struct {
 	ErrorKind    string // 失败时的错误分类（如 file_not_found）
 	DurationMs   int64  // 执行耗时（毫秒）
 	Denied       bool   // 工具因权限检查被拒（未实际执行）
-	Fatal        bool   // 错误是否致命（ErrorClassFatal），TUI 据此区分红/金色样式
+	Fatal        bool   // 错误是否致命(ErrorClassFatal),TUI 据此区分红/金色样式
+	// ServerSide 标记该结果为服务端自动执行的虚拟事件(Responses API 的
+	// web_search_call),非本地工具执行结果;TUI 据此区分渲染样式。
+	ServerSide bool
 
-	// DiffHunks 为 edit_file 等工具提供的结构化 diff，供 TUI 渲染带行号的统一 diff 视图。
+	// DiffHunks 为 edit_file 等工具提供的结构化 diff,供 TUI 渲染带行号的统一 diff 视图。
 	// nil 表示不适用。
 	DiffHunks []tool.DiffHunk
 }

@@ -782,7 +782,7 @@ func TestDeepSeekParseStreamEventWithUsage(t *testing.T) {
 func TestDeepSeekBuildRequestResponseFormat(t *testing.T) {
 	adapter := newDeepSeekAdapter(ClientConfig{
 		APIKey:         "sk-test",
-		Model:          "deepseek-v4-flash",
+		Model:          "deepseek-v4-pro",
 		BaseURL:        "https://api.deepseek.com",
 		ResponseFormat: "json_object",
 	})
@@ -810,7 +810,7 @@ func TestDeepSeekBuildRequestResponseFormat(t *testing.T) {
 func TestDeepSeekBuildStreamRequestResponseFormat(t *testing.T) {
 	adapter := newDeepSeekAdapter(ClientConfig{
 		APIKey:         "sk-test",
-		Model:          "deepseek-v4-flash",
+		Model:          "deepseek-v4-pro",
 		BaseURL:        "https://api.deepseek.com",
 		ResponseFormat: "json_object",
 	})
@@ -1014,5 +1014,669 @@ func TestDeepSeekAdapter_ModelOverrideEmpty(t *testing.T) {
 	}
 	if body["model"] != "deepseek-v4-pro" {
 		t.Errorf("body[model] = %q, want %q", body["model"], "deepseek-v4-pro")
+	}
+}
+
+// --- Responses API 模式(deepseek-v4-flash)---
+
+func newResponsesAdapter() *deepSeekAdapter {
+	return newDeepSeekAdapter(ClientConfig{
+		Provider: ProviderDeepSeek,
+		APIKey:   "sk-deepseek",
+		Model:    ModelDeepSeekV4Flash,
+		BaseURL:  "https://api.deepseek.com",
+	})
+}
+
+// TestResponsesBuildRequest_Endpoint 验证 v4-flash 走 /v1/responses,v4-pro 走 chat/completions。
+func TestResponsesBuildRequest_Endpoint(t *testing.T) {
+	flash := newResponsesAdapter()
+	req, err := flash.BuildRequest(context.Background(), []Message{{Role: RoleUser, Content: "Hi"}}, nil)
+	if err != nil {
+		t.Fatalf("BuildRequest error: %v", err)
+	}
+	if req.URL.String() != "https://api.deepseek.com/v1/responses" {
+		t.Errorf("URL = %q, want /v1/responses", req.URL.String())
+	}
+
+	pro := newDeepSeekAdapter(ClientConfig{
+		Provider: ProviderDeepSeek,
+		APIKey:   "sk-deepseek",
+		Model:    "deepseek-v4-pro",
+		BaseURL:  "https://api.deepseek.com",
+	})
+	req, err = pro.BuildRequest(context.Background(), []Message{{Role: RoleUser, Content: "Hi"}}, nil)
+	if err != nil {
+		t.Fatalf("BuildRequest error: %v", err)
+	}
+	if req.URL.String() != "https://api.deepseek.com/v1/chat/completions" {
+		t.Errorf("URL = %q, want /v1/chat/completions", req.URL.String())
+	}
+}
+
+// TestResponsesBuildRequest_ModelOverride 验证 ModelOverride 切换模型时每请求独立判定端点。
+func TestResponsesBuildRequest_ModelOverride(t *testing.T) {
+	// 配置为 v4-pro(chat),但 override 为 v4-flash → 走 responses
+	pro := newDeepSeekAdapter(ClientConfig{
+		Provider: ProviderDeepSeek,
+		APIKey:   "sk-deepseek",
+		Model:    "deepseek-v4-pro",
+		BaseURL:  "https://api.deepseek.com",
+	})
+	ctx := WithModelOverride(context.Background(), ModelDeepSeekV4Flash)
+	req, err := pro.BuildRequest(ctx, []Message{{Role: RoleUser, Content: "Hi"}}, nil)
+	if err != nil {
+		t.Fatalf("BuildRequest error: %v", err)
+	}
+	if req.URL.String() != "https://api.deepseek.com/v1/responses" {
+		t.Errorf("override flash URL = %q, want /v1/responses", req.URL.String())
+	}
+
+	// 配置为 v4-flash,override 为 v4-pro → 走 chat
+	flash := newResponsesAdapter()
+	ctx = WithModelOverride(context.Background(), "deepseek-v4-pro")
+	req, err = flash.BuildRequest(ctx, []Message{{Role: RoleUser, Content: "Hi"}}, nil)
+	if err != nil {
+		t.Fatalf("BuildRequest error: %v", err)
+	}
+	if req.URL.String() != "https://api.deepseek.com/v1/chat/completions" {
+		t.Errorf("override pro URL = %q, want /v1/chat/completions", req.URL.String())
+	}
+}
+
+// TestResponsesBuildRequest_Instructions 验证首条 system 提取为 instructions,
+// 后续 system 保留为 input item。
+func TestResponsesBuildRequest_Instructions(t *testing.T) {
+	adapter := newResponsesAdapter()
+	messages := []Message{
+		{Role: RoleSystem, Content: "You are a helpful assistant."},
+		{Role: RoleSystem, Content: "Extra rules."},
+		{Role: RoleUser, Content: "Hi"},
+	}
+	req, err := adapter.BuildRequest(context.Background(), messages, nil)
+	if err != nil {
+		t.Fatalf("BuildRequest error: %v", err)
+	}
+	var body map[string]any
+	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+
+	if body["instructions"] != "You are a helpful assistant." {
+		t.Errorf("instructions = %q, want first system message", body["instructions"])
+	}
+	input := body["input"].([]any)
+	if len(input) != 2 {
+		t.Fatalf("input len = %d, want 2 (extra system + user)", len(input))
+	}
+	sysItem := input[0].(map[string]any)
+	if sysItem["role"] != "system" {
+		t.Errorf("input[0].role = %v, want system", sysItem["role"])
+	}
+}
+
+// TestResponsesBuildRequest_InputItems 验证消息 → input items 的完整转换
+// (assistant tool_calls → function_call items;tool 消息 → function_call_output)。
+func TestResponsesBuildRequest_InputItems(t *testing.T) {
+	adapter := newResponsesAdapter()
+	messages := []Message{
+		{Role: RoleSystem, Content: "Sys"},
+		{Role: RoleUser, Content: "read the file"},
+		{Role: RoleAssistant, Content: "ok", ReasoningContent: "thinking...",
+			ToolCalls: []ToolCall{{ID: "call_1", Name: "read_file", Arguments: `{"path":"a.go"}`}}},
+		{Role: RoleTool, ToolCallID: "call_1", Name: "read_file", Content: "file contents"},
+	}
+	req, err := adapter.BuildRequest(context.Background(), messages, nil)
+	if err != nil {
+		t.Fatalf("BuildRequest error: %v", err)
+	}
+	var body map[string]any
+	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	input := body["input"].([]any)
+	if len(input) != 5 {
+		t.Fatalf("input len = %d, want 5 (user, assistant, reasoning, function_call, function_call_output)", len(input))
+	}
+
+	userItem := input[0].(map[string]any)
+	content := userItem["content"].([]any)
+	if userItem["role"] != "user" || content[0].(map[string]any)["type"] != "input_text" {
+		t.Errorf("input[0] = %v, want user input_text", userItem)
+	}
+
+	asstItem := input[1].(map[string]any)
+	asstContent := asstItem["content"].([]any)
+	if asstItem["role"] != "assistant" || asstContent[0].(map[string]any)["type"] != "output_text" {
+		t.Errorf("input[1] = %v, want assistant output_text", asstItem)
+	}
+
+	reasoningItem := input[2].(map[string]any)
+	if reasoningItem["type"] != "reasoning" {
+		t.Errorf("input[2].type = %v, want reasoning", reasoningItem["type"])
+	}
+
+	fcItem := input[3].(map[string]any)
+	if fcItem["type"] != "function_call" || fcItem["call_id"] != "call_1" ||
+		fcItem["name"] != "read_file" || fcItem["arguments"] != `{"path":"a.go"}` {
+		t.Errorf("input[3] = %v, want function_call item", fcItem)
+	}
+
+	fcoItem := input[4].(map[string]any)
+	if fcoItem["type"] != "function_call_output" || fcoItem["call_id"] != "call_1" ||
+		fcoItem["output"] != "file contents" {
+		t.Errorf("input[4] = %v, want function_call_output item", fcoItem)
+	}
+}
+
+// TestResponsesBuildRequest_WebSearchTool 验证 web_search 转为服务端声明,
+// 其他工具保持 function 声明。
+func TestResponsesBuildRequest_WebSearchTool(t *testing.T) {
+	adapter := newResponsesAdapter()
+	tools := []ToolSpec{
+		{Name: "web_search", Description: "Search the web"},
+		{Name: "read_file", Description: "Read a file", Parameters: map[string]any{"type": "object"}},
+	}
+	req, err := adapter.BuildRequest(context.Background(), []Message{{Role: RoleUser, Content: "Hi"}}, tools)
+	if err != nil {
+		t.Fatalf("BuildRequest error: %v", err)
+	}
+	var body map[string]any
+	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	toolsArr := body["tools"].([]any)
+	if len(toolsArr) != 2 {
+		t.Fatalf("tools len = %d, want 2 (web_search 声明 + read_file function)", len(toolsArr))
+	}
+	// 实现顺序:function 声明在前,web_search 服务端声明最后追加
+	fnTool := toolsArr[0].(map[string]any)
+	if fnTool["type"] != "function" || fnTool["name"] != "read_file" {
+		t.Errorf("tools[0] = %v, want function read_file", fnTool)
+	}
+	wsTool := toolsArr[1].(map[string]any)
+	if wsTool["type"] != "web_search" {
+		t.Errorf("tools[1] = %v, want {type: web_search}", wsTool)
+	}
+	if _, hasName := wsTool["name"]; hasName {
+		t.Errorf("web_search 声明不应包含 function schema 字段 name")
+	}
+}
+
+// TestResponsesBuildRequest_ParamsMapping 验证参数映射:
+// max_tokens → max_output_tokens;reasoning_effort → reasoning.effort(原始值);
+// response_format → text.format。
+func TestResponsesBuildRequest_ParamsMapping(t *testing.T) {
+	adapter := newDeepSeekAdapter(ClientConfig{
+		Provider:       ProviderDeepSeek,
+		APIKey:         "sk-deepseek",
+		Model:          ModelDeepSeekV4Flash,
+		BaseURL:        "https://api.deepseek.com",
+		ResponseFormat: "json_object",
+		ExtraParams:    map[string]any{"reasoning_effort": "low", "max_tokens": 4096},
+	})
+	ctx := WithMaxTokens(context.Background(), 2048)
+	req, err := adapter.BuildRequest(ctx, []Message{{Role: RoleUser, Content: "Hi"}}, nil)
+	if err != nil {
+		t.Fatalf("BuildRequest error: %v", err)
+	}
+	var body map[string]any
+	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if maxOut, ok := body["max_output_tokens"].(float64); !ok || int(maxOut) != 2048 {
+		t.Errorf("max_output_tokens = %v, want 2048 (ctx override 优先)", body["max_output_tokens"])
+	}
+	reasoning, ok := body["reasoning"].(map[string]any)
+	if !ok || reasoning["effort"] != "low" {
+		t.Errorf("reasoning = %v, want {effort: low}(原始值,不经 chat 重映射)", body["reasoning"])
+	}
+	text, ok := body["text"].(map[string]any)
+	if !ok {
+		t.Fatalf("text = %v, want text.format", body["text"])
+	}
+	format := text["format"].(map[string]any)
+	if format["type"] != "json_object" {
+		t.Errorf("text.format.type = %v, want json_object", format["type"])
+	}
+}
+
+// TestResponsesParseResponse_Text 验证非流式文本响应解析。
+func TestResponsesParseResponse_Text(t *testing.T) {
+	adapter := newResponsesAdapter()
+	body := []byte(`{
+		"object": "response",
+		"status": "completed",
+		"model": "deepseek-v4-flash",
+		"output": [
+			{"type": "message", "role": "assistant", "content": [
+				{"type": "output_text", "text": "Hello "},
+				{"type": "output_text", "text": "world"}
+			]}
+		]
+	}`)
+	resp, err := adapter.ParseResponse(body)
+	if err != nil {
+		t.Fatalf("ParseResponse error: %v", err)
+	}
+	if resp.Content != "Hello world" {
+		t.Errorf("Content = %q, want %q", resp.Content, "Hello world")
+	}
+	if resp.FinishReason != "stop" {
+		t.Errorf("FinishReason = %q, want stop", resp.FinishReason)
+	}
+	if len(resp.ToolCalls) != 0 {
+		t.Errorf("ToolCalls = %v, want empty", resp.ToolCalls)
+	}
+}
+
+// TestResponsesParseResponse_FunctionCall 验证 function_call item 提取 + web_search_call 忽略。
+func TestResponsesParseResponse_FunctionCall(t *testing.T) {
+	adapter := newResponsesAdapter()
+	body := []byte(`{
+		"object": "response",
+		"status": "completed",
+		"output": [
+			{"type": "function_call", "call_id": "call_1", "name": "read_file", "arguments": "{\"path\":\"a.go\"}"},
+			{"type": "web_search_call", "id": "ws_1", "status": "completed"}
+		]
+	}`)
+	resp, err := adapter.ParseResponse(body)
+	if err != nil {
+		t.Fatalf("ParseResponse error: %v", err)
+	}
+	if len(resp.ToolCalls) != 1 {
+		t.Fatalf("ToolCalls len = %d, want 1", len(resp.ToolCalls))
+	}
+	tc := resp.ToolCalls[0]
+	if tc.ID != "call_1" || tc.Name != "read_file" || tc.Arguments != `{"path":"a.go"}` {
+		t.Errorf("ToolCall = %+v, want call_1/read_file", tc)
+	}
+	if resp.FinishReason != "tool_calls" {
+		t.Errorf("FinishReason = %q, want tool_calls", resp.FinishReason)
+	}
+}
+
+// TestResponsesParseResponse_Usage 验证 usage 映射(含 reasoning_tokens / cached_tokens)。
+func TestResponsesParseResponse_Usage(t *testing.T) {
+	adapter := newResponsesAdapter()
+	body := []byte(`{
+		"object": "response",
+		"status": "completed",
+		"usage": {
+			"input_tokens": 100,
+			"output_tokens": 50,
+			"total_tokens": 150,
+			"input_tokens_details": {"cached_tokens": 70, "cache_miss_tokens": 30},
+			"output_tokens_details": {"reasoning_tokens": 20}
+		}
+	}`)
+	resp, err := adapter.ParseResponse(body)
+	if err != nil {
+		t.Fatalf("ParseResponse error: %v", err)
+	}
+	if resp.Usage == nil {
+		t.Fatal("Usage = nil, want non-nil")
+	}
+	if resp.Usage.PromptTokens != 100 || resp.Usage.CompletionTokens != 50 || resp.Usage.TotalTokens != 150 {
+		t.Errorf("usage tokens = %+v, want 100/50/150", resp.Usage)
+	}
+	if resp.Usage.CacheHitTokens != 70 || resp.Usage.CacheMissTokens != 30 {
+		t.Errorf("cache tokens = hit:%d miss:%d, want 70/30", resp.Usage.CacheHitTokens, resp.Usage.CacheMissTokens)
+	}
+	if resp.Usage.ReasoningTokens != 20 {
+		t.Errorf("ReasoningTokens = %d, want 20", resp.Usage.ReasoningTokens)
+	}
+}
+
+// TestResponsesParseResponse_Failed 验证 failed 状态返回 NonRetryableError。
+func TestResponsesParseResponse_Failed(t *testing.T) {
+	adapter := newResponsesAdapter()
+	body := []byte(`{
+		"object": "response",
+		"status": "failed",
+		"error": {"code": "rate_limit_exceeded", "message": "too many requests"}
+	}`)
+	_, err := adapter.ParseResponse(body)
+	if err == nil {
+		t.Fatal("ParseResponse error = nil, want NonRetryableError")
+	}
+	var nre *NonRetryableError
+	if !errors.As(err, &nre) {
+		t.Errorf("err type = %T, want NonRetryableError", err)
+	}
+	if !strings.Contains(nre.Message, "too many requests") {
+		t.Errorf("message = %q, want include error detail", nre.Message)
+	}
+}
+
+// TestResponsesParseStreamEvent_Delta 验证 output_text.delta → Delta。
+func TestResponsesParseStreamEvent_Delta(t *testing.T) {
+	adapter := newResponsesAdapter()
+	ev, err := adapter.ParseStreamEvent([]byte(`{"type":"response.output_text.delta","delta":"Hello"}`))
+	if err != nil {
+		t.Fatalf("ParseStreamEvent error: %v", err)
+	}
+	if ev.Delta != "Hello" {
+		t.Errorf("Delta = %q, want Hello", ev.Delta)
+	}
+	if ev.Done {
+		t.Error("Done = true, want false")
+	}
+}
+
+// TestResponsesParseStreamEvent_Reasoning 验证 reasoning_text.delta → ReasoningDelta。
+func TestResponsesParseStreamEvent_Reasoning(t *testing.T) {
+	adapter := newResponsesAdapter()
+	ev, err := adapter.ParseStreamEvent([]byte(`{"type":"response.reasoning_text.delta","delta":"thinking"}`))
+	if err != nil {
+		t.Fatalf("ParseStreamEvent error: %v", err)
+	}
+	if ev.ReasoningDelta != "thinking" {
+		t.Errorf("ReasoningDelta = %q, want thinking", ev.ReasoningDelta)
+	}
+}
+
+// TestResponsesParseStreamEvent_FunctionCall 验证 function_call 流式累积:
+// output_item.added → ID/Name;delta → 参数增量;done → 完整参数(ToolCallReplace)。
+func TestResponsesParseStreamEvent_FunctionCall(t *testing.T) {
+	adapter := newResponsesAdapter()
+
+	ev, err := adapter.ParseStreamEvent([]byte(
+		`{"type":"response.output_item.added","output_index":1,"item":{"type":"function_call","id":"fc_1","call_id":"call_1","name":"read_file","arguments":""}}`))
+	if err != nil {
+		t.Fatalf("added error: %v", err)
+	}
+	if len(ev.ToolCalls) != 1 || ev.ToolCalls[0].ID != "call_1" || ev.ToolCalls[0].Name != "read_file" || ev.ToolCalls[0].Index != 1 {
+		t.Errorf("added ev = %+v, want call_1/read_file @index 1", ev)
+	}
+
+	ev, err = adapter.ParseStreamEvent([]byte(`{"type":"response.function_call_arguments.delta","output_index":1,"delta":"{\"path\":"}`))
+	if err != nil {
+		t.Fatalf("delta error: %v", err)
+	}
+	if len(ev.ToolCalls) != 1 || ev.ToolCalls[0].Arguments != `{"path":` || ev.ToolCalls[0].Index != 1 {
+		t.Errorf("delta ev = %+v, want arguments fragment @index 1", ev)
+	}
+
+	ev, err = adapter.ParseStreamEvent([]byte(`{"type":"response.function_call_arguments.done","output_index":1,"arguments":"{\"path\":\"a.go\"}"}`))
+	if err != nil {
+		t.Fatalf("done error: %v", err)
+	}
+	if len(ev.ToolCalls) != 1 || ev.ToolCalls[0].Arguments != `{"path":"a.go"}` {
+		t.Errorf("done ev = %+v, want full arguments", ev)
+	}
+	if !ev.ToolCallReplace {
+		t.Error("ToolCallReplace = false, want true (完整参数应覆盖累积)")
+	}
+}
+
+// TestResponsesParseStreamEvent_WebSearch 验证 web_search_call 状态透传。
+func TestResponsesParseStreamEvent_WebSearch(t *testing.T) {
+	adapter := newResponsesAdapter()
+	ev, err := adapter.ParseStreamEvent([]byte(
+		`{"type":"response.web_search_call.in_progress","item":{"type":"web_search_call","id":"ws_1","status":"in_progress"}}`))
+	if err != nil {
+		t.Fatalf("in_progress error: %v", err)
+	}
+	if ev.WebSearchStatus != "in_progress" || ev.WebSearchCallID != "ws_1" {
+		t.Errorf("ev = status:%q id:%q, want in_progress/ws_1", ev.WebSearchStatus, ev.WebSearchCallID)
+	}
+
+	ev, err = adapter.ParseStreamEvent([]byte(
+		`{"type":"response.web_search_call.completed","item":{"type":"web_search_call","id":"ws_1","status":"completed"}}`))
+	if err != nil {
+		t.Fatalf("completed error: %v", err)
+	}
+	if ev.WebSearchStatus != "completed" {
+		t.Errorf("WebSearchStatus = %q, want completed", ev.WebSearchStatus)
+	}
+
+	// 防御性解析:OpenAI 兼容 search_queries(DeepSeek 文档未承诺,若返回则透传)
+	ev, err = adapter.ParseStreamEvent([]byte(
+		`{"type":"response.web_search_call.completed","item":{"type":"web_search_call","id":"ws_1","status":"completed","search_queries":["go 1.25","deepseek api"]}}`))
+	if err != nil {
+		t.Fatalf("completed with queries error: %v", err)
+	}
+	if len(ev.WebSearchQueries) != 2 || ev.WebSearchQueries[0] != "go 1.25" || ev.WebSearchQueries[1] != "deepseek api" {
+		t.Errorf("WebSearchQueries = %v, want [go 1.25 deepseek api]", ev.WebSearchQueries)
+	}
+}
+
+// TestResponsesParseStreamEvent_Completed 验证 completed 事件 → Done + Usage。
+func TestResponsesParseStreamEvent_Completed(t *testing.T) {
+	adapter := newResponsesAdapter()
+	ev, err := adapter.ParseStreamEvent([]byte(`{
+		"type": "response.completed",
+		"response": {
+			"object": "response",
+			"status": "completed",
+			"model": "deepseek-v4-flash",
+			"usage": {"input_tokens": 10, "output_tokens": 5, "total_tokens": 15}
+		}
+	}`))
+	if err != nil {
+		t.Fatalf("ParseStreamEvent error: %v", err)
+	}
+	if !ev.Done {
+		t.Fatal("Done = false, want true")
+	}
+	if ev.FinishReason != "stop" {
+		t.Errorf("FinishReason = %q, want stop", ev.FinishReason)
+	}
+	if ev.Err != nil {
+		t.Errorf("Err = %v, want nil", ev.Err)
+	}
+	if ev.Usage == nil || ev.Usage.PromptTokens != 10 || ev.Usage.CompletionTokens != 5 {
+		t.Errorf("Usage = %+v, want 10/5", ev.Usage)
+	}
+	if ev.Model != "deepseek-v4-flash" {
+		t.Errorf("Model = %q, want deepseek-v4-flash", ev.Model)
+	}
+}
+
+// TestResponsesParseStreamEvent_Failed 验证 failed 事件 → Done + Err。
+func TestResponsesParseStreamEvent_Failed(t *testing.T) {
+	adapter := newResponsesAdapter()
+	ev, err := adapter.ParseStreamEvent([]byte(`{
+		"type": "response.failed",
+		"response": {"object": "response", "status": "failed", "error": {"code": "x", "message": "boom"}}
+	}`))
+	if err != nil {
+		t.Fatalf("ParseStreamEvent error: %v", err)
+	}
+	if !ev.Done {
+		t.Fatal("Done = false, want true")
+	}
+	if ev.Err == nil || !strings.Contains(ev.Err.Error(), "boom") {
+		t.Errorf("Err = %v, want include boom", ev.Err)
+	}
+}
+
+// TestResponsesParseStreamEvent_IgnoredEvents 验证无关事件(created/in_progress/content_part)静默忽略。
+func TestResponsesParseStreamEvent_IgnoredEvents(t *testing.T) {
+	adapter := newResponsesAdapter()
+	for _, data := range []string{
+		`{"type":"response.created","response":{"object":"response","model":"deepseek-v4-flash"}}`,
+		`{"type":"response.in_progress"}`,
+		`{"type":"response.content_part.added","part":{"type":"output_text","text":""}}`,
+		`{"type":"response.output_item.done"}`,
+	} {
+		ev, err := adapter.ParseStreamEvent([]byte(data))
+		if err != nil {
+			t.Fatalf("ParseStreamEvent(%s) error: %v", data, err)
+		}
+		if ev.Delta != "" || ev.Done || len(ev.ToolCalls) != 0 {
+			t.Errorf("ParseStreamEvent(%s) = %+v, want zero event", data, ev)
+		}
+	}
+}
+
+// TestResponsesFormatDetection 验证格式探测:chat chunk 不带 type 字段 → chat 分支;
+// responses 事件带 response.* type → responses 分支。
+func TestResponsesFormatDetection(t *testing.T) {
+	adapter := newResponsesAdapter()
+
+	// chat chunk(无 type 字段)→ 按 chat 解析
+	ev, err := adapter.ParseStreamEvent([]byte(`{"choices":[{"finish_reason":null,"delta":{"content":"Hi"}}]}`))
+	if err != nil {
+		t.Fatalf("chat chunk error: %v", err)
+	}
+	if ev.Delta != "Hi" {
+		t.Errorf("chat Delta = %q, want Hi", ev.Delta)
+	}
+
+	// chat 非流式响应(带 choices)→ chat 分支
+	resp, err := adapter.ParseResponse([]byte(`{"choices":[{"finish_reason":"stop","message":{"role":"assistant","content":"Hi"}}]}`))
+	if err != nil {
+		t.Fatalf("chat response error: %v", err)
+	}
+	if resp.Content != "Hi" {
+		t.Errorf("chat Content = %q, want Hi", resp.Content)
+	}
+}
+
+// TestResponsesBuildStreamRequest 验证流式请求体(stream=true)同样走 responses 格式。
+func TestResponsesBuildStreamRequest(t *testing.T) {
+	adapter := newResponsesAdapter()
+	req, err := adapter.BuildStreamRequest(context.Background(),
+		[]Message{{Role: RoleUser, Content: "Hi"}}, nil)
+	if err != nil {
+		t.Fatalf("BuildStreamRequest error: %v", err)
+	}
+	if req.URL.String() != "https://api.deepseek.com/v1/responses" {
+		t.Errorf("URL = %q, want /v1/responses", req.URL.String())
+	}
+	var body map[string]any
+	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if body["stream"] != true {
+		t.Errorf("stream = %v, want true", body["stream"])
+	}
+	if _, hasInput := body["input"]; !hasInput {
+		t.Error("input 缺失,responses 请求应使用 input items 而非 messages")
+	}
+	if _, hasMessages := body["messages"]; hasMessages {
+		t.Error("messages 不应出现在 responses 请求体中")
+	}
+}
+
+// TestResponsesBuildRequest_InputEdgeCases 验证 input 转换边界:
+//  1. 首条消息非 system → 无 instructions 字段
+//  2. assistant 无 tool_calls 但带 reasoning_content → 不输出 reasoning item
+//     (明文归并到 assistant 消息,避免冗余 token)
+func TestResponsesBuildRequest_InputEdgeCases(t *testing.T) {
+	adapter := newResponsesAdapter()
+
+	// 1. 无 system 消息 → body 不含 instructions
+	req, err := adapter.BuildRequest(context.Background(),
+		[]Message{{Role: RoleUser, Content: "Hi"}}, nil)
+	if err != nil {
+		t.Fatalf("BuildRequest error: %v", err)
+	}
+	var body map[string]any
+	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if _, hasInstructions := body["instructions"]; hasInstructions {
+		t.Error("instructions 不应存在(首条消息非 system)")
+	}
+
+	// 2. assistant 无 tool_calls 带 reasoning → 仅 message item,无 reasoning item
+	req, err = adapter.BuildRequest(context.Background(), []Message{
+		{Role: RoleUser, Content: "question"},
+		{Role: RoleAssistant, Content: "answer", ReasoningContent: "thinking but no tools"},
+	}, nil)
+	if err != nil {
+		t.Fatalf("BuildRequest error: %v", err)
+	}
+	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	input := body["input"].([]any)
+	if len(input) != 2 {
+		t.Fatalf("input len = %d, want 2 (user + assistant,无 reasoning item)", len(input))
+	}
+	for _, item := range input {
+		if m := item.(map[string]any); m["type"] == "reasoning" {
+			t.Error("无 tool_calls 的 assistant 不应输出 reasoning item")
+		}
+	}
+}
+
+// TestResponsesBuildRequest_NoWebSearchTool 验证 tools 列表不含 web_search 时
+// 不声明服务端 web_search 工具(避免意外启用服务端搜索)。
+func TestResponsesBuildRequest_NoWebSearchTool(t *testing.T) {
+	adapter := newResponsesAdapter()
+	tools := []ToolSpec{
+		{Name: "read_file", Description: "Read a file", Parameters: map[string]any{"type": "object"}},
+	}
+	req, err := adapter.BuildRequest(context.Background(),
+		[]Message{{Role: RoleUser, Content: "Hi"}}, tools)
+	if err != nil {
+		t.Fatalf("BuildRequest error: %v", err)
+	}
+	var body map[string]any
+	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	toolsArr := body["tools"].([]any)
+	if len(toolsArr) != 1 {
+		t.Fatalf("tools len = %d, want 1 (仅 read_file function)", len(toolsArr))
+	}
+	if t0 := toolsArr[0].(map[string]any); t0["type"] != "function" {
+		t.Errorf("tools[0] = %v, want function 声明", t0)
+	}
+}
+
+// TestResponsesParseResponse_EmptyOutput 验证 output 为空或仅含 web_search_call
+// 时返回空内容 + 空 tool_calls,不崩溃(服务端纯搜索无文本输出的场景)。
+func TestResponsesParseResponse_EmptyOutput(t *testing.T) {
+	adapter := newResponsesAdapter()
+	body := []byte(`{
+		"object": "response",
+		"status": "completed",
+		"output": [
+			{"type": "web_search_call", "id": "ws_1", "status": "completed"}
+		]
+	}`)
+	resp, err := adapter.ParseResponse(body)
+	if err != nil {
+		t.Fatalf("ParseResponse error: %v", err)
+	}
+	if resp.Content != "" {
+		t.Errorf("Content = %q, want empty", resp.Content)
+	}
+	if len(resp.ToolCalls) != 0 {
+		t.Errorf("ToolCalls = %v, want empty", resp.ToolCalls)
+	}
+	if resp.FinishReason != "stop" {
+		t.Errorf("FinishReason = %q, want stop", resp.FinishReason)
+	}
+}
+
+// TestResponsesParseStreamEvent_Incomplete 验证 incomplete 事件 → Done + length。
+func TestResponsesParseStreamEvent_Incomplete(t *testing.T) {
+	adapter := newResponsesAdapter()
+	ev, err := adapter.ParseStreamEvent([]byte(`{
+		"type": "response.incomplete",
+		"response": {
+			"object": "response",
+			"status": "incomplete",
+			"usage": {"input_tokens": 10, "output_tokens": 5, "total_tokens": 15}
+		}
+	}`))
+	if err != nil {
+		t.Fatalf("ParseStreamEvent error: %v", err)
+	}
+	if !ev.Done {
+		t.Fatal("Done = false, want true")
+	}
+	if ev.FinishReason != "length" {
+		t.Errorf("FinishReason = %q, want length", ev.FinishReason)
+	}
+	if ev.Usage == nil || ev.Usage.TotalTokens != 15 {
+		t.Errorf("Usage = %+v, want total 15", ev.Usage)
 	}
 }

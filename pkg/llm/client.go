@@ -225,16 +225,32 @@ func (c *client) readStream(ctx context.Context, req *http.Request, ch chan<- St
 
 		ev, err := c.adapter.ParseStreamEvent([]byte(data))
 		if err != nil {
-			// 跳过无法解析的 chunk，继续消费后续数据
+			// 跳过无法解析的 chunk,继续消费后续数据
 			slog.Debug("sse chunk parse skipped", "err", err)
 			continue
 		}
 		acc.accumulate(ev)
-		if ev.Delta != "" || ev.ReasoningDelta != "" {
+		// 终态事件(Responses API: response.completed / incomplete / failed)。
+		// Chat 模式的 ParseStreamEvent 从不返回 Done=true,该分支不影响 chat 模式。
+		if ev.Done {
+			final := acc.final()
+			// REGRESSION: 终态事件(completed/incomplete/failed)携带 model,
+			// 必须复制到 final——response.created 首帧被增量过滤器丢弃,
+			// 若此处不复制,流式调用的 Model 将永远为空。
+			if final.Model == "" {
+				final.Model = ev.Model
+			}
+			if ev.Err != nil {
+				final.Err = ev.Err
+			}
+			ch <- final
+			return
+		}
+		if ev.Delta != "" || ev.ReasoningDelta != "" || ev.WebSearchStatus != "" {
 			ch <- ev
 		}
 
-		// 快速路径：数据仍在到达但 ctx 已取消
+		// 快速路径:数据仍在到达但 ctx 已取消
 		select {
 		case <-ctx.Done():
 			ch <- StreamingEvent{Done: true, Err: ctx.Err()}
@@ -297,7 +313,13 @@ func (a *streamAccumulator) accumulate(ev StreamingEvent) {
 			if tc.Name != "" {
 				b.Name = tc.Name
 			}
-			b.Arguments += tc.Arguments
+			if ev.ToolCallReplace {
+				// Responses API done 事件携带完整参数:覆盖而非拼接,
+				// 避免与已累积的 delta 重复
+				b.Arguments = tc.Arguments
+			} else {
+				b.Arguments += tc.Arguments
+			}
 		}
 	}
 }
@@ -308,8 +330,17 @@ func (a *streamAccumulator) final() StreamingEvent {
 		ev.FinishReason = "stop"
 	}
 	if len(a.toolCallMap) > 0 {
+		// Responses API 的 output_index 是输出 item 的全局序号(可能非 0 起始,
+		// 如 message 占 0、function_call 占 1),必须按最大序号完整遍历。
+		// Chat 模式 index 从 0 连续递增,行为不变。
+		maxIndex := 0
+		for i := range a.toolCallMap {
+			if i > maxIndex {
+				maxIndex = i
+			}
+		}
 		ev.ToolCalls = make([]ToolCall, 0, len(a.toolCallMap))
-		for i := 0; i < len(a.toolCallMap); i++ {
+		for i := 0; i <= maxIndex; i++ {
 			if b, ok := a.toolCallMap[i]; ok && b != nil {
 				ev.ToolCalls = append(ev.ToolCalls, ToolCall{
 					ID:        b.ID,

@@ -71,10 +71,13 @@ type Paragraph struct {
 	ToolResult    string // 完整输出（展开时显示）
 	ToolError     string // 错误信息
 	ToolErrorKind string // 错误分类（如 timeout、command_failed 等）
-	ToolDurMs     int64  // 执行耗时（毫秒）
+	ToolDurMs     int64  // 执行耗时(毫秒)
 	ToolDenied    bool   // 权限被拒
-	ToolFatal     bool   // 错误是否致命，TUI 据此区分红（fatal）/金（recoverable）样式
-	DiffHunks  []tool.DiffHunk // edit_file 结构化 diff（nil = 不适用或纯文本回退）
+	ToolFatal     bool   // 错误是否致命,TUI 据此区分红(fatal)/金(recoverable)样式
+	// ToolServerSide 标记该工具为服务端自动执行(Responses API 的 web_search_call),
+	// 非本地工具调用;TUI 据此显示 "(server)" 摘要而非空参数 + (0ms)。
+	ToolServerSide bool
+	DiffHunks      []tool.DiffHunk // edit_file 结构化 diff(nil = 不适用或纯文本回退)
 
 	// Thought 专用字段
 	ThoughtTokens int // 完成后的 token 数
@@ -608,6 +611,15 @@ func toolSuffix(p *Paragraph, lc *Messages) string {
 		dur := formatDuration(p.ToolDurMs)
 		return fmt.Sprintf("(%s, %s)", size, dur)
 	case "web_search":
+		// 服务端自动执行的搜索(Responses API):无本地结果列表,显示
+		// "(server, <耗时>)" 区分于本地 DuckDuckGo/Brave 的 "(N results, <耗时>)"
+		if p.ToolServerSide {
+			dur := formatDuration(p.ToolDurMs)
+			if dur == "0ms" {
+				return "(server)"
+			}
+			return fmt.Sprintf("(server, %s)", dur)
+		}
 		n := countSearchResults(p.ToolResult)
 		dur := formatDuration(p.ToolDurMs)
 		if n > 0 {
@@ -1606,19 +1618,26 @@ func renderToolPara(sb *strings.Builder, p *Paragraph, ctx ViewportCtx) {
 	// 构造摘要行并做宽度自适应截断
 	toolNameRendered := toolNameStyle.Render(p.ToolName)
 	suffixRendered := toolSuffix(p, ctx.LC)
-	fixedWidth := lipgloss.Width(toolNameRendered) + lipgloss.Width("  ") + lipgloss.Width("  ") + lipgloss.Width(suffixRendered)
+	argsDisplay := p.ToolArgs
+	// 无参数工具(如服务端 web_search)跳过 args 渲染,避免双空格空洞
+	hasArgs := argsDisplay != ""
+	fixedWidth := lipgloss.Width(toolNameRendered) + lipgloss.Width("  ") + lipgloss.Width(suffixRendered)
+	if hasArgs {
+		fixedWidth += lipgloss.Width("  ")
+	}
 	maxArgsWidth := textWidth - fixedWidth
 	if maxArgsWidth < 4 {
 		maxArgsWidth = 4
 	}
-	argsDisplay := p.ToolArgs
 	if displayWidth(argsDisplay) > maxArgsWidth {
 		argsDisplay = truncateByDisplayWidth(argsDisplay, maxArgsWidth)
 	}
 	sb.WriteString(toolNameRendered)
 	sb.WriteString("  ")
-	sb.WriteString(styleToolArgs.Render(argsDisplay))
-	sb.WriteString("  ")
+	if hasArgs {
+		sb.WriteString(styleToolArgs.Render(argsDisplay))
+		sb.WriteString("  ")
+	}
 	sb.WriteString(suffixRendered)
 	sb.WriteString("\n")
 

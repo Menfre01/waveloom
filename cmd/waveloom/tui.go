@@ -1665,13 +1665,21 @@ func (m *model) handleToolStart(ev agentloop.ToolCallStart) {
 		last.renderDirty = true
 	}
 
-	// 创建 tool 段落（agent 工具由 SubagentStart 事件创建 paraSubagent 替代）
+	// 创建 tool 段落(agent 工具由 SubagentStart 事件创建 paraSubagent 替代)
 	if ev.ToolCallName != "agent" {
+		// 服务端自动执行的 web_search(Responses API)无本地参数,参数区显示
+		// 为空(耗时/服务端标记由 suffix 展示,避免与后缀 "server" 重复);
+		// 本地 web_search 仍显示 query
+		args := formatToolArgs(ev.ToolCallName, ev.Arguments, m.cwd)
+		if ev.ServerSide {
+			args = ""
+		}
 		m.paras = append(m.paras, Paragraph{
-			Type:     paraTool,
-			State:    stateStreaming,
-			ToolName: ev.ToolCallName,
-			ToolArgs: formatToolArgs(ev.ToolCallName, ev.Arguments, m.cwd),
+			Type:           paraTool,
+			State:          stateStreaming,
+			ToolName:       ev.ToolCallName,
+			ToolArgs:       args,
+			ToolServerSide: ev.ServerSide,
 		})
 	}
 }
@@ -1700,6 +1708,9 @@ func (m *model) handleToolResult(ev agentloop.ToolCallResult) {
 			p.ToolDurMs = ev.DurationMs
 			p.ToolDenied = ev.Denied
 			p.ToolFatal = ev.Fatal
+			if ev.ServerSide {
+				p.ToolServerSide = true
+			}
 			p.DiffHunks = ev.DiffHunks
 			if ev.IsError() || ev.Denied {
 				p.State = stateError
@@ -2412,10 +2423,10 @@ func isExpandable(p *Paragraph, contentWidth int) bool {
 		}
 		return true
 	case paraTool:
-		// shell / web_fetch / skill 的输出值得展开/折叠，其他工具的输出
-		// 或为结构化摘要（grep/ls/search_file/lsp_*）或通过预览行已传达完整信息。
+		// shell / web_fetch / web_search / skill 的输出值得展开/折叠,其他工具的输出
+		// 或为结构化摘要(grep/ls/search_file/lsp_*)或通过预览行已传达完整信息。
 		switch p.ToolName {
-		case "bash", "web_fetch", "skill":
+		case "bash", "web_fetch", "web_search", "skill":
 			if p.State != stateDone && p.State != stateCollapsed && p.State != stateExpanded && p.State != stateError {
 				return false
 			}

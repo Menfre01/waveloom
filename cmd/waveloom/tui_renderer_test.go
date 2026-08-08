@@ -251,6 +251,60 @@ func TestBuildViewportContent_ToolError(t *testing.T) {
 	}
 }
 
+// TestBuildViewportContent_ToolServerWebSearch 验证服务端 web_search 段落:
+// 参数区为空(不显示 "server"),suffix 显示 "(server, <耗时>)" 且 "server" 只出现一次。
+func TestBuildViewportContent_ToolServerWebSearch(t *testing.T) {
+	paras := []Paragraph{
+		{
+			Type:           paraTool,
+			State:          stateDone,
+			ToolName:       "web_search",
+			ToolArgs:       "",
+			ToolServerSide: true,
+			ToolDurMs:      1300,
+		},
+	}
+	ctx := ViewportCtx{LC: &enUS, Width: 80}
+	lines, _ := buildViewportContent(paras, ctx, -1, 0)
+
+	if len(lines) < 1 {
+		t.Fatal("expected at least 1 line for server web_search")
+	}
+	line := lines[0]
+	if !strings.Contains(line, "web_search") {
+		t.Errorf("expected tool name, got %q", line)
+	}
+	if !strings.Contains(line, "(server, 1.3s)") {
+		t.Errorf("expected server suffix with duration, got %q", line)
+	}
+	// "server" 只应出现在 suffix 中,参数区不再重复
+	if strings.Count(line, "server") != 1 {
+		t.Errorf("server 出现 %d 次, want 1(仅 suffix): %q", strings.Count(line, "server"), line)
+	}
+}
+
+// TestBuildViewportContent_ToolNoArgs 验证空参数工具跳过 args 渲染(无双空格空洞)。
+func TestBuildViewportContent_ToolNoArgs(t *testing.T) {
+	paras := []Paragraph{
+		{
+			Type:     paraTool,
+			State:    stateDone,
+			ToolName: "enter_plan_mode",
+			ToolArgs: "",
+		},
+	}
+	ctx := ViewportCtx{LC: &enUS, Width: 80}
+	lines, _ := buildViewportContent(paras, ctx, -1, 0)
+
+	if len(lines) < 1 {
+		t.Fatal("expected at least 1 line")
+	}
+	line := lines[0]
+	if !strings.Contains(line, "enter_plan_mode") {
+		t.Errorf("expected tool name, got %q", line)
+	}
+}
+
 func TestBuildViewportContent_SystemParagraph(t *testing.T) {
 	paras := []Paragraph{
 		{Type: paraSystem, State: stateDone, Text: "执行被中断。"},

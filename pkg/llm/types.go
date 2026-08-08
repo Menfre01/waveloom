@@ -179,6 +179,10 @@ const (
 // 仅作为 curr_model / --model 的选择值,绝不进入 Client 配置或 API 请求。
 const ModelChoiceProPlan = "proplan"
 
+// ModelDeepSeekV4Flash 是 DeepSeek Responses API 唯一支持的模型。
+// Provider=deepseek 且生效模型为此时,adapter 自动切换为 Responses API 格式。
+const ModelDeepSeekV4Flash = "deepseek-v4-flash"
+
 // ClientConfig 在构造 Client 时传入，运行期不可变。
 type ClientConfig struct {
 	Provider       ProviderType      // Provider 类型
@@ -197,13 +201,26 @@ type ClientConfig struct {
 // StreamingEvent 流式响应中的一个增量块。
 type StreamingEvent struct {
 	Delta          string     // 本次增量文本
-	ReasoningDelta string     // 本次增量思考内容（DeepSeek 思考模式下出现）
-	ToolCalls      []ToolCall // 流式累积完成后的工具调用列表（仅在 Done=true 时完整填充）
-	FinishReason   string     // 完成原因（仅在 Done=true 时非空）
-	Usage          *UsageInfo // Token 用量（仅在 Done=true 的最后一帧非空）
-	Model          string     // API 返回的实际模型名（首帧或最后一帧携带）
-	Done           bool       // 是否为流结束信号
-	Err            error      // 流处理中的错误（仅在 Done=true 且出错时非 nil）
+	ReasoningDelta string     // 本次增量思考内容(DeepSeek 思考模式下出现)
+	ToolCalls      []ToolCall // 流式累积完成后的工具调用列表(仅在 Done=true 时完整填充)
+	// ToolCallReplace 标记本事件的 ToolCalls 分片为完整值(覆盖而非追加 arguments)。
+	// Responses API 的 function_call_arguments.done 事件携带完整参数,必须覆盖
+	// 已累积的 delta,否则重复拼接导致参数损坏。
+	ToolCallReplace bool
+	// WebSearchStatus 标记服务端 web_search 工具的状态更新(Responses API 独有):
+	// "in_progress" / "searching" / "completed"。服务端自动执行搜索并注入上下文,
+	// 客户端无需本地执行;agent loop 据此生成虚拟 ToolCall 事件供 TUI 展示。
+	WebSearchStatus string
+	// WebSearchCallID 是 web_search_call item 的 ID(非 function call id)。
+	WebSearchCallID string
+	// WebSearchQueries 是服务端实际执行的搜索词列表(OpenAI 兼容 search_queries
+	// 字段,DeepSeek 未在文档承诺,防御性解析;为空时由上层回退到通用文案)。
+	WebSearchQueries []string
+	FinishReason     string     // 完成原因(仅在 Done=true 时非空)
+	Usage            *UsageInfo // Token 用量(仅在 Done=true 的最后一帧非空)
+	Model            string     // API 返回的实际模型名(首帧或最后一帧携带)
+	Done             bool       // 是否为流结束信号
+	Err              error      // 流处理中的错误(仅在 Done=true 且出错时非 nil)
 }
 
 // RepairAction 描述校验/修复操作的类型。
