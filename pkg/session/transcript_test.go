@@ -466,6 +466,42 @@ func TestToolName_RoundTrip(t *testing.T) {
 	}
 }
 
+// TestWebSearchCalls_RoundTrip 验证 Responses API web_search_call items
+// 通过 content blocks 完整往返(多轮对话恢复搜索结果上下文的持久化链路)。
+func TestWebSearchCalls_RoundTrip(t *testing.T) {
+	msg := llm.Message{
+		Role:   llm.RoleAssistant,
+		ID:     "a-ws",
+		Content: "Searching...",
+		WebSearchCalls: []llm.WebSearchCall{
+			{ID: "ws_1", Status: "completed",
+				Action: json.RawMessage(`{"type":"search","queries":["go 1.25"]}`)},
+			{ID: "ws_2", Status: "in_progress"},
+		},
+	}
+	entry := NewTranscriptEntry(msg, nil, "sid", "v1", "/cwd", "")
+	restored := entry.ToMessage()
+	if len(restored.WebSearchCalls) != 2 {
+		t.Fatalf("WebSearchCalls len = %d, want 2", len(restored.WebSearchCalls))
+	}
+	if restored.WebSearchCalls[0].ID != "ws_1" || restored.WebSearchCalls[0].Status != "completed" {
+		t.Errorf("WebSearchCalls[0] = %+v, want ws_1/completed", restored.WebSearchCalls[0])
+	}
+	// action 原样透传(文档要求"原样回传")
+	if string(restored.WebSearchCalls[0].Action) != `{"type":"search","queries":["go 1.25"]}` {
+		t.Errorf("WebSearchCalls[0].Action = %s, want search action", restored.WebSearchCalls[0].Action)
+	}
+	if restored.WebSearchCalls[1].ID != "ws_2" || restored.WebSearchCalls[1].Status != "in_progress" {
+		t.Errorf("WebSearchCalls[1] = %+v, want ws_2/in_progress", restored.WebSearchCalls[1])
+	}
+	if len(restored.WebSearchCalls[1].Action) != 0 {
+		t.Errorf("WebSearchCalls[1].Action = %s, want empty(未设置 action)", restored.WebSearchCalls[1].Action)
+	}
+	if restored.Content != "Searching..." {
+		t.Errorf("Content = %q, want Searching...", restored.Content)
+	}
+}
+
 // TestSubagentTranscriptPath 验证 subagent 路径生成。
 func TestSubagentTranscriptPath(t *testing.T) {
 	path := SubagentTranscriptPath("/sessions", "sid-123", "agent-abc")

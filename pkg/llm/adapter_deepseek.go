@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"strings"
 )
@@ -143,6 +144,8 @@ func (a *deepSeekAdapter) buildResponsesRequestBody(ctx context.Context, message
 	}
 
 	// response_format(json_object)→ text.format(Responses API 格式)
+	// 注意:若 ExtraParams 同时含 "text"(如 json_schema 配置),此处覆盖,
+	// 配置层 responseFormat 优先(当前仅 json_object 已实现)。
 	if a.responseFormat == "json_object" {
 		body["text"] = map[string]any{"format": map[string]string{"type": "json_object"}}
 	}
@@ -186,9 +189,14 @@ func buildResponsesInput(messages []Message) (string, []any) {
 			// 与不带 tool_calls 时省略 reasoning 的策略一致:减少冗余 token)
 			if len(m.ToolCalls) > 0 {
 				if m.ReasoningContent != "" {
+					// REGRESSION: 原实现发 summary[summary_text],但 DeepSeek
+					// 文档明确不支持 summary,回传的思维链被服务端忽略。
+					// 正确格式为 content[reasoning_text]。
 					input = append(input, map[string]any{
-						"type":    "reasoning",
-						"summary": []any{map[string]any{"type": "summary_text", "text": m.ReasoningContent}},
+						"type": "reasoning",
+						"content": []any{
+							map[string]any{"type": "reasoning_text", "text": m.ReasoningContent},
+						},
 					})
 				}
 				for _, tc := range m.ToolCalls {
@@ -199,6 +207,22 @@ func buildResponsesInput(messages []Message) (string, []any) {
 						"arguments": tc.Arguments,
 					})
 				}
+			}
+			// 服务端 web_search 输出 item 原样回传(多轮对话恢复搜索结果上下文)
+			for _, wsc := range m.WebSearchCalls {
+				item := map[string]any{"type": "web_search_call", "id": wsc.ID}
+				// Status 为空时省略字段(resume 恢复的旧 JSONL 可能无 status;
+				// OpenAI 协议中 status 可选,避免发送空字符串被服务端拒绝)
+				if wsc.Status != "" {
+					item["status"] = wsc.Status
+				}
+				// Action 原样透传(文档要求"原样回传",服务端据此恢复搜索上下文;
+				// json.RawMessage 序列化时内联原始 JSON)
+				// "null" 字节守卫:避免显式 null 序列化为 "action":null 发送
+				if len(wsc.Action) > 0 && string(wsc.Action) != "null" {
+					item["action"] = wsc.Action
+				}
+				input = append(input, item)
 			}
 		case RoleTool:
 			input = append(input, map[string]any{
@@ -279,8 +303,14 @@ func (a *deepSeekAdapter) parseResponsesResponse(body []byte) (*Response, error)
 		Model:        resp.Model,
 		FinishReason: "stop",
 	}
+	// REGRESSION: 原实现一律映射 length,内容过滤截断会被误报为长度截断。
+	// DeepSeek 的 incomplete_details.reason 区分 max_output_tokens / content_filter。
 	if resp.Status == "incomplete" {
-		result.FinishReason = "length"
+		if resp.IncompleteDetails != nil && resp.IncompleteDetails.Reason == "content_filter" {
+			result.FinishReason = "content_filter"
+		} else {
+			result.FinishReason = "length"
+		}
 	}
 
 	var textParts []string
@@ -299,27 +329,45 @@ func (a *deepSeekAdapter) parseResponsesResponse(body []byte) (*Response, error)
 				Arguments: item.Arguments,
 			})
 		case "reasoning":
-			for _, part := range item.Summary {
-				if part.Type == "summary_text" {
+			// REGRESSION: 原实现只读 summary[summary_text],但 DeepSeek 文档
+			// 承诺不生成 summary,reasoning 明文思维链放在 content[reasoning_text]
+			// 中,导致非流式调用 ReasoningContent 恒为空(流式 reasoning_text.delta
+			// 不受影响)。两者都解析以兼容 OpenAI 变体。
+			// content 优先(DeepSeek 实际结构);content 为空时回退 summary
+			// (OpenAI 变体),避免两处同时存在时重复拼接。
+			fromContent := false
+			for _, part := range item.Content {
+				if part.Type == "reasoning_text" {
+					fromContent = true
 					result.ReasoningContent += part.Text
 				}
 			}
+			if !fromContent {
+				for _, part := range item.Summary {
+					if part.Type == "summary_text" {
+						result.ReasoningContent += part.Text
+					}
+				}
+			}
 		case "web_search_call":
-			// 服务端已自动执行搜索并注入上下文,无需本地处理
+			// 服务端已自动执行搜索并注入上下文,item 需原样回传
+			// (下一轮恢复搜索结果上下文)
 		}
 	}
+	result.WebSearchCalls = responsesWebSearchCalls(resp.Output)
 	result.Content = strings.Join(textParts, "")
 	if len(result.ToolCalls) > 0 {
 		result.FinishReason = "tool_calls"
 	}
 
 	if resp.Usage != nil {
+		hit, miss := responsesCacheTokens(resp.Usage)
 		result.Usage = &UsageInfo{
 			PromptTokens:     resp.Usage.InputTokens,
 			CompletionTokens: resp.Usage.OutputTokens,
 			TotalTokens:      resp.Usage.TotalTokens,
-			CacheHitTokens:   resp.Usage.InputTokensDetails.CachedTokens,
-			CacheMissTokens:  resp.Usage.InputTokensDetails.CacheMissTokens,
+			CacheHitTokens:   hit,
+			CacheMissTokens:  miss,
 		}
 		if resp.Usage.OutputTokensDetails != nil {
 			result.Usage.ReasoningTokens = resp.Usage.OutputTokensDetails.ReasoningTokens
@@ -515,19 +563,29 @@ func (a *deepSeekAdapter) parseResponsesStreamEvent(data []byte) (StreamingEvent
 		}, nil
 
 	case "response.completed":
+		// 注意:此处仅填充 WebSearchCalls(终态事件内嵌完整 output 列表);
+		// ToolCalls 依赖流式增量事件(response.output_item.added +
+		// function_call_arguments.delta/done)累积,与 chat 模式一致。
 		return StreamingEvent{
-			Done:         true,
-			FinishReason: "stop",
-			Usage:        responsesUsageToInfo(ev.Response.Usage),
-			Model:        ev.Response.Model,
+			Done:           true,
+			FinishReason:   "stop",
+			Usage:          responsesUsageToInfo(ev.Response.Usage),
+			Model:          ev.Response.Model,
+			WebSearchCalls: responsesWebSearchCalls(ev.Response.Output),
 		}, nil
 
 	case "response.incomplete":
+		// REGRESSION: 原实现一律映射 length,内容过滤截断会被误报为长度截断。
+		reason := "length"
+		if ev.Response.IncompleteDetails != nil && ev.Response.IncompleteDetails.Reason == "content_filter" {
+			reason = "content_filter"
+		}
 		return StreamingEvent{
-			Done:         true,
-			FinishReason: "length",
-			Usage:        responsesUsageToInfo(ev.Response.Usage),
-			Model:        ev.Response.Model,
+			Done:           true,
+			FinishReason:   reason,
+			Usage:          responsesUsageToInfo(ev.Response.Usage),
+			Model:          ev.Response.Model,
+			WebSearchCalls: responsesWebSearchCalls(ev.Response.Output),
 		}, nil
 
 	case "response.failed":
@@ -552,22 +610,61 @@ func (a *deepSeekAdapter) parseResponsesStreamEvent(data []byte) (StreamingEvent
 	}
 }
 
+// responsesCacheTokens 提取 Responses API usage 的缓存命中/未命中 token 数。
+// REGRESSION: DeepSeek Responses API 的 input_tokens_details 仅返回 cached_tokens
+// (与 Chat Completions API 的 prompt_cache_hit_tokens/prompt_cache_miss_tokens
+// 不同),缺失的 cache_miss_tokens 直接解析为 0,会导致 TUI 缓存命中率虚高为
+// 100% 且输入费用低估。未命中数按 input_tokens - cached_tokens 推导
+// (OpenAI 语义:input_tokens = cached_tokens + 未缓存输入);
+// 服务端字段有效时优先使用。
+func responsesCacheTokens(u *responsesUsage) (hit, miss int) {
+	if u == nil {
+		return 0, 0
+	}
+	hit = u.InputTokensDetails.CachedTokens
+	miss = u.InputTokensDetails.CacheMissTokens
+	if miss <= 0 && u.InputTokens > hit {
+		miss = u.InputTokens - hit
+	}
+	return hit, miss
+}
+
 // responsesUsageToInfo 将 Responses API usage 转为内部 UsageInfo。
 func responsesUsageToInfo(u *responsesUsage) *UsageInfo {
 	if u == nil {
 		return nil
 	}
+	hit, miss := responsesCacheTokens(u)
 	info := &UsageInfo{
 		PromptTokens:     u.InputTokens,
 		CompletionTokens: u.OutputTokens,
 		TotalTokens:      u.TotalTokens,
-		CacheHitTokens:   u.InputTokensDetails.CachedTokens,
-		CacheMissTokens:  u.InputTokensDetails.CacheMissTokens,
+		CacheHitTokens:   hit,
+		CacheMissTokens:  miss,
 	}
 	if u.OutputTokensDetails != nil {
 		info.ReasoningTokens = u.OutputTokensDetails.ReasoningTokens
 	}
 	return info
+}
+
+// responsesWebSearchCalls 从 output items 中提取 web_search_call item。
+// 服务端搜索动作已在服务端执行并注入上下文,客户端仅需原样回传
+// (OpenAI 协议:{"type": "web_search_call", "id": ..., "status": ...,
+// "action": {...}})。
+func responsesWebSearchCalls(output []responsesItem) []WebSearchCall {
+	var calls []WebSearchCall
+	for _, item := range output {
+		if item.Type == "web_search_call" {
+			if item.ID == "" {
+				// 防御:ID 缺失的 item 无法回传配对,丢弃并告警保证可观测
+				slog.Warn("web_search_call item without id dropped", "status", item.Status)
+				continue
+			}
+			calls = append(calls, WebSearchCall{ID: item.ID, Status: item.Status, Action: item.Action})
+		}
+	}
+	return calls
 }
 
 func (a *deepSeekAdapter) parseChatStreamEvent(data []byte) (StreamingEvent, error) {
@@ -646,17 +743,24 @@ type deepSeekStreamToolCall struct {
 
 // responsesResponse 是 Responses API 非流式响应结构(仅提取需要的字段)。
 type responsesResponse struct {
-	Object string             `json:"object"`
-	Status string             `json:"status"` // completed / incomplete / failed
-	Output []responsesItem    `json:"output"`
-	Usage  *responsesUsage    `json:"usage"`
-	Model  string             `json:"model"`
-	Error  *responsesAPIError `json:"error"`
+	Object            string                    `json:"object"`
+	Status            string                    `json:"status"` // completed / incomplete / failed
+	Output            []responsesItem           `json:"output"`
+	Usage             *responsesUsage           `json:"usage"`
+	Model             string                    `json:"model"`
+	Error             *responsesAPIError        `json:"error"`
+	IncompleteDetails *responsesIncompleteDetails `json:"incomplete_details"`
+}
+
+// responsesIncompleteDetails 响应不完整的原因详情。
+type responsesIncompleteDetails struct {
+	Reason string `json:"reason"` // max_output_tokens / content_filter
 }
 
 // responsesItem 是 Responses API 输出/输入 item 的通用结构。
 // 不同类型使用不同字段:message(role+content)、function_call(call_id+name+arguments)、
-// function_call_output(call_id+output)、reasoning(summary)、web_search_call(id+status)。
+// function_call_output(call_id+output)、reasoning(content/summary)、
+// web_search_call(id+status+action)。
 type responsesItem struct {
 	Type      string             `json:"type"`
 	ID        string             `json:"id"`
@@ -668,13 +772,16 @@ type responsesItem struct {
 	Output    string             `json:"output"`
 	Summary   []responsesContent `json:"summary"`
 	Status    string             `json:"status"`
+	// Action 是 web_search_call item 的搜索动作描述(search/open_page/find_in_page),
+	// 原样透传供多轮回传
+	Action json.RawMessage `json:"action"`
 	// SearchQueries 是 web_search_call item 的实际搜索词(OpenAI 兼容
 	// search_queries 字段;DeepSeek 未在文档承诺,防御性解析)
 	SearchQueries []string `json:"search_queries"`
 }
 
 // responsesContent 是 Responses API 内容块结构。
-// type 取值: input_text / output_text / summary_text。
+// type 取值: input_text / output_text / reasoning_text / summary_text。
 type responsesContent struct {
 	Type string `json:"type"`
 	Text string `json:"text"`
@@ -707,12 +814,15 @@ type responsesAPIError struct {
 // 不同事件类型使用不同字段:output_text.delta 用 Delta,
 // function_call_arguments.done 用 Arguments,completed 用 Response。
 type responsesStreamEvent struct {
-	Type        string            `json:"type"`
-	Delta       string            `json:"delta"`
-	Arguments   string            `json:"arguments"`
-	OutputIndex int               `json:"output_index"`
-	Item        responsesItem     `json:"item"`
-	Response    responsesResponse `json:"response"`
+	Type           string            `json:"type"`
+	Delta          string            `json:"delta"`
+	Arguments      string            `json:"arguments"`
+	ItemID         string            `json:"item_id"`
+	ContentIndex   int               `json:"content_index"`
+	SequenceNumber int               `json:"sequence_number"`
+	OutputIndex    int               `json:"output_index"`
+	Item           responsesItem     `json:"item"`
+	Response       responsesResponse `json:"response"`
 }
 
 // --- DeepSeek 非流式响应解析结构 (原) ---

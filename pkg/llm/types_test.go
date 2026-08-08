@@ -111,6 +111,20 @@ func TestValidateMessages(t *testing.T) {
 			wantOK:  false,
 		},
 		{
+			name: "web_search only assistant preserved",
+			input: []Message{
+				{Role: RoleUser, Content: "search the web"},
+				// Responses API 纯服务端搜索轮:无文本无 function_call,
+				// 但 web_search_call item 需回传恢复搜索上下文
+				{Role: RoleAssistant, Content: "", WebSearchCalls: []WebSearchCall{
+					{ID: "ws_1", Status: "completed"},
+				}},
+				{Role: RoleUser, Content: "next"},
+			},
+			wantMsg: 3, // web_search_call 消息保留
+			wantOK:  true,
+		},
+		{
 			name: "orphan tool message skipped",
 			input: []Message{
 				{Role: RoleUser, Content: "do"},

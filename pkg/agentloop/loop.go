@@ -404,6 +404,7 @@ func (l *Loop) Run(ctx context.Context, messages []llm.Message) <-chan TurnEvent
 			// 消费流式事件
 			var contentBuf, reasoningBuf string
 			var toolCalls []llm.ToolCall
+			var webSearchCalls []llm.WebSearchCall // 服务端 web_search 输出 items(多轮回传)
 			var streamModel string
 			// 服务端 web_search 起始时间表(call_id → 起始时间),completed 时
 			// 计算真实搜索耗时(替代虚拟事件的 0ms 假时长)
@@ -444,10 +445,11 @@ func (l *Loop) Run(ctx context.Context, messages []llm.Message) <-chan TurnEvent
 						return
 					}
 
-					// 替换为完整响应（已推送的增量仅影响 TUI 显示，不影响 state.Messages）
+					// 替换为完整响应(已推送的增量仅影响 TUI 显示,不影响 state.Messages)
 					contentBuf = resp.Content
 					reasoningBuf = resp.ReasoningContent
 					toolCalls = resp.ToolCalls
+					webSearchCalls = resp.WebSearchCalls
 					if resp.Usage != nil {
 						lastPromptTokens = resp.Usage.PromptTokens
 						lastUsage = resp.Usage
@@ -499,6 +501,7 @@ func (l *Loop) Run(ctx context.Context, messages []llm.Message) <-chan TurnEvent
 
 				if ev.Done {
 					toolCalls = ev.ToolCalls
+					webSearchCalls = ev.WebSearchCalls
 					if ev.Usage != nil {
 						lastPromptTokens = ev.Usage.PromptTokens
 						lastUsage = ev.Usage
@@ -555,10 +558,11 @@ func (l *Loop) Run(ctx context.Context, messages []llm.Message) <-chan TurnEvent
 			// reasoning_content 仅在 tool_calls 场景保留（跨轮延续 DeepSeek 协议要求）。
 			// 空响应时注入的占位消息不含 reasoning_content，使模型从干净上下文重新推理。
 			assistantMsg := llm.Message{
-				ID:        llm.NewMessageID(),
-				Role:      llm.RoleAssistant,
-				Content:   contentBuf,
-				ToolCalls: toolCalls,
+				ID:             llm.NewMessageID(),
+				Role:           llm.RoleAssistant,
+				Content:        contentBuf,
+				ToolCalls:      toolCalls,
+				WebSearchCalls: webSearchCalls,
 			}
 			if !emptyResponse {
 				if reasoningBuf != "" || len(toolCalls) > 0 {

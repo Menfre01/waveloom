@@ -43,6 +43,8 @@ type contentBlock struct {
 	Text      string          `json:"text,omitempty"`
 	ID        string          `json:"id,omitempty"`
 	Name      string          `json:"name,omitempty"`
+	Status    string          `json:"status,omitempty"` // web_search_call 状态(Responses API 回传)
+	Action    json.RawMessage `json:"action,omitempty"` // web_search_call 搜索动作(原样透传)
 	Input     json.RawMessage `json:"input,omitempty"`
 	ToolUseID string          `json:"tool_use_id,omitempty"`
 	Content   string          `json:"content,omitempty"`
@@ -112,6 +114,16 @@ func convertToContentBlocks(msg llm.Message) json.RawMessage {
 				ID:    tc.ID,
 				Name:  tc.Name,
 				Input: json.RawMessage(tc.Arguments),
+			})
+		}
+		// web_search_call blocks — Responses API 服务端搜索输出 item,
+		// 多轮对话需原样回传恢复搜索结果上下文
+		for _, wsc := range msg.WebSearchCalls {
+			blocks = append(blocks, contentBlock{
+				Type:   "web_search_call",
+				ID:     wsc.ID,
+				Status: wsc.Status,
+				Action: wsc.Action,
 			})
 		}
 		// thinking block — DeepSeek requires reasoning_content on assistant messages with tool_calls
@@ -186,6 +198,12 @@ func (e TranscriptEntry) ToMessage() llm.Message {
 				ID:        block.ID,
 				Name:      block.Name,
 				Arguments: string(block.Input),
+			})
+		case "web_search_call":
+			msg.WebSearchCalls = append(msg.WebSearchCalls, llm.WebSearchCall{
+				ID:     block.ID,
+				Status: block.Status,
+				Action: block.Action,
 			})
 		case "tool_result":
 			msg.Content = block.Content

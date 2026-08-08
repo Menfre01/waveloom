@@ -1123,7 +1123,9 @@ func TestResponsesBuildRequest_InputItems(t *testing.T) {
 		{Role: RoleSystem, Content: "Sys"},
 		{Role: RoleUser, Content: "read the file"},
 		{Role: RoleAssistant, Content: "ok", ReasoningContent: "thinking...",
-			ToolCalls: []ToolCall{{ID: "call_1", Name: "read_file", Arguments: `{"path":"a.go"}`}}},
+			ToolCalls: []ToolCall{{ID: "call_1", Name: "read_file", Arguments: `{"path":"a.go"}`}},
+			WebSearchCalls: []WebSearchCall{{ID: "ws_1", Status: "completed",
+				Action: json.RawMessage(`{"type":"search","queries":["go 1.25"]}`)}}},
 		{Role: RoleTool, ToolCallID: "call_1", Name: "read_file", Content: "file contents"},
 	}
 	req, err := adapter.BuildRequest(context.Background(), messages, nil)
@@ -1135,8 +1137,8 @@ func TestResponsesBuildRequest_InputItems(t *testing.T) {
 		t.Fatalf("decode body: %v", err)
 	}
 	input := body["input"].([]any)
-	if len(input) != 5 {
-		t.Fatalf("input len = %d, want 5 (user, assistant, reasoning, function_call, function_call_output)", len(input))
+	if len(input) != 6 {
+		t.Fatalf("input len = %d, want 6 (user, assistant, reasoning, function_call, web_search_call, function_call_output)", len(input))
 	}
 
 	userItem := input[0].(map[string]any)
@@ -1155,6 +1157,18 @@ func TestResponsesBuildRequest_InputItems(t *testing.T) {
 	if reasoningItem["type"] != "reasoning" {
 		t.Errorf("input[2].type = %v, want reasoning", reasoningItem["type"])
 	}
+	// REGRESSION: 回传 reasoning 必须用 content[reasoning_text](DeepSeek 不支持 summary)
+	reasoningContent := reasoningItem["content"].([]any)
+	if len(reasoningContent) != 1 {
+		t.Fatalf("input[2].content len = %d, want 1", len(reasoningContent))
+	}
+	rc := reasoningContent[0].(map[string]any)
+	if rc["type"] != "reasoning_text" || rc["text"] != "thinking..." {
+		t.Errorf("input[2].content[0] = %v, want {type: reasoning_text, text: thinking...}", rc)
+	}
+	if _, hasSummary := reasoningItem["summary"]; hasSummary {
+		t.Errorf("input[2] 不应包含 summary 字段(DeepSeek 不支持)")
+	}
 
 	fcItem := input[3].(map[string]any)
 	if fcItem["type"] != "function_call" || fcItem["call_id"] != "call_1" ||
@@ -1162,7 +1176,17 @@ func TestResponsesBuildRequest_InputItems(t *testing.T) {
 		t.Errorf("input[3] = %v, want function_call item", fcItem)
 	}
 
-	fcoItem := input[4].(map[string]any)
+	wscItem := input[4].(map[string]any)
+	if wscItem["type"] != "web_search_call" || wscItem["id"] != "ws_1" || wscItem["status"] != "completed" {
+		t.Errorf("input[4] = %v, want web_search_call item ws_1/completed", wscItem)
+	}
+	// action 原样透传(json.RawMessage 内联输出)
+	action, ok := wscItem["action"].(map[string]any)
+	if !ok || action["type"] != "search" {
+		t.Errorf("input[4].action = %v, want {type: search} 原样透传", wscItem["action"])
+	}
+
+	fcoItem := input[5].(map[string]any)
 	if fcoItem["type"] != "function_call_output" || fcoItem["call_id"] != "call_1" ||
 		fcoItem["output"] != "file contents" {
 		t.Errorf("input[4] = %v, want function_call_output item", fcoItem)
@@ -1270,7 +1294,7 @@ func TestResponsesParseResponse_Text(t *testing.T) {
 	}
 }
 
-// TestResponsesParseResponse_FunctionCall 验证 function_call item 提取 + web_search_call 忽略。
+// TestResponsesParseResponse_FunctionCall 验证 function_call item 提取 + web_search_call 捕获。
 func TestResponsesParseResponse_FunctionCall(t *testing.T) {
 	adapter := newResponsesAdapter()
 	body := []byte(`{
@@ -1278,7 +1302,8 @@ func TestResponsesParseResponse_FunctionCall(t *testing.T) {
 		"status": "completed",
 		"output": [
 			{"type": "function_call", "call_id": "call_1", "name": "read_file", "arguments": "{\"path\":\"a.go\"}"},
-			{"type": "web_search_call", "id": "ws_1", "status": "completed"}
+			{"type": "web_search_call", "id": "ws_1", "status": "completed",
+				"action": {"type": "search", "queries": ["go 1.25"]}}
 		]
 	}`)
 	resp, err := adapter.ParseResponse(body)
@@ -1295,9 +1320,23 @@ func TestResponsesParseResponse_FunctionCall(t *testing.T) {
 	if resp.FinishReason != "tool_calls" {
 		t.Errorf("FinishReason = %q, want tool_calls", resp.FinishReason)
 	}
+	// web_search_call item 需原样回传(多轮对话恢复搜索结果上下文)
+	if len(resp.WebSearchCalls) != 1 {
+		t.Fatalf("WebSearchCalls len = %d, want 1", len(resp.WebSearchCalls))
+	}
+	if resp.WebSearchCalls[0].ID != "ws_1" || resp.WebSearchCalls[0].Status != "completed" {
+		t.Errorf("WebSearchCalls[0] = %+v, want ws_1/completed", resp.WebSearchCalls[0])
+	}
+	// action 对象原样透传(文档要求"原样回传")
+	if len(resp.WebSearchCalls[0].Action) == 0 ||
+		!strings.Contains(strings.ReplaceAll(string(resp.WebSearchCalls[0].Action), " ", ""), `"type":"search"`) {
+		t.Errorf("WebSearchCalls[0].Action = %s, want search action", resp.WebSearchCalls[0].Action)
+	}
 }
 
 // TestResponsesParseResponse_Usage 验证 usage 映射(含 reasoning_tokens / cached_tokens)。
+// 注意:mock 用真实 API 结构——input_tokens_details 仅含 cached_tokens,
+// 无 cache_miss_tokens(见 TestRegression_ResponsesCacheMissFallback)。
 func TestResponsesParseResponse_Usage(t *testing.T) {
 	adapter := newResponsesAdapter()
 	body := []byte(`{
@@ -1307,7 +1346,7 @@ func TestResponsesParseResponse_Usage(t *testing.T) {
 			"input_tokens": 100,
 			"output_tokens": 50,
 			"total_tokens": 150,
-			"input_tokens_details": {"cached_tokens": 70, "cache_miss_tokens": 30},
+			"input_tokens_details": {"cached_tokens": 70},
 			"output_tokens_details": {"reasoning_tokens": 20}
 		}
 	}`)
@@ -1327,6 +1366,67 @@ func TestResponsesParseResponse_Usage(t *testing.T) {
 	if resp.Usage.ReasoningTokens != 20 {
 		t.Errorf("ReasoningTokens = %d, want 20", resp.Usage.ReasoningTokens)
 	}
+}
+
+// TestRegression_ResponsesCacheMissFallback 验证缺失 cache_miss_tokens 时
+// 未命中数按 input_tokens - cached_tokens 推导。
+// REGRESSION: DeepSeek Responses API 的 input_tokens_details 仅返回
+// cached_tokens(与 Chat Completions 的 prompt_cache_miss_tokens 不同),
+// 直接解析缺失字段得到 0,导致 TUI 缓存命中率虚高为 100%、费用低估。
+func TestRegression_ResponsesCacheMissFallback(t *testing.T) {
+	adapter := newResponsesAdapter()
+
+	t.Run("stream missing cache_miss_tokens derives from input-cached", func(t *testing.T) {
+		// 真实 API 结构:input_tokens_details 只有 cached_tokens
+		ev, err := adapter.ParseStreamEvent([]byte(`{
+			"type": "response.completed",
+			"response": {
+				"object": "response",
+				"status": "completed",
+				"usage": {"input_tokens": 1000, "output_tokens": 50, "total_tokens": 1050,
+					"input_tokens_details": {"cached_tokens": 700}}
+			}
+		}`))
+		if err != nil {
+			t.Fatalf("ParseStreamEvent error: %v", err)
+		}
+		if ev.Usage.CacheHitTokens != 700 || ev.Usage.CacheMissTokens != 300 {
+			t.Errorf("cache = hit:%d miss:%d, want 700/300 (miss 由 input-cached 推导)",
+				ev.Usage.CacheHitTokens, ev.Usage.CacheMissTokens)
+		}
+	})
+
+	t.Run("non-stream full hit gives zero miss", func(t *testing.T) {
+		resp, err := adapter.ParseResponse([]byte(`{
+			"object": "response",
+			"status": "completed",
+			"usage": {"input_tokens": 500, "output_tokens": 10, "total_tokens": 510,
+				"input_tokens_details": {"cached_tokens": 500}}
+		}`))
+		if err != nil {
+			t.Fatalf("ParseResponse error: %v", err)
+		}
+		if resp.Usage.CacheHitTokens != 500 || resp.Usage.CacheMissTokens != 0 {
+			t.Errorf("cache = hit:%d miss:%d, want 500/0", resp.Usage.CacheHitTokens, resp.Usage.CacheMissTokens)
+		}
+	})
+
+	t.Run("server-provided cache_miss_tokens takes precedence", func(t *testing.T) {
+		// 若未来服务端返回该字段且有效,优先使用服务端值
+		resp, err := adapter.ParseResponse([]byte(`{
+			"object": "response",
+			"status": "completed",
+			"usage": {"input_tokens": 1000, "output_tokens": 10, "total_tokens": 1010,
+				"input_tokens_details": {"cached_tokens": 700, "cache_miss_tokens": 250}}
+		}`))
+		if err != nil {
+			t.Fatalf("ParseResponse error: %v", err)
+		}
+		if resp.Usage.CacheHitTokens != 700 || resp.Usage.CacheMissTokens != 250 {
+			t.Errorf("cache = hit:%d miss:%d, want 700/250 (服务端字段优先)",
+				resp.Usage.CacheHitTokens, resp.Usage.CacheMissTokens)
+		}
+	})
 }
 
 // TestResponsesParseResponse_Failed 验证 failed 状态返回 NonRetryableError。
@@ -1353,7 +1453,10 @@ func TestResponsesParseResponse_Failed(t *testing.T) {
 // TestResponsesParseStreamEvent_Delta 验证 output_text.delta → Delta。
 func TestResponsesParseStreamEvent_Delta(t *testing.T) {
 	adapter := newResponsesAdapter()
-	ev, err := adapter.ParseStreamEvent([]byte(`{"type":"response.output_text.delta","delta":"Hello"}`))
+	// 完整事件结构:item_id / output_index / content_index / sequence_number
+	// (与官方 schema 对齐,防止 struct 字段缺失被测试放过)
+	ev, err := adapter.ParseStreamEvent([]byte(
+		`{"type":"response.output_text.delta","item_id":"msg_1","output_index":1,"content_index":0,"sequence_number":11,"delta":"Hello"}`))
 	if err != nil {
 		t.Fatalf("ParseStreamEvent error: %v", err)
 	}
@@ -1368,7 +1471,8 @@ func TestResponsesParseStreamEvent_Delta(t *testing.T) {
 // TestResponsesParseStreamEvent_Reasoning 验证 reasoning_text.delta → ReasoningDelta。
 func TestResponsesParseStreamEvent_Reasoning(t *testing.T) {
 	adapter := newResponsesAdapter()
-	ev, err := adapter.ParseStreamEvent([]byte(`{"type":"response.reasoning_text.delta","delta":"thinking"}`))
+	ev, err := adapter.ParseStreamEvent([]byte(
+		`{"type":"response.reasoning_text.delta","item_id":"rs_1","output_index":0,"content_index":0,"sequence_number":4,"delta":"thinking"}`))
 	if err != nil {
 		t.Fatalf("ParseStreamEvent error: %v", err)
 	}
@@ -1452,7 +1556,10 @@ func TestResponsesParseStreamEvent_Completed(t *testing.T) {
 			"object": "response",
 			"status": "completed",
 			"model": "deepseek-v4-flash",
-			"usage": {"input_tokens": 10, "output_tokens": 5, "total_tokens": 15}
+			"usage": {"input_tokens": 10, "output_tokens": 5, "total_tokens": 15},
+			"output": [
+				{"type": "web_search_call", "id": "ws_1", "status": "completed"}
+			]
 		}
 	}`))
 	if err != nil {
@@ -1472,6 +1579,13 @@ func TestResponsesParseStreamEvent_Completed(t *testing.T) {
 	}
 	if ev.Model != "deepseek-v4-flash" {
 		t.Errorf("Model = %q, want deepseek-v4-flash", ev.Model)
+	}
+	// 终态事件携带 web_search_call items,供上层组装 assistant 消息多轮回传
+	if len(ev.WebSearchCalls) != 1 {
+		t.Fatalf("WebSearchCalls len = %d, want 1", len(ev.WebSearchCalls))
+	}
+	if ev.WebSearchCalls[0].ID != "ws_1" || ev.WebSearchCalls[0].Status != "completed" {
+		t.Errorf("WebSearchCalls[0] = %+v, want ws_1/completed", ev.WebSearchCalls[0])
 	}
 }
 
@@ -1664,6 +1778,7 @@ func TestResponsesParseStreamEvent_Incomplete(t *testing.T) {
 		"response": {
 			"object": "response",
 			"status": "incomplete",
+			"incomplete_details": {"reason": "max_output_tokens"},
 			"usage": {"input_tokens": 10, "output_tokens": 5, "total_tokens": 15}
 		}
 	}`))
@@ -1679,4 +1794,125 @@ func TestResponsesParseStreamEvent_Incomplete(t *testing.T) {
 	if ev.Usage == nil || ev.Usage.TotalTokens != 15 {
 		t.Errorf("Usage = %+v, want total 15", ev.Usage)
 	}
+}
+
+// TestResponsesParseStreamEvent_IncompleteContentFilter 验证 content_filter
+// 截断被正确映射为 content_filter 而非 length。
+// REGRESSION: 原实现一律映射 length,内容过滤截断被误报为长度截断。
+func TestResponsesParseStreamEvent_IncompleteContentFilter(t *testing.T) {
+	adapter := newResponsesAdapter()
+	ev, err := adapter.ParseStreamEvent([]byte(`{
+		"type": "response.incomplete",
+		"response": {
+			"object": "response",
+			"status": "incomplete",
+			"incomplete_details": {"reason": "content_filter"}
+		}
+	}`))
+	if err != nil {
+		t.Fatalf("ParseStreamEvent error: %v", err)
+	}
+	if !ev.Done {
+		t.Fatal("Done = false, want true")
+	}
+	if ev.FinishReason != "content_filter" {
+		t.Errorf("FinishReason = %q, want content_filter", ev.FinishReason)
+	}
+}
+
+// TestResponsesParseResponse_IncompleteContentFilter 验证非流式 incomplete
+// 响应的 content_filter 映射。
+func TestResponsesParseResponse_IncompleteContentFilter(t *testing.T) {
+	adapter := newResponsesAdapter()
+	resp, err := adapter.ParseResponse([]byte(`{
+		"object": "response",
+		"status": "incomplete",
+		"incomplete_details": {"reason": "content_filter"},
+		"output": [{"type": "message", "role": "assistant", "content": [
+			{"type": "output_text", "text": "partial"}
+		]}]
+	}`))
+	if err != nil {
+		t.Fatalf("ParseResponse error: %v", err)
+	}
+	if resp.FinishReason != "content_filter" {
+		t.Errorf("FinishReason = %q, want content_filter", resp.FinishReason)
+	}
+	if resp.Content != "partial" {
+		t.Errorf("Content = %q, want partial", resp.Content)
+	}
+}
+
+// TestRegression_ResponsesReasoningContent 验证非流式响应从 content[reasoning_text]
+// 提取思维链(DeepSeek 实际结构),summary 兜底兼容 OpenAI 变体。
+// REGRESSION: 原实现只读 summary[summary_text],但 DeepSeek 文档承诺不生成
+// summary,导致非流式调用 ReasoningContent 恒为空。
+func TestRegression_ResponsesReasoningContent(t *testing.T) {
+	adapter := newResponsesAdapter()
+
+	t.Run("deepseek content reasoning_text", func(t *testing.T) {
+		resp, err := adapter.ParseResponse([]byte(`{
+			"object": "response",
+			"status": "completed",
+			"output": [
+				{"type": "reasoning", "id": "rs_1", "content": [
+					{"type": "reasoning_text", "text": "Let me think"}
+				], "summary": []},
+				{"type": "message", "role": "assistant", "content": [
+					{"type": "output_text", "text": "Answer"}
+				]}
+			]
+		}`))
+		if err != nil {
+			t.Fatalf("ParseResponse error: %v", err)
+		}
+		if resp.ReasoningContent != "Let me think" {
+			t.Errorf("ReasoningContent = %q, want %q", resp.ReasoningContent, "Let me think")
+		}
+		if resp.Content != "Answer" {
+			t.Errorf("Content = %q, want Answer", resp.Content)
+		}
+	})
+
+	t.Run("openai summary_text fallback", func(t *testing.T) {
+		resp, err := adapter.ParseResponse([]byte(`{
+			"object": "response",
+			"status": "completed",
+			"output": [
+				{"type": "reasoning", "id": "rs_1", "summary": [
+					{"type": "summary_text", "text": "summary fallback"}
+				]},
+				{"type": "message", "role": "assistant", "content": [
+					{"type": "output_text", "text": "Answer"}
+				]}
+			]
+		}`))
+		if err != nil {
+			t.Fatalf("ParseResponse error: %v", err)
+		}
+		if resp.ReasoningContent != "summary fallback" {
+			t.Errorf("ReasoningContent = %q, want %q", resp.ReasoningContent, "summary fallback")
+		}
+	})
+
+	t.Run("content takes precedence over summary", func(t *testing.T) {
+		resp, err := adapter.ParseResponse([]byte(`{
+			"object": "response",
+			"status": "completed",
+			"output": [
+				{"type": "reasoning", "id": "rs_1",
+					"content": [{"type": "reasoning_text", "text": "content text"}],
+					"summary": [{"type": "summary_text", "text": "summary text"}]},
+				{"type": "message", "role": "assistant", "content": [
+					{"type": "output_text", "text": "Answer"}
+				]}
+			]
+		}`))
+		if err != nil {
+			t.Fatalf("ParseResponse error: %v", err)
+		}
+		if resp.ReasoningContent != "content text" {
+			t.Errorf("ReasoningContent = %q, want content text(不重复拼接)", resp.ReasoningContent)
+		}
+	})
 }

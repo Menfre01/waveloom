@@ -22,13 +22,16 @@ const (
 // Message 表示对话中的一条消息，直接映射 OpenAI 协议的 message 对象。
 // JSON struct tags 配合 omitempty 实现零分配序列化，无需手动 buildMessages。
 type Message struct {
-	ID               string     `json:"id,omitempty"`                 // 不可变 UUID，创建时分配，用于 checkpoint/rewind 追踪
+	ID               string     `json:"id,omitempty"`                 // 不可变 UUID,创建时分配,用于 checkpoint/rewind 追踪
 	Role             Role       `json:"role"`                         // system / user / assistant / tool
-	Content          string     `json:"content,omitempty"`            // 文本内容（tool 角色时为工具执行结果）
-	ReasoningContent string     `json:"reasoning_content"`            // 思考链内容（DeepSeek 要求有 tool_calls 时必须回传，即使是空字符串）
+	Content          string     `json:"content,omitempty"`            // 文本内容(tool 角色时为工具执行结果)
+	ReasoningContent string     `json:"reasoning_content"`            // 思考链内容(DeepSeek 要求有 tool_calls 时必须回传,即使是空字符串)
 	ToolCallID       string     `json:"tool_call_id,omitempty"`       // tool 角色时关联的工具调用 ID
 	ToolCalls        []ToolCall `json:"tool_calls,omitempty"`         // assistant 角色时可能包含的工具调用
-	Name             string     `json:"name,omitempty"`               // 可选，工具名（tool 角色时）
+	// WebSearchCalls 是 Responses API 服务端 web_search 工具的输出 item
+	// (assistant 角色)。多轮对话需原样回传,服务端据此恢复搜索结果上下文。
+	WebSearchCalls   []WebSearchCall `json:"web_search_calls,omitempty"`
+	Name             string     `json:"name,omitempty"`               // 可选,工具名(tool 角色时)
 	Model            string     `json:"model,omitempty"`              // assistant: 实际使用的模型名
 	FinishReason     string     `json:"stop_reason,omitempty"`        // assistant: API 返回的 finish_reason
 	Usage            *UsageInfo `json:"usage,omitempty"`              // assistant: token 用量
@@ -36,10 +39,22 @@ type Message struct {
 
 // ToolCall 表示 LLM 发起的一次工具调用请求。
 type ToolCall struct {
-	Index     int    // 工具调用序号（流式模式下用于分片累积，非流式时为 0）；序列化时排除
+	Index     int    // 工具调用序号(流式模式下用于分片累积,非流式时为 0);序列化时排除
 	ID        string // 工具调用唯一 ID
 	Name      string // 工具名
 	Arguments string // JSON 编码的调用参数
+}
+
+// WebSearchCall 是 Responses API 服务端 web_search 工具的输出 item。
+// 服务端自动执行搜索并注入上下文,客户端只需在多轮对话中原样回传
+// (OpenAI 协议:{"type": "web_search_call", "id": "...", "status": "..."})。
+type WebSearchCall struct {
+	ID     string // web_search_call item 的唯一 ID
+	Status string // 输出侧状态:in_progress / searching / completed(回传时保留)
+	// Action 是服务端搜索动作描述(OpenAI 兼容 action 对象,如
+	// {"type": "search", "queries": [...]})。原样透传不解析内部结构,
+	// 多轮回传时随 item 一并回传(文档要求"原样回传")。
+	Action json.RawMessage `json:"action,omitempty"`
 }
 
 // openaiToolCall 是 ToolCall 序列化/反序列化的中间结构，
@@ -100,10 +115,11 @@ type ToolSpec struct {
 // Response 封装 LLM 返回的完整信息。
 type Response struct {
 	Content          string     // 文本回复内容
-	ReasoningContent string     // 推理/思考链内容（思考模式下非空，DeepSeek 独有）
-	FinishReason     string     // 完成原因：stop / length / tool_calls / content_filter / insufficient_system_resource
-	ToolCalls        []ToolCall // 工具调用列表（LLM 请求执行工具时非空）
-	Usage            *UsageInfo // Token 用量信息（Provider 未返回时为 nil）
+	ReasoningContent string     // 推理/思考链内容(思考模式下非空,DeepSeek 独有)
+	FinishReason     string     // 完成原因:stop / length / tool_calls / content_filter / insufficient_system_resource
+	ToolCalls        []ToolCall // 工具调用列表(LLM 请求执行工具时非空)
+	WebSearchCalls   []WebSearchCall // 服务端 web_search 输出 item(Responses API,需多轮回传)
+	Usage            *UsageInfo // Token 用量信息(Provider 未返回时为 nil)
 	Model            string     // API 返回的实际模型名
 }
 
@@ -216,6 +232,10 @@ type StreamingEvent struct {
 	// WebSearchQueries 是服务端实际执行的搜索词列表(OpenAI 兼容 search_queries
 	// 字段,DeepSeek 未在文档承诺,防御性解析;为空时由上层回退到通用文案)。
 	WebSearchQueries []string
+	// WebSearchCalls 是终态事件携带的服务端 web_search 输出 items
+	// (completed/incomplete/failed 事件内嵌完整 response.output),
+	// 供上层组装 assistant 消息时多轮回传。
+	WebSearchCalls   []WebSearchCall
 	FinishReason     string     // 完成原因(仅在 Done=true 时非空)
 	Usage            *UsageInfo // Token 用量(仅在 Done=true 的最后一帧非空)
 	Model            string     // API 返回的实际模型名(首帧或最后一帧携带)
@@ -347,7 +367,9 @@ func ValidateMessages(msgs []Message) ([]Message, []RepairEntry) {
 			msg.ToolCalls = valid
 
 			// 如果所有 tool_calls 被剔除且 content 为空 → 退化为空 assistant
-			if len(msg.ToolCalls) == 0 && msg.Content == "" {
+			// (带 web_search_calls 的消息保留:Responses API 服务端搜索轮
+			// 无文本无 function_call,但 item 需回传恢复搜索上下文)
+			if len(msg.ToolCalls) == 0 && msg.Content == "" && len(msg.WebSearchCalls) == 0 {
 				report = append(report, RepairEntry{
 					Index: idx, Role: msg.Role, Action: RepairSkipEmptyAssistant,
 					Detail: "assistant message empty after stripping invalid tool_calls",
@@ -356,8 +378,8 @@ func ValidateMessages(msgs []Message) ([]Message, []RepairEntry) {
 			}
 		}
 
-		// 4. 空 assistant（无 content 且无 tool_calls）— 占位 "(empty response)" 或反序列化残留
-		if msg.Role == RoleAssistant && msg.Content == "" && len(msg.ToolCalls) == 0 {
+		// 4. 空 assistant(无 content 且无 tool_calls)— 占位 "(empty response)" 或反序列化残留
+		if msg.Role == RoleAssistant && msg.Content == "" && len(msg.ToolCalls) == 0 && len(msg.WebSearchCalls) == 0 {
 			report = append(report, RepairEntry{
 				Index: idx, Role: msg.Role, Action: RepairSkipEmptyAssistant,
 				Detail: "assistant message with no content and no tool_calls",
