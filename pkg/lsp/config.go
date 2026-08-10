@@ -23,6 +23,7 @@ func DefaultLSPServers() map[string]ServerConfig {
 	return map[string]ServerConfig{
 		".go":  {Command: "gopls"},
 		".rs":  {Command: "rust-analyzer"},
+		".py":  {Command: "pyright-langserver", Args: []string{"--stdio"}},
 		".ts":  {Command: "typescript-language-server", Args: []string{"--stdio"}},
 		".tsx": {Command: "typescript-language-server", Args: []string{"--stdio"}},
 		".js":  {Command: "typescript-language-server", Args: []string{"--stdio"}},

@@ -76,6 +76,7 @@ func DefaultProbes() []string {
 		// LSP servers
 		"gopls version",
 		"rust-analyzer --version",
+		"pyright --version",
 		"typescript-language-server --version",
 		"clangd --version",
 	}
@@ -86,7 +87,9 @@ func DefaultProbes() []string {
 // ---------------------------------------------------------------------------
 
 // ProbeTimeout 是单个探针命令的最大等待时间。
-const ProbeTimeout = 2 * time.Second
+// 4s 容纳 node 系 LSP server 的启动延迟(pyright-langserver 的 CLI
+// wrapper 启动 ~2s;typescript-language-server 同源)。
+const ProbeTimeout = 4 * time.Second
 
 // RunProbes 并行执行给定的探针命令列表，返回按 binary 名排序的结果切片。
 // 每个命令超时 ProbeTimeout 秒，失败结果也返回（Found=false）。

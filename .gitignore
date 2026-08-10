@@ -59,3 +59,8 @@ cmd/cache-proxy/
 .mcp.json
 
 .qoder
+
+# SWE-bench 评测运行产物(venv/结果/测试仓库 clone,不入仓库)
+eval/swebench/venv/
+eval/swebench/results/
+eval/swebench/smoke/

@@ -182,6 +182,10 @@ waitLoop:
 		switch r.Binary {
 		case "gopls", "rust-analyzer", "typescript-language-server", "clangd":
 			lspProbeMap[r.Binary] = r.Found
+		case "pyright":
+			// pyright 与 pyright-langserver 同包安装(pip/npm);
+			// langserver 无 --version,探测 CLI 即认定 langserver 可用
+			lspProbeMap["pyright-langserver"] = r.Found
 		}
 	}
 	userLSPServers := make(map[string]lsp.ServerConfig)

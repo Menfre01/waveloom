@@ -325,11 +325,31 @@ func TestDefaultLSPServers(t *testing.T) {
 	servers := DefaultLSPServers()
 
 	// Should have entries for common languages
-	required := []string{".go", ".rs", ".ts", ".tsx", ".js", ".c", ".cpp"}
+	required := []string{".go", ".rs", ".py", ".ts", ".tsx", ".js", ".c", ".cpp"}
 	for _, ext := range required {
 		if _, ok := servers[ext]; !ok {
 			t.Errorf("missing default server for %s", ext)
 		}
+	}
+}
+
+// REGRESSION: Python LSP(pyright-langserver)缺位导致评测中 Python 仓库
+// import 错误不可见(pylint-4661 漏依赖失败根因,2026-08-10 SWE-bench 实测)。
+func TestLookupServer_Python(t *testing.T) {
+	cfg := LookupServer("pastebin.py", nil)
+	if cfg == nil {
+		t.Fatal("expected config for .py files")
+	}
+	if cfg.Command != "pyright-langserver" {
+		t.Errorf("expected pyright-langserver, got %s", cfg.Command)
+	}
+	// 用户覆盖优先
+	overrides := map[string]ServerConfig{
+		".py": {Command: "pylsp"},
+	}
+	cfg = LookupServer("pastebin.py", overrides)
+	if cfg == nil || cfg.Command != "pylsp" {
+		t.Errorf("expected user override pylsp, got %+v", cfg)
 	}
 }
 
