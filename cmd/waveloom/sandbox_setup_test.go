@@ -55,7 +55,7 @@ func TestLoadSandboxSection_HasSandbox(t *testing.T) {
 
 // TestCreateSandboxManager_NotEnabled 未启用且非 bypass → nil(沙箱不激活)。
 func TestCreateSandboxManager_NotEnabled(t *testing.T) {
-	if mgr, fatal := createSandboxManager(false, "", "", "", t.TempDir()); mgr != nil || fatal {
+	if mgr, fatal := createSandboxManager(false, false, "", "", "", t.TempDir()); mgr != nil || fatal {
 		t.Error("default disabled sandbox should return nil")
 	}
 }
@@ -65,7 +65,7 @@ func TestCreateSandboxManager_InvalidConfig(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "settings.json")
 	// proxy 是 v2 未实现 → 校验拒绝
 	_ = os.WriteFile(path, []byte(`{"sandbox": {"enabled": true, "network": {"mode": "proxy"}}}`), 0o644)
-	if mgr, fatal := createSandboxManager(false, "", "", path, t.TempDir()); mgr != nil || fatal {
+	if mgr, fatal := createSandboxManager(false, false, "", "", path, t.TempDir()); mgr != nil || fatal {
 		t.Error("invalid config should disable sandbox")
 	}
 }
@@ -74,7 +74,7 @@ func TestCreateSandboxManager_InvalidConfig(t *testing.T) {
 func TestCreateSandboxManager_UnreadableConfig(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "settings.json")
 	_ = os.WriteFile(path, []byte(`{bad`), 0o644)
-	if mgr, fatal := createSandboxManager(false, "", "", path, t.TempDir()); mgr != nil || fatal {
+	if mgr, fatal := createSandboxManager(false, false, "", "", path, t.TempDir()); mgr != nil || fatal {
 		t.Error("unreadable config should disable sandbox")
 	}
 }
@@ -85,7 +85,7 @@ func TestCreateSandboxManager_BypassActivates(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("windows stub always unavailable")
 	}
-	mgr, fatal := createSandboxManager(true, "", "", "", t.TempDir())
+	mgr, fatal := createSandboxManager(true, false, "", "", "", t.TempDir())
 	if fatal {
 		t.Fatal("bypass activation should not be fatal (failIfUnavailable defaults false)")
 	}
@@ -107,7 +107,7 @@ func TestCreateSandboxManager_EnabledExplicit(t *testing.T) {
 	}
 	path := filepath.Join(t.TempDir(), "settings.json")
 	_ = os.WriteFile(path, []byte(`{"sandbox": {"enabled": true}}`), 0o644)
-	mgr, fatal := createSandboxManager(false, "", "", path, t.TempDir())
+	mgr, fatal := createSandboxManager(false, false, "", "", path, t.TempDir())
 	if fatal {
 		t.Fatal("enabled without failIfUnavailable should not be fatal")
 	}
@@ -131,7 +131,7 @@ func TestCreateSandboxManager_FailIfUnavailableFatal(t *testing.T) {
 	_ = os.WriteFile(path, []byte(`{"sandbox": {"enabled": true, "failIfUnavailable": true}}`), 0o644)
 	// PATH 置空 → LookPath 必然失败 → Select 失败 → fatal
 	t.Setenv("PATH", t.TempDir())
-	mgr, fatal := createSandboxManager(false, "", "", path, t.TempDir())
+	mgr, fatal := createSandboxManager(false, false, "", "", path, t.TempDir())
 	if !fatal {
 		t.Error("failIfUnavailable + unavailable should be fatal")
 	}
@@ -148,7 +148,7 @@ func TestCreateSandboxManager_NetworkOverrideOn_WithoutCredentials(t *testing.T)
 	}
 	path := filepath.Join(t.TempDir(), "settings.json")
 	_ = os.WriteFile(path, []byte(`{"sandbox": {"enabled": true}}`), 0o644)
-	mgr, fatal := createSandboxManager(false, "on", "", path, t.TempDir())
+	mgr, fatal := createSandboxManager(false, false, "on", "", path, t.TempDir())
 	if fatal {
 		t.Fatal("should not be fatal")
 	}
@@ -181,7 +181,7 @@ func TestCreateSandboxManager_NetworkOverrideOn_WithCredentials(t *testing.T) {
 			"credentials": {"files": ["~/.ssh"]}
 		}
 	}`), 0o644)
-	mgr, fatal := createSandboxManager(false, "on", "", path, t.TempDir())
+	mgr, fatal := createSandboxManager(false, false, "on", "", path, t.TempDir())
 	if fatal {
 		t.Fatal("should not be fatal")
 	}
@@ -204,7 +204,30 @@ func TestCreateSandboxManager_NetworkOverrideOn_WithCredentials(t *testing.T) {
 func TestCreateSandboxManager_NetworkOverrideInvalid(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "settings.json")
 	_ = os.WriteFile(path, []byte(`{"sandbox": {"enabled": true, "credentials": {"files": ["~/.ssh"]}}}`), 0o644)
-	if mgr, fatal := createSandboxManager(false, "banana", "", path, t.TempDir()); mgr != nil || fatal {
+	if mgr, fatal := createSandboxManager(false, false, "banana", "", path, t.TempDir()); mgr != nil || fatal {
 		t.Error("invalid network override should be rejected")
+	}
+}
+
+// TestCreateSandboxManager_NoSandbox --no-sandbox 显式关闭:优先级最高,
+// 即使 settings enabled: true + bypass 激活条件满足也不激活。
+func TestCreateSandboxManager_NoSandbox(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "settings.json")
+	_ = os.WriteFile(path, []byte(`{"sandbox": {"enabled": true, "failIfUnavailable": true}}`), 0o644)
+	mgr, fatal := createSandboxManager(true, true, "", "", path, t.TempDir())
+	if fatal {
+		t.Error("--no-sandbox should not be fatal even with failIfUnavailable=true")
+	}
+	if mgr != nil {
+		t.Error("--no-sandbox should return nil manager")
+	}
+}
+
+// TestCreateSandboxManager_NoSandbox_NoSettings --no-sandbox 在无配置文件时
+// 同样生效(不尝试加载配置)。
+func TestCreateSandboxManager_NoSandbox_NoSettings(t *testing.T) {
+	mgr, fatal := createSandboxManager(true, true, "", "", "", t.TempDir())
+	if fatal || mgr != nil {
+		t.Errorf("--no-sandbox without settings should return nil manager, got mgr=%v fatal=%v", mgr, fatal)
 	}
 }

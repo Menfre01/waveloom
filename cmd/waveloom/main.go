@@ -139,7 +139,7 @@ func main() {
 	// 激活,对齐 ACP)或显式 enabled 时激活。
 	// REGRESSION: oneshot 必须无条件激活沙箱——此前仅 --bypass-permissions
 	// 触发,普通 one-shot 管道运行无 OS 级兜底。无法单测:main 流程耦合 flag 解析。
-	sandboxMgr, sandboxFatal := createSandboxManager(cfg.BypassPerm || cfg.OneShot != "", cfg.SandboxNetwork, globalPath, projectPath, cwd)
+	sandboxMgr, sandboxFatal := createSandboxManager(cfg.BypassPerm || cfg.OneShot != "", cfg.NoSandbox, cfg.SandboxNetwork, globalPath, projectPath, cwd)
 	if sandboxFatal {
 		os.Exit(1) // failIfUnavailable: true 且后端不可用 → 拒绝启动
 	}

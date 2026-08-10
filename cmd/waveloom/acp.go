@@ -47,6 +47,7 @@ func runACP(args []string) {
 	provider := fs.String("provider", "", "LLM Provider 名称")
 	logLevel := fs.String("log-level", "info", "日志级别 (error/warn/info/debug)")
 	contextLimit := fs.String("context-limit", "", "上下文窗口 token 上限(支持 1M/200k;默认读 settings 的 compaction.context_limit_tokens,再默认 1M)")
+	noSandbox := fs.Bool("no-sandbox", false, "显式关闭沙箱(ACP 默认激活;Docker 等已隔离环境可关闭)")
 
 	fs.Usage = func() {
 		fmt.Fprintf(os.Stderr, `Usage: waveloom acp [options]
@@ -121,7 +122,7 @@ Options:
 	// 沙箱管理器:ACP 无交互 → 自动激活(bypassPerm=true,即使 sandbox.enabled=false)。
 	// 不可用 → 警告 + 降级运行(二元决策不受影响——规格书 2025-08 决策:
 	// "bypass 即二元决策");failIfUnavailable:true 且后端不可用 → 拒绝启动。
-	sandboxMgr, sandboxFatal := createSandboxManager(true, "", globalPath, projectPath, cwd)
+	sandboxMgr, sandboxFatal := createSandboxManager(true, *noSandbox, "", globalPath, projectPath, cwd)
 	if sandboxFatal {
 		// fatal 原因对 ACP 客户端用户必须可见(slog 只写日志文件)
 		fmt.Fprintln(os.Stderr, "⚠ acp: sandbox required but unavailable (failIfUnavailable=true), refusing to start")

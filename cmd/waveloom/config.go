@@ -31,6 +31,7 @@ type CLIConfig struct {
 	CompletionShell string // shell 补全脚本名称(bash/zsh/fish),空 = 不输出
 	BypassPerm      bool
 	SandboxNetwork  string // --sandbox-network,覆盖 settings.json 的 sandbox.network.mode(off/on)
+	NoSandbox       bool   // --no-sandbox,显式关闭沙箱(one-shot/ACP 默认激活;Docker 等已隔离环境使用)
 	LogLevel  string // 日志级别: error / warn / info / debug,默认 info
 	SettingsPath string // settings.json 路径
 	ToolTimeoutRaw string // 单个工具执行超时（Go Duration 格式，如 "5m" / "600s"），空 = 默认 5m
@@ -39,36 +40,78 @@ type CLIConfig struct {
 }
 
 // parseCLI 解析命令行参数。
+// 支持 flag 与位置参数任意交错(prompt 在前、flag 在后也生效):
+// Go flag 包在首个非 flag 参数处停止解析,故循环取出位置参数后继续 Parse。
 func parseCLI() CLIConfig {
 	cfg := CLIConfig{}
 	var contextLimitRaw string
 
-	flag.Usage = func() {
+	fs := flag.NewFlagSet("waveloom", flag.ExitOnError)
+	fs.Usage = func() {
 		printHelpWithAutoDetect()
 	}
 
-	flag.StringVar(&cfg.Model, "model", "", "LLM 模型名称(默认从环境变量 LLM_MODEL 读取;proplan = plan 用 model、日常用 sub_model)")
-	flag.IntVar(&cfg.MaxTurns, "max-turns", 0, "最大 turn 数（0=无限制）")
-	flag.StringVar(&cfg.SystemPrompt, "system-prompt", "", "系统提示词")
-	flag.StringVar(&contextLimitRaw, "context-limit", "", "上下文窗口 token 上限(默认读 settings 的 compaction.context_limit_tokens,再默认 1M)")
-	flag.StringVar(&cfg.Theme, "theme", "auto", "主题模式 (auto/dark/light)，auto 自动检测终端背景色")
-	flag.StringVar(&cfg.Locale, "locale", "auto", "界面语言 (zh-CN/en-US/auto)，auto 从 LANG 环境变量自动检测")
-	flag.StringVar(&cfg.SettingsPath, "settings", "", "显式指定项目配置文件路径（默认: .waveloom/settings.json）")
-	flag.StringVar(&cfg.ResumeSessionID, "resume", "", "恢复指定 session ID 的对话（空 = 新建 session）")
-	flag.BoolVar(&cfg.ContinueSession, "continue", false, "恢复最近一个 session 的对话")
-	flag.StringVar(&cfg.LogLevel, "log-level", "info", "日志级别 (error/warn/info/debug)")
-	flag.BoolVar(&cfg.BypassPerm, "bypass-permissions", false, "跳过权限检查(CI/测试)")
-	flag.StringVar(&cfg.SandboxNetwork, "sandbox-network", "", "沙箱网络模式 off/on(默认 on,覆盖 settings.json 的 sandbox.network.mode;on 建议配置凭据遮蔽)")
-	flag.StringVar(&cfg.ToolTimeoutRaw, "tool-timeout", "", "单个工具执行超时(Go Duration 格式,如 5m/600s/0s,0=禁用,默认 5m)")
-	flag.StringVar(&cfg.Provider, "provider", "", "LLM Provider 名称（kimi/deepseek/openai），查找 profiles 中匹配配置")
+	fs.StringVar(&cfg.Model, "model", "", "LLM 模型名称(默认从环境变量 LLM_MODEL 读取;proplan = plan 用 model、日常用 sub_model)")
+	fs.IntVar(&cfg.MaxTurns, "max-turns", 0, "最大 turn 数(0=无限制)")
+	fs.StringVar(&cfg.SystemPrompt, "system-prompt", "", "系统提示词")
+	fs.StringVar(&contextLimitRaw, "context-limit", "", "上下文窗口 token 上限(默认读 settings 的 compaction.context_limit_tokens,再默认 1M)")
+	fs.StringVar(&cfg.Theme, "theme", "auto", "主题模式 (auto/dark/light),auto 自动检测终端背景色")
+	fs.StringVar(&cfg.Locale, "locale", "auto", "界面语言 (zh-CN/en-US/auto),auto 从 LANG 环境变量自动检测")
+	fs.StringVar(&cfg.SettingsPath, "settings", "", "显式指定项目配置文件路径(默认: .waveloom/settings.json)")
+	fs.StringVar(&cfg.ResumeSessionID, "resume", "", "恢复指定 session ID 的对话(空 = 新建 session)")
+	fs.BoolVar(&cfg.ContinueSession, "continue", false, "恢复最近一个 session 的对话")
+	fs.StringVar(&cfg.LogLevel, "log-level", "info", "日志级别 (error/warn/info/debug)")
+	fs.BoolVar(&cfg.BypassPerm, "bypass-permissions", false, "跳过权限检查(CI/测试)")
+	fs.StringVar(&cfg.SandboxNetwork, "sandbox-network", "", "沙箱网络模式 off/on(默认 on,覆盖 settings.json 的 sandbox.network.mode;on 建议配置凭据遮蔽)")
+	fs.BoolVar(&cfg.NoSandbox, "no-sandbox", false, "显式关闭沙箱(one-shot/ACP 默认激活;Docker 等已隔离环境可关闭)")
+	fs.StringVar(&cfg.ToolTimeoutRaw, "tool-timeout", "", "单个工具执行超时(Go Duration 格式,如 5m/600s/0s,0=禁用,默认 5m)")
+	fs.StringVar(&cfg.Provider, "provider", "", "LLM Provider 名称(kimi/deepseek/openai),查找 profiles 中匹配配置")
 
-	setup := flag.Bool("setup", false, "首次设置向导")
+	setup := fs.Bool("setup", false, "首次设置向导")
 
-	help := flag.Bool("help", false, "显示帮助")
-	h := flag.Bool("h", false, "显示帮助")
-	version := flag.Bool("version", false, "显示版本号")
+	help := fs.Bool("help", false, "显示帮助")
+	h := fs.Bool("h", false, "显示帮助")
+	version := fs.Bool("version", false, "显示版本号")
 
-	flag.Parse()
+	// 循环解析:取出每个位置参数后继续,使 prompt 之后的 flag 也能被解析。
+	// 两个保护边界(对齐重构前 flag.Parse 单次行为):
+	//  1. "--" 终止符之后全部为位置参数,不再解析
+	//  2. 子命令(acp/mcp/completion/setup/ls)后的参数原样保留,不解析
+	//     (子命令有独立 flag 集,如 acp --session-dir)
+	args := os.Args[1:]
+	var positional []string
+	termIdx := -1
+	for i, a := range args {
+		if a == "--" {
+			termIdx = i
+			break
+		}
+	}
+	var tail []string
+	if termIdx >= 0 {
+		tail = args[termIdx+1:]
+		args = args[:termIdx]
+	}
+
+loop:
+	for len(args) > 0 {
+		if err := fs.Parse(args); err != nil {
+			// ExitOnError 下 Parse 已打印错误并退出;此处仅防御
+			break
+		}
+		rest := fs.Args()
+		if len(rest) == 0 {
+			break
+		}
+		positional = append(positional, rest[0])
+		switch rest[0] {
+		case "setup", "ls", "completion", "mcp", "acp":
+			positional = append(positional, rest[1:]...)
+			break loop
+		}
+		args = rest[1:]
+	}
+	positional = append(positional, tail...)
 
 	cfg.Setup = *setup
 	cfg.ShowHelp = *help || *h
@@ -101,8 +144,8 @@ func parseCLI() CLIConfig {
 		}
 	}
 
-	// 单次模式：命令行剩余参数即 prompt
-	args := flag.Args()
+	// 单次模式:命令行剩余参数即 prompt(支持 flag 与 prompt 交错)
+	args = positional
 	if len(args) > 0 {
 		// "setup"、"ls"、"completion"、"mcp" 作为子命令处理，不走 oneshot
 		switch args[0] {

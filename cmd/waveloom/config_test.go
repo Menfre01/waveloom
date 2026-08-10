@@ -1,7 +1,6 @@
 package main
 
 import (
-	"flag"
 	"image/color"
 	"os"
 	"path/filepath"
@@ -9,14 +8,8 @@ import (
 	"testing"
 )
 
-// resetCommandLine 重置全局 flag.CommandLine，避免跨 parseCLI 调用重复注册 panic。
-func resetCommandLine() {
-	flag.CommandLine = flag.NewFlagSet(os.Args[0], flag.ExitOnError)
-}
-
 // parseCLIForTest 在每次调用前重置 flag.CommandLine 并设置 os.Args。
 func parseCLIForTest(args []string) CLIConfig {
-	resetCommandLine()
 	os.Args = append([]string{"waveloom"}, args...)
 	return parseCLI()
 }
@@ -419,6 +412,98 @@ func TestParseCLI_DefaultValues(t *testing.T) {
 	}
 	if cfg.BypassPerm {
 		t.Error("default BypassPerm should be false")
+	}
+}
+
+// REGRESSION: prompt 在前的命令格式("waveloom 'prompt' --flag ...")——
+// Go flag 包在首个非 flag 参数处停止解析,循环解析修复前 prompt 后的
+// flag 全部失效(评测 runner 调用格式实测受影响,2026-08-10)。
+func TestParseCLI_FlagsAfterPrompt(t *testing.T) {
+	cfg := parseCLIForTest([]string{"fix the bug", "--max-turns", "25", "--no-sandbox", "--bypass-permissions", "--context-limit", "128k"})
+	if cfg.OneShot != "fix the bug" {
+		t.Errorf("expected OneShot='fix the bug', got %q", cfg.OneShot)
+	}
+	if cfg.MaxTurns != 25 {
+		t.Errorf("expected MaxTurns=25, got %d", cfg.MaxTurns)
+	}
+	if !cfg.NoSandbox {
+		t.Error("expected NoSandbox=true")
+	}
+	if !cfg.BypassPerm {
+		t.Error("expected BypassPerm=true")
+	}
+	if cfg.ContextLimit != 128000 {
+		t.Errorf("expected ContextLimit=128000, got %d", cfg.ContextLimit)
+	}
+}
+
+// REGRESSION: 多个位置参数与 flag 交错时,位置参数按序收集。
+func TestParseCLI_InterleavedPositional(t *testing.T) {
+	cfg := parseCLIForTest([]string{"prompt-a", "--max-turns", "3", "prompt-b"})
+	// 单次模式取第一个位置参数为 prompt,后续位置参数不影响解析
+	if cfg.OneShot != "prompt-a" {
+		t.Errorf("expected OneShot='prompt-a', got %q", cfg.OneShot)
+	}
+	if cfg.MaxTurns != 3 {
+		t.Errorf("expected MaxTurns=3, got %d", cfg.MaxTurns)
+	}
+}
+
+// TestParseCLI_NoSandboxFlag --no-sandbox 在 prompt 前解析正常。
+func TestParseCLI_NoSandboxFlag(t *testing.T) {
+	cfg := parseCLIForTest([]string{"--no-sandbox", "test"})
+	if !cfg.NoSandbox {
+		t.Error("expected NoSandbox=true")
+	}
+}
+
+// REGRESSION: 子命令后的参数原样保留给子命令,不被主 flag 集解析
+// (重构前 flag.Parse 在子命令名处停止;循环解析不能吞掉 acp 的 --session-dir)。
+func TestParseCLI_SubcommandArgsPreserved(t *testing.T) {
+	// acp 子命令在 parseCLI 内直接调用 runACP 并退出,无法在单测中执行;
+	// 这里验证 completion 子命令(解析逻辑共享,不进 runACP)。
+	cfg := parseCLIForTest([]string{"completion", "bash"})
+	if cfg.CompletionShell != "bash" {
+		t.Errorf("expected CompletionShell='bash', got %q", cfg.CompletionShell)
+	}
+	// mcp 子命令参数应保留到 runMCPCommand——parseCLI 内直接执行无法断言,
+	// 以 setup/ls 无参数子命令验证不 panic 即可。
+	_ = parseCLIForTest([]string{"ls"})
+}
+
+// REGRESSION: "--" 终止符之后全部为位置参数,不再解析为 flag。
+func TestParseCLI_DoubleDashTerminator(t *testing.T) {
+	cfg := parseCLIForTest([]string{"--", "prompt", "--version"})
+	if cfg.OneShot != "prompt" {
+		t.Errorf("expected OneShot='prompt', got %q", cfg.OneShot)
+	}
+	if cfg.ShowVersion {
+		t.Error("--version after -- should NOT be parsed as flag")
+	}
+}
+
+// REGRESSION: flag 以 "=" 形式出现(prompt 之后)。
+func TestParseCLI_FlagEqualsFormAfterPrompt(t *testing.T) {
+	cfg := parseCLIForTest([]string{"fix bug", "--no-sandbox=true", "--max-turns=7"})
+	if cfg.OneShot != "fix bug" {
+		t.Errorf("expected OneShot='fix bug', got %q", cfg.OneShot)
+	}
+	if !cfg.NoSandbox {
+		t.Error("expected NoSandbox=true")
+	}
+	if cfg.MaxTurns != 7 {
+		t.Errorf("expected MaxTurns=7, got %d", cfg.MaxTurns)
+	}
+}
+
+// REGRESSION: 同一 flag 出现多次,末次生效(与单次 flag.Parse 行为一致)。
+func TestParseCLI_DuplicateFlagLastWins(t *testing.T) {
+	cfg := parseCLIForTest([]string{"--model", "a", "prompt", "--model", "b"})
+	if cfg.Model != "b" {
+		t.Errorf("expected Model='b' (last wins), got %q", cfg.Model)
+	}
+	if cfg.OneShot != "prompt" {
+		t.Errorf("expected OneShot='prompt', got %q", cfg.OneShot)
 	}
 }
 

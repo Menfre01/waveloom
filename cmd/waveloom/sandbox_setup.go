@@ -41,15 +41,24 @@ func loadSandboxSection(path string) ([]byte, error) {
 // createSandboxManager 加载沙箱配置并激活。
 // networkOverride 为 --sandbox-network flag 值(off/on/空),非空时覆盖
 // settings.json 的 network.mode 并重新校验(网络 on 的凭据强制校验不被绕过)。
+// noSandbox 为 --no-sandbox flag:优先级最高,显式关闭时跳过全部激活判定
+// (覆盖 settings enabled 与 one-shot/ACP 强制激活;Docker 等已隔离环境使用)。
 //
 // 激活判定(任一满足):
 //  1. settings.json 显式 enabled: true(TUI 常规模式)
 //  2. --bypass-permissions(TUI)或 one-shot / ACP 无交互入口自动激活
 //     (oneshot 无条件激活,无需显式 flag——2025-09 决策,对齐 ACP)
+//  3. 以上均被 --no-sandbox 显式关闭
 //
 // 返回 nil 表示沙箱未启用或不可用(调用方降级运行)。
 // failIfUnavailable: true 且依赖缺失时返回 fatal=true(调用方拒绝启动)。
-func createSandboxManager(bypassPerm bool, networkOverride, globalPath, projectPath, cwd string) (mgr *sandbox.SandboxManager, fatal bool) {
+func createSandboxManager(bypassPerm, noSandbox bool, networkOverride, globalPath, projectPath, cwd string) (mgr *sandbox.SandboxManager, fatal bool) {
+	// --no-sandbox 显式关闭:优先级最高,不加载配置、不激活、不提示
+	// (用户明确选择信任外部隔离,如 Docker / CI 一次性环境)。
+	if noSandbox {
+		slog.Info("sandbox: disabled by --no-sandbox (explicit opt-out)")
+		return nil, false
+	}
 	// 合并配置:项目 sandbox 段覆盖全局(与权限规则一致)
 	raw, err := loadSandboxSection(projectPath)
 	if err != nil {
