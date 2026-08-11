@@ -64,3 +64,7 @@ cmd/cache-proxy/
 eval/swebench/venv/
 eval/swebench/results/
 eval/swebench/smoke/
+eval/swebench/__pycache__/
+eval/swebench/mirrors/
+eval/swebench/container-prompt.txt
+eval/swebench/.api_key
