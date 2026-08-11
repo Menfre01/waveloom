@@ -39,13 +39,16 @@ def tool_sequence(trace: list[dict]) -> list[dict]:
                 tid = block.get("tool_use_id", "")
                 info = pending.pop(tid, {})
                 content = block.get("content", "")
-                # 仅 bash 工具结果参与错误判定:read 返回的是代码内容,
-                # 含 "error" 字样属正常(规格书 F2:需 IsError 结构化才精确)
-                is_err = isinstance(content, str) and (
-                    info.get("name") == "bash"
-                    and ("Error" in content or "failed" in content.lower()
-                         or "FAILED" in content)
-                )
+                # F2 结构化 is_error 优先(waveloom ≥ v0.6.2-3-g550c565);
+                # 旧 trace 回退内容正则(仅 bash,避免 read 代码内容误报)
+                if "is_error" in block:
+                    is_err = bool(block.get("is_error"))
+                else:
+                    is_err = isinstance(content, str) and (
+                        info.get("name") == "bash"
+                        and ("Error" in content or "failed" in content.lower()
+                             or "FAILED" in content)
+                    )
                 seq.append({
                     "tool": info.get("name", "?"),
                     "input": info.get("input", {}),

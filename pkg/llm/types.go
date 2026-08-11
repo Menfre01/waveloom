@@ -32,6 +32,7 @@ type Message struct {
 	// (assistant 角色)。多轮对话需原样回传,服务端据此恢复搜索结果上下文。
 	WebSearchCalls   []WebSearchCall `json:"web_search_calls,omitempty"`
 	Name             string     `json:"name,omitempty"`               // 可选,工具名(tool 角色时)
+	IsError          bool       `json:"is_error,omitempty"`           // tool 角色:工具执行是否失败(结构化标记,落盘供分析)
 	Model            string     `json:"model,omitempty"`              // assistant: 实际使用的模型名
 	FinishReason     string     `json:"stop_reason,omitempty"`        // assistant: API 返回的 finish_reason
 	Usage            *UsageInfo `json:"usage,omitempty"`              // assistant: token 用量

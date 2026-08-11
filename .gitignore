@@ -68,3 +68,5 @@ eval/swebench/__pycache__/
 eval/swebench/mirrors/
 eval/swebench/container-prompt.txt
 eval/swebench/.api_key
+eval/swebench/*_result.json
+eval/swebench/report.md
