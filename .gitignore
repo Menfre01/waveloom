@@ -70,3 +70,9 @@ eval/swebench/container-prompt.txt
 eval/swebench/.api_key
 eval/swebench/*_result.json
 eval/swebench/report.md
+eval/swebench/*.log
+eval/swebench/.docker/
+eval/swebench/.docker-nocred/
+eval/swebench/deep_dive.py
+eval/swebench/rejudge.py
+eval/swebench/run_mini_eval.sh
