@@ -33,3 +33,22 @@ func TestDefault_ActionPreviewExample(t *testing.T) {
 		t.Error("action preview rule should include an English example")
 	}
 }
+
+// TestDefault_FirstEditDeadline 锁定 First-edit deadline 与 External-source
+// discipline(SWE-bench 复测验证:8 实例 2 翻转 0 回退,取代旧 Stop exploring)。
+// 旧规则 "Stop exploring, start editing" 已移除——若被误加回或新规则被误删,
+// 回归测试失败。
+func TestDefault_FirstEditDeadline(t *testing.T) {
+	if !strings.Contains(Default, "First-edit deadline") {
+		t.Fatal("default prompt must define First-edit deadline (replaces Stop exploring)")
+	}
+	if !strings.Contains(Default, "no later than your 8th tool call") {
+		t.Fatal("First-edit deadline must quantify the bound (8th tool call)")
+	}
+	if !strings.Contains(Default, "External-source discipline") {
+		t.Fatal("default prompt must define External-source discipline")
+	}
+	if strings.Contains(Default, "Stop exploring, start editing") {
+		t.Fatal("old 'Stop exploring, start editing' must be removed (superseded by First-edit deadline)")
+	}
+}
