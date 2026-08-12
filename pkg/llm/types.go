@@ -196,15 +196,18 @@ const (
 // 仅作为 curr_model / --model 的选择值,绝不进入 Client 配置或 API 请求。
 const ModelChoiceProPlan = "proplan"
 
-// ModelDeepSeekV4Flash 是 DeepSeek Responses API 唯一支持的模型。
-// Provider=deepseek 且生效模型为此时,adapter 自动切换为 Responses API 格式。
-const ModelDeepSeekV4Flash = "deepseek-v4-flash"
+// ModelDeepSeekV4Flash / ModelDeepSeekV4Pro 是 DeepSeek Responses API 支持的模型。
+// Provider=deepseek 且生效模型为二者之一时,adapter 自动切换为 Responses API 格式。
+const (
+	ModelDeepSeekV4Flash = "deepseek-v4-flash"
+	ModelDeepSeekV4Pro   = "deepseek-v4-pro"
+)
 
 // ClientConfig 在构造 Client 时传入，运行期不可变。
 type ClientConfig struct {
 	Provider       ProviderType      // Provider 类型
 	APIKey         string            // API Key
-	Model          string            // 模型名称，如 "deepseek-chat"
+	Model          string            // 模型名称,如 "deepseek-v4-pro"
 	BaseURL        string            // 可选，留空使用 Provider 默认端点
 	ResponseFormat string            // 可选，强制输出格式："json_object" 启用 JSON 模式，空字符串不设置
 	ExtraParams    map[string]any    // 可选，注入 Provider 特殊参数（如 DeepSeek 的 frequency_penalty 等）

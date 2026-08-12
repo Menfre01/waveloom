@@ -16,7 +16,7 @@ import (
 func TestDeepSeekBuildRequest(t *testing.T) {
 	adapter := newDeepSeekAdapter(ClientConfig{
 		APIKey:  "sk-deepseek",
-		Model:   "deepseek-v4-pro",
+		Model:   "custom-chat-model",
 		BaseURL: "https://api.deepseek.com",
 	})
 
@@ -44,8 +44,8 @@ func TestDeepSeekBuildRequest(t *testing.T) {
 		t.Fatalf("Failed to decode request body: %v", err)
 	}
 
-	if body["model"] != "deepseek-v4-pro" {
-		t.Errorf("model = %v, want deepseek-v4-pro", body["model"])
+	if body["model"] != "custom-chat-model" {
+		t.Errorf("model = %v, want custom-chat-model", body["model"])
 	}
 	if body["stream"] != false {
 		t.Errorf("stream = %v, want false", body["stream"])
@@ -55,7 +55,7 @@ func TestDeepSeekBuildRequest(t *testing.T) {
 func TestDeepSeekBuildRequestReasoningContent(t *testing.T) {
 	adapter := newDeepSeekAdapter(ClientConfig{
 		APIKey:  "sk-deepseek",
-		Model:   "deepseek-v4-pro",
+		Model:   "custom-chat-model",
 		BaseURL: "https://api.deepseek.com",
 	})
 
@@ -118,7 +118,7 @@ func TestDeepSeekBuildRequestReasoningContent(t *testing.T) {
 func TestDeepSeekBuildRequestExtraParams(t *testing.T) {
 	adapter := newDeepSeekAdapter(ClientConfig{
 		APIKey:  "sk-deepseek",
-		Model:   "deepseek-v4-pro",
+		Model:   "custom-chat-model",
 		BaseURL: "https://api.deepseek.com",
 		ExtraParams: map[string]any{
 			"thinking":          map[string]any{"type": "enabled"},
@@ -155,7 +155,7 @@ func TestDeepSeekBuildRequestExtraParams(t *testing.T) {
 func TestDeepSeekBuildRequestMaxTokensOverride(t *testing.T) {
 	adapter := newDeepSeekAdapter(ClientConfig{
 		APIKey:  "sk-deepseek",
-		Model:   "deepseek-v4-pro",
+		Model:   "custom-chat-model",
 		BaseURL: "https://api.deepseek.com",
 	})
 
@@ -203,7 +203,7 @@ func TestDeepSeekReasoningEffortMapping(t *testing.T) {
 		t.Run(tt.input, func(t *testing.T) {
 			adapter := newDeepSeekAdapter(ClientConfig{
 				APIKey:  "sk-deepseek",
-				Model:   "deepseek-v4-pro",
+				Model:   "custom-chat-model",
 				BaseURL: "https://api.deepseek.com",
 				ExtraParams: map[string]any{
 					"reasoning_effort": tt.input,
@@ -498,7 +498,7 @@ func TestDeepSeekParseResponseMalformedJSON(t *testing.T) {
 func TestDeepSeekBuildRequestWithTools(t *testing.T) {
 	adapter := newDeepSeekAdapter(ClientConfig{
 		APIKey:  "sk-deepseek",
-		Model:   "deepseek-v4-pro",
+		Model:   "custom-chat-model",
 		BaseURL: "https://api.deepseek.com",
 	})
 
@@ -540,7 +540,7 @@ func TestDeepSeekBuildRequestWithTools(t *testing.T) {
 func TestDeepSeekBuildMessagesNameField(t *testing.T) {
 	adapter := newDeepSeekAdapter(ClientConfig{
 		APIKey:  "sk-deepseek",
-		Model:   "deepseek-v4-pro",
+		Model:   "custom-chat-model",
 		BaseURL: "https://api.deepseek.com",
 	})
 
@@ -591,7 +591,7 @@ func TestDeepSeekParseResponseNoUsage(t *testing.T) {
 func TestDeepSeekBuildStreamRequest(t *testing.T) {
 	adapter := newDeepSeekAdapter(ClientConfig{
 		APIKey:  "sk-deepseek",
-		Model:   "deepseek-v4-pro",
+		Model:   "custom-chat-model",
 		BaseURL: "https://api.deepseek.com",
 	})
 
@@ -610,8 +610,8 @@ func TestDeepSeekBuildStreamRequest(t *testing.T) {
 	if body["stream"] != true {
 		t.Errorf("stream = %v, want true", body["stream"])
 	}
-	if body["model"] != "deepseek-v4-pro" {
-		t.Errorf("model = %v, want deepseek-v4-pro", body["model"])
+	if body["model"] != "custom-chat-model" {
+		t.Errorf("model = %v, want custom-chat-model", body["model"])
 	}
 }
 
@@ -782,7 +782,7 @@ func TestDeepSeekParseStreamEventWithUsage(t *testing.T) {
 func TestDeepSeekBuildRequestResponseFormat(t *testing.T) {
 	adapter := newDeepSeekAdapter(ClientConfig{
 		APIKey:         "sk-test",
-		Model:          "deepseek-v4-pro",
+		Model:          "custom-chat-model",
 		BaseURL:        "https://api.deepseek.com",
 		ResponseFormat: "json_object",
 	})
@@ -810,7 +810,7 @@ func TestDeepSeekBuildRequestResponseFormat(t *testing.T) {
 func TestDeepSeekBuildStreamRequestResponseFormat(t *testing.T) {
 	adapter := newDeepSeekAdapter(ClientConfig{
 		APIKey:         "sk-test",
-		Model:          "deepseek-v4-pro",
+		Model:          "custom-chat-model",
 		BaseURL:        "https://api.deepseek.com",
 		ResponseFormat: "json_object",
 	})
@@ -1017,7 +1017,7 @@ func TestDeepSeekAdapter_ModelOverrideEmpty(t *testing.T) {
 	}
 }
 
-// --- Responses API 模式(deepseek-v4-flash)---
+// --- Responses API 模式(deepseek-v4-flash / deepseek-v4-pro)---
 
 func newResponsesAdapter() *deepSeekAdapter {
 	return newDeepSeekAdapter(ClientConfig{
@@ -1028,7 +1028,9 @@ func newResponsesAdapter() *deepSeekAdapter {
 	})
 }
 
-// TestResponsesBuildRequest_Endpoint 验证 v4-flash 走 /v1/responses,v4-pro 走 chat/completions。
+// TestResponsesBuildRequest_Endpoint 验证 v4-flash / v4-pro 走 /v1/responses;
+// 自定义模型名(官方模型已全部支持 Responses API,chat 分支仅覆盖自定义
+// baseURL / 第三方 OpenAI 兼容端点)走 chat/completions。
 func TestResponsesBuildRequest_Endpoint(t *testing.T) {
 	flash := newResponsesAdapter()
 	req, err := flash.BuildRequest(context.Background(), []Message{{Role: RoleUser, Content: "Hi"}}, nil)
@@ -1049,6 +1051,37 @@ func TestResponsesBuildRequest_Endpoint(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BuildRequest error: %v", err)
 	}
+	if req.URL.String() != "https://api.deepseek.com/v1/responses" {
+		t.Errorf("URL = %q, want /v1/responses", req.URL.String())
+	}
+	var body map[string]any
+	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if body["model"] != "deepseek-v4-pro" {
+		t.Errorf("model = %v, want deepseek-v4-pro", body["model"])
+	}
+
+	// 流式请求同样走 responses 格式
+	req, err = pro.BuildStreamRequest(context.Background(), []Message{{Role: RoleUser, Content: "Hi"}}, nil)
+	if err != nil {
+		t.Fatalf("BuildStreamRequest error: %v", err)
+	}
+	if req.URL.String() != "https://api.deepseek.com/v1/responses" {
+		t.Errorf("stream URL = %q, want /v1/responses", req.URL.String())
+	}
+
+	// 自定义模型名(非官方模型)走 chat/completions
+	chat := newDeepSeekAdapter(ClientConfig{
+		Provider: ProviderDeepSeek,
+		APIKey:   "sk-deepseek",
+		Model:    "custom-chat-model",
+		BaseURL:  "https://api.deepseek.com",
+	})
+	req, err = chat.BuildRequest(context.Background(), []Message{{Role: RoleUser, Content: "Hi"}}, nil)
+	if err != nil {
+		t.Fatalf("BuildRequest error: %v", err)
+	}
 	if req.URL.String() != "https://api.deepseek.com/v1/chat/completions" {
 		t.Errorf("URL = %q, want /v1/chat/completions", req.URL.String())
 	}
@@ -1056,15 +1089,15 @@ func TestResponsesBuildRequest_Endpoint(t *testing.T) {
 
 // TestResponsesBuildRequest_ModelOverride 验证 ModelOverride 切换模型时每请求独立判定端点。
 func TestResponsesBuildRequest_ModelOverride(t *testing.T) {
-	// 配置为 v4-pro(chat),但 override 为 v4-flash → 走 responses
-	pro := newDeepSeekAdapter(ClientConfig{
+	// 配置为自定义模型名(chat),但 override 为 v4-flash → 走 responses
+	chat := newDeepSeekAdapter(ClientConfig{
 		Provider: ProviderDeepSeek,
 		APIKey:   "sk-deepseek",
-		Model:    "deepseek-v4-pro",
+		Model:    "custom-chat-model",
 		BaseURL:  "https://api.deepseek.com",
 	})
 	ctx := WithModelOverride(context.Background(), ModelDeepSeekV4Flash)
-	req, err := pro.BuildRequest(ctx, []Message{{Role: RoleUser, Content: "Hi"}}, nil)
+	req, err := chat.BuildRequest(ctx, []Message{{Role: RoleUser, Content: "Hi"}}, nil)
 	if err != nil {
 		t.Fatalf("BuildRequest error: %v", err)
 	}
@@ -1072,15 +1105,15 @@ func TestResponsesBuildRequest_ModelOverride(t *testing.T) {
 		t.Errorf("override flash URL = %q, want /v1/responses", req.URL.String())
 	}
 
-	// 配置为 v4-flash,override 为 v4-pro → 走 chat
+	// 配置为 v4-flash,override 为自定义模型名 → 走 chat
 	flash := newResponsesAdapter()
-	ctx = WithModelOverride(context.Background(), "deepseek-v4-pro")
+	ctx = WithModelOverride(context.Background(), "custom-chat-model")
 	req, err = flash.BuildRequest(ctx, []Message{{Role: RoleUser, Content: "Hi"}}, nil)
 	if err != nil {
 		t.Fatalf("BuildRequest error: %v", err)
 	}
 	if req.URL.String() != "https://api.deepseek.com/v1/chat/completions" {
-		t.Errorf("override pro URL = %q, want /v1/chat/completions", req.URL.String())
+		t.Errorf("override chat URL = %q, want /v1/chat/completions", req.URL.String())
 	}
 }
 

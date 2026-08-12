@@ -45,7 +45,7 @@ func (a *deepSeekAdapter) AuthHeader() (string, string) {
 }
 
 func (a *deepSeekAdapter) BuildRequest(ctx context.Context, messages []Message, tools []ToolSpec) (*http.Request, error) {
-	if a.effectiveModel(ctx) == ModelDeepSeekV4Flash {
+	if isDeepSeekResponsesModel(a.effectiveModel(ctx)) {
 		body := a.buildResponsesRequestBody(ctx, messages, tools, false)
 		return newJSONRequest(http.MethodPost, a.baseURL+"/v1/responses", body)
 	}
@@ -54,12 +54,21 @@ func (a *deepSeekAdapter) BuildRequest(ctx context.Context, messages []Message, 
 }
 
 func (a *deepSeekAdapter) BuildStreamRequest(ctx context.Context, messages []Message, tools []ToolSpec) (*http.Request, error) {
-	if a.effectiveModel(ctx) == ModelDeepSeekV4Flash {
+	if isDeepSeekResponsesModel(a.effectiveModel(ctx)) {
 		body := a.buildResponsesRequestBody(ctx, messages, tools, true)
 		return newJSONRequest(http.MethodPost, a.baseURL+"/v1/responses", body)
 	}
 	body := a.buildChatRequestBody(ctx, messages, tools, true)
 	return newJSONRequest(http.MethodPost, a.baseURL+"/v1/chat/completions", body)
+}
+
+// isDeepSeekResponsesModel 判断模型是否使用 Responses API(/v1/responses)。
+// 官方文档:Responses API 的 model 可选值为 deepseek-v4-flash / deepseek-v4-pro
+// (旧模型名 deepseek-chat / deepseek-reasoner 已废弃)。其余模型名(自定义
+// baseURL 或第三方 OpenAI 兼容端点)走 Chat Completions。精确匹配配置/override
+// 传入的模型名,带 provider 前缀(如 "deepseek/deepseek-v4-pro")的形式不会命中。
+func isDeepSeekResponsesModel(model string) bool {
+	return model == ModelDeepSeekV4Flash || model == ModelDeepSeekV4Pro
 }
 
 // effectiveModel 返回实际生效的模型名:ctx 中的 ModelOverride 优先,否则用配置模型。
@@ -105,7 +114,7 @@ func (a *deepSeekAdapter) buildChatRequestBody(ctx context.Context, messages []M
 }
 
 // ---------------------------------------------------------------------------
-// Responses API(deepseek-v4-flash)
+// Responses API(deepseek-v4-flash / deepseek-v4-pro)
 // ---------------------------------------------------------------------------
 
 // buildResponsesRequestBody 构造 Responses API 请求 body。
@@ -739,7 +748,7 @@ type deepSeekStreamToolCall struct {
 	Function deepSeekFunctionCall   `json:"function"`
 }
 
-// --- Responses API 解析结构 (deepseek-v4-flash) ---
+// --- Responses API 解析结构 (deepseek-v4-flash / deepseek-v4-pro) ---
 
 // responsesResponse 是 Responses API 非流式响应结构(仅提取需要的字段)。
 type responsesResponse struct {

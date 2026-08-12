@@ -1406,7 +1406,7 @@ func TestRetryDeepSeekInsufficientResourceExhausted(t *testing.T) {
 
 	cfg := ClientConfig{
 		APIKey:      "sk-deepseek",
-		Model:       "deepseek-chat",
+		Model:       "deepseek-v4-pro",
 		Provider:    ProviderDeepSeek,
 		RetryPolicy: RetryPolicy{MaxRetries: 2, InitialBackoff: 1 * time.Millisecond, MaxBackoff: 10 * time.Millisecond, Multiplier: 2.0},
 		HTTPClient:  &http.Client{Transport: transport},
