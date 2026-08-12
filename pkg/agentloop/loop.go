@@ -709,8 +709,10 @@ func (l *Loop) Run(ctx context.Context, messages []llm.Message) <-chan TurnEvent
 			// (评测实测:模型常以 "启动 xxx:" 结尾后漏发工具调用)。
 			// 注入 [system:continue] 提醒并继续一轮,给模型一次补发工具调用的机会;
 			// 若下一轮仍无工具调用(或本 Run 已提醒过)则正常终止,防死循环。
-			// plan mode 除外:计划文本以冒号结尾是常态,终止等审批是预期行为。
-			if !l.previewWarned && !l.plan && hasPreviewSuffix(contentBuf) {
+			// plan mode 同样生效:计划文本虽常以冒号结尾,但预告式结尾同样可能
+			// 意味着模型漏发了工具调用(如读完文件后未写 plan),给一次补发机会;
+			// previewWarned 保证最多提醒一次,不会造成死循环。
+			if !l.previewWarned && hasPreviewSuffix(contentBuf) {
 				l.previewWarned = true
 				l.verbose("    → preview-style text without tool calls, injecting continue reminder\n")
 				state.Messages = append(state.Messages, llm.Message{
