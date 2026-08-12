@@ -1055,7 +1055,10 @@ func maxTurnsWarningText(remaining int) string {
 
 // previewContinueText 是模型输出"预告文本"(以冒号/箭头等结尾)但未携带
 // 工具调用时注入的 user 提醒,引导模型补发工具调用或明确收尾。
-const previewContinueText = "[system:continue] Your last message ended with a preview of an action (e.g. trailing \":\") but included no tool calls. If you still intend to perform the announced action, call the tool(s) now. If you are genuinely finished, reply with a final summary instead."
+// 2026-08-12 措辞修订:意图推断("preview of an action")改为后缀形态的事实
+// 描述(与 hasPreviewSuffix 的五种后缀一致),避免误报时模型困惑;补充
+// "上一条消息已入历史"确认;总结选项提示勿再以预告后缀结尾,防止再次触发检测。
+const previewContinueText = "[system:continue] Your last message ended with a trailing preview marker (\":\", \"\uFF1A\", \"-\", \"\u2192\" or \"...\") but included no tool calls — that message is already part of the conversation history. If you still intend to perform the announced action, call the tool(s) now. If you are genuinely finished, reply with a final summary (do not end it with a trailing preview marker)."
 
 // hasPreviewSuffix 检测文本是否以"预告后缀"结尾(冒号/中文冒号/连字符/箭头/省略号),
 // 表明模型宣告了下一步动作但未附带工具调用。评测实测(deepseek-v4-flash):
