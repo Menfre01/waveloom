@@ -126,13 +126,40 @@ def collect_patch(instance_id: str) -> None:
 
 def verdict(instance_id: str) -> None:
     """官方 get_eval_report 判定,写 verdict.json。"""
-    from swebench.harness.grading import get_eval_report
+    import re
+    from swebench.harness.grading import get_eval_report, get_logs_eval
     spec, _ = make_spec(instance_id)
     pred = {"instance_id": instance_id,
             "model_patch": (ROOT / "results" / instance_id / "model_patch.diff").read_text()}
-    report = get_eval_report(spec, pred,
-                             str(ROOT / "results" / instance_id / "container-run.log"),
-                             include_tests_status=True)
+    log_path = str(ROOT / "results" / instance_id / "container-run.log")
+    report = get_eval_report(spec, pred, log_path, include_tests_status=True)
+
+    # REGRESSION(2026-08-11 sphinx 实例实测):官方 parser 对 tox 输出
+    # (点号进度 + 汇总行,无逐测试 PASSED/FAILED 行)解析为空 status_map,
+    # 导致 45 passed 全通过的实例被误判 FAIL。回退:汇总行判定。
+    status_map, found = get_logs_eval(spec, log_path)
+    if found and not status_map:
+        log = Path(log_path).read_text(errors="replace")
+        summary = re.findall(r"(\d+) (?:passed|failed)", log)
+        if summary:
+            n_fail = int(summary[-1]) if summary and len(summary) > 1 else 0
+            n_pass = int(summary[0])
+            # 汇总格式 "N passed" / "M failed" — 取最后一条 "N failed"(0 失败 = 全过)
+            failed_m = re.findall(r"(\d+) failed", log)
+            n_failed = int(failed_m[-1]) if failed_m else 0
+            resolved = n_failed == 0
+            r = report[instance_id]
+            r["resolved"] = resolved
+            r["status_map_empty_fallback"] = {
+                "reason": "official parser empty status_map, fallback to summary",
+                "n_passed": n_pass,
+                "n_failed": n_failed,
+            }
+            # 标注 tests_status 来自汇总行推断(非逐测试解析),防止 analyze/report 误读 f2p
+            if "tests_status" in r:
+                r["tests_status"]["_from_summary"] = True
+            print(f"[run] verdict: status_map 空,汇总回退 → resolved={resolved} "
+                  f"(passed={n_pass}, failed={n_failed})")
     (ROOT / "results" / instance_id / "verdict.json").write_text(
         json.dumps(report, indent=2, ensure_ascii=False))
     print(f"[run] verdict resolved={report[instance_id]['resolved']}")
@@ -145,6 +172,9 @@ def process_one(instance_id: str) -> dict:
     print(f"[run] {instance_id}: waveloom+测试 exit={rc}")
     collect_patch(instance_id)
     verdict(instance_id)
+    # 自动补齐 evidence:meta.json + trace.jsonl + session.json
+    from finalize import finalize
+    finalize(instance_id)
     elapsed = time.time() - t0
     return {"instance_id": instance_id, "exit": rc, "elapsed_s": round(elapsed)}
 
@@ -169,15 +199,16 @@ def prepare_instance(instance_id: str) -> None:
         subprocess.run(["git", "-C", str(repo_dir), "checkout", "-q", "--", "."],
                        check=True, timeout=120)
 
-    # prompt 生成(v2 模板)
+    # prompt 生成(v4 模板:精简为任务特有要求,通用行为规则由产品系统 prompt
+    # pkg/prompt/default.md 承担——禁止回滚/即时验证/停止探索/最小修改已在产品侧,
+    # 模板重复会污染评测归因,改进效果无法剥离模板变量。2026-08-11)
     if not (inst_dir / "prompt.txt").exists():
         stmt = (inst_dir / "problem_statement.md").read_text()
         template = (
             "\n\n请修复上述问题。要求:\n"
             "1. 先阅读相关文件定位根因,再修改代码\n"
-            "2. 修改涉及新 import/依赖时,同步更新依赖声明(如 setup.cfg/requirements.txt)\n"
-            "3. 修改完成后运行相关测试验证(如 pytest);测试因依赖缺失而失败时,补齐依赖后重试\n"
-            "4. 修改完成后简要说明改动内容与验证结果\n"
+            "2. 修改完成后运行相关测试验证\n"
+            "3. 修改完成后简要说明改动内容与验证结果\n"
         )
         (inst_dir / "prompt.txt").write_text(stmt + template)
 
