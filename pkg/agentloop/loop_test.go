@@ -31,6 +31,7 @@ type mockLLMClient struct {
 	streamErrors []error     // 流中错误(ev.Err != nil),nil 表示无流错误
 	callCount    int
 	models       []string    // 每次调用的 model 覆盖(从 ctx 提取,proplan 测试用)
+	received     [][]llm.Message // 每次调用收到的 messages 快照(触顶提醒注入断言用)
 }
 
 func (m *mockLLMClient) SendMessage(ctx context.Context, messages []llm.Message, tools []llm.ToolSpec) (*llm.Response, error) {
@@ -56,6 +57,7 @@ func (m *mockLLMClient) SendMessageStream(ctx context.Context, messages []llm.Me
 	defer m.mu.Unlock()
 
 	m.models = append(m.models, llm.ModelOverrideFromContext(ctx))
+	m.received = append(m.received, append([]llm.Message(nil), messages...))
 	idx := m.callCount
 	m.callCount++
 
@@ -596,6 +598,167 @@ func TestRunZeroMaxTurns(t *testing.T) {
 	if finalEv.Turn != 1 {
 		t.Errorf("expected 1 turn (1 LLM call), got %d", finalEv.Turn)
 	}
+}
+
+func TestMaxTurnsWarningInjection(t *testing.T) {
+	// REGRESSION(2026-08-11 SWE-bench 33 实例归因):失败实例全部跑满 max-turns,
+	// 且 agent 常在触顶时丢弃已有修改(sklearn-13779 git checkout 回滚、
+	// sympy-24066 手工 git apply 失败)。触顶保护应在剩余 ≤5 轮时注入收尾提醒,
+	// 且每 Run 最多一次。
+	client := &mockLLMClient{
+		responses: []*llm.Response{
+			makeToolCallResponse("", makeToolCall("tc1", "read_file", `{"file_path":"/tmp/a.txt"}`)),
+			makeToolCallResponse("", makeToolCall("tc2", "read_file", `{"file_path":"/tmp/b.txt"}`)),
+			makeToolCallResponse("", makeToolCall("tc3", "read_file", `{"file_path":"/tmp/c.txt"}`)),
+			makeToolCallResponse("", makeToolCall("tc4", "read_file", `{"file_path":"/tmp/d.txt"}`)),
+			makeToolCallResponse("", makeToolCall("tc5", "read_file", `{"file_path":"/tmp/e.txt"}`)),
+			makeToolCallResponse("", makeToolCall("tc6", "read_file", `{"file_path":"/tmp/f.txt"}`)),
+			makeToolCallResponse("", makeToolCall("tc7", "read_file", `{"file_path":"/tmp/g.txt"}`)),
+			makeToolCallResponse("", makeToolCall("tc8", "read_file", `{"file_path":"/tmp/h.txt"}`)),
+		}}
+	readTool := newSuccessTool("read_file", true, "ok")
+	registry := newTestRegistry(readTool)
+	loop := New(client, registry, Config{MaxTurns: 8})
+
+	finalEv := drainEvents(loop.Run(context.Background(), []llm.Message{
+		{Role: llm.RoleUser, Content: "read files"}}))
+
+	if finalEv.Reason != ReasonMaxTurns {
+		t.Fatalf("expected ReasonMaxTurns, got %s", finalEv.Reason)
+	}
+
+	// 剩余轮数 = MaxTurns - TurnCount。MaxTurns=8:
+	//   Turn 0-2(剩余 8-6)不注入;Turn 3(剩余 5)起注入,且仅一次。
+	warnCount := 0
+	for i, msgs := range client.received {
+		for _, m := range msgs {
+			if strings.Contains(m.Content, "turns left") && strings.Contains(m.Content, "git checkout") {
+				warnCount++
+				if i != 3 {
+					t.Errorf("警告应仅在第 4 轮(TurnCount=3,剩余 5)注入,实际第 %d 轮", i+1)
+				}
+				if !strings.Contains(m.Content, "5") {
+					t.Errorf("警告应包含剩余轮数 5,实际: %q", m.Content)
+				}
+			}
+		}
+	}
+	if warnCount != 1 {
+		t.Errorf("expected exactly 1 max-turns warning injection, got %d", warnCount)
+	}
+}
+
+func TestMaxTurnsWarningNotInjected_Unlimited(t *testing.T) {
+	// MaxTurns=0(无限制)时不得注入触顶提醒
+	client := &mockLLMClient{
+		responses: []*llm.Response{
+			makeTextResponse("done")}}
+	loop := New(client, newTestRegistry(), Config{MaxTurns: 0})
+	drainEvents(loop.Run(context.Background(), []llm.Message{
+		{Role: llm.RoleUser, Content: "hello"}}))
+
+	for _, msgs := range client.received {
+		for _, m := range msgs {
+			if strings.Contains(m.Content, "turns left") && strings.Contains(m.Content, "git checkout") {
+				t.Fatalf("MaxTurns=0 不应注入触顶提醒: %q", m.Content)
+			}
+		}
+	}
+}
+
+func TestMaxTurnsWarningInjection_MinTurns(t *testing.T) {
+	// 边界:MaxTurns=5 时首轮(TurnCount=0,剩余 5)即注入——
+	// remaining ≤ maxTurnsWarnRemaining 判定在 TurnCount++ 之前,行为应与
+	// MaxTurns=8 的第 4 轮注入一致(冷审 WARNING-1,2026-08-11)。
+	client := &mockLLMClient{
+		responses: []*llm.Response{
+			makeToolCallResponse("", makeToolCall("tc1", "read_file", `{"file_path":"/tmp/a.txt"}`)),
+			makeToolCallResponse("", makeToolCall("tc2", "read_file", `{"file_path":"/tmp/b.txt"}`)),
+			makeToolCallResponse("", makeToolCall("tc3", "read_file", `{"file_path":"/tmp/c.txt"}`)),
+			makeToolCallResponse("", makeToolCall("tc4", "read_file", `{"file_path":"/tmp/d.txt"}`)),
+			makeToolCallResponse("", makeToolCall("tc5", "read_file", `{"file_path":"/tmp/e.txt"}`)),
+		}}
+	readTool := newSuccessTool("read_file", true, "ok")
+	loop := New(client, newTestRegistry(readTool), Config{MaxTurns: 5})
+
+	finalEv := drainEvents(loop.Run(context.Background(), []llm.Message{
+		{Role: llm.RoleUser, Content: "read files"}}))
+	if finalEv.Reason != ReasonMaxTurns {
+		t.Fatalf("expected ReasonMaxTurns, got %s", finalEv.Reason)
+	}
+
+	warnCount := 0
+	for i, msgs := range client.received {
+		for _, m := range msgs {
+			if strings.Contains(m.Content, "turns left") && strings.Contains(m.Content, "git checkout") {
+				warnCount++
+				if i != 0 {
+					t.Errorf("MaxTurns=5 应在首轮注入,实际第 %d 轮", i+1)
+				}
+			}
+		}
+	}
+	if warnCount != 1 {
+		t.Errorf("expected exactly 1 max-turns warning, got %d", warnCount)
+	}
+}
+
+func TestRegression_MaxTurnsWarningResetAcrossRuns(t *testing.T) {
+	// REGRESSION(2026-08-11,审查 CRITICAL-1):maxTurnsWarned 若跨 Run 残留,
+	// 同 session 第二个 prompt 的触顶保护永久失效(与 lastChanceTodoInjected
+	// 曾跨 prompt 残留同源)。Loop 是 session 级持久组件,每次 Run 必须重置。
+	client := &mockLLMClient{
+		responses: []*llm.Response{
+			makeToolCallResponse("", makeToolCall("tc1", "read_file", `{"file_path":"/tmp/a.txt"}`)),
+			makeToolCallResponse("", makeToolCall("tc2", "read_file", `{"file_path":"/tmp/b.txt"}`)),
+			makeToolCallResponse("", makeToolCall("tc3", "read_file", `{"file_path":"/tmp/c.txt"}`)),
+			makeToolCallResponse("", makeToolCall("tc4", "read_file", `{"file_path":"/tmp/d.txt"}`)),
+			makeToolCallResponse("", makeToolCall("tc5", "read_file", `{"file_path":"/tmp/e.txt"}`)),
+			makeToolCallResponse("", makeToolCall("tc6", "read_file", `{"file_path":"/tmp/f.txt"}`)),
+			makeToolCallResponse("", makeToolCall("tc7", "read_file", `{"file_path":"/tmp/g.txt"}`)),
+			makeToolCallResponse("", makeToolCall("tc8", "read_file", `{"file_path":"/tmp/h.txt"}`)),
+			makeToolCallResponse("", makeToolCall("tc9", "read_file", `{"file_path":"/tmp/i.txt"}`)),
+			makeToolCallResponse("", makeToolCall("tc10", "read_file", `{"file_path":"/tmp/j.txt"}`)),
+			makeToolCallResponse("", makeToolCall("tc11", "read_file", `{"file_path":"/tmp/k.txt"}`)),
+			makeToolCallResponse("", makeToolCall("tc12", "read_file", `{"file_path":"/tmp/l.txt"}`)),
+			makeToolCallResponse("", makeToolCall("tc13", "read_file", `{"file_path":"/tmp/m.txt"}`)),
+			makeToolCallResponse("", makeToolCall("tc14", "read_file", `{"file_path":"/tmp/n.txt"}`)),
+			makeToolCallResponse("", makeToolCall("tc15", "read_file", `{"file_path":"/tmp/o.txt"}`)),
+			makeToolCallResponse("", makeToolCall("tc16", "read_file", `{"file_path":"/tmp/p.txt"}`)),
+		}}
+	readTool := newSuccessTool("read_file", true, "ok")
+	registry := newTestRegistry(readTool)
+	loop := New(client, registry, Config{MaxTurns: 8})
+
+	// 第一次 Run:耗尽 8 轮,触发触顶提醒
+	drainEvents(loop.Run(context.Background(), []llm.Message{
+		{Role: llm.RoleUser, Content: "first prompt"}}))
+	firstWarn := countMaxTurnsWarnings(client)
+	if firstWarn != 1 {
+		t.Fatalf("first run: expected 1 warning, got %d", firstWarn)
+	}
+
+	// 第二次 Run(同 Loop):必须再次注入提醒(证明 maxTurnsWarned 已重置)
+	client.received = nil
+	drainEvents(loop.Run(context.Background(), []llm.Message{
+		{Role: llm.RoleUser, Content: "second prompt"}}))
+	secondWarn := countMaxTurnsWarnings(client)
+	if secondWarn != 1 {
+		t.Errorf("second run: expected 1 warning (maxTurnsWarned reset per Run), got %d", secondWarn)
+	}
+}
+
+// countMaxTurnsWarnings 统计 mockLLMClient 收到消息中的触顶提醒次数。
+func countMaxTurnsWarnings(client *mockLLMClient) int {
+	n := 0
+	for _, msgs := range client.received {
+		for _, m := range msgs {
+			if strings.Contains(m.Content, "turns left") && strings.Contains(m.Content, "git checkout") {
+				n++
+			}
+		}
+	}
+	return n
 }
 
 func TestRunContextCancelled(t *testing.T) {
@@ -3480,6 +3643,142 @@ func TestRegression_LastChanceTodoResetAcrossRuns(t *testing.T) {
 	}
 	if !reminderIn(finalEv2) {
 		t.Error("second run: last-chance reminder should be re-injected (lastChanceTodoInjected reset per Run)")
+	}
+}
+
+// TestRegression_PreviewTextNoToolCall_ContinueWithToolCall 验证模型输出
+// "预告文本"(以冒号结尾,暗示接下来要执行动作)但没有携带工具调用时,
+// Loop 注入 [system:continue] 提醒并继续,而不是直接终止导致任务中断。
+// 评测实测(deepseek-v4-flash):模型常以 "启动 xxx:" 结尾后漏发工具调用。
+func TestRegression_PreviewTextNoToolCall_ContinueWithToolCall(t *testing.T) {
+	client := &mockLLMClient{
+		responses: []*llm.Response{
+			// 第一轮:预告文本(中文全角冒号结尾),无工具调用 → 应注入 [system:continue] 并继续
+			// \uFF1A = 全角冒号,用转义锁定字节,防编辑工具 Unicode 归一化破坏测试
+			makeTextResponse("启动评测:检查第一批 verdict\uFF1A"),
+			// 第二轮:模型补发工具调用
+			makeToolCallResponse("", makeToolCall("tc1", "read_file", `{"file_path":"/tmp/a.txt"}`)),
+			// 第三轮:正常完成
+			makeTextResponse("All done.")}}
+	readTool := newSuccessTool("read_file", true, "hello")
+	registry := newTestRegistry(readTool)
+	loop := New(client, registry, DefaultConfig())
+
+	finalEv := drainEvents(loop.Run(context.Background(), []llm.Message{
+		{Role: llm.RoleUser, Content: "run eval"}}))
+
+	if finalEv.Err != nil {
+		t.Fatalf("unexpected error: %v", finalEv.Err)
+	}
+	if finalEv.Reason != ReasonCompleted {
+		t.Errorf("expected ReasonCompleted, got %s", finalEv.Reason)
+	}
+	if finalEv.Turn != 3 {
+		t.Errorf("expected 3 turns (preview → tool → done), got %d", finalEv.Turn)
+	}
+	// 消息: user → assistant(预告) → user([system:continue]) → assistant(tool) → tool(result) → assistant(done)
+	if len(finalEv.Messages) != 6 {
+		t.Errorf("expected 6 messages, got %d", len(finalEv.Messages))
+	}
+	// [system:continue] 提醒必须注入(在 assistant 预告之后)
+	reminderMsg := finalEv.Messages[2]
+	if reminderMsg.Role != llm.RoleUser || !strings.Contains(reminderMsg.Content, "[system:continue]") {
+		t.Errorf("expected [system:continue] reminder at msg[2], got role=%s content=%q", reminderMsg.Role, reminderMsg.Content)
+	}
+}
+
+// TestRegression_PreviewTextNoToolCall_SecondPreviewTerminates 验证预告文本
+// 保护不会无限循环:连续两轮预告文本(无工具调用)时,仅第一轮注入提醒,
+// 第二轮直接终止(防死循环)。
+func TestRegression_PreviewTextNoToolCall_SecondPreviewTerminates(t *testing.T) {
+	client := &mockLLMClient{
+		responses: []*llm.Response{
+			makeTextResponse("启动评测:"),
+			makeTextResponse("继续等待:"),
+			makeTextResponse("unreachable")}}
+	registry := newTestRegistry()
+	loop := New(client, registry, DefaultConfig())
+
+	finalEv := drainEvents(loop.Run(context.Background(), []llm.Message{
+		{Role: llm.RoleUser, Content: "run eval"}}))
+
+	if finalEv.Err != nil {
+		t.Fatalf("unexpected error: %v", finalEv.Err)
+	}
+	if finalEv.Reason != ReasonCompleted {
+		t.Errorf("expected ReasonCompleted, got %s", finalEv.Reason)
+	}
+	if finalEv.Turn != 2 {
+		t.Errorf("expected 2 turns (preview → reminder → preview → terminate), got %d", finalEv.Turn)
+	}
+	// 提醒只注入一次,第三轮响应不应被消费
+	reminderCount := 0
+	for _, msg := range finalEv.Messages {
+		if strings.Contains(msg.Content, "[system:continue]") {
+			reminderCount++
+		}
+	}
+	if reminderCount != 1 {
+		t.Errorf("expected exactly 1 [system:continue] reminder, got %d", reminderCount)
+	}
+}
+
+// TestRegression_PreviewTextNoToolCall_PlanModeTerminates 验证 plan mode 下
+// 预告文本保护被跳过:计划文本以冒号结尾是常态,终止等待审批是预期行为,
+// 不应注入 [system:continue] 提醒。
+func TestRegression_PreviewTextNoToolCall_PlanModeTerminates(t *testing.T) {
+	client := &mockLLMClient{
+		responses: []*llm.Response{
+			makeTextResponse("计划如下:")}}
+	registry := newTestRegistry()
+	loop := New(client, registry, DefaultConfig())
+	loop.plan = true // 同包测试可直接设置 plan 模式
+
+	finalEv := drainEvents(loop.Run(context.Background(), []llm.Message{
+		{Role: llm.RoleUser, Content: "make a plan"}}))
+
+	if finalEv.Err != nil {
+		t.Fatalf("unexpected error: %v", finalEv.Err)
+	}
+	if finalEv.Reason != ReasonCompleted {
+		t.Errorf("expected ReasonCompleted, got %s", finalEv.Reason)
+	}
+	if finalEv.Turn != 1 {
+		t.Errorf("expected 1 turn in plan mode, got %d", finalEv.Turn)
+	}
+	for _, msg := range finalEv.Messages {
+		if strings.Contains(msg.Content, "[system:continue]") {
+			t.Errorf("plan mode must not inject [system:continue], got %q", msg.Content)
+		}
+	}
+}
+
+// TestHasPreviewSuffix 表驱动验证预告后缀检测,锁定字节级行为:
+// 全角冒号(U+FF1A)/省略号(U+2026)必须命中,普通句号/空文本必须不命中。
+func TestHasPreviewSuffix(t *testing.T) {
+	tests := []struct {
+		name string
+		text string
+		want bool
+	}{
+		{"ascii colon", "启动评测:", true},
+		{"fullwidth colon", "开始执行\uFF1A", true},
+		{"hyphen", "next step -", true},
+		{"arrow", "下一步 →", true},
+		{"ellipsis", "等待结果\u2026", true},
+		{"period", "全部完成。", false},
+		{"ascii period", "All done.", false},
+		{"question", "继续吗?", false},
+		{"empty", "", false},
+		{"whitespace only", "   ", false},
+		{"colon inside not end", "先看一下:然后再执行", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := hasPreviewSuffix(tt.text); got != tt.want {
+				t.Errorf("hasPreviewSuffix(%q) = %v, want %v", tt.text, got, tt.want)
+			}
+		})
 	}
 }
 
