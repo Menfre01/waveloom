@@ -17,6 +17,7 @@
 """
 import argparse
 from concurrent.futures import ThreadPoolExecutor, as_completed
+import functools
 import json
 import os
 import subprocess
@@ -65,18 +66,28 @@ def host_api_key() -> str:
             "或设置 LLM_API_KEY 环境变量")
     return key
 
-def make_spec(instance_id: str):
+@functools.lru_cache(maxsize=64)
+def _load_dataset():
     from swebench.harness.test_spec.test_spec import make_test_spec
     from datasets import load_dataset
     ds = load_dataset("princeton-nlp/SWE-bench_Verified", split="test")
+    return ds
+
+def make_spec(instance_id: str):
+    from swebench.harness.test_spec.test_spec import make_test_spec
+    ds = _load_dataset()
     ex = next(e for e in ds if e["instance_id"] == instance_id)
     return make_test_spec(ex, namespace="swebench"), ex
 
-def run_single(instance_id: str) -> int:
+def run_single(instance_id: str, binary: Path | None = None,
+               settings: Path | None = None) -> int:
     inst_dir = ROOT / "results" / instance_id
     repo_dir = inst_dir / "repo"
     sessions_dir = inst_dir / "sessions"
     sessions_dir.mkdir(parents=True, exist_ok=True)
+    # Phase 4 复测:显式 binary/settings 优先于模块全局(线程安全)
+    wav_bin = (binary or WAVELOOM_LINUX).resolve()
+    wav_settings = (settings or SETTINGS).resolve()
 
     spec, _ = make_spec(instance_id)
     prompt = (inst_dir / "prompt.txt").read_text()
@@ -89,8 +100,8 @@ def run_single(instance_id: str) -> int:
         "docker", "run", "--rm",
         "-v", f"{repo_dir}:/testbed",
         "-v", f"{prompt_path}:/prompt.txt:ro",
-        "-v", f"{WAVELOOM_LINUX}:/usr/local/bin/waveloom:ro",
-        "-v", f"{SETTINGS}:/settings.json:ro",
+        "-v", f"{wav_bin}:/usr/local/bin/waveloom:ro",
+        "-v", f"{wav_settings}:/settings.json:ro",
         "-v", f"{eval_script}:/eval_script.sh:ro",
         "-v", f"{sessions_dir}:/sessions",
         "-e", f"LLM_API_KEY={host_api_key()}",
@@ -164,11 +175,12 @@ def verdict(instance_id: str) -> None:
         json.dumps(report, indent=2, ensure_ascii=False))
     print(f"[run] verdict resolved={report[instance_id]['resolved']}")
 
-def process_one(instance_id: str) -> dict:
+def process_one(instance_id: str, binary: Path | None = None,
+                settings: Path | None = None) -> dict:
     """单实例全流程:单容器修复+测试 → patch → verdict。返回摘要。"""
     t0 = time.time()
     prepare_instance(instance_id)
-    rc = run_single(instance_id)
+    rc = run_single(instance_id, binary=binary, settings=settings)
     print(f"[run] {instance_id}: waveloom+测试 exit={rc}")
     collect_patch(instance_id)
     verdict(instance_id)
@@ -192,8 +204,7 @@ def prepare_instance(instance_id: str) -> None:
     repo_dir = inst_dir / "repo"
     if not (repo_dir / ".git").exists():
         _clone_repo(instance_id, repo_dir)
-        subprocess.run(["git", "-C", str(repo_dir), "checkout", "-q",
-                        _base_commit(instance_id)], check=True, timeout=120)
+        _checkout_base(instance_id, repo_dir)
     else:
         # 重置为干净 base_commit(并行重跑场景)
         subprocess.run(["git", "-C", str(repo_dir), "checkout", "-q", "--", "."],
@@ -212,10 +223,23 @@ def prepare_instance(instance_id: str) -> None:
         )
         (inst_dir / "prompt.txt").write_text(stmt + template)
 
+def _checkout_base(instance_id: str, repo_dir: Path) -> None:
+    """checkout base_commit;mirror 缺该 commit(mirror 建立后 force-push 或
+    不在默认分支历史)时按 sha 从 GitHub fetch 兜底。"""
+    base = _base_commit(instance_id)
+    if subprocess.run(["git", "-C", str(repo_dir), "cat-file", "-e",
+                       base + "^{commit}"], capture_output=True).returncode != 0:
+        print(f"[run] {instance_id}: base_commit {base} 不在 mirror,从 GitHub fetch 兜底")
+        subprocess.run(["git", "-C", str(repo_dir), "fetch", "-q",
+                        "https://github.com/" + _repo_full(instance_id), base],
+                       check=True, timeout=300)
+    subprocess.run(["git", "-C", str(repo_dir), "checkout", "-q", base],
+                   check=True, timeout=120)
+
 def _clone_repo(instance_id: str, repo_dir: Path) -> None:
     """优先本地 mirror 克隆(秒级),mirror 缺失时回退 GitHub 并提示。"""
     repo = _repo_full(instance_id)  # e.g. "pytest-dev/pytest"
-    mirror = ROOT / "mirrors" / (repo.replace("/", "__") + ".git")
+    mirror = _mirror_for(repo)
     url = f"https://github.com/{repo}"
     if mirror.exists():
         # 本地 mirror → 文件级 clone,秒级
@@ -231,6 +255,15 @@ def _clone_repo(instance_id: str, repo_dir: Path) -> None:
                     url, str(repo_dir)],
                    check=True, timeout=900)
 
+def _mirror_for(repo: str) -> Path:
+    """按 repo 查找本地 mirror,兼容单/双下划线命名(实测历史命名不统一:
+    `astropy_astropy.git` 与 `pylint-dev__pylint.git` 并存)。"""
+    for sep in ("__", "_"):
+        p = ROOT / "mirrors" / (repo.replace("/", sep) + ".git")
+        if p.exists():
+            return p
+    return ROOT / "mirrors" / (repo.replace("/", "__") + ".git")
+
 def _repo_full(instance_id: str) -> str:
     meta = json.loads((ROOT / "results" / instance_id / "instance.json").read_text())
     return meta["repo"]
@@ -244,7 +277,13 @@ def main():
     parser.add_argument("instances", nargs="+", help="实例 ID 列表")
     parser.add_argument("--parallel", type=int, default=1,
                         help="并发容器数(默认 1;建议 ≤5,受 LLM API 限流约束)")
+    parser.add_argument("--binary", type=Path, default=WAVELOOM_LINUX,
+                        help="waveloom 二进制路径(Phase 4 复测:新旧策略交替用)")
+    parser.add_argument("--settings", type=Path, default=SETTINGS,
+                        help="waveloom settings 路径(Phase 4 复测:温度固定用)")
     args = parser.parse_args()
+    WAVELOOM_LINUX = args.binary.resolve()
+    SETTINGS = args.settings.resolve()
 
     results = []
     if args.parallel <= 1:

@@ -1,0 +1,13 @@
+{
+  "llm": {
+    "provider": "deepseek",
+    "model": "deepseek-v4-pro",
+    "sub_model": "deepseek-v4-flash",
+    "extra_params": {
+      "temperature": 0.1
+    }
+  },
+  "compaction": {
+    "context_limit_tokens": 131072
+  }
+}

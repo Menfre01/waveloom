@@ -10,12 +10,15 @@ ROOT = Path(__file__).parent
 def finalize(instance_id: str) -> None:
     inst = ROOT / "results" / instance_id
     sessions = inst / "sessions"
-    jsonl = sorted(sessions.glob("*.jsonl"))
+    # REGRESSION(2026-08-12 sphinx-9230 实测):重跑后 sessions/ 残留旧 session,
+    # 按文件名(UUID)字典序取第一个会复制旧 session → trace 与 verdict 错位。
+    # 改为按 mtime 取最新 session。
+    jsonl = sorted(sessions.glob("*.jsonl"), key=lambda p: p.stat().st_mtime)
     if jsonl:
-        (inst / "trace.jsonl").write_bytes(jsonl[0].read_bytes())
-    jsons = sorted(sessions.glob("*.json"))
+        (inst / "trace.jsonl").write_bytes(jsonl[-1].read_bytes())
+    jsons = sorted(sessions.glob("*.json"), key=lambda p: p.stat().st_mtime)
     if jsons:
-        (inst / "session.json").write_bytes(jsons[0].read_bytes())
+        (inst / "session.json").write_bytes(jsons[-1].read_bytes())
 
     # waveloom 版本/参数
     ver = subprocess.run(
