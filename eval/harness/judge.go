@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 )
 
@@ -28,6 +29,11 @@ type HostJudge struct {
 //  2. repo 内执行 → container-run.log(与 run.py verdict 读取路径一致)
 //  3. 复用 run.py collect_patch + verdict → verdict.json
 func (j *HostJudge) Run(ctx context.Context) error {
+	// 宿主判定执行官方 eval_script.sh(bash 脚本),Windows 无 bash 语义,
+	// 编译兼容但运行时明确报错(评测宿主场景为 Linux/macOS)。
+	if runtime.GOOS == "windows" {
+		return fmt.Errorf("宿主判定依赖 bash(eval_script.sh 为官方 bash 脚本),Windows 不支持;请在 Linux/macOS 宿主或容器内运行评测")
+	}
 	script, err := j.buildHostEvalScript()
 	if err != nil {
 		return fmt.Errorf("构建宿主 eval_script: %w", err)
@@ -41,7 +47,7 @@ func (j *HostJudge) Run(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("创建判定日志: %w", err)
 	}
-	defer logf.Close()
+	defer func() { _ = logf.Close() }()
 	cmd.Stdout = logf
 	cmd.Stderr = logf
 	if err := cmd.Run(); err != nil {
@@ -94,6 +100,9 @@ func (j *HostJudge) buildHostEvalScript() (string, error) {
 		}
 	}
 	script := filepath.Join(j.Inst.InstDir, "eval_script_host.sh")
+	// #nosec G703 -- InstDir 由 LoadInstance 保证:实例 ID 必须为单段名称
+	// (filepath.Base 校验,拒绝 ../ 与分隔符,见 runner.go LoadInstance),
+	// 拼接出的脚本路径不可能逃逸出结果目录。
 	if err := os.WriteFile(script, []byte(strings.Join(out, "\n")), 0o755); err != nil {
 		return "", err
 	}

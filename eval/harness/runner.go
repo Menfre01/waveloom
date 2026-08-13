@@ -33,6 +33,11 @@ type Instance struct {
 // LoadInstance 从 results/<id> 加载实例数据。
 // 数据由 run.py prepare_instance 生成(prompt.txt / gold_patch.diff / repo/)。
 func LoadInstance(resultsDir, id string) (*Instance, error) {
+	// 防路径逃逸:实例 ID 必须是单段名称(results/<id> 下所有读写依赖此约束),
+	// 拒绝含分隔符/点段(../)的 ID,避免写入结果目录之外(gosec G703 taint)。
+	if id == "" || filepath.Base(id) != id || id == "." || id == ".." {
+		return nil, fmt.Errorf("非法实例 ID: %q(必须为单段名称,不允许路径分隔符)", id)
+	}
 	instDir := filepath.Join(resultsDir, id)
 	repoDir := filepath.Join(instDir, "repo")
 	if _, err := os.Stat(filepath.Join(repoDir, ".git")); err != nil {
