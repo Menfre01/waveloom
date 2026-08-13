@@ -28,10 +28,11 @@ L16:2: error: undefined: abs
 
 | 语言 | LSP Server | 探测命令 | 备注 |
 |------|-----------|---------|------|
-| Go | `gopls` | `gopls version` | 内置，自动检测 |
-| Rust | `rust-analyzer` | `rust-analyzer --version` | 内置，自动检测 |
-| TypeScript / JavaScript | `typescript-language-server` | `typescript-language-server --version` | 内置，需 `npm install -g` |
-| C / C++ | `clangd` | `clangd --version` | 内置，自动检测 |
+| Go | `gopls` | `gopls version` | 内置,自动检测 |
+| Rust | `rust-analyzer` | `rust-analyzer --version` | 内置,自动检测 |
+| TypeScript / JavaScript | `typescript-language-server` | `typescript-language-server --version` | 内置,需 `npm install -g` |
+| Python | `pyright-langserver` | `pyright --version` | 内置,自动检测(pyright CLI 探测通过即可用) |
+| C / C++ | `clangd` | `clangd --version` | 内置,自动检测 |
 
 其他语言通过 `settings.json` 配置。
 

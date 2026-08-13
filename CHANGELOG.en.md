@@ -1,3 +1,19 @@
+## [v0.7.0] — 2026-08-13
+
+### Added
+- **Max-turns guard & preview-text protection** (attributed from 33-instance SWE-bench eval: every failed instance ran out of max-turns and often discarded existing changes at the limit):
+  - Max-turns guard: with ≤5 turns remaining, a `[system:maxturns]` wrap-up reminder is injected (persist changes / do not roll back / verify with tests / stop exploring), at most once per Run, reset across Runs
+  - Preview-text protection: when the model ends with a preview suffix (colon/arrow etc.) but sends no tool calls, a `[system:continue]` reminder is injected and the loop continues one turn instead of mis-judging the task as complete. Shipped scope: also active in plan mode; reminder reworded as a factual suffix description to eliminate false positives; all 12 colon-like Unicode variants plus ASCII ellipsis are matched; when injection happens on the final MaxTurns turn, one grace turn is granted to re-issue the tool call
+- **Agent behavior rules hardened** (eval attribution folded into the shared system prompt, effective for every task): `git checkout --` / `git reset` / `git stash` discarding on-disk changes is forbidden; verify after each change; First-edit deadline replaces Stop exploring (must start editing after 3-5 reads); announced actions must come with tool calls
+- **deepseek-v4-pro adapts to the Responses API**: the pro model now switches to the Responses protocol automatically (aligned with the v0.6.1 flash adaptation)
+- **Built-in Python LSP support**: `.py` files automatically use pyright-langserver (eval exposed that without an LSP, the agent missed unresolved-import diagnostics and failed directly)
+- **`--no-sandbox` flag**: scenarios where one-shot/ACP force sandbox activation (eval Docker isolation / CI) can explicitly disable the sandbox; highest priority, short-circuits all activation checks
+
+### Fixed
+- **Flags after a positional prompt were ignored**: `waveloom "prompt" --max-turns 25` dropped every flag after the prompt (Go flag stops at the first non-flag argument); parseCLI was refactored to a loop parser supporting interleaved positionals/flags and `--` terminator semantics
+
+---
+
 ## [v0.6.2] — 2026-08-09
 
 ### Fixed

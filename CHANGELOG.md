@@ -1,3 +1,21 @@
+## [v0.7.0] — 2026-08-13
+
+### 新增功能
+- **触顶保护与预告文本保护**(SWE-bench 评测 33 实例归因:失败实例全部跑满 max-turns 且常在触顶时丢弃已有修改):
+  - 触顶保护:剩余轮数 ≤5 时注入 `[system:maxturns]` 收尾提醒(修改落盘/勿回滚/测试验证/停止探索),每 Run 最多一次、跨 Run 重置
+  - 预告文本保护:模型输出冒号/箭头等预告后缀但漏发工具调用时,注入 `[system:continue]` 提醒并继续一轮,防任务被误判完成。覆盖范围(随版本一并发布):plan mode 同样生效;提醒改为后缀形态事实描述消除误报;匹配全部 12 个冒号类 Unicode 变体与 ASCII 省略号;MaxTurns 末轮注入时放行一轮补发工具调用
+- **agent 行为规则强化**(评测归因落通用 system prompt,任何任务生效):禁止 `git checkout --` / `git reset` / `git stash` 丢弃已落盘修改;每次修改后立即验证测试(Verify after each change);First-edit deadline 取代 Stop exploring(读 3-5 文件后必须开始修改);动作预告必须携带工具调用
+- **deepseek-v4-pro 适配 Responses API**:pro 模型自动切换 Responses 协议(与 v0.6.1 的 flash 适配对齐)
+- **内置 Python LSP 支持**:`.py` 文件自动启用 pyright-langserver(评测实测暴露:Python 仓库无 LSP 时 agent 漏 unresolved import 诊断直接 FAIL)
+- **`--no-sandbox` 选项**:one-shot/ACP 强制激活沙箱的场景(评测 Docker 隔离 / CI 环境)可显式关闭沙箱,优先级最高短路全部激活判定
+
+### 修复
+- **prompt 后 flag 失效**:`waveloom "prompt" --max-turns 25` 中 prompt 后的 flag 全部失效(Go flag 在首个非 flag 参数处停止解析);parseCLI 重构为循环解析,支持位置参数与 flag 交错与 `--` 终止符语义
+
+---
+
+📝 [Changelog (English)](https://github.com/Menfre01/waveloom/blob/dev/CHANGELOG.en.md)
+
 ## [v0.6.2] — 2026-08-09
 
 ### 修复

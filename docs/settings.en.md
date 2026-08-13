@@ -340,6 +340,7 @@ when network is on).
 | `--log-level level` | Log level (error/warn/info/debug) | `info` |
 | `--bypass-permissions` | one-shot (direct terminal input) / ACP: ASK → ALLOW by default (binary decision), keeping deny rules and high-risk hard blocks; one-shot **piped input** requires this flag, otherwise write/bash degrade to deny; TUI: enables the binary decision (no more prompt dialogs) | Off (default on for one-shot terminal input / ACP) |
 | `--sandbox-network off/on` | Sandbox network mode, overrides `network.mode` in `settings.json` (on: credential masking recommended) | From config (default `on`) |
+| `--no-sandbox` | Disable the sandbox (one-shot/ACP force it on by default; explicitly disable for eval Docker isolation / CI environments; highest priority) | Off (sandbox active) |
 | `--tool-timeout D` | Single tool execution timeout (Go Duration format, e.g. `10m` / `600s` / `0s`, 0 to disable) | `5m` |
 | `--resume ID` | Resume a specific session | — |
 | `--continue` | Resume the most recent session | — |

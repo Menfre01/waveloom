@@ -31,6 +31,7 @@ L16:2: error: undefined: abs
 | Go | `gopls` | `gopls version` | Built-in, auto-detected |
 | Rust | `rust-analyzer` | `rust-analyzer --version` | Built-in, auto-detected |
 | TypeScript / JavaScript | `typescript-language-server` | `typescript-language-server --version` | Built-in, requires `npm install -g` |
+| Python | `pyright-langserver` | `pyright --version` | Built-in, auto-detected (pyright CLI probe passes → server available) |
 | C / C++ | `clangd` | `clangd --version` | Built-in, auto-detected |
 
 Other languages are supported via `settings.json` configuration.
