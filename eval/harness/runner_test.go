@@ -260,6 +260,9 @@ func TestRunFast_SandboxFailClosed(t *testing.T) {
 	repoDir := makeGitRepo(t)
 	inst := makeInstance(t, repoDir)
 	client := &mockClient{}
+	// 沙箱探测经 exec.LookPath(bwrap/seatbelt),清空 PATH 强制探测失败,
+	// 不依赖主机环境(CI 装有 bubblewrap 时原生探测会成功导致假失败)。
+	t.Setenv("PATH", "/nonexistent")
 	// NoSandbox=false(默认)→ 沙箱探测失败 → Error 指标,不执行 agent
 	runner := NewL0Runner(client, &Settings{MaxTurns: 5, ToolTimeout: 30 * time.Second})
 	m := runner.RunFast(context.Background(), inst)

@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -94,6 +95,11 @@ func TestHostJudge_RunMissingScript(t *testing.T) {
 // TestHostJudge_RunWithFakeEvalScript 用假 eval_script 验证 Run 流程
 // (bash 执行 + verdict 调用;verdict 用假 python 记录参数)。
 func TestHostJudge_RunWithFakeEvalScript(t *testing.T) {
+	// Run 在 Windows 上按运行时保护直接返回错误(宿主判定依赖 bash),
+	// 本测试验证 bash 执行 + verdict 调用流程,Windows 无此语义,跳过。
+	if runtime.GOOS == "windows" {
+		t.Skip("宿主判定依赖 bash,Windows 不支持(与 Run 的运行时保护一致)")
+	}
 	instDir := t.TempDir()
 	repoDir := t.TempDir()
 	// 假 eval_script:只 echo,不依赖 testbed 真实包
