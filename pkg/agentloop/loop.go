@@ -224,6 +224,12 @@ type Loop struct {
 	// 漏发工具调用,若直接终止会导致预告的动作从未执行、任务被迫中断。
 	previewWarned bool
 
+	// previewGraceTurn 标记预告注入发生在 MaxTurns 最后一轮时,放行一轮
+	// 补发工具调用。仅放行一次:注入后 continue 回到 for shouldContinue,
+	// 若 TurnCount 已满循环会立即退出,模型看不到 [system:continue] 提醒,
+	// 预告的动作永远不执行(REGRESSION,见 shouldContinue)。
+	previewGraceTurn bool
+
 	readStateStore    *tool.ReadStateStore
 
 	// hookRunner 执行 hooks。nil → 跳过 hooks。
@@ -333,6 +339,9 @@ func (l *Loop) Run(ctx context.Context, messages []llm.Message) <-chan TurnEvent
 		l.maxTurnsWarned = false
 		// 同理:previewWarned 若跨 Run 残留,后续 prompt 的预告文本保护永久失效。
 		l.previewWarned = false
+		// previewGraceTurn 同理:仅当轮注入时置位,shouldContinue 消费后复位,
+		// 此处重置防御跨 Run 残留(注入后立即退出等边角路径)。
+		l.previewGraceTurn = false
 
 		// goroutine 结束时触发 Stop/Notification hooks。
 		// blocked 返回值在此场景无意义（goroutine 即将退出），仅记录日志。
@@ -715,6 +724,13 @@ func (l *Loop) Run(ctx context.Context, messages []llm.Message) <-chan TurnEvent
 			if !l.previewWarned && hasPreviewSuffix(contentBuf) {
 				l.previewWarned = true
 				l.verbose("    → preview-style text without tool calls, injecting continue reminder\n")
+				// REGRESSION: 注入后 continue 回到 for l.shouldContinue(state),
+				// 若 TurnCount 已达 MaxTurns 会立即退出,模型看不到提醒、
+				// 预告的动作永远不执行。放行一轮(仅一轮,shouldContinue 消费后复位),
+				// 给模型补发工具调用的机会。
+				if l.config.MaxTurns > 0 && state.TurnCount >= l.config.MaxTurns {
+					l.previewGraceTurn = true
+				}
 				state.Messages = append(state.Messages, llm.Message{
 					Role:    llm.RoleUser,
 					Content: previewContinueText,
@@ -830,7 +846,18 @@ func (l *Loop) shouldContinue(state *LoopState) bool {
 	if l.config.MaxTurns == 0 {
 		return true
 	}
-	return state.TurnCount < l.config.MaxTurns
+	if state.TurnCount < l.config.MaxTurns {
+		return true
+	}
+	// REGRESSION: 预告注入发生在最后一轮(TurnCount == MaxTurns)时,
+	// 注入后 continue 会在此立即退出,模型看不到 [system:continue] 提醒、
+	// 预告的动作从未执行、任务被误判中断。previewGraceTurn 放行一轮
+	// 补发工具调用;消费后立即复位,仅放行一次,不突破 MaxTurns 语义。
+	if l.previewGraceTurn {
+		l.previewGraceTurn = false
+		return true
+	}
+	return false
 }
 
 // resolveModel 解析本轮请求使用的模型。
@@ -1070,7 +1097,32 @@ func hasPreviewSuffix(text string) bool {
 	if t == "" {
 		return false
 	}
-	for _, suffix := range []string{":", "：", "-", "→", "…"} {
+	// REGRESSION: 此前第 5 个后缀是 U+2026(…),与 previewContinueText 文案
+	// 声明的 ASCII "..." 不一致;英文模型输出 "checking files..."(三个 ASCII
+	// 点)时预告防御失效,任务被误判完成。补上 ASCII 三连点,两者都匹配。
+	// REGRESSION: 冒号类后缀仅覆盖 U+003A/U+FF1A,其余视觉形似冒号的变体
+	// (小冒号 U+FE55、比号 U+2236、修饰符冒号 U+A789、竖排冒号 U+FE13、
+	// 比例号 U+2237、亚美尼亚句号 U+0589、希伯来标点 U+05C3、语音学冒号
+	// U+02D0/U+02F8、希腊问号 U+037E)结尾的预告文本被跳过,任务误判完成。
+	// 全部纳入匹配;用 \uXXXX 转义锁定字节,防编辑工具 Unicode 归一化破坏。
+	for _, suffix := range []string{
+		":",        // U+003A COLON
+		"\uFF1A",   // FULLWIDTH COLON
+		"\uFE55",   // SMALL COLON
+		"\u2236",   // RATIO
+		"\uA789",   // MODIFIER LETTER COLON
+		"\uFE13",   // PRESENTATION FORM FOR VERTICAL COLON
+		"\u2237",   // PROPORTION
+		"\u0589",   // ARMENIAN FULL STOP
+		"\u05C3",   // HEBREW PUNCTUATION SOF PASUQ
+		"\u02D0",   // MODIFIER LETTER TRIANGULAR COLON
+		"\u02F8",   // MODIFIER LETTER RAISED COLON
+		"\u037E",   // GREEK QUESTION MARK
+		"-",
+		"\u2192",   // RIGHTWARDS ARROW
+		"...",
+		"\u2026",   // HORIZONTAL ELLIPSIS
+	} {
 		if strings.HasSuffix(t, suffix) {
 			return true
 		}

@@ -3909,6 +3909,7 @@ func TestHasPreviewSuffix(t *testing.T) {
 		{"hyphen", "next step -", true},
 		{"arrow", "下一步 →", true},
 		{"ellipsis", "等待结果\u2026", true},
+		{"ascii ellipsis", "checking files...", true},
 		{"period", "全部完成。", false},
 		{"ascii period", "All done.", false},
 		{"question", "继续吗?", false},
@@ -3922,6 +3923,96 @@ func TestHasPreviewSuffix(t *testing.T) {
 				t.Errorf("hasPreviewSuffix(%q) = %v, want %v", tt.text, got, tt.want)
 			}
 		})
+	}
+}
+
+// TestRegression_PreviewAsciiEllipsisInjects 验证 ASCII 三连点 "..." 结尾的
+// 预告文本同样触发 [system:continue] 注入。
+// REGRESSION: hasPreviewSuffix 此前只匹配 U+2026(…),与 previewContinueText
+// 文案声明的 "..." 不一致;英文模型输出 "checking files..." 时预告防御失效,
+// 任务被误判完成直接中断。
+func TestRegression_PreviewAsciiEllipsisInjects(t *testing.T) {
+	client := &mockLLMClient{
+		responses: []*llm.Response{
+			// 第一轮:ASCII 省略号预告,无工具调用
+			makeTextResponse("Let me check the eval harness..."),
+			// 第二轮:模型补发工具调用
+			makeToolCallResponse("", makeToolCall("tc1", "read_file", `{"file_path":"/tmp/a.txt"}`)),
+			// 第三轮:正常完成
+			makeTextResponse("All done.")}}
+	registry := newTestRegistry(newSuccessTool("read_file", true, "hello"))
+	loop := New(client, registry, DefaultConfig())
+
+	finalEv := drainEvents(loop.Run(context.Background(), []llm.Message{
+		{Role: llm.RoleUser, Content: "check the file"}}))
+
+	if finalEv.Err != nil {
+		t.Fatalf("unexpected error: %v", finalEv.Err)
+	}
+	if finalEv.Reason != ReasonCompleted {
+		t.Errorf("expected ReasonCompleted, got %s", finalEv.Reason)
+	}
+	reminderCount := 0
+	for _, msg := range finalEv.Messages {
+		if strings.Contains(msg.Content, "[system:continue]") {
+			reminderCount++
+		}
+	}
+	if reminderCount != 1 {
+		t.Errorf("expected 1 [system:continue] reminder for ASCII ellipsis preview, got %d", reminderCount)
+	}
+	if client.callCount != 3 {
+		t.Errorf("expected 3 LLM calls (preview → tool → done), got %d", client.callCount)
+	}
+}
+
+// TestRegression_PreviewLastTurnMaxTurnsGrace 验证预告注入发生在最后一轮
+// (TurnCount == MaxTurns)时仍生效:注入后放行一轮(grace turn),让模型看到
+// [system:continue] 并补发工具调用,而不是注入后循环立即退出、提醒形同虚设。
+// REGRESSION: 注入分支 continue 回到 for l.shouldContinue(state),TurnCount
+// 已满 → 循环退出,模型从未看到提醒,预告的动作永远不执行。
+func TestRegression_PreviewLastTurnMaxTurnsGrace(t *testing.T) {
+	client := &mockLLMClient{
+		responses: []*llm.Response{
+			// 第一轮(也是最后一轮):预告文本,无工具调用
+			makeTextResponse("启动评测:"),
+			// 第二轮(grace turn):模型补发工具调用
+			makeToolCallResponse("", makeToolCall("tc1", "read_file", `{"file_path":"/tmp/a.txt"}`)),
+			// 第三轮:不应被消费(grace turn 已用完,循环退出)
+			makeTextResponse("unreachable")}}
+	readTool := newSuccessTool("read_file", true, "hello")
+	execCount := int32(0)
+	readTool.execCount = &execCount
+	registry := newTestRegistry(readTool)
+	loop := New(client, registry, Config{MaxTurns: 1})
+
+	finalEv := drainEvents(loop.Run(context.Background(), []llm.Message{
+		{Role: llm.RoleUser, Content: "run eval"}}))
+
+	if finalEv.Err != nil {
+		t.Fatalf("unexpected error: %v", finalEv.Err)
+	}
+	// 模型必须获得补发机会(共 2 次 LLM 调用,而非 1 次后直接退出)
+	if client.callCount != 2 {
+		t.Errorf("expected 2 LLM calls (preview + grace turn), got %d", client.callCount)
+	}
+	// 工具在 grace turn 中执行
+	if atomic.LoadInt32(&execCount) != 1 {
+		t.Errorf("expected read_file executed once in grace turn, got %d", execCount)
+	}
+	// 提醒必须注入(在 history 中)
+	reminderCount := 0
+	for _, msg := range finalEv.Messages {
+		if strings.Contains(msg.Content, "[system:continue]") {
+			reminderCount++
+		}
+	}
+	if reminderCount != 1 {
+		t.Errorf("expected 1 [system:continue] reminder, got %d", reminderCount)
+	}
+	// grace turn 后恢复 MaxTurns 限制:第三轮不可达,以 MaxTurns 终止
+	if finalEv.Reason != ReasonMaxTurns {
+		t.Errorf("expected ReasonMaxTurns after grace turn, got %s", finalEv.Reason)
 	}
 }
 
