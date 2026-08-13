@@ -20,8 +20,10 @@ dist/
 # 根目录 waveloom 二进制(go build 本地产物)
 /waveloom
 /llmedit
+# 根目录 harness 二进制(go build ./cmd/harness 产物)
+/harness
 
-# 实验编译产物（go build ./experiments/...）
+# 实验编译产物(go build ./experiments/...)
 /attention_order
 /attention_position
 /agentsmd_attention
