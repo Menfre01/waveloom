@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -90,6 +91,11 @@ func makeInstance(t *testing.T, repoDir string) *Instance {
 }
 
 func TestRunFast_EndToEnd(t *testing.T) {
+	// 评测 guard 路径白名单依赖 POSIX 路径语义(Windows 短路径/大小写差异
+	// 导致 write 被误 deny),评测运行环境为 Linux/macOS,Windows 仅保证编译。
+	if runtime.GOOS == "windows" {
+		t.Skip("评测基建(fast 模式 guard 路径白名单)仅支持 Linux/macOS")
+	}
 	repoDir := makeGitRepo(t)
 	inst := makeInstance(t, repoDir)
 
@@ -209,6 +215,11 @@ func TestPrepareViaRunPy_MissingPython(t *testing.T) {
 
 // TestPrepareViaRunPy_Success 用可执行脚本伪造 python 验证成功路径与参数。
 func TestPrepareViaRunPy_Success(t *testing.T) {
+	// 伪造 python 为 #! 脚本,Windows 无法 exec 脚本文件(评测运行环境
+	// 为 Linux/macOS,Windows 仅保证编译)。
+	if runtime.GOOS == "windows" {
+		t.Skip("评测基建(fake-python exec)仅支持 Linux/macOS")
+	}
 	scriptDir := t.TempDir()
 	recorder := filepath.Join(scriptDir, "recorded.args")
 	script := filepath.Join(scriptDir, "fake-python")

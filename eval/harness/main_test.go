@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -69,6 +70,11 @@ func TestRunFast_MissingInstance(t *testing.T) {
 
 // TestRunFull_ArgAssembly runFull 委托 run.py,参数正确。
 func TestRunFull_ArgAssembly(t *testing.T) {
+	// full 模式委托 run.py(评测 venv python,#! 脚本 Windows 无法 exec;
+	// 评测运行环境为 Linux/macOS,Windows 仅保证编译)。
+	if runtime.GOOS == "windows" {
+		t.Skip("评测基建(full 模式委托 run.py)仅支持 Linux/macOS")
+	}
 	// 用可执行脚本伪造 python,记录 argv。
 	scriptDir := t.TempDir()
 	recorder := filepath.Join(scriptDir, "recorded.args")
@@ -273,6 +279,10 @@ func TestModelFilesFromGit_NotARepo(t *testing.T) {
 
 // TestRunCLI_FullSuccess full 模式成功路径(有效 venv python + run.py)。
 func TestRunCLI_FullSuccess(t *testing.T) {
+	// full 模式成功路径依赖评测 venv python 执行,Windows 无对应语义。
+	if runtime.GOOS == "windows" {
+		t.Skip("评测基建(full 模式)仅支持 Linux/macOS")
+	}
 	swebenchDir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(swebenchDir, "run.py"), []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
 		t.Fatal(err)

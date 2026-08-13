@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -33,6 +34,10 @@ export VIRTUAL_ENV="` + venv + `"
 }
 
 func TestTestbedShell_ExecuteInjectsActivate(t *testing.T) {
+	// testbed 激活注入依赖 bash/sh 执行语义,Windows 无对应环境。
+	if runtime.GOOS == "windows" {
+		t.Skip("评测基建(testbed shell)仅支持 Linux/macOS")
+	}
 	venvPython := makeFakeVenv(t)
 	inner := &tool.Shell{AllowBg: true}
 	ts := NewTestbedShell(inner, venvPython)
@@ -60,6 +65,9 @@ func TestTestbedShell_ExecuteInjectsActivate(t *testing.T) {
 }
 
 func TestTestbedShell_NoActivateWhenEmpty(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("评测基建(testbed shell)仅支持 Linux/macOS")
+	}
 	// registerEvalTools 空 testbedPython 时注册普通 Shell(不注入)
 	r := tool.NewRegistry()
 	registerEvalTools(r, nil, "")
@@ -78,6 +86,9 @@ func TestTestbedShell_NoActivateWhenEmpty(t *testing.T) {
 }
 
 func TestTestbedShell_RegisterWithTestbed(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("评测基建(testbed shell)仅支持 Linux/macOS")
+	}
 	venvPython := makeFakeVenv(t)
 	r := tool.NewRegistry()
 	registerEvalTools(r, nil, venvPython)
@@ -96,6 +107,9 @@ func TestTestbedShell_RegisterWithTestbed(t *testing.T) {
 
 // TestTestbedShell_ExecuteStreaming 流式路径同样注入激活前缀。
 func TestTestbedShell_ExecuteStreaming(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("评测基建(testbed shell)仅支持 Linux/macOS")
+	}
 	venvPython := makeFakeVenv(t)
 	inner := &tool.Shell{AllowBg: true}
 	ts := NewTestbedShell(inner, venvPython)
