@@ -76,3 +76,6 @@ eval/swebench/.docker-nocred/
 eval/swebench/deep_dive.py
 eval/swebench/rejudge.py
 eval/swebench/run_mini_eval.sh
+
+# 评测模型检查产物(含明文 API key 快照,禁止入库)
+.model-check.txt

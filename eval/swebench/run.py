@@ -13,7 +13,8 @@
 
 用法:
     venv/bin/python run.py <instance_id> [<instance_id> ...] [--parallel N]
-    --parallel N   并发容器数(默认 1;受 DeepSeek Flash ~10 RPM 限流约束)
+    --parallel N   并发容器数(默认 1;实测(2026-08)DeepSeek Flash 限流 ~2500
+                   并发非瓶颈,上限受容器内存约束,OrbStack 16GB 建议 ≤12)
 """
 import argparse
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -276,7 +277,8 @@ def main():
     parser = argparse.ArgumentParser(description="SWE-bench 单容器评测 runner")
     parser.add_argument("instances", nargs="+", help="实例 ID 列表")
     parser.add_argument("--parallel", type=int, default=1,
-                        help="并发容器数(默认 1;建议 ≤5,受 LLM API 限流约束)")
+                        help="并发容器数(默认 1;实测 LLM 限流 2500 并发非瓶颈,"
+                             "上限受容器内存约束,OrbStack 16GB 建议 ≤12)")
     parser.add_argument("--binary", type=Path, default=WAVELOOM_LINUX,
                         help="waveloom 二进制路径(Phase 4 复测:新旧策略交替用)")
     parser.add_argument("--settings", type=Path, default=SETTINGS,
