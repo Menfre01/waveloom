@@ -139,7 +139,6 @@ func convertToContentBlocks(msg llm.Message) json.RawMessage {
 			ToolUseID: msg.ToolCallID,
 			Content:   msg.Content,
 			Name:      msg.Name,
-			IsError:   msg.IsError,
 		})
 	}
 

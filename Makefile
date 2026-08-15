@@ -13,11 +13,6 @@ DIST_DIR = dist
 build:
 	go build -ldflags "$(LDFLAGS)" -o ./bin/$(BINARY) $(MODULE)
 
-.PHONY: build-linux-amd64
-build-linux-amd64:
-	GOOS=linux GOARCH=amd64 CGO_ENABLED=0 \
-		go build -ldflags "$(LDFLAGS)" -o ./eval/swebench/bin/$(BINARY)-linux-amd64 $(MODULE)
-
 .PHONY: install
 install:
 	go build -ldflags "$(LDFLAGS)" -o $(LOCALBIN)/$(BINARY) $(MODULE)

@@ -735,7 +735,6 @@ func (l *Loop) buildToolMessages(
 			Content:    content,
 			ToolCallID: tc.ID,
 			Name:       tc.Name,
-			IsError:    result.IsError(),
 		})
 	}
 

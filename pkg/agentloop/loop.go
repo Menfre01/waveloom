@@ -135,17 +135,12 @@ const planProMaxContextTokens = 200_000
 // 阶梯:3 → 5 → 8(终止)
 var warnThresholds = map[int]bool{3: true, 5: true}
 
-// todoReminderInterval 定义 todo 周期性提醒的间隔(assistant turn 数)。
-// 首次提醒在 idleTodoWrite(距上次 todo_update 达到此值)时触发,// 后续提醒至少间隔 idleTodoReminder 轮。
+// todoReminderInterval 定义 todo 周期性提醒的间隔（assistant turn 数）。
+// 首次提醒在 idleTodoWrite（距上次 todo_update 达到此值）时触发，// 后续提醒至少间隔 idleTodoReminder 轮。
 const (
 	idleTodoWrite    = 2 // 超过此值无 todo_update → 注入提醒
 	idleTodoReminder = 2 // 两次提醒之间的最小间隔
 )
-
-// maxTurnsWarnRemaining 是触顶保护阈值:剩余轮数 ≤ 此值时注入收尾提醒。
-// 评测实测(SWE-bench 33 实例):失败实例全部跑满 max-turns(25.0 vs 成功 21.9),
-// 且 agent 常在耗尽轮数时丢弃已有修改——提前提醒引导收尾。
-const maxTurnsWarnRemaining = 5
 
 // ---------------------------------------------------------------------------
 // TerminalReason — 终止原因
@@ -210,25 +205,9 @@ type Loop struct {
 
 	// turnsSinceLastTodoReminder 记录自上次注入 todo 提醒以来的 assistant turn 数。
 	turnsSinceLastTodoReminder int
-	// lastChanceTodoInjected 在 loop 即将以 ReasonCompleted 终止时,	// 若检测到残留的非 completed todo 项,注入一次"最后机会"提醒后置为 true。
+	// lastChanceTodoInjected 在 loop 即将以 ReasonCompleted 终止时，	// 若检测到残留的非 completed todo 项，注入一次"最后机会"提醒后置为 true。
 	// todo_update 成功执行时重置为 false。防止 LLM 忘记最后一次 todo 更新导致残留。
 	lastChanceTodoInjected bool
-
-	// maxTurnsWarned 标记是否已注入过触顶收尾提醒(每 Run 最多一次)。
-	// 评测实测(SWE-bench 33 实例):agent 常在轮数耗尽时丢弃已有修改
-	// (git checkout -- 回滚 / 手工 git apply 失败),触顶前提醒引导收尾。
-	maxTurnsWarned bool
-
-	// previewWarned 标记本轮是否已注入过"预告文本无工具调用"提醒(每 Run 最多一次)。
-	// 评测实测(deepseek-v4-flash):模型常输出"接下来:xxx"式预告文本后
-	// 漏发工具调用,若直接终止会导致预告的动作从未执行、任务被迫中断。
-	previewWarned bool
-
-	// previewGraceTurn 标记预告注入发生在 MaxTurns 最后一轮时,放行一轮
-	// 补发工具调用。仅放行一次:注入后 continue 回到 for shouldContinue,
-	// 若 TurnCount 已满循环会立即退出,模型看不到 [system:continue] 提醒,
-	// 预告的动作永远不执行(REGRESSION,见 shouldContinue)。
-	previewGraceTurn bool
 
 	readStateStore    *tool.ReadStateStore
 
@@ -334,14 +313,6 @@ func (l *Loop) Run(ctx context.Context, messages []llm.Message) <-chan TurnEvent
 		// 第二个 prompt 的完成前提醒被跳过。Loop 是 session 级持久组件,
 		// 每次 Run(单次 prompt)开始时重置,保证每轮都注入提醒。
 		l.lastChanceTodoInjected = false
-		// 同理:maxTurnsWarned 若跨 Run 残留,后续 prompt 的触顶保护永久失效
-		// (审查 CRITICAL-1,2026-08-11)。
-		l.maxTurnsWarned = false
-		// 同理:previewWarned 若跨 Run 残留,后续 prompt 的预告文本保护永久失效。
-		l.previewWarned = false
-		// previewGraceTurn 同理:仅当轮注入时置位,shouldContinue 消费后复位,
-		// 此处重置防御跨 Run 残留(注入后立即退出等边角路径)。
-		l.previewGraceTurn = false
 
 		// goroutine 结束时触发 Stop/Notification hooks。
 		// blocked 返回值在此场景无意义（goroutine 即将退出），仅记录日志。
@@ -407,13 +378,8 @@ func (l *Loop) Run(ctx context.Context, messages []llm.Message) <-chan TurnEvent
 			// 在末尾追加 todo-status 消息，仅影响 messagesForTurn，不修改 state.Messages。
 			// 追加使用 Append 策略以避免破坏前缀缓存（Update 的 API 费用是 Append 的 19x）。
 
-			// 每轮注入当前 todo 状态,确保 LLM 始终可见活跃任务
+			// 每轮注入当前 todo 状态，确保 LLM 始终可见活跃任务
 			l.injectTodoStatus(&messagesForTurn)
-
-			// 触顶保护:剩余轮数 ≤ 阈值时注入一次收尾提醒,
-			// 引导 LLM 在轮数耗尽前确认修改已落盘/未被回滚/测试已跑
-			// (评测实测:agent 常在触顶时丢弃已有修改,见 maxTurnsWarned 注释)。
-			l.injectMaxTurnsWarning(&messagesForTurn, state.TurnCount)
 
 			var lastPromptTokens int      // 本轮 API 返回的 prompt_tokens
 			var lastUsage       *llm.UsageInfo // 暂存 usage,压缩后统一推送 TurnStats
@@ -691,7 +657,7 @@ func (l *Loop) Run(ctx context.Context, messages []llm.Message) <-chan TurnEvent
 				}
 			}
 
-			// 最后机会:终止前检测残留的非 completed todo 项,			// 注入提醒并给 LLM 一次额外 turn 调用 todo_update。
+			// 最后机会：终止前检测残留的非 completed todo 项，			// 注入提醒并给 LLM 一次额外 turn 调用 todo_update。
 			if l.config.TodoState != nil && !l.lastChanceTodoInjected {
 				snapshot := l.config.TodoState.Snapshot()
 				hasIncomplete := false
@@ -713,33 +679,8 @@ func (l *Loop) Run(ctx context.Context, messages []llm.Message) <-chan TurnEvent
 				}
 			}
 
-			// 预告文本保护:模型输出了"预告"式文本(以冒号/箭头等结尾,
-			// 暗示接下来还要执行动作)但没有携带工具调用。直接终止会中断任务
-			// (评测实测:模型常以 "启动 xxx:" 结尾后漏发工具调用)。
-			// 注入 [system:continue] 提醒并继续一轮,给模型一次补发工具调用的机会;
-			// 若下一轮仍无工具调用(或本 Run 已提醒过)则正常终止,防死循环。
-			// plan mode 同样生效:计划文本虽常以冒号结尾,但预告式结尾同样可能
-			// 意味着模型漏发了工具调用(如读完文件后未写 plan),给一次补发机会;
-			// previewWarned 保证最多提醒一次,不会造成死循环。
-			if !l.previewWarned && hasPreviewSuffix(contentBuf) {
-				l.previewWarned = true
-				l.verbose("    → preview-style text without tool calls, injecting continue reminder\n")
-				// REGRESSION: 注入后 continue 回到 for l.shouldContinue(state),
-				// 若 TurnCount 已达 MaxTurns 会立即退出,模型看不到提醒、
-				// 预告的动作永远不执行。放行一轮(仅一轮,shouldContinue 消费后复位),
-				// 给模型补发工具调用的机会。
-				if l.config.MaxTurns > 0 && state.TurnCount >= l.config.MaxTurns {
-					l.previewGraceTurn = true
-				}
-				state.Messages = append(state.Messages, llm.Message{
-					Role:    llm.RoleUser,
-					Content: previewContinueText,
-				})
-				continue
-			}
-
-			ch <- LoopDone{
-				Turn:     state.TurnCount,
+				ch <- LoopDone{
+					Turn:     state.TurnCount,
 					Reason:   ReasonCompleted,
 					Messages: state.Messages,
 				}
@@ -846,18 +787,7 @@ func (l *Loop) shouldContinue(state *LoopState) bool {
 	if l.config.MaxTurns == 0 {
 		return true
 	}
-	if state.TurnCount < l.config.MaxTurns {
-		return true
-	}
-	// REGRESSION: 预告注入发生在最后一轮(TurnCount == MaxTurns)时,
-	// 注入后 continue 会在此立即退出,模型看不到 [system:continue] 提醒、
-	// 预告的动作从未执行、任务被误判中断。previewGraceTurn 放行一轮
-	// 补发工具调用;消费后立即复位,仅放行一次,不突破 MaxTurns 语义。
-	if l.previewGraceTurn {
-		l.previewGraceTurn = false
-		return true
-	}
-	return false
+	return state.TurnCount < l.config.MaxTurns
 }
 
 // resolveModel 解析本轮请求使用的模型。
@@ -1043,91 +973,10 @@ func todoStatusText(summary string) string {
 	return summary
 }
 
-// todoReminderText 构造 todo 提醒消息文本:状态摘要 + 提醒引导。
+// todoReminderText 构造 todo 提醒消息文本：状态摘要 + 提醒引导。
 func todoReminderText(summary string, turnsSince int) string {
 	return summary + "\n\n" +
 		fmt.Sprintf("[system:todo] %d turns since last todo_update. Your todo list is stale — call todo_update NOW to update task statuses. Mark completed tasks as 'completed' and set the next pending task to 'in_progress'.", turnsSince)
-}
-
-// injectMaxTurnsWarning 在剩余轮数 ≤ maxTurnsWarnRemaining 时,向 messagesForTurn
-// 追加一次触顶收尾提醒(每 Run 最多一次,避免重复刷屏)。
-// 与 injectTodoStatus 相同的 Append 策略:仅影响 messagesForTurn,不修改 state.Messages,
-// 不破坏前缀缓存。
-// 引导内容对应评测归因的三个高发失败点:
-//   1. 修改已落盘(edit/write 成功即算,不要 git checkout -- / git reset 回滚)
-//   2. 测试已运行验证
-//   3. 不要继续探索新方向(探索型空转耗尽轮数)
-func (l *Loop) injectMaxTurnsWarning(msgs *[]llm.Message, turnCount int) {
-	if l.maxTurnsWarned || l.config.MaxTurns <= 0 {
-		return
-	}
-	remaining := l.config.MaxTurns - turnCount
-	if remaining > maxTurnsWarnRemaining {
-		return
-	}
-	l.maxTurnsWarned = true
-	*msgs = append(*msgs, llm.Message{
-		Role:    llm.RoleUser,
-		Content: maxTurnsWarningText(remaining),
-	})
-}
-
-// maxTurnsWarningText 构造触顶收尾提醒文本。
-func maxTurnsWarningText(remaining int) string {
-	return fmt.Sprintf(
-		"[system:maxturns] %d turns left until the max-turns limit. Wrap up now:\n"+
-			"1. Make sure your changes are written via edit/write; do NOT discard them with `git checkout --` or `git reset`\n"+
-			"2. Run the relevant tests to verify your changes\n"+
-			"3. If the task is incomplete, prioritize finishing and verifying the core change — stop exploring new directions",
-		remaining)
-}
-
-// previewContinueText 是模型输出"预告文本"(以冒号/箭头等结尾)但未携带
-// 工具调用时注入的 user 提醒,引导模型补发工具调用或明确收尾。
-// 2026-08-12 措辞修订:意图推断("preview of an action")改为后缀形态的事实
-// 描述(与 hasPreviewSuffix 的五种后缀一致),避免误报时模型困惑;补充
-// "上一条消息已入历史"确认;总结选项提示勿再以预告后缀结尾,防止再次触发检测。
-const previewContinueText = "[system:continue] Your last message ended with a trailing preview marker (\":\", \"\uFF1A\", \"-\", \"\u2192\" or \"...\") but included no tool calls — that message is already part of the conversation history. If you still intend to perform the announced action, call the tool(s) now. If you are genuinely finished, reply with a final summary (do not end it with a trailing preview marker)."
-
-// hasPreviewSuffix 检测文本是否以"预告后缀"结尾(冒号/中文冒号/连字符/箭头/省略号),
-// 表明模型宣告了下一步动作但未附带工具调用。评测实测(deepseek-v4-flash):
-// 模型常输出 "启动 xxx:" 之类的预告文本后漏发工具调用,导致任务被误判完成。
-func hasPreviewSuffix(text string) bool {
-	t := strings.TrimSpace(text)
-	if t == "" {
-		return false
-	}
-	// REGRESSION: 此前第 5 个后缀是 U+2026(…),与 previewContinueText 文案
-	// 声明的 ASCII "..." 不一致;英文模型输出 "checking files..."(三个 ASCII
-	// 点)时预告防御失效,任务被误判完成。补上 ASCII 三连点,两者都匹配。
-	// REGRESSION: 冒号类后缀仅覆盖 U+003A/U+FF1A,其余视觉形似冒号的变体
-	// (小冒号 U+FE55、比号 U+2236、修饰符冒号 U+A789、竖排冒号 U+FE13、
-	// 比例号 U+2237、亚美尼亚句号 U+0589、希伯来标点 U+05C3、语音学冒号
-	// U+02D0/U+02F8、希腊问号 U+037E)结尾的预告文本被跳过,任务误判完成。
-	// 全部纳入匹配;用 \uXXXX 转义锁定字节,防编辑工具 Unicode 归一化破坏。
-	for _, suffix := range []string{
-		":",        // U+003A COLON
-		"\uFF1A",   // FULLWIDTH COLON
-		"\uFE55",   // SMALL COLON
-		"\u2236",   // RATIO
-		"\uA789",   // MODIFIER LETTER COLON
-		"\uFE13",   // PRESENTATION FORM FOR VERTICAL COLON
-		"\u2237",   // PROPORTION
-		"\u0589",   // ARMENIAN FULL STOP
-		"\u05C3",   // HEBREW PUNCTUATION SOF PASUQ
-		"\u02D0",   // MODIFIER LETTER TRIANGULAR COLON
-		"\u02F8",   // MODIFIER LETTER RAISED COLON
-		"\u037E",   // GREEK QUESTION MARK
-		"-",
-		"\u2192",   // RIGHTWARDS ARROW
-		"...",
-		"\u2026",   // HORIZONTAL ELLIPSIS
-	} {
-		if strings.HasSuffix(t, suffix) {
-			return true
-		}
-	}
-	return false
 }
 
 // updateTodoCounters 在每轮工具执行后更新 todo 提醒计数器。

@@ -20,7 +20,7 @@ dist/
 # 根目录 waveloom 二进制(go build 本地产物)
 /waveloom
 /llmedit
-# 根目录 harness 二进制(go build ./cmd/harness 产物)
+# 根目录 harness 二进制(评测遗留构建产物)
 /harness
 
 # 实验编译产物(go build ./experiments/...)
@@ -30,6 +30,9 @@ dist/
 /channel_priority
 /injection_priority
 /tool_cache
+
+# SWE-bench 评测遗留本地产物(含评测结果/镜像/API key 快照,不入仓库)
+eval/swebench/
 
 # Waveloom verbose 日志
 .waveloom/waveloom.log
@@ -66,18 +69,3 @@ cmd/cache-proxy/
 eval/swebench/venv/
 eval/swebench/results/
 eval/swebench/smoke/
-eval/swebench/__pycache__/
-eval/swebench/mirrors/
-eval/swebench/container-prompt.txt
-eval/swebench/.api_key
-eval/swebench/*_result.json
-eval/swebench/report.md
-eval/swebench/*.log
-eval/swebench/.docker/
-eval/swebench/.docker-nocred/
-eval/swebench/deep_dive.py
-eval/swebench/rejudge.py
-eval/swebench/run_mini_eval.sh
-
-# 评测模型检查产物(含明文 API key 快照,禁止入库)
-.model-check.txt

@@ -155,7 +155,6 @@ func subagentEventsToMessages(events []SubagentEvent) []llm.Message {
 				Content:    ev.ToolResult,
 				ToolCallID: ev.ToolCallID,
 				Name:       ev.ToolName,
-				IsError:    ev.ToolError != "",
 			})
 		}
 	}
