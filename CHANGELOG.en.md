@@ -1,3 +1,11 @@
+## [v0.7.1] — 2026-08-15
+
+### Refactored
+- **Reverted v0.7.0 eval-driven changes**: removed the SWE-bench eval system (`eval/`), the max-turns guard (`[system:maxturns]` wrap-up reminder), the preview-text protection (`[system:continue]` follow-up reminder) and the hardened agent behavior rules (no rollback / first-edit deadline, etc.); the agent loop now behaves as in v0.6.2
+- **Kept the rest of v0.7.0**: the `--no-sandbox` flag, the flags-after-prompt parsing fix, built-in pyright LSP support, and the deepseek-v4-pro Responses API adaptation
+
+---
+
 ## [v0.7.0] — 2026-08-13
 
 ### Added

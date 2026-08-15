@@ -1,3 +1,13 @@
+## [v0.7.1] — 2026-08-15
+
+### 重构
+- **回退 v0.7.0 评测驱动改动**:移除 SWE-bench 评测系统(`eval/`)、触顶保护(`[system:maxturns]` 收尾提醒)、预告文本保护(`[system:continue]` 补发提醒)与 agent 行为规则强化(禁止回滚 / First-edit deadline 等),agent 循环行为回到 v0.6.2 语义
+- **保留 v0.7.0 其余改动**:`--no-sandbox` 选项、prompt 后 flag 解析修复、内置 pyright LSP 支持、deepseek-v4-pro Responses API 适配
+
+---
+
+📝 [Changelog (English)](https://github.com/Menfre01/waveloom/blob/dev/CHANGELOG.en.md)
+
 ## [v0.7.0] — 2026-08-13
 
 ### 新增功能
