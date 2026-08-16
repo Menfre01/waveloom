@@ -242,6 +242,22 @@ func TestDisplayWidth_MultipleAnsiCodes(t *testing.T) {
 	}
 }
 
+func TestShortSessionID(t *testing.T) {
+	tests := []struct {
+		in   string
+		want string
+	}{
+		{"", ""},
+		{"short-id", "short-id"},
+		{"a022f312-f955-f348-9c7e-13c57e675251", "a022f312...5251"},
+	}
+	for _, tt := range tests {
+		if got := shortSessionID(tt.in); got != tt.want {
+			t.Errorf("shortSessionID(%q) = %q, want %q", tt.in, got, tt.want)
+		}
+	}
+}
+
 func TestDisplayWidth_AnsiWithoutText(t *testing.T) {
 	w := displayWidth("\x1b[1m\x1b[0m")
 	if w != 0 {
@@ -1048,6 +1064,12 @@ type stubSessionCreator struct{}
 
 func (s *stubSessionCreator) NewSession() error { return nil }
 
+// stubSessionRenamer 实现 slashcommand.SessionRenamer。
+type stubSessionRenamer struct{}
+
+func (s *stubSessionRenamer) RenameSession(name string) error { return nil }
+func (s *stubSessionRenamer) CurrentName() string             { return "" }
+
 // stubSettingsStore 实现 slashcommand.SettingsStore。
 type stubSettingsStore struct {
 	llm *llm.LLMSettings
@@ -1113,14 +1135,15 @@ description: 一个不冲突的 skill
 	cwd, _ := os.Getwd()
 	loader := skill.NewLoader(cwd, tmpDir, "test-session", "medium", nil)
 
-	// ── 调用 newSlashRegistry（模拟 runTUI 中的调用） ──
+	// ── 调用 newSlashRegistry(模拟 runTUI 中的调用) ──
 	creator := &stubSessionCreator{}
+	renamer := &stubSessionRenamer{}
 	store := &stubSettingsStore{}
 	lister := &stubModelLister{}
 	sm := emptySlashMessages()
 
 	// 不应 panic
-	r := newSlashRegistry(creator, store, lister, "test-model", loader, nil, sm)
+	r := newSlashRegistry(creator, renamer, store, lister, "test-model", loader, nil, sm)
 
 	// ── 验证内置 /help 仍然存在（未被 skill 覆盖） ──
 	cmd, _ := r.Match("/help")
@@ -1163,14 +1186,15 @@ description: 一个不冲突的 skill
 // TestNewSlashRegistry_NoSkillLoader returns a valid registry when skillLoader is nil.
 func TestNewSlashRegistry_NoSkillLoader(t *testing.T) {
 	creator := &stubSessionCreator{}
+	renamer := &stubSessionRenamer{}
 	store := &stubSettingsStore{}
 	lister := &stubModelLister{}
 	sm := emptySlashMessages()
 
-	r := newSlashRegistry(creator, store, lister, "test-model", nil, nil, sm)
+	r := newSlashRegistry(creator, renamer, store, lister, "test-model", nil, nil, sm)
 
 	// 内置命令应全部存在
-	expected := []string{"help", "new", "model", "theme", "locale", "rewind", "provider"}
+	expected := []string{"help", "new", "rename", "model", "theme", "locale", "rewind", "provider"}
 	for _, name := range expected {
 		if cmd, _ := r.Match("/" + name); cmd == nil {
 			t.Errorf("Match(\"/%s\") returned nil, built-in command should exist", name)

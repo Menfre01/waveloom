@@ -31,6 +31,13 @@ type SlashMessages struct {
 	// ── /rewind ──
 	RewindDescription string
 
+	// ── /rename ──
+	RenameDescription string
+	RenameDone       string // 含 %s(新名称)
+	RenameFailed     string // 含 %v
+	RenameCurrent    string // 含 %s(当前名称)
+	RenameUnnamed    string // 当前 session 未命名时无参提示
+
 	// ── /provider ──
 	ProviderDescription       string
 	ProviderList              string // 含 %s, %s

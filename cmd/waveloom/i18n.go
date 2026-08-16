@@ -191,6 +191,11 @@ type Messages struct {
 	SlashLocaleDescription     string
 	SlashHelpDescription       string
 	SlashHelpText              string
+	SlashRenameDescription     string
+	SlashRenameDone            string // 含 %s
+	SlashRenameFailed          string // 含 %v
+	SlashRenameCurrent         string // 含 %s
+	SlashRenameUnnamed         string
 
 	// ── /provider ──
 	ProviderDescription       string
@@ -430,8 +435,13 @@ var zhCN = Messages{
 	SlashModelSwitched:         "模型已切换为 %s。",
 	SlashModelProPlanAnchorMissing: "proplan 需要配置 model 与 sub_model 锚点(settings.json llm 段)。",
 	SlashThemeDescription:      "选择主题(Auto / Dark / Light / ColorBlind)",
-	SlashLocaleDescription:     "切换语言（zh-CN / en-US）",
+	SlashLocaleDescription:     "切换语言(zh-CN / en-US)",
 	SlashHelpDescription:       "显示所有可用命令",
+	SlashRenameDescription:     "重命名当前 session",
+	SlashRenameDone:            "session 已重命名为: %s",
+	SlashRenameFailed:          "重命名失败: %v",
+	SlashRenameCurrent:         "当前 session 名称: %s",
+	SlashRenameUnnamed:         "当前 session 未命名,输入 /rename <名称> 命名。",
 	SlashHelpText: `使用技巧:
 
   —— 以下仅在空闲时生效 ——
@@ -495,9 +505,10 @@ var zhCN = Messages{
   --bypass-permissions    跳过权限检查(TUI 交互确认;one-shot/ACP 默认启用)
   --no-sandbox            显式关闭沙箱(one-shot/ACP 默认激活;Docker 等已隔离环境可关闭)
   --tool-timeout D         单个工具执行超时(Go Duration 格式,如 10m / 600s / 0s,0 禁用,默认 10m)
-  --provider NAME         LLM Provider（kimi / deepseek / openai），覆盖配置文件并查找 profiles 中匹配配置
+  --provider NAME         LLM Provider(kimi / deepseek / openai),覆盖配置文件并查找 profiles 中匹配配置
   --resume ID             恢复指定 session ID 的对话
   --continue              恢复最近一个 session 的对话
+  --name NAME             为 session 命名(展示用,ls 显示;resume 仍用 ID)
 
 配置文件（settings.json）:
   ~/.waveloom/settings.json  用户全局配置（安全基线）
@@ -740,6 +751,11 @@ var enUS = Messages{
 	SlashThemeDescription:      "Select theme (Auto / Dark / Light / ColorBlind)",
 	SlashLocaleDescription:     "Switch language (zh-CN / en-US)",
 	SlashHelpDescription:       "Show all available commands",
+	SlashRenameDescription:     "Rename current session",
+	SlashRenameDone:            "Session renamed to: %s",
+	SlashRenameFailed:          "Rename failed: %v",
+	SlashRenameCurrent:         "Current session name: %s",
+	SlashRenameUnnamed:         "Current session is unnamed. Type /rename <name> to name it.",
 	SlashHelpText: `Usage tips:
 
   —— Idle only ——
@@ -805,6 +821,7 @@ Options:
   --provider NAME         LLM Provider (kimi / deepseek / openai), overrides config file and looks up matching entry in profiles
   --resume ID             Resume session by ID
   --continue              Resume the most recent session
+  --name NAME             Name the session (display only, shown by ls; resume still uses ID)
 
 Configuration (settings.json):
   ~/.waveloom/settings.json  Global user config (security baseline)

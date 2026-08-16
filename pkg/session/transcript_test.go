@@ -98,10 +98,10 @@ func TestTranscriptPath(t *testing.T) {
 func TestRecentUpdateAndLoad(t *testing.T) {
 	dir := t.TempDir()
 
-	if err := UpdateRecentSessions(dir, "session-1", 5); err != nil {
+	if err := UpdateRecentSessions(dir, "session-1", "修复登录 bug", 5); err != nil {
 		t.Fatalf("UpdateRecentSessions: %v", err)
 	}
-	if err := UpdateRecentSessions(dir, "session-2", 10); err != nil {
+	if err := UpdateRecentSessions(dir, "session-2", "", 10); err != nil {
 		t.Fatalf("UpdateRecentSessions: %v", err)
 	}
 
@@ -119,13 +119,20 @@ func TestRecentUpdateAndLoad(t *testing.T) {
 	if entries[1].ID != "session-1" {
 		t.Errorf("second entry = %q, want %q", entries[1].ID, "session-1")
 	}
+	// name 随记录持久化;未设置 name 的条目为空
+	if entries[0].Name != "" {
+		t.Errorf("entries[0].Name = %q, want empty", entries[0].Name)
+	}
+	if entries[1].Name != "修复登录 bug" {
+		t.Errorf("entries[1].Name = %q, want %q", entries[1].Name, "修复登录 bug")
+	}
 }
 
 func TestRecentDeduplication(t *testing.T) {
 	dir := t.TempDir()
 
-	_ = UpdateRecentSessions(dir, "session-1", 5)
-	_ = UpdateRecentSessions(dir, "session-1", 8) // 更新同一个
+	_ = UpdateRecentSessions(dir, "session-1", "旧名", 5)
+	_ = UpdateRecentSessions(dir, "session-1", "新名", 8) // 更新同一个
 
 	entries, _ := LoadRecentSessions(dir)
 	if len(entries) != 1 {
@@ -134,6 +141,9 @@ func TestRecentDeduplication(t *testing.T) {
 	if entries[0].MessageCount != 8 {
 		t.Errorf("MessageCount = %d, want 8", entries[0].MessageCount)
 	}
+	if entries[0].Name != "新名" {
+		t.Errorf("Name = %q, want %q", entries[0].Name, "新名")
+	}
 }
 
 func TestRecentMaxEntries(t *testing.T) {
@@ -141,7 +151,7 @@ func TestRecentMaxEntries(t *testing.T) {
 
 	for i := 0; i < maxRecentSessions+5; i++ {
 		id := "session-" + string(rune('a'+i%26))
-		_ = UpdateRecentSessions(dir, id, 0)
+		_ = UpdateRecentSessions(dir, id, "", 0)
 	}
 
 	entries, _ := LoadRecentSessions(dir)
@@ -169,7 +179,7 @@ func TestContinueSessionID(t *testing.T) {
 		t.Fatalf("expected empty, got %q (err=%v)", id, err)
 	}
 
-	_ = UpdateRecentSessions(dir, "last-session", 3)
+	_ = UpdateRecentSessions(dir, "last-session", "", 3)
 	id, err = ContinueSessionID(dir)
 	if err != nil || id != "last-session" {
 		t.Fatalf("expected 'last-session', got %q (err=%v)", id, err)

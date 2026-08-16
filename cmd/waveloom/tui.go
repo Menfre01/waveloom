@@ -3297,15 +3297,32 @@ func (m *model) renderLogoLines(contentWidth int) []string {
 	return []string{logoLine, ""}
 }
 
+// shortSessionID 截短 session ID 便于 header 展示。
+// UUID 格式(8-4-4-4-12)显示为 前8...后4,如 a022f312...5251。
+func shortSessionID(id string) string {
+	if len(id) <= 14 {
+		return id
+	}
+	return id[:8] + "..." + id[len(id)-4:]
+}
+
 func (m *model) renderHeader() string {
 	contentWidth := max(m.width-4, 20)
 	var sb strings.Builder
 
-	// 信息行：session ID（左） + 版本号（右）
+	// 信息行:session 名称(优先)/ session ID(左) + 版本号(右)
 	sidLine := ""
 	if sid := m.cm.SessionID(); sid != "" {
-		sidPart := styleHeaderAccent.Render(m.msg().HeaderSession) +
-			styleHeader.Render(sid)
+		sidPart := styleHeaderAccent.Render(m.msg().HeaderSession)
+		if name := m.cm.SessionName(); name != "" {
+			// 有 name:显示名称 + 短 session ID(dsh-tui 同款投影)
+			sidPart += styleHeader.Render(name)
+			if short := shortSessionID(sid); short != "" {
+				sidPart += " " + styleMuted.Render("(" + short + ")")
+			}
+		} else {
+			sidPart += styleHeader.Render(sid)
+		}
 		verStr := styleHeaderAccent.Render(Version)
 		leftWidth := lipgloss.Width(sidPart)
 		rightWidth := lipgloss.Width(verStr)
@@ -4303,8 +4320,9 @@ func (m *model) handleSlashCommand(input string) tea.Cmd {
 				skillLoader := skill.NewLoader(m.cwd, homeDir, "", "medium", m.guard)
 				m.skillLoader = skillLoader
 				creator := &tuiSessionCreator{m: m}
+				renamer := &tuiSessionRenamer{m: m}
 				lister := &tuiModelLister{client: m.llmClient}
-				m.slashRegistry = newSlashRegistry(creator, m.settingsStore, lister, m.hudModel, skillLoader, m.registry, m.slashMessages)
+				m.slashRegistry = newSlashRegistry(creator, renamer, m.settingsStore, lister, m.hudModel, skillLoader, m.registry, m.slashMessages)
 			}
 			m.paras = append(m.paras, Paragraph{
 				Type:      paraSystem,
@@ -4565,8 +4583,9 @@ func (m *model) reconfigureLLMClientForProvider(newProvider string, settings *ll
 // 在 /provider 和 /model 切换后调用，使 /model（无参）能获取到新 provider 的模型列表。
 func (m *model) rebuildSlashRegistry() {
 	creator := &tuiSessionCreator{m: m}
+	renamer := &tuiSessionRenamer{m: m}
 	lister := &tuiModelLister{client: m.llmClient}
-	m.slashRegistry = newSlashRegistry(creator, m.settingsStore, lister, m.hudModel, m.skillLoader, m.registry, m.slashMessages)
+	m.slashRegistry = newSlashRegistry(creator, renamer, m.settingsStore, lister, m.hudModel, m.skillLoader, m.registry, m.slashMessages)
 }
 
 // ---------------------------------------------------------------------------
@@ -4743,7 +4762,29 @@ func (c *tuiSessionCreator) NewSession() error {
 	return nil
 }
 
-// tuiSkillExecutor 实现 slashcommand.SkillExecutor，将 skill 执行委托给 tool.Registry。
+// tuiSessionRenamer 实现 slashcommand.SessionRenamer,为当前 session 改名并落盘。
+type tuiSessionRenamer struct {
+	m *model
+}
+
+func (r *tuiSessionRenamer) RenameSession(name string) error {
+	m := r.m
+	m.cm.SetSessionName(name) // 内部统一规范化(TrimSpace + 截断 + 控制字符过滤)
+	m.cm.Save()
+	if sid := m.cm.SessionID(); sid != "" {
+		stats := m.cm.Stats()
+		if err := session.UpdateRecentSessions(m.sessionDir, sid, m.cm.SessionName(), stats.MessageCount); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (r *tuiSessionRenamer) CurrentName() string {
+	return r.m.cm.SessionName()
+}
+
+// tuiSkillExecutor 实现 slashcommand.SkillExecutor,将 skill 执行委托给 tool.Registry。
 // 这样用户 /skill-name 和 LLM 调用 skill 工具走相同的代码路径。
 type tuiSkillExecutor struct {
 	registry tool.Registry
@@ -4785,6 +4826,11 @@ func slashMessagesFrom(lc *Messages) *slashcommand.SlashMessages {
 		HelpDescription:        lc.SlashHelpDescription,
 		HelpText:               lc.SlashHelpText,
 		RewindDescription:      lc.RewindSlashDescription,
+		RenameDescription:      lc.SlashRenameDescription,
+		RenameDone:             lc.SlashRenameDone,
+		RenameFailed:           lc.SlashRenameFailed,
+		RenameCurrent:          lc.SlashRenameCurrent,
+		RenameUnnamed:          lc.SlashRenameUnnamed,
 		ProviderDescription:       lc.ProviderDescription,
 		ProviderList:              lc.ProviderList,
 		ProviderAvailable:         lc.ProviderAvailable,
@@ -4798,9 +4844,10 @@ func slashMessagesFrom(lc *Messages) *slashcommand.SlashMessages {
 	}
 }
 
-func newSlashRegistry(creator slashcommand.SessionCreator, store slashcommand.SettingsStore, lister slashcommand.ModelLister, currentModel string, skillLoader *skill.Loader, registry tool.Registry, sm *slashcommand.SlashMessages) *slashcommand.Registry {
+func newSlashRegistry(creator slashcommand.SessionCreator, renamer slashcommand.SessionRenamer, store slashcommand.SettingsStore, lister slashcommand.ModelLister, currentModel string, skillLoader *skill.Loader, registry tool.Registry, sm *slashcommand.SlashMessages) *slashcommand.Registry {
 	r := slashcommand.NewRegistry()
 	r.Register(slashcommand.NewNewCommand(creator, sm))
+	r.Register(slashcommand.NewRenameCommand(renamer, sm))
 	r.Register(slashcommand.NewModelCommand(store, lister, currentModel, sm))
 	r.Register(slashcommand.NewThemeCommand(sm))
 	r.Register(slashcommand.NewLocaleCommand(sm))
@@ -4857,12 +4904,13 @@ func runTUI(llmClient llm.Client, registry tool.Registry, guard permission.Guard
 	m.initThinkingEffort(store)
 	lister := &tuiModelLister{client: llmClient}
 	sessionCreator := &tuiSessionCreator{m: m}
+	sessionRenamer := &tuiSessionRenamer{m: m}
 
 	// 构造 skill loader（用于注册 skill 命令）
 	homeDir, _ := os.UserHomeDir()
 	skillLoader := skill.NewLoader(m.cwd, homeDir, ctxMgr.SessionID(), "medium", guard)
 	m.slashMessages = slashMessagesFrom(m.lc)
-	m.slashRegistry = newSlashRegistry(sessionCreator, store, lister, modelChoice, skillLoader, registry, m.slashMessages)
+	m.slashRegistry = newSlashRegistry(sessionCreator, sessionRenamer, store, lister, modelChoice, skillLoader, registry, m.slashMessages)
 	m.skillLoader = skillLoader
 
 	m.bypassPerm = bypassPerm
@@ -4928,7 +4976,7 @@ func runTUI(llmClient llm.Client, registry tool.Registry, guard permission.Guard
 		// 写入 recent.json（TUI 启动时唯一写入点）
 	if sid := ctxMgr.SessionID(); sid != "" {
 		stats := ctxMgr.Stats()
-		_ = session.UpdateRecentSessions(sessionDir, sid, stats.MessageCount)
+		_ = session.UpdateRecentSessions(sessionDir, sid, ctxMgr.SessionName(), stats.MessageCount)
 	}
 
 	p := tea.NewProgram(m)
@@ -4966,7 +5014,7 @@ func runTUI(llmClient llm.Client, registry tool.Registry, guard permission.Guard
 	m.cm.Save()
 	if sid := m.cm.SessionID(); sid != "" {
 		stats := m.cm.Stats()
-		_ = session.UpdateRecentSessions(sessionDir, sid, stats.MessageCount)
+		_ = session.UpdateRecentSessions(sessionDir, sid, m.cm.SessionName(), stats.MessageCount)
 		slog.Info("session saved", "id", sid)
 		fmt.Fprintf(os.Stderr, m.lc.SessionSaved, sid)
 		fmt.Fprintf(os.Stderr, m.lc.SessionResumeHint, sid)

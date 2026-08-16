@@ -455,6 +455,7 @@ const maxRecentSessions = 10
 // RecentEntry 是 recent.json 中的一条记录。
 type RecentEntry struct {
 	ID           string `json:"id"`
+	Name         string `json:"name,omitempty"` // 展示用名称(--name 设置,ls 显示)
 	UpdatedAt    string `json:"updated_at"`
 	MessageCount int    `json:"message_count"`
 }
@@ -464,8 +465,9 @@ func RecentPath(sessionsDir string) string {
 	return filepath.Join(sessionsDir, "recent.json")
 }
 
-// UpdateRecentSessions 将指定 session 加入 recent.json 头部，保留最近 maxRecentSessions 条。
-func UpdateRecentSessions(sessionsDir, sessionID string, messageCount int) error {
+// UpdateRecentSessions 将指定 session 加入 recent.json 头部,保留最近 maxRecentSessions 条。
+// name 为展示用 session 名称(空 = 不展示名称)。
+func UpdateRecentSessions(sessionsDir, sessionID, name string, messageCount int) error {
 	dir := sessionsDir
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return fmt.Errorf("create sessions dir: %w", err)
@@ -475,7 +477,7 @@ func UpdateRecentSessions(sessionsDir, sessionID string, messageCount int) error
 	entries, _ := loadRecentEntries(path)
 
 	now := time.Now().UTC().Format(time.RFC3339)
-	newEntry := RecentEntry{ID: sessionID, UpdatedAt: now, MessageCount: messageCount}
+	newEntry := RecentEntry{ID: sessionID, Name: name, UpdatedAt: now, MessageCount: messageCount}
 
 	result := make([]RecentEntry, 0, len(entries)+1)
 	result = append(result, newEntry)

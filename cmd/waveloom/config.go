@@ -27,6 +27,7 @@ type CLIConfig struct {
 	Locale          string // 界面语言: zh-CN / en-US / auto（自动检测）
 	ResumeSessionID string // 恢复指定 session ID（空 = 新建 session）
 	ContinueSession bool   // 恢复最近一个 session
+	SessionName     string // 为 session 命名(--name,展示用,ls 显示)
 	ListSessions    bool   // 列出最近 sessions
 	CompletionShell string // shell 补全脚本名称(bash/zsh/fish),空 = 不输出
 	BypassPerm      bool
@@ -60,6 +61,7 @@ func parseCLI() CLIConfig {
 	fs.StringVar(&cfg.SettingsPath, "settings", "", "显式指定项目配置文件路径(默认: .waveloom/settings.json)")
 	fs.StringVar(&cfg.ResumeSessionID, "resume", "", "恢复指定 session ID 的对话(空 = 新建 session)")
 	fs.BoolVar(&cfg.ContinueSession, "continue", false, "恢复最近一个 session 的对话")
+	fs.StringVar(&cfg.SessionName, "name", "", "为 session 命名(展示用,ls 显示;resume 仍用 ID)")
 	fs.StringVar(&cfg.LogLevel, "log-level", "info", "日志级别 (error/warn/info/debug)")
 	fs.BoolVar(&cfg.BypassPerm, "bypass-permissions", false, "跳过权限检查(CI/测试)")
 	fs.StringVar(&cfg.SandboxNetwork, "sandbox-network", "", "沙箱网络模式 off/on(默认 on,覆盖 settings.json 的 sandbox.network.mode;on 建议配置凭据遮蔽)")

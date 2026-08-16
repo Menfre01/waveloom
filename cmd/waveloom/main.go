@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"time"
 
 	"github.com/Menfre01/waveloom/pkg/agentloop"
@@ -328,6 +329,10 @@ waitLoop:
 			sessionPath := filepath.Join(sessionDir, session.NewSessionID()+".json")
 			ctxMgr.SetSessionPath(sessionPath)
 		}
+		// --name 命名:新建时写入,resume 时非空覆盖(改名)
+		if cfg.SessionName != "" {
+			ctxMgr.SetSessionName(cfg.SessionName)
+		}
 	}
 
 	// REGRESSION: skill loader 在 session 确定前创建，SessionID 为空，导致 skill
@@ -587,8 +592,29 @@ func listSessions(projectPath, globalPath string, loc Locale) {
 	}
 
 	fmt.Println(lc.CLILsHeader)
+	// name 列宽自适应:取所有条目 name 显示宽度的最大值(上限 20),
+	// 使 name 与 session ID 紧凑对齐,避免短名称时出现大段空白。
+	nameWidth := 0
 	for _, e := range entries {
-		fmt.Printf("  %s  (%d messages, %s)\n", e.ID, e.MessageCount, e.UpdatedAt)
+		n := e.Name
+		if n == "" {
+			n = "-"
+		}
+		if w := displayWidth(n); w > nameWidth {
+			nameWidth = w
+		}
+	}
+	if nameWidth > 20 {
+		nameWidth = 20
+	}
+	for _, e := range entries {
+		name := e.Name
+		if name == "" {
+			name = "-"
+		}
+		name = truncateByDisplayWidth(name, nameWidth)
+		pad := nameWidth - displayWidth(name)
+		fmt.Printf("  %s%s  %s  (%d messages, %s)\n", name, strings.Repeat(" ", pad), e.ID, e.MessageCount, e.UpdatedAt)
 	}
 	fmt.Println()
 	fmt.Println(lc.CLILsRestoreHint)

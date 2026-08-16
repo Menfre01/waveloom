@@ -327,6 +327,20 @@ func TestParseCLI_Resume(t *testing.T) {
 	}
 }
 
+func TestParseCLI_Name(t *testing.T) {
+	cfg := parseCLIForTest([]string{"--name", "修复登录 bug"})
+	if cfg.SessionName != "修复登录 bug" {
+		t.Errorf("expected SessionName='修复登录 bug', got %q", cfg.SessionName)
+	}
+}
+
+func TestParseCLI_NameDefaultEmpty(t *testing.T) {
+	cfg := parseCLIForTest([]string{"test"})
+	if cfg.SessionName != "" {
+		t.Errorf("expected default SessionName='', got %q", cfg.SessionName)
+	}
+}
+
 func TestParseCLI_ThemeDefault(t *testing.T) {
 	cfg := parseCLIForTest([]string{"test"})
 	if cfg.Theme != "auto" {

@@ -22,6 +22,7 @@ var BuildVersion = "dev"
 // sessionFile 是 session 落盘文件的顶层结构。
 type sessionFile struct {
 	SessionID            string              `json:"session_id"`
+	Name                 string              `json:"name,omitempty"` // 展示用名称(--name 设置,ls 显示)
 	Version              string              `json:"version"`
 	CreatedAt            string              `json:"created_at"`
 	UpdatedAt            string              `json:"updated_at"`
@@ -64,28 +65,33 @@ type sessionStats struct {
 }
 
 // SaveSessionToFile 将消息历史、统计信息、plan mode 和文件历史序列化写入指定文件。
-// 使用原子写入：先写临时文件，再 rename。
+// 使用原子写入:先写临时文件,再 rename。
 // compaction 为 nil 时不写入压缩状态。
-// planMode 为 nil 时不写入 plan mode 状态（保留已有值）。
-// fileHistory 为 nil 时不写入文件历史（保留已有值）。
-// lastBackgroundCheck 为后台任务上次检查时间（零值时保留已有值）。
-func SaveSessionToFile(path string, messages []llm.Message, stats Stats, compData *compaction.CompactionData, todoItems []json.RawMessage, planMode *sessionPlanMode, fileHistory *filehistory.SnapshotData, lastBackgroundCheck time.Time) error {
+// planMode 为 nil 时不写入 plan mode 状态(保留已有值)。
+// fileHistory 为 nil 时不写入文件历史(保留已有值)。
+// lastBackgroundCheck 为后台任务上次检查时间(零值时保留已有值)。
+// name 为展示用 session 名称(非空时覆盖已有值,空时保留)。
+func SaveSessionToFile(path string, name string, messages []llm.Message, stats Stats, compData *compaction.CompactionData, todoItems []json.RawMessage, planMode *sessionPlanMode, fileHistory *filehistory.SnapshotData, lastBackgroundCheck time.Time) error {
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return fmt.Errorf("create session dir: %w", err)
 	}
 
-	// 如果已存在旧文件，保留 session_id 和 created_at
+	// 如果已存在旧文件,保留 session_id 和 created_at
 	var sf sessionFile
 	existing, err := loadSessionFile(path)
 	if err == nil && existing != nil {
 		sf.SessionID = existing.SessionID
+		sf.Name = existing.Name
 		sf.CreatedAt = existing.CreatedAt
 		sf.Version = existing.Version
 	} else {
 		sf.SessionID = NewSessionID()
 		sf.CreatedAt = time.Now().UTC().Format(time.RFC3339)
 		sf.Version = version()
+	}
+	if n := normalizeSessionName(name); n != "" {
+		sf.Name = n
 	}
 
 	sf.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
@@ -163,18 +169,18 @@ func SaveSessionToFile(path string, messages []llm.Message, stats Stats, compDat
 }
 // LoadSessionFromFile 从指定文件读取并返回消息历史、统计信息、压缩数据、session ID、
 // 后台任务列表、todo items、plan mode、file history 和上次后台检查时间。
-// 文件不存在返回 nil, ..., nil；格式无效返回 error。
+// 文件不存在返回 nil, ..., nil;格式无效返回 error。
 //
-// 加载优先级：
-//  1. 若同目录存在 .jsonl 文件，优先从 JSONL 加载消息（增量恢复）
-//  2. 否则从 JSON 文件的 Messages 字段加载（兼容旧格式）
-func LoadSessionFromFile(path string) ([]llm.Message, Stats, *compaction.CompactionData, string, []task.TaskInfo, []json.RawMessage, *sessionPlanMode, *filehistory.SnapshotData, time.Time, error) {
+// 加载优先级:
+//  1. 若同目录存在 .jsonl 文件,优先从 JSONL 加载消息(增量恢复)
+//  2. 否则从 JSON 文件的 Messages 字段加载(兼容旧格式)
+func LoadSessionFromFile(path string) ([]llm.Message, Stats, *compaction.CompactionData, string, string, []task.TaskInfo, []json.RawMessage, *sessionPlanMode, *filehistory.SnapshotData, time.Time, error) {
 	sf, err := loadSessionFile(path)
 	if err != nil {
-		return nil, Stats{}, nil, "", nil, nil, nil, nil, time.Time{}, err
+		return nil, Stats{}, nil, "", "", nil, nil, nil, nil, time.Time{}, err
 	}
 	if sf == nil {
-		return nil, Stats{}, nil, "", nil, nil, nil, nil, time.Time{}, nil
+		return nil, Stats{}, nil, "", "", nil, nil, nil, nil, time.Time{}, nil
 	}
 
 	// 优先从统一 JSONL 加载消息
@@ -212,7 +218,6 @@ func LoadSessionFromFile(path string) ([]llm.Message, Stats, *compaction.Compact
 		}
 	}
 
-
 	var lastBackgroundCheck time.Time
 	if sf.LastBackgroundCheck != "" {
 		if t, parseErr := time.Parse(time.RFC3339, sf.LastBackgroundCheck); parseErr == nil {
@@ -220,7 +225,7 @@ func LoadSessionFromFile(path string) ([]llm.Message, Stats, *compaction.Compact
 		}
 	}
 
-	return messages, stats, compData, sf.SessionID, sf.Tasks, sf.TodoItems, sf.PlanMode, sf.FileHistory, lastBackgroundCheck, nil
+	return messages, stats, compData, sf.SessionID, sf.Name, sf.Tasks, sf.TodoItems, sf.PlanMode, sf.FileHistory, lastBackgroundCheck, nil
 }
 
 // loadSessionFile 读取并解析 session 文件。文件不存在返回 nil, nil。
@@ -307,6 +312,31 @@ func version() string {
 	return BuildVersion
 }
 
+// maxSessionNameLen 是 session name 的最大长度(rune 数),防止 recent.json 膨胀。
+const maxSessionNameLen = 64
+
+// normalizeSessionName 规范化 session name:TrimSpace + 截断到 maxSessionNameLen。
+// 同时过滤 C0 控制字符(换行/制表符/ANSI 转义等)、DEL 与 C1 控制字符,
+// 防止破坏 ls 表格输出或注入终端控制序列。
+// 空 name 返回空字符串。name 仅作展示,不参与文件路径与恢复匹配。
+func normalizeSessionName(name string) string {
+	n := strings.Map(func(r rune) rune {
+		if r < 0x20 || r == 0x7f || (r >= 0x80 && r <= 0x9f) {
+			return -1
+		}
+		return r
+	}, name)
+	n = strings.TrimSpace(n)
+	if n == "" {
+		return ""
+	}
+	runes := []rune(n)
+	if len(runes) > maxSessionNameLen {
+		return string(runes[:maxSessionNameLen])
+	}
+	return n
+}
+
 // --- settings.json session 配置 ---
 
 // sessionSettingsFile 是 settings.json 中 session 块的顶层结构。
@@ -335,5 +365,4 @@ func LoadSessionDir(path string) string {
 	}
 	return sf.Session.Dir
 }
-
 

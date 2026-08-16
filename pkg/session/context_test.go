@@ -519,6 +519,77 @@ func TestSessionID_NoExtension(t *testing.T) {
 	}
 }
 
+func TestSessionName_SetAndGet(t *testing.T) {
+	cm := New("system")
+	if cm.SessionName() != "" {
+		t.Fatalf("expected empty name, got %q", cm.SessionName())
+	}
+	cm.SetSessionName("修复登录 bug")
+	if cm.SessionName() != "修复登录 bug" {
+		t.Fatalf("expected 修复登录 bug, got %q", cm.SessionName())
+	}
+	// SetSessionName 统一规范化:TrimSpace + 控制字符过滤 + 截断
+	// 仅 ESC(0x1b)与 \n 被过滤;`[31m` 是可见文本保留
+	cm.SetSessionName("  带空白\n换行\x1b[31mANSI  ")
+	if got := cm.SessionName(); got != "带空白换行[31mANSI" {
+		t.Fatalf("normalized name = %q, want %q", got, "带空白换行[31mANSI")
+	}
+	cm.SetSessionName(strings.Repeat("长", maxSessionNameLen+10))
+	if got := len([]rune(cm.SessionName())); got != maxSessionNameLen {
+		t.Fatalf("truncated name rune len = %d, want %d", got, maxSessionNameLen)
+	}
+	cm.SetSessionName("") // 清空
+	if cm.SessionName() != "" {
+		t.Fatalf("expected empty name after clear, got %q", cm.SessionName())
+	}
+}
+
+// TestSessionName_ResetClears 验证 Reset 清空 session name(/new 后新 session 不继承旧名)。
+func TestSessionName_ResetClears(t *testing.T) {
+	cm := New("system")
+	cm.SetSessionName("旧名")
+	cm.Reset()
+	if cm.SessionName() != "" {
+		t.Fatalf("expected empty name after Reset, got %q", cm.SessionName())
+	}
+}
+
+// TestSessionName_SaveAndLoad 验证 name 通过 Save/LoadFromFile 持久化。
+func TestSessionName_SaveAndLoad(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "named.json")
+
+	cm := New("system")
+	_, _ = cm.PrepareRun("hello")
+	cm.SetSessionPath(path)
+	cm.SetSessionName("重构 TUI")
+	cm.Save()
+
+	// 重新加载:name 应恢复
+	cm2 := New("system")
+	if !cm2.LoadFromFile(path) {
+		t.Fatal("LoadFromFile failed")
+	}
+	if cm2.SessionName() != "重构 TUI" {
+		t.Errorf("SessionName = %q, want %q", cm2.SessionName(), "重构 TUI")
+	}
+
+	// 旧 session(无 name)→ 空
+	cm3 := New("system")
+	cm3.SetSessionName("旧名")
+	cm3.Save()
+	cm4 := New("system")
+	if !cm4.LoadFromFile(path) {
+		t.Fatal("LoadFromFile failed (cm4)")
+	}
+	// 未设置 name 的 Save 应保留已有 name(空 name 不覆盖)
+	cm5 := New("system")
+	_ = cm5.LoadFromFile(path)
+	if cm5.SessionName() != "重构 TUI" {
+		t.Errorf("name lost after reload cycle: %q", cm5.SessionName())
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Save / LoadFromFile / RemoveSession
 // ---------------------------------------------------------------------------
@@ -738,6 +809,7 @@ func TestRewindConversationTo_TruncatesMessages(t *testing.T) {
 	dir := t.TempDir()
 	cm := New("You are a helpful assistant.")
 	cm.SetSessionPath(filepath.Join(dir, "session.json"))
+	cm.SetSessionName("旧名")
 
 	// 累积几条消息
 	_, _ = cm.PrepareRun("first user message")
@@ -752,7 +824,7 @@ func TestRewindConversationTo_TruncatesMessages(t *testing.T) {
 	beforeCount := cm.MessageCount()
 
 	// 回退到索引 3（system + user "first" + assistant + tool）= 4，但索引是 4 → 保留到 tool
-	// 实际：messages = [system, user("first"), assistant, tool, user("second")] 
+	// 实际：messages = [system, user("first"), assistant, tool, user("second")]
 	// 回退到 user("first") 那条之前 → 索引 = 1（只保留 system）
 	newID, _, err := cm.RewindConversationTo(1, dir)
 	if err != nil {
@@ -769,6 +841,16 @@ func TestRewindConversationTo_TruncatesMessages(t *testing.T) {
 
 	// 旧 session 应该有之前的消息数
 	_ = beforeCount
+
+	// REGRESSION: fork 出的新 session 不应继承旧 name(避免 ls 下两个 session 同名混淆)。
+	// 通过新 path 加载 fork 产物验证 name 为空。
+	forked := New("system")
+	if !forked.LoadFromFile(cm.SessionPath()) {
+		t.Fatal("LoadFromFile(forked) failed")
+	}
+	if forked.SessionName() != "" {
+		t.Errorf("forked session name = %q, want empty", forked.SessionName())
+	}
 }
 
 func TestRewindConversationTo_InvalidIndex(t *testing.T) {
@@ -1004,7 +1086,7 @@ func TestLoadFromFile_WithRepair(t *testing.T) {
 		{Role: llm.RoleAssistant, ID: "a-1", Content: "hi"},
 	}
 
-	if err := SaveSessionToFile(path, badMessages, Stats{}, nil, nil, nil, nil, time.Time{}); err != nil {
+	if err := SaveSessionToFile(path, "", badMessages, Stats{}, nil, nil, nil, nil, time.Time{}); err != nil {
 		t.Fatalf("SaveSessionToFile: %v", err)
 	}
 

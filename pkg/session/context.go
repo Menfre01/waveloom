@@ -41,7 +41,8 @@ type ContextManager struct {
 	mu          sync.RWMutex
 	messages    []llm.Message
 	stats       Stats
-	sessionPath string // session 落盘路径（空表示不落盘）
+	sessionPath string // session 落盘路径(空表示不落盘)
+	sessionName string // 展示用 session 名称(--name 设置,仅展示不参与恢复)
 
 	// jsonlMessageCount 记录已写入 JSONL 的消息数，	// 用于增量追加（避免重复写入已持久化的消息）。
 	jsonlMessageCount int
@@ -280,6 +281,22 @@ func (cm *ContextManager) SessionPath() string {
 	return cm.sessionPath
 }
 
+// SetSessionName 设置展示用 session 名称。
+// 仅影响展示(--name / ls),不参与 session 恢复匹配。
+// 统一规范化(TrimSpace + 截断 + 过滤控制字符),保证内存值 = 落盘值 = recent.json 值。
+func (cm *ContextManager) SetSessionName(name string) {
+	cm.mu.Lock()
+	defer cm.mu.Unlock()
+	cm.sessionName = normalizeSessionName(name)
+}
+
+// SessionName 返回展示用 session 名称(未设置时为空字符串)。
+func (cm *ContextManager) SessionName() string {
+	cm.mu.RLock()
+	defer cm.mu.RUnlock()
+	return cm.sessionName
+}
+
 // SessionID 从落盘路径提取 session 标识符。未设置路径时返回空字符串。
 func (cm *ContextManager) SessionID() string {
 	cm.mu.RLock()
@@ -296,6 +313,7 @@ func (cm *ContextManager) SessionID() string {
 func (cm *ContextManager) Save() {
 	cm.mu.RLock()
 	path := cm.sessionPath
+	name := cm.sessionName
 	messages := make([]llm.Message, len(cm.messages))
 	copy(messages, cm.messages)
 	stats := cm.stats
@@ -324,7 +342,7 @@ func (cm *ContextManager) Save() {
 
 	if path != "" {
 		pm := &sessionPlanMode{Active: planActive, PlanFile: planFile}
-		_ = SaveSessionToFile(path, messages, stats, &compaction, todoItems, pm, fhData, lastCheck)
+		_ = SaveSessionToFile(path, name, messages, stats, &compaction, todoItems, pm, fhData, lastCheck)
 	}
 	n := len(messages)
 	sid := strings.TrimSuffix(filepath.Base(path), ".json")
@@ -360,6 +378,7 @@ func (cm *ContextManager) Save() {
 // 若消息列表因 compaction/ValidateMessages 缩短或过滤了无效消息，则全量重写 JSONL。
 func (cm *ContextManager) saveToPath(path string) {
 	cm.mu.RLock()
+	name := cm.sessionName
 	messages := make([]llm.Message, len(cm.messages))
 	copy(messages, cm.messages)
 	stats := cm.stats
@@ -386,9 +405,9 @@ func (cm *ContextManager) saveToPath(path string) {
 		messages = valid
 		forceRewrite = true
 	}
-	// 保存 JSON 元数据（stats / compaction / tasks / todo / plan / filehistory）
+	// 保存 JSON 元数据(stats / compaction / tasks / todo / plan / filehistory)
 	pm := &sessionPlanMode{Active: planActive, PlanFile: planFile}
-	_ = SaveSessionToFile(path, messages, stats, &compaction, todoItems, pm, fhData, lastCheck)
+	_ = SaveSessionToFile(path, name, messages, stats, &compaction, todoItems, pm, fhData, lastCheck)
 
 	n := len(messages)
 	sid := strings.TrimSuffix(filepath.Base(path), ".json")
@@ -448,7 +467,7 @@ func (cm *ContextManager) compactionData() compaction.CompactionData {
 //
 // 修复详情通过 stderr 输出（静默修复不阻塞恢复流程）。
 func (cm *ContextManager) LoadFromFile(path string) bool {
-	messages, stats, compactionData, _, tasks, todoItems, planMode, fileHistory, lastCheck, err := LoadSessionFromFile(path)
+	messages, stats, compactionData, _, name, tasks, todoItems, planMode, fileHistory, lastCheck, err := LoadSessionFromFile(path)
 	if err != nil || messages == nil {
 		return false
 	}
@@ -483,7 +502,6 @@ func (cm *ContextManager) LoadFromFile(path string) bool {
 		cm.fhData = fileHistory
 	}
 
-
 	// 反序列化后完整性校验
 	cleaned, report := llm.ValidateMessages(messages)
 	if len(report) > 0 {
@@ -515,6 +533,7 @@ func (cm *ContextManager) LoadFromFile(path string) bool {
 	cm.messages = messages
 	cm.stats = stats
 	cm.sessionPath = path
+	cm.sessionName = name
 	cm.jsonlMessageCount = len(messages) // 标记全部已写入 JSONL
 
 	// 恢复压缩状态
@@ -560,6 +579,7 @@ func (cm *ContextManager) Reset() {
 
 	cm.stats = Stats{}
 	cm.instructionsInjected = false
+	cm.sessionName = "" // 新 session 身份独立,不继承旧 name(/new 场景)
 	cm.stateful().Reset()
 	cm.jsonlMessageCount = 0
 
@@ -603,10 +623,11 @@ func (cm *ContextManager) RewindConversationTo(messageIndex int, sessionDir stri
 	}
 	cm.jsonlMessageCount = len(cm.messages)
 
-	// 写入新 JSON 元数据（零值 plan mode + 空 filehistory）
+	// 写入新 JSON 元数据(零值 plan mode + 空 filehistory + 空 name——fork 出的
+	// 新 session 身份独立,不应继承旧 name,避免 ls 下两个 session 同名混淆)
 	jsonPath := filepath.Join(sessionDir, newID+".json")
 	compData := cm.compactionData()
-	if err := SaveSessionToFile(jsonPath, cm.messages, cm.stats, &compData, nil, nil, nil, time.Time{}); err != nil {
+	if err := SaveSessionToFile(jsonPath, "", cm.messages, cm.stats, &compData, nil, nil, nil, time.Time{}); err != nil {
 		return "", "", fmt.Errorf("write fork json: %w", err)
 	}
 
