@@ -252,7 +252,12 @@ type model struct {
 	// 模型选择器覆盖层
 	modelPickerList     list.Model
 	modelPickerDelegate *list.DefaultDelegate
-	modelPickerItems    []llm.ModelInfo // 模型列表数据，主题切换时更新样式
+	modelPickerItems    []llm.ModelInfo // 模型列表数据,主题切换时更新样式
+
+	// effort 面板(e 键从模型选择器进入)
+	effortPickerMode    bool           // 是否处于 effort 档位面板
+	effortPickerList    list.Model
+	effortPickerEfforts []effortChoice // 当前可选档位(按 provider 过滤)
 
 	// 语言选择器覆盖层
 	localeList     list.Model
@@ -1761,13 +1766,17 @@ func extractToolFilePaths(toolName string, toolArgs string) []string {
 	return nil
 }
 
-// shortTokens 将 token 数格式化为短格式（≥1000 时用 k 后缀，保留一位小数）。
+// shortTokens 将 token 数格式化为短格式:
+// <1000 原样;≥1000 用 k 后缀;≥1M 用 M 后缀(均保留一位小数)。
 func shortTokens(n int) string {
-	if n < 1000 {
+	switch {
+	case n < 1000:
 		return fmt.Sprintf("%d", n)
+	case n < 1_000_000:
+		return fmt.Sprintf("%.1fk", float64(n)/1000)
+	default:
+		return fmt.Sprintf("%.1fM", float64(n)/1_000_000)
 	}
-	v := float64(n) / 1000
-	return fmt.Sprintf("%.1fk", v)
 }
 
 // 完整结果已通过 agent loop 传递给 LLM，截断仅影响 TUI 展示。
@@ -3371,7 +3380,7 @@ func (m *model) renderFooter() string {
 		if m.hudThinkingEffort == "max" {
 			effStyle = styleThinkMax
 		}
-		modelPart += styleFooterLabel.Render("(think ") + effStyle.Render(m.hudThinkingEffort) + styleFooterLabel.Render(")")
+		modelPart += styleFooterLabel.Render("(effort ") + effStyle.Render(m.hudThinkingEffort) + styleFooterLabel.Render(")")
 	}
 	ctxPart := m.renderCtxBarCompact()
 
@@ -4463,6 +4472,9 @@ func (m *model) reconfigureLLMClient(newModel string) {
 	} else {
 		m.hudModel = normalizeWidth(newModel)
 	}
+	// REGRESSION: /model 切换后 hudThinkingEffort 未随 settings 刷新,选择器路径
+	// (commitModelSwitch 基于仅项目文件解析)会清空档位。统一在此基于合并配置更新。
+	m.hudThinkingEffort = resolveThinkingEffort(settings)
 	m.rebuildSlashRegistry()
 	if m.agentTool != nil {
 		m.agentTool.SetClient(client)
@@ -4842,10 +4854,7 @@ func runTUI(llmClient llm.Client, registry tool.Registry, guard permission.Guard
 	if savedTheme := store.LoadTheme(); savedTheme != "" {
 		m.themeMode = savedTheme
 	}
-	// 初始化 thinking 档位显示
-	if s, err := store.LoadLLM(); err == nil {
-		m.hudThinkingEffort = resolveThinkingEffort(s)
-	}
+	m.initThinkingEffort(store)
 	lister := &tuiModelLister{client: llmClient}
 	sessionCreator := &tuiSessionCreator{m: m}
 
@@ -5055,6 +5064,17 @@ func (m *model) plansDirectory() string {
 	}
 	homeDir, _ := os.UserHomeDir()
 	return filepath.Join(homeDir, ".waveloom", "plans")
+}
+
+// initThinkingEffort 初始化 HUD thinking 档位显示(runTUI 启动路径)。
+// REGRESSION: 启动路径未 ResolveProfile 导致 profile 形态配置(3b3313b 后
+// /model 切换写入 profiles.<provider>.curr_model)的 extra_params 读不到,
+// HUD 档位不显示。与 createLLMClient 的解析顺序(Merge → ResolveProfile)保持一致。
+func (m *model) initThinkingEffort(store *tuiSettingsStore) {
+	if s, err := store.LoadLLM(); err == nil {
+		s.ResolveProfile()
+		m.hudThinkingEffort = resolveThinkingEffort(s)
+	}
 }
 
 // loadPlansDirectory 从 settings 读取 plans_directory 配置。

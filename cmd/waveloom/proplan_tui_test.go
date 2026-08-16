@@ -189,6 +189,67 @@ func TestProPlanTUI_ReconfigureNormalModel(t *testing.T) {
 	}
 }
 
+// TestRegression_StartupResolveProfileForThinkingEffort 验证启动路径(runTUI 初始化)
+// 对 profile 形态配置解析 thinking 档位。3b3313b 后 /model 切换写入
+// profiles.<provider>.curr_model,extra_params 位于 profile 内:启动时若只做
+// MergeLLMSettings 不 ResolveProfile,resolveThinkingEffort 读不到顶层
+// ExtraParams → HUD 档位不显示。与 createLLMClient 的解析顺序保持一致。
+func TestRegression_StartupResolveProfileForThinkingEffort(t *testing.T) {
+	dir := t.TempDir()
+	globalPath := filepath.Join(dir, "global.json")
+	projectPath := filepath.Join(dir, "project.json")
+	// 全局无 extra_params;项目为 profile 形态(reasoning_effort 在 profile 内)
+	if err := os.WriteFile(globalPath, []byte(`{"llm":{"api_key":"sk-test","provider":"deepseek","model":"deepseek-v4-pro"}}`), 0o644); err != nil {
+		t.Fatalf("WriteFile global: %v", err)
+	}
+	if err := os.WriteFile(projectPath, []byte(`{"llm":{"api_key":"sk-test","provider":"deepseek","model":"deepseek-v4-pro","sub_model":"deepseek-v4-flash","profiles":{"deepseek":{"curr_model":"deepseek-v4-flash","extra_params":{"thinking":{"type":"enabled"},"reasoning_effort":"max"}}}}}`), 0o644); err != nil {
+		t.Fatalf("WriteFile project: %v", err)
+	}
+	store := &tuiSettingsStore{projectPath: projectPath, globalPath: globalPath}
+
+	// 驱动真实启动路径(runTUI 调用 initThinkingEffort):Merge → ResolveProfile → resolveThinkingEffort
+	m := newProPlanTUIModel()
+	m.settingsStore = store
+	m.initThinkingEffort(store)
+	if m.hudThinkingEffort != "max" {
+		t.Errorf("hudThinkingEffort = %q, want max (profile extra_params must be visible at startup)", m.hudThinkingEffort)
+	}
+}
+
+// TestRegression_ModelSwitchKeepsThinkingEffort 验证 /model 切换后 HUD thinking
+// 档位不丢失:reasoning_effort 配置在全局 settings,项目文件无 extra_params。
+// 修复前 reconfigureLLMClient 不更新 hudThinkingEffort,commitModelSwitch 又
+// 基于仅项目文件的 settings 解析 → 返回空,footer 的 (think ...) 消失。
+func TestRegression_ModelSwitchKeepsThinkingEffort(t *testing.T) {
+	dir := t.TempDir()
+	globalPath := filepath.Join(dir, "global.json")
+	projectPath := filepath.Join(dir, "project.json")
+	// 全局配置 reasoning_effort(与 setup 流程落盘形态一致)
+	if err := os.WriteFile(globalPath, []byte(`{"llm":{"api_key":"sk-test","provider":"deepseek","model":"deepseek-v4-pro","sub_model":"deepseek-v4-flash","extra_params":{"thinking":{"type":"enabled"},"reasoning_effort":"max"}}}`), 0o644); err != nil {
+		t.Fatalf("WriteFile global: %v", err)
+	}
+	// 项目文件仅含 provider/model(无 extra_params,/model 切换后写入 curr_model 形态)
+	if err := os.WriteFile(projectPath, []byte(`{"llm":{"api_key":"sk-test","provider":"deepseek","model":"deepseek-v4-pro","sub_model":"deepseek-v4-flash","profiles":{"deepseek":{"curr_model":"deepseek-v4-flash"}}}}`), 0o644); err != nil {
+		t.Fatalf("WriteFile project: %v", err)
+	}
+	m := newProPlanTUIModel()
+	m.settingsStore = &tuiSettingsStore{projectPath: projectPath, globalPath: globalPath}
+	m.planModel = "deepseek-v4-pro"
+	m.subModel = "deepseek-v4-flash"
+	m.modelChoice = "deepseek-v4-flash"
+	m.hudModel = "deepseek-v4-flash"
+	m.hudThinkingEffort = "" // 缺陷路径:切换后档位被清空;修复后 reconfigure 应恢复为合并配置的档位
+
+	m.reconfigureLLMClient("deepseek-v4-pro")
+
+	if m.hudThinkingEffort != "max" {
+		t.Errorf("hudThinkingEffort = %q, want max (must survive /model switch)", m.hudThinkingEffort)
+	}
+	if m.hudModel != "deepseek-v4-pro" {
+		t.Errorf("hudModel = %q, want deepseek-v4-pro", m.hudModel)
+	}
+}
+
 // TestProPlanTUI_ProviderSwitchKeepsProPlan 验证 /provider 切换到锚点齐全的
 // provider 时,proplan 选择保持(锚点/显示切换为新 provider 的模型)。
 func TestProPlanTUI_ProviderSwitchKeepsProPlan(t *testing.T) {

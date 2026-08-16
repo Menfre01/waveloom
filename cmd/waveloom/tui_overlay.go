@@ -238,8 +238,18 @@ func localePickerKeyBindings(lc *Messages) []key.Binding {
 func modelPickerKeyBindings(lc *Messages) []key.Binding {
 	return []key.Binding{
 		key.NewBinding(key.WithKeys("↑/↓"), key.WithHelp("↑/↓", lc.KeyNav)),
+		key.NewBinding(key.WithKeys("e"), key.WithHelp("e", lc.KeyEffort)),
 		key.NewBinding(key.WithKeys("enter"), key.WithHelp("Enter", lc.KeyConfirm)),
 		key.NewBinding(key.WithKeys("esc"), key.WithHelp("Esc", lc.KeyCancel)),
+	}
+}
+
+// effortPickerKeyBindings effort 档位面板快捷键。
+func effortPickerKeyBindings(lc *Messages) []key.Binding {
+	return []key.Binding{
+		key.NewBinding(key.WithKeys("↑/↓"), key.WithHelp("↑/↓", lc.KeyNav)),
+		key.NewBinding(key.WithKeys("enter"), key.WithHelp("Enter", lc.KeyConfirm)),
+		key.NewBinding(key.WithKeys("esc"), key.WithHelp("Esc", lc.KeyBack)),
 	}
 }
 
@@ -268,6 +278,27 @@ func (m *model) renderThemePickerOverlay(boxWidth int) string {
 
 func (m *model) renderModelPickerOverlay(boxWidth int) string {
 	innerWidth := boxWidth - 2 - 4
+	// effort 档位面板模式:渲染档位列表
+	if m.effortPickerMode {
+		// 与 buildEffortPickerList 一致:ShowDescription 每项占两行
+		height := len(m.effortPickerEfforts) * 2
+		if height > 8 {
+			height = 8
+		}
+		if height < 1 {
+			height = 1
+		}
+		m.effortPickerList.SetSize(innerWidth, height)
+
+		title := styleOverlayTitle.Width(innerWidth).Render(m.msg().PickerSelectEffort)
+		contentLines := []string{title, ""}
+		contentLines = append(contentLines, styleOverlayBody.Width(innerWidth).Render(m.effortPickerList.View()))
+		contentLines = append(contentLines, "")
+		hint := renderOverlayHint(&m.help, innerWidth, effortPickerKeyBindings(m.msg()))
+		contentLines = append(contentLines, hint)
+		return renderOverlayBox(boxWidth, m.overlayAnimFrame, strings.Join(contentLines, "\n"))
+	}
+
 	height := len(m.modelPickerItems)
 	if height > 5 {
 		height = 5

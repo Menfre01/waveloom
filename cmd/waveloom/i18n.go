@@ -84,9 +84,16 @@ type Messages struct {
 	// ── Theme / Model picker ─────────────────────────────
 	PickerSelectTheme  string
 	PickerSelectModel  string
+	PickerSelectEffort string
 	PickerSelectLocale string
 	PickerSelectProvider string
 	PickerThemeAuto    string
+	EffortSwitched     string // 含 %s
+	EffortDescOff      string
+	EffortDescLow      string
+	EffortDescMedium   string
+	EffortDescHigh     string
+	EffortDescMax      string
 
 	// ── File picker ──────────────────────────────────────
 	PickerScanning  string
@@ -95,6 +102,8 @@ type Messages struct {
 	// ── Key bindings ─────────────────────────────────────
 	KeyNav         string
 	KeyConfirm     string
+	KeyEffort      string // e 键:进入 thinking 档位面板
+	KeyBack        string // Esc 返回上级面板
 	KeyDeny        string
 	KeyCancel      string
 	KeyToggle      string
@@ -319,15 +328,24 @@ var zhCN = Messages{
 	// Picker
 	PickerSelectTheme:  "▲ 选择主题",
 	PickerSelectModel:  "▲ 选择模型",
+	PickerSelectEffort: "▲ 选择思考档位",
 	PickerSelectLocale: "▲ 选择界面语言",
 	PickerSelectProvider: "▲ 选择 Provider",
-	PickerThemeAuto:    "Auto（自动检测终端背景色）",
+	PickerThemeAuto:    "Auto(自动检测终端背景色)",
+	EffortSwitched:     "思考档位已切换为 %s",
+	EffortDescOff:      "关闭 — 不思考,响应最快,省 token",
+	EffortDescLow:      "低 — 响应更快,省 token,复杂任务易出错",
+	EffortDescMedium:   "中 — 权衡速度与推理深度",
+	EffortDescHigh:     "高 — 更强推理,延迟与费用更高",
+	EffortDescMax:      "最强 — 全力思考,适合代码/数学等复杂任务",
 	PickerScanning:     "正在扫描文件...",
 	PickerNoResults:    "无匹配文件",
 
 	// Key bindings
 	KeyNav:         "导航",
 	KeyConfirm:     "确认",
+	KeyEffort:      "思考档位",
+	KeyBack:        "返回",
 	KeyDeny:        "拒绝",
 	KeyCancel:      "取消",
 	KeyToggle:      "勾选",
@@ -618,15 +636,24 @@ var enUS = Messages{
 	// Picker
 	PickerSelectTheme:  "▲ Select Theme",
 	PickerSelectModel:  "▲ Select Model",
+	PickerSelectEffort: "▲ Select Reasoning Effort",
 	PickerSelectLocale: "▲ Select Language",
 	PickerSelectProvider: "▲ Select Provider",
 	PickerThemeAuto:    "Auto (detect terminal background)",
+	EffortSwitched:     "Reasoning effort switched to %s",
+	EffortDescOff:      "Off — no thinking, fastest responses, fewer tokens",
+	EffortDescLow:      "Low — faster responses, fewer tokens, weaker on complex tasks",
+	EffortDescMedium:   "Medium — balance of speed and reasoning depth",
+	EffortDescHigh:     "High — stronger reasoning, higher latency and cost",
+	EffortDescMax:      "Max — full reasoning, best for code/math and complex tasks",
 	PickerScanning:     "Scanning files...",
 	PickerNoResults:    "No files found",
 
 	// Key bindings
 	KeyNav:         "Navigate",
 	KeyConfirm:     "Confirm",
+	KeyEffort:      "Reasoning effort",
+	KeyBack:        "Back",
 	KeyDeny:        "Deny",
 	KeyCancel:      "Cancel",
 	KeyToggle:      "Toggle",

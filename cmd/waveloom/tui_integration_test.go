@@ -1,6 +1,8 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -162,6 +164,203 @@ func TestHandleModelPickerKey_EscCloses(t *testing.T) {
 	}
 }
 
+// newTestModelForEffortPicker 构造带 settingsStore 的模型选择器 model。
+// buildEffortPickerList 依赖 LoadLLM(读项目文件),commitEffortSwitch 依赖
+// SaveLLM + reconfigureLLMClient(NewClientFromLLMSettings 需 api_key)。
+func newTestModelForEffortPicker(t *testing.T) (*model, *tuiSettingsStore) {
+	t.Helper()
+	dir := t.TempDir()
+	projectPath := filepath.Join(dir, "settings.json")
+	if err := os.WriteFile(projectPath, []byte(`{"llm":{"api_key":"sk-test","provider":"deepseek","model":"deepseek-v4-pro"}}`), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	store := &tuiSettingsStore{projectPath: projectPath}
+	m := newTestModelForModelPicker()
+	m.settingsStore = store
+	m.modelChoice = "deepseek-v4-pro"
+	m.hudThinkingEffort = "high"
+	return m, store
+}
+
+// TestHandleModelPickerKey_E_EntersEffortMode 验证按 e 进入 effort 档位面板,
+// 且当前档位在列表中高亮(Select 索引指向 hudThinkingEffort)。
+func TestHandleModelPickerKey_E_EntersEffortMode(t *testing.T) {
+	m, _ := newTestModelForEffortPicker(t)
+
+	handled, _ := m.handleModelPickerKey(tea.KeyPressMsg{Text: "e", Code: 'e'})
+	if !handled {
+		t.Error("e should be handled")
+	}
+	if !m.effortPickerMode {
+		t.Fatal("effortPickerMode should be true after pressing e")
+	}
+	if len(m.effortPickerEfforts) != 3 {
+		t.Errorf("deepseek should offer 3 efforts (off/high/max), got %d", len(m.effortPickerEfforts))
+	}
+	if m.effortPickerEfforts[0].ID != "off" || m.effortPickerEfforts[1].ID != "high" || m.effortPickerEfforts[2].ID != "max" {
+		t.Errorf("deepseek efforts = %+v, want [off high max]", m.effortPickerEfforts)
+	}
+	// 当前档位 high 应被高亮(deepseek 档位 [off high max] 中索引 1)
+	if got := m.effortPickerList.Index(); got != 1 {
+		t.Errorf("effort list should highlight current effort high (index 1), got %d", got)
+	}
+}
+
+// TestHandleModelPickerKey_EffortEscReturns 验证 effort 面板按 esc 返回模型列表
+// (overlay 保持,仅退出 effort 模式)。
+func TestHandleModelPickerKey_EffortEscReturns(t *testing.T) {
+	m, _ := newTestModelForEffortPicker(t)
+	m.effortPickerMode = true
+	m.buildEffortPickerList()
+
+	handled, _ := m.handleModelPickerKey(tea.KeyPressMsg{Text: "esc", Code: 'e'})
+	if !handled {
+		t.Error("esc should be handled in effort mode")
+	}
+	if m.effortPickerMode {
+		t.Error("effortPickerMode should be false after esc")
+	}
+	if m.overlay != overlayModelPicker {
+		t.Errorf("overlay should stay model picker, got %v", m.overlay)
+	}
+}
+
+// TestHandleModelPickerKey_EffortEnterCommits 验证 effort 面板按 enter 提交:
+// 档位写入项目 settings.json 的 extra_params.reasoning_effort,HUD 档位同步更新。
+func TestHandleModelPickerKey_EffortEnterCommits(t *testing.T) {
+	m, store := newTestModelForEffortPicker(t)
+	m.effortPickerMode = true
+	m.buildEffortPickerList()
+	// 选中 "max"(deepseek 档位 [off high max] 索引 2)
+	m.effortPickerList.Select(2)
+
+	handled, _ := m.handleModelPickerKey(tea.KeyPressMsg{Text: "enter", Code: 'e'})
+	if !handled {
+		t.Error("enter should be handled in effort mode")
+	}
+	if m.effortPickerMode {
+		t.Error("effortPickerMode should be false after commit")
+	}
+	if m.overlay != overlayNone {
+		t.Errorf("overlay should close after commit, got %v", m.overlay)
+	}
+	if m.hudThinkingEffort != "max" {
+		t.Errorf("hudThinkingEffort = %q, want max", m.hudThinkingEffort)
+	}
+	// 验证落盘
+	saved, err := store.LoadProjectLLM()
+	if err != nil {
+		t.Fatalf("LoadProjectLLM: %v", err)
+	}
+	if got := saved.ExtraParams["reasoning_effort"]; got != "max" {
+		t.Errorf("saved reasoning_effort = %v, want max", got)
+	}
+}
+
+// TestHandleModelPickerKey_EffortKimiOnlyMax 验证 Kimi 仅提供 max 档位。
+func TestHandleModelPickerKey_EffortKimiOnlyMax(t *testing.T) {
+	dir := t.TempDir()
+	projectPath := filepath.Join(dir, "settings.json")
+	if err := os.WriteFile(projectPath, []byte(`{"llm":{"api_key":"sk-test","provider":"kimi","model":"kimi-k3"}}`), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	store := &tuiSettingsStore{projectPath: projectPath}
+	m := newTestModelForModelPicker()
+	m.settingsStore = store
+
+	handled, _ := m.handleModelPickerKey(tea.KeyPressMsg{Text: "e", Code: 'e'})
+	if !handled {
+		t.Error("e should be handled")
+	}
+	if !m.effortPickerMode {
+		t.Fatal("effortPickerMode should be true")
+	}
+	if len(m.effortPickerEfforts) != 1 || m.effortPickerEfforts[0].ID != "max" {
+		t.Errorf("kimi efforts = %+v, want [max]", m.effortPickerEfforts)
+	}
+}
+
+// TestHandleModelPickerKey_EffortCommitWritesProfile 验证 profile 形态配置
+// (reasoning_effort 位于 profiles.<provider>.extra_params)时,档位写入 profile
+// 而非顶层——ResolveProfile 后生效,避免写顶层被 profile 覆盖导致不生效。
+func TestHandleModelPickerKey_EffortCommitWritesProfile(t *testing.T) {
+	dir := t.TempDir()
+	projectPath := filepath.Join(dir, "settings.json")
+	if err := os.WriteFile(projectPath, []byte(`{"llm":{"api_key":"sk-test","provider":"deepseek","model":"deepseek-v4-pro","profiles":{"deepseek":{"curr_model":"deepseek-v4-flash"}}}}`), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	store := &tuiSettingsStore{projectPath: projectPath}
+	m := newTestModelForModelPicker()
+	m.settingsStore = store
+	m.modelChoice = "deepseek-v4-pro"
+	m.hudThinkingEffort = "high"
+	m.effortPickerMode = true
+	m.buildEffortPickerList()
+	m.effortPickerList.Select(2) // max(deepseek [off high max] 索引 2)
+
+	_, _ = m.handleModelPickerKey(tea.KeyPressMsg{Text: "enter", Code: 'e'})
+
+	saved, err := store.LoadProjectLLM()
+	if err != nil {
+		t.Fatalf("LoadProjectLLM: %v", err)
+	}
+	prof := saved.Profiles["deepseek"]
+	if prof == nil {
+		t.Fatal("profile deepseek should exist")
+	}
+	if got := prof.ExtraParams["reasoning_effort"]; got != "max" {
+		t.Errorf("profile reasoning_effort = %v, want max", got)
+	}
+	if got := saved.ExtraParams["reasoning_effort"]; got != nil {
+		t.Errorf("top-level reasoning_effort should stay nil, got %v", got)
+	}
+}
+
+// TestHandleModelPickerKey_EffortOffDisablesThinking 验证选择 off 后:
+// thinking.type=disabled 落盘、reasoning_effort 被移除、HUD 档位清空(不显示)。
+func TestHandleModelPickerKey_EffortOffDisablesThinking(t *testing.T) {
+	m, store := newTestModelForEffortPicker(t)
+	m.effortPickerMode = true
+	m.buildEffortPickerList()
+	m.effortPickerList.Select(0) // off(deepseek [off high max] 索引 0)
+
+	handled, _ := m.handleModelPickerKey(tea.KeyPressMsg{Text: "enter", Code: 'e'})
+	if !handled {
+		t.Error("enter should be handled in effort mode")
+	}
+	if m.hudThinkingEffort != "" {
+		t.Errorf("hudThinkingEffort = %q, want empty (off hides effort in HUD)", m.hudThinkingEffort)
+	}
+	saved, err := store.LoadProjectLLM()
+	if err != nil {
+		t.Fatalf("LoadProjectLLM: %v", err)
+	}
+	thinking, ok := saved.ExtraParams["thinking"].(map[string]any)
+	if !ok || thinking["type"] != "disabled" {
+		t.Errorf("thinking = %#v, want {type: disabled}", saved.ExtraParams["thinking"])
+	}
+	if _, ok := saved.ExtraParams["reasoning_effort"]; ok {
+		t.Error("reasoning_effort should be removed when off")
+	}
+}
+
+// TestRenderModelPickerOverlay_EffortMode 验证 effort 面板渲染包含标题与档位。
+func TestRenderModelPickerOverlay_EffortMode(t *testing.T) {
+	m, _ := newTestModelForEffortPicker(t)
+	m.effortPickerMode = true
+	m.buildEffortPickerList()
+
+	content := m.renderModelPickerOverlay(40)
+	if content == "" {
+		t.Fatal("effort overlay should produce non-empty output")
+	}
+	if !strings.Contains(content, "max") {
+		t.Error("effort overlay should contain 'max' effort")
+	}
+	if !strings.Contains(content, "off") {
+		t.Error("effort overlay should contain 'off' effort")
+	}
+}
 
 // ---------------------------------------------------------------------------
 // Locale picker — render

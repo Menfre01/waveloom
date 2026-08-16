@@ -194,7 +194,6 @@ func TestFormatToolArgs_UnknownTool(t *testing.T) {
 	}
 }
 
-
 func TestCollapseMultilineCommand(t *testing.T) {
 	tests := []struct {
 		name  string
@@ -496,6 +495,28 @@ func TestFormatTokens(t *testing.T) {
 		got := formatTokens(tt.n)
 		if got != tt.want {
 			t.Errorf("formatTokens(%d) = %q, want %q", tt.n, got, tt.want)
+		}
+	}
+}
+
+// TestShortTokens 验证 HUD tok 短格式:k 与 M 单位。
+func TestShortTokens(t *testing.T) {
+	tests := []struct {
+		n    int
+		want string
+	}{
+		{0, "0"},
+		{512, "512"},
+		{3860, "3.9k"},
+		{38600, "38.6k"},
+		{999999, "1000.0k"},
+		{1000000, "1.0M"},
+		{1250000, "1.2M"},
+	}
+	for _, tt := range tests {
+		got := shortTokens(tt.n)
+		if got != tt.want {
+			t.Errorf("shortTokens(%d) = %q, want %q", tt.n, got, tt.want)
 		}
 	}
 }

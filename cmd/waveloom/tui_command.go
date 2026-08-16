@@ -40,6 +40,21 @@ func (i modelPickerItem) Title() string       { return i.modelID }
 func (i modelPickerItem) Description() string { return i.ownedBy }
 func (i modelPickerItem) FilterValue() string { return i.modelID }
 
+// effortChoice 是一个思考档位(extra_params.reasoning_effort 可选值)。
+type effortChoice struct {
+	ID          string // 写入 settings 的值(low/medium/high/max)
+	Description string // 档位说明(来自 i18n)
+}
+
+// effortPickerItem 是 effort 档位列表项。
+type effortPickerItem struct {
+	choice effortChoice
+}
+
+func (i effortPickerItem) Title() string       { return i.choice.ID }
+func (i effortPickerItem) Description() string { return i.choice.Description }
+func (i effortPickerItem) FilterValue() string { return i.choice.ID }
+
 // commandPickerItem 是 slash 命令选择器列表项。
 type commandPickerItem struct {
 	name        string
@@ -610,9 +625,11 @@ func (m *model) buildModelPickerList() {
 		}
 	}
 
-	height := len(items)
-	if height > 5 {
-		height = 5
+	// ShowDescription 使每项占两行(Title + Description),高度按行数计算,
+	// 保证全部档位一页可见(选中当前档位时不会滚动隐藏其他档位)。
+	height := len(items) * 2
+	if height > 8 {
+		height = 8
 	}
 	if height < 1 {
 		height = 1
@@ -653,6 +670,36 @@ func (m *model) handleModelPickerKey(msg tea.KeyPressMsg) (bool, tea.Cmd) {
 		return true, nil
 	}
 	keyStr := msg.String()
+	// effort 档位面板模式(e 键进入):↑/↓ 导航,Enter 确认,Esc 返回模型列表
+	if m.effortPickerMode {
+		switch keyStr {
+		case "up":
+			if m.effortPickerList.Index() <= 0 {
+				return true, nil
+			}
+			var cmd tea.Cmd
+			m.effortPickerList, cmd = m.effortPickerList.Update(msg)
+			return true, cmd
+		case "down":
+			if m.effortPickerList.Index() >= len(m.effortPickerEfforts)-1 {
+				return true, nil
+			}
+			var cmd tea.Cmd
+			m.effortPickerList, cmd = m.effortPickerList.Update(msg)
+			return true, cmd
+		case "enter":
+			if idx := m.effortPickerList.Index(); idx >= 0 && idx < len(m.effortPickerEfforts) {
+				m.commitEffortSwitch(m.effortPickerEfforts[idx].ID)
+			}
+			m.closeModelPicker()
+			return true, nil
+		case "esc":
+			// 返回模型列表(仅退出 effort 面板,不关闭选择器)
+			m.effortPickerMode = false
+			return true, nil
+		}
+		return true, nil
+	}
 	switch keyStr {
 	case "up":
 		if m.modelPickerList.Index() <= 0 {
@@ -670,6 +717,12 @@ func (m *model) handleModelPickerKey(msg tea.KeyPressMsg) (bool, tea.Cmd) {
 		var cmd tea.Cmd
 		m.modelPickerList, cmd = m.modelPickerList.Update(msg)
 		return true, cmd
+	case "e":
+		// 进入 effort 档位面板(effort 为全局配置,与当前选中模型无关)
+		if m.buildEffortPickerList() {
+			m.effortPickerMode = true
+		}
+		return true, nil
 	case "enter":
 		idx := m.modelPickerList.Index()
 		if idx >= 0 && idx < len(m.modelPickerItems) {
@@ -721,8 +774,10 @@ func (m *model) commitModelSwitch(modelID string) {
 	if err := m.settingsStore.SaveLLM(settings); err != nil {
 		slog.Warn("failed to save LLM settings", "err", err)
 	}
-	m.hudThinkingEffort = resolveThinkingEffort(settings)
-	m.reconfigureLLMClient(modelID) // hudModel 在 reconfigure 成功路径统一更新(失败不残留)
+	// REGRESSION: 不得在此用 LoadProjectLLM 结果解析 thinking 档位——项目文件
+	// 无 extra_params(配置在全局)时 resolveThinkingEffort 返回空,清空 HUD。
+	// hudThinkingEffort 与 hudModel 统一在 reconfigureLLMClient 内基于合并配置更新。
+	m.reconfigureLLMClient(modelID) // hudModel/hudThinkingEffort 在 reconfigure 成功路径统一更新(失败不残留)
 
 	// 追加系统通知
 	lc := m.msg()
@@ -737,7 +792,140 @@ func (m *model) commitModelSwitch(modelID string) {
 	m.flushTranscript()
 }
 
+// effortChoicesForProvider 返回当前 provider 支持的 thinking 档位。
+// DeepSeek: off/high/max(off 关闭思考;chat 模式 low/medium 经 adapter 映射为
+// high,xhigh→max,故不暴露无效档位);OpenAI 兼容: low/medium/high(无 thinking
+// 参数,不提供 off);Kimi: 仅 max(adapter 强制思考,无法关闭)。
+func effortChoicesForProvider(provider string, lc *Messages) []effortChoice {
+	all := []effortChoice{
+		{ID: "low", Description: lc.EffortDescLow},
+		{ID: "medium", Description: lc.EffortDescMedium},
+		{ID: "high", Description: lc.EffortDescHigh},
+		{ID: "max", Description: lc.EffortDescMax},
+	}
+	switch provider {
+	case string(llm.ProviderKimi):
+		// Kimi K3 始终启用思考,当前仅支持 max。
+		return []effortChoice{all[3]}
+	case string(llm.ProviderOpenAI):
+		// OpenAI 兼容协议无 max 档位。
+		return all[:3]
+	default: // deepseek 及其余:off/high/max
+		return []effortChoice{
+			{ID: "off", Description: lc.EffortDescOff},
+			all[2], all[3],
+		}
+	}
+}
+
+// buildEffortPickerList 按当前 provider 构建档位列表。
+// 返回 false 表示无可选档位(不进入 effort 面板)。
+func (m *model) buildEffortPickerList() bool {
+	settings, err := m.settingsStore.LoadLLM()
+	if err != nil || settings == nil {
+		return false
+	}
+	settings.ResolveProfile()
+	provider := settings.Provider
+	if provider == "" {
+		provider = string(llm.ProviderDeepSeek)
+	}
+	m.effortPickerEfforts = effortChoicesForProvider(provider, m.msg())
+	if len(m.effortPickerEfforts) == 0 {
+		return false
+	}
+
+	items := make([]list.Item, len(m.effortPickerEfforts))
+	selectedIdx := 0
+	for i, e := range m.effortPickerEfforts {
+		items[i] = effortPickerItem{choice: e}
+		if e.ID == m.hudThinkingEffort {
+			selectedIdx = i
+		}
+	}
+
+	height := len(items)
+	if height > 5 {
+		height = 5
+	}
+	if height < 1 {
+		height = 1
+	}
+
+	delegate := list.NewDefaultDelegate()
+	delegate.ShowDescription = true
+	delegate.SetSpacing(0)
+	delegate.Styles = listItemStyles()
+
+	l := list.New(items, delegate, 0, height)
+	l.SetShowTitle(false)
+	l.SetShowPagination(false)
+	l.SetShowStatusBar(false)
+	l.SetShowFilter(false)
+	l.SetShowHelp(false)
+	l.KeyMap.Quit = key.NewBinding()
+	l.KeyMap.ForceQuit = key.NewBinding()
+	if selectedIdx < height {
+		l.Select(selectedIdx)
+	}
+	m.effortPickerList = l
+	return true
+}
+
+// commitEffortSwitch 确认思考档位切换:写 settings + 热替换。
+func (m *model) commitEffortSwitch(effort string) {
+	// 写入目标 = 项目文件自身(不合并全局),与 commitModelSwitch 一致。
+	settings, err := m.settingsStore.LoadProjectLLM()
+	if err != nil {
+		settings = &llm.LLMSettings{}
+	}
+	if settings == nil {
+		settings = &llm.LLMSettings{}
+	}
+	// 写入位置与 curr_model 一致:项目已有该 provider 的 profile → 写 profile 的
+	// extra_params(profile 形态配置,ResolveProfile 后生效);无 → 写顶层
+	// extra_params(旧格式,避免创建空 profile 覆盖全局)。
+	target := settings
+	if p := settings.Profiles[settings.Provider]; p != nil {
+		target = p
+	}
+	if target.ExtraParams == nil {
+		target.ExtraParams = map[string]any{}
+	}
+	if effort == "off" {
+		// 关闭思考:thinking.type=disabled,并移除 reasoning_effort 防残留生效
+		// (resolveThinkingEffort 对 disabled 返回空,HUD 不显示档位)。
+		target.ExtraParams["thinking"] = map[string]any{"type": "disabled"}
+		delete(target.ExtraParams, "reasoning_effort")
+	} else {
+		// 对齐 setup 落盘形态:reasoning_effort 单独存在;thinking 未配置或此前
+		// 为 disabled(off 后再开启)时补 enabled。
+		if thinking, ok := target.ExtraParams["thinking"].(map[string]any); !ok || thinking["type"] != "enabled" {
+			target.ExtraParams["thinking"] = map[string]any{"type": "enabled"}
+		}
+		target.ExtraParams["reasoning_effort"] = effort
+	}
+	if err := m.settingsStore.SaveLLM(settings); err != nil {
+		slog.Warn("failed to save LLM settings", "err", err)
+	}
+
+	m.reconfigureLLMClient(m.modelChoice) // hudThinkingEffort/hudModel 统一更新
+
+	// 追加系统通知
+	lc := m.msg()
+	text := fmt.Sprintf(lc.EffortSwitched, effort)
+	m.paras = append(m.paras, Paragraph{
+		Type:      paraSystem,
+		State:     stateDone,
+		Text:      text,
+		NotifKind: notifInfo,
+	})
+	m.trimParas()
+	m.flushTranscript()
+}
+
 func (m *model) closeModelPicker() {
+	m.effortPickerMode = false
 	m.overlay = overlayNone
 	m.input.Focus()
 }
