@@ -2463,23 +2463,28 @@ func subagentSuffix(p *Paragraph, lc *Messages) string {
 		return "(interrupted)"
 	}
 	suffix := ""
-	if p.SubagentModel != "" {
-		suffix = p.SubagentModel + ", "
-	}
-	if p.SubagentTurns > 0 {
-		suffix += fmt.Sprintf(lc.SubagentTurnsFmt, p.SubagentTurns)
-	}
-	if p.ToolDurMs > 0 {
-		if suffix != "" && p.SubagentTurns > 0 {
+	// REGRESSION: 片段统一延迟拼 ", ",避免 model 单独出现时输出 "(flash, )"
+	// 或 model+token 无 turns 时输出双逗号。由 TestSubagentSuffix 覆盖
+	add := func(part string) {
+		if suffix != "" {
 			suffix += ", "
 		}
-		suffix += formatDuration(p.ToolDurMs)
+		suffix += part
+	}
+	if p.SubagentModel != "" {
+		add(p.SubagentModel)
+	}
+	if p.SubagentTurns > 0 {
+		add(fmt.Sprintf(lc.SubagentTurnsFmt, p.SubagentTurns))
+	}
+	if p.ToolDurMs > 0 {
+		add(formatDuration(p.ToolDurMs))
 	}
 	if p.SubagentPromptTok > 0 {
-		suffix += fmt.Sprintf(", ↑%s", formatTokens(p.SubagentPromptTok))
+		add("↑" + formatTokens(p.SubagentPromptTok))
 	}
 	if p.SubagentComplTok > 0 {
-		suffix += fmt.Sprintf(", ↓%s", formatTokens(p.SubagentComplTok))
+		add("↓" + formatTokens(p.SubagentComplTok))
 	}
 	if suffix == "" {
 		return ""
