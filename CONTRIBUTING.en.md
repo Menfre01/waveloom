@@ -63,8 +63,7 @@ waveloom/
 │   ├── subagent/          # Sub-agents (Fork/Cold/Explore)
 │   ├── task/              # Background task management
 │   ├── todo/              # Todo state management
-│   ├── tool/              # Built-in tool system
-│   └── tuitest/           # TUI test helpers
+│   └── tool/              # Built-in tool system
 ├── specs/                 # Component design specs (read before modifying)
 ├── docs/                  # Documentation
 └── Makefile

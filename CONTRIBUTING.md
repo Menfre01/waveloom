@@ -63,8 +63,7 @@ waveloom/
 │   ├── subagent/          # 子代理(Fork/Cold/Explore)
 │   ├── task/              # 后台任务管理
 │   ├── todo/              # Todo 状态管理
-│   ├── tool/              # 内置工具系统
-│   └── tuitest/           # TUI 测试辅助
+│   └── tool/              # 内置工具系统
 ├── specs/                 # 各组件设计规格书（修改前先阅读）
 ├── docs/                  # 文档
 └── Makefile

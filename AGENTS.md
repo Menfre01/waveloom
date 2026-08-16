@@ -38,7 +38,6 @@ pkg/
   task/          后台任务管理
   todo/          Todo 状态管理
   tool/          工具系统(内置工具,TypedTool[P] 泛型接口)
-  tuitest/       TUI 测试辅助(Bubble Tea v2 model 测试)
 specs/           各组件规格书(修改前先阅读;内部文档,不纳入公开仓库)
 ```
 
