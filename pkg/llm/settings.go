@@ -56,7 +56,12 @@ func (s *LLMSettings) ResolveProfile() {
 	if p.BaseURL != "" {
 		s.BaseURL = p.BaseURL
 	}
-	s.ExtraParams = p.ExtraParams
+	// REGRESSION: 无条件覆盖会在 profile 无 extra_params 时清空合并/顶层配置
+	// (如全局 reasoning_effort),导致 /model 切换后 HUD 档位消失、请求丢失参数。
+	// 仅 profile 显式配置时覆盖。
+	if p.ExtraParams != nil {
+		s.ExtraParams = p.ExtraParams
+	}
 }
 
 // RetrySettings 对应 settings.json 中的 retry 配置块。

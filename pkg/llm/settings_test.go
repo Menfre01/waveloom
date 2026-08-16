@@ -953,6 +953,47 @@ func TestResolveProfile(t *testing.T) {
 	})
 }
 
+// TestRegression_ResolveProfileKeepsExtraParams 验证 profile 无 extra_params 时
+// ResolveProfile 不清空已合并的 ExtraParams。修复前无条件 `s.ExtraParams = p.ExtraParams`
+// 会把全局/合并配置(如 reasoning_effort)覆盖为 nil,导致 /model 切换后 HUD
+// thinking 档位消失、请求丢失参数。
+func TestRegression_ResolveProfileKeepsExtraParams(t *testing.T) {
+	s := &LLMSettings{
+		Provider: "deepseek",
+		ExtraParams: map[string]any{
+			"thinking":         map[string]any{"type": "enabled"},
+			"reasoning_effort": "max",
+		},
+		Profiles: map[string]*LLMSettings{
+			// 项目 profile 仅含 curr_model,无 extra_params(典型 /model 切换后落盘形态)
+			"deepseek": {CurrModel: "deepseek-v4-flash"},
+		},
+	}
+	s.ResolveProfile()
+	if s.ExtraParams == nil {
+		t.Fatal("ExtraParams = nil after ResolveProfile, want preserved (profile has no extra_params)")
+	}
+	if got := s.ExtraParams["reasoning_effort"]; got != "max" {
+		t.Errorf("reasoning_effort = %v, want max", got)
+	}
+}
+
+// TestRegression_ResolveProfileProfileExtraParamsOverrides 验证 profile 显式配置
+// extra_params 时仍覆盖顶层(provider 专属参数优先级不变)。
+func TestRegression_ResolveProfileProfileExtraParamsOverrides(t *testing.T) {
+	s := &LLMSettings{
+		Provider:    "deepseek",
+		ExtraParams: map[string]any{"reasoning_effort": "high"},
+		Profiles: map[string]*LLMSettings{
+			"deepseek": {ExtraParams: map[string]any{"reasoning_effort": "max"}},
+		},
+	}
+	s.ResolveProfile()
+	if got := s.ExtraParams["reasoning_effort"]; got != "max" {
+		t.Errorf("reasoning_effort = %v, want max (profile explicit extra_params overrides)", got)
+	}
+}
+
 // REGRESSION: 切换 provider 后顶层残留的上一 provider 的 model/base_url/api_key
 // 必须被目标 profile 覆盖。旧实现顶层优先（仅顶层为空才从 profile 填充），
 // 导致携带 kimi 的 base_url 请求 deepseek 端点
