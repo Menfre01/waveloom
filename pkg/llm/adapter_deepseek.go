@@ -371,6 +371,7 @@ func (a *deepSeekAdapter) parseResponsesResponse(body []byte) (*Response, error)
 
 	if resp.Usage != nil {
 		hit, miss := responsesCacheTokens(resp.Usage)
+		logResponsesUsageRaw(body, "non-stream", resp.Usage)
 		result.Usage = &UsageInfo{
 			PromptTokens:     resp.Usage.InputTokens,
 			CompletionTokens: resp.Usage.OutputTokens,
@@ -575,6 +576,7 @@ func (a *deepSeekAdapter) parseResponsesStreamEvent(data []byte) (StreamingEvent
 		// 注意:此处仅填充 WebSearchCalls(终态事件内嵌完整 output 列表);
 		// ToolCalls 依赖流式增量事件(response.output_item.added +
 		// function_call_arguments.delta/done)累积,与 chat 模式一致。
+		logResponsesUsageRaw(data, "completed", ev.Response.Usage)
 		return StreamingEvent{
 			Done:           true,
 			FinishReason:   "stop",
@@ -589,6 +591,7 @@ func (a *deepSeekAdapter) parseResponsesStreamEvent(data []byte) (StreamingEvent
 		if ev.Response.IncompleteDetails != nil && ev.Response.IncompleteDetails.Reason == "content_filter" {
 			reason = "content_filter"
 		}
+		logResponsesUsageRaw(data, "incomplete", ev.Response.Usage)
 		return StreamingEvent{
 			Done:           true,
 			FinishReason:   reason,
@@ -636,6 +639,45 @@ func responsesCacheTokens(u *responsesUsage) (hit, miss int) {
 		miss = u.InputTokens - hit
 	}
 	return hit, miss
+}
+
+// logResponsesUsageRaw 打印 Responses API 事件/响应中的原始 usage JSON 与解析后字段。
+// 定位服务端 input_tokens 偶发 ~2x 暴涨(幽灵缓存命中,cached_tokens 翻倍、
+// miss 正常)问题时,用于核对 DeepSeek 原始返回与解析后 UsageInfo 是否一致:
+//   - raw.input_tokens 已翻倍 → 服务端返回异常(向服务商反馈)
+//   - raw 正常但解析后翻倍 → 本地解析/映射 bug(排查 adapter)
+// 仅当事件内嵌 usage 时打印;delta 等无 usage 事件直接返回。
+// REGRESSION: 服务端间歇行为,无法单测,依赖真实请求日志观测。
+func logResponsesUsageRaw(data []byte, eventType string, usage *responsesUsage) {
+	var probe struct {
+		Usage json.RawMessage `json:"usage"`
+		// 流式终态事件(如 response.completed)usage 嵌套在 response 字段下,
+		// 非流式响应 usage 在顶层;两者都探测,否则流式路径静默跳过。
+		Response struct {
+			Usage json.RawMessage `json:"usage"`
+		} `json:"response"`
+	}
+	if err := json.Unmarshal(data, &probe); err != nil {
+		return
+	}
+	raw := probe.Usage
+	if len(raw) == 0 {
+		raw = probe.Response.Usage
+	}
+	if len(raw) == 0 {
+		return
+	}
+	if usage == nil {
+		slog.Info("responses usage", "event", eventType, "raw", string(raw))
+		return
+	}
+	slog.Info("responses usage",
+		"event", eventType,
+		"raw", string(raw),
+		"input_tokens", usage.InputTokens,
+		"cached_tokens", usage.InputTokensDetails.CachedTokens,
+		"cache_miss_tokens", usage.InputTokensDetails.CacheMissTokens,
+	)
 }
 
 // responsesUsageToInfo 将 Responses API usage 转为内部 UsageInfo。
