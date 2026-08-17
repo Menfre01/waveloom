@@ -65,7 +65,7 @@ type CompactionDecision struct {
 	DecisionTier int    `json:"decision_tier"` // 做出决策时的 tier（1/2/3）
 	Action       string `json:"action"`        // "snip" | "prune"
 	TokensSaved  int    `json:"tokens_saved"`  // 本次决策节省的估算 token 数
-	AppliedAt    int    `json:"applied_at"`    // 决策生效的 loop 序号（TotalTurns）
+	AppliedAt    int    `json:"applied_at"`    // 决策生效的 turn 序号(TotalTurns;一次 Run = 一个 turn)
 }
 
 // compactionDecisionSet 以 MsgIndex 严格升序排列的压缩决策集合。
@@ -558,7 +558,7 @@ func applyTier2(
 					DecisionTier: 2,
 					Action:       "prune",
 					TokensSaved:  saved,
-					AppliedAt:    totalTurns,
+				AppliedAt:    totalTurns,
 				})
 				pruned++
 				tokensSaved += saved
@@ -889,7 +889,7 @@ func validateAfterCompaction(messages *[]llm.Message) int {
 //   - contextTokens: 当前上下文实际 token 数（末轮 API 返回的 prompt_tokens，非跨轮累加值）
 //   - watermark: 当前水位线状态（原地更新）
 //   - decisions: 当前压缩决策表（原地更新）
-//   - totalTurns: 累计完成的 loop 数
+//   - totalTurns: 累计完成的 turn 数(一次 Run = 一个 turn)
 //   - config: 压缩配置（阈值等）
 //   - summarizer: Tier 3 摘要执行器（nil 时 Tier 3 降级跳过）
 //   - existingSummaries: 已有摘要链（Tier 3 成功时追加）

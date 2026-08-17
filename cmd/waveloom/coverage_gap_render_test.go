@@ -464,8 +464,8 @@ func TestSubagentSuffix(t *testing.T) {
 		{"streaming empty", Paragraph{State: stateStreaming}, ""},
 		{"error interrupted", Paragraph{State: stateError, ToolError: "x"}, "(interrupted)"},
 		{"model only", Paragraph{State: stateDone, SubagentModel: "flash"}, "(flash)"},
-		{"turns and duration", Paragraph{State: stateDone, SubagentTurns: 3, ToolDurMs: 2100}, "(3轮, 2.1s)"},
-		{"model turns tokens", Paragraph{State: stateDone, SubagentModel: "flash", SubagentTurns: 2, SubagentPromptTok: 1500, SubagentComplTok: 2500}, "(flash, 2轮, ↑1.5K, ↓2.5K)"},
+		{"turns and duration", Paragraph{State: stateDone, SubagentTurns: 3, ToolDurMs: 2100}, "(3步, 2.1s)"},
+		{"model turns tokens", Paragraph{State: stateDone, SubagentModel: "flash", SubagentTurns: 2, SubagentPromptTok: 1500, SubagentComplTok: 2500}, "(flash, 2步, ↑1.5K, ↓2.5K)"},
 		{"all zero", Paragraph{State: stateDone}, ""},
 	}
 	for _, tt := range tests {

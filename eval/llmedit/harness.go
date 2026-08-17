@@ -19,7 +19,7 @@ type Runner struct {
 	client       llm.Client
 	registry     tool.Registry
 	SystemPrompt string
-	MaxTurns     int
+	MaxSteps     int
 	Model        string
 	Verbose      bool
 }
@@ -29,7 +29,7 @@ func NewRunner(client llm.Client, registry tool.Registry, systemPrompt string) *
 		client:       client,
 		registry:     registry,
 		SystemPrompt: systemPrompt,
-		MaxTurns:     8,
+		MaxSteps:     8,
 		Model:        "default",
 	}
 }
@@ -75,9 +75,9 @@ func (r *Runner) Run(ctx context.Context, task *Task) *RunResult {
 		{Role: llm.RoleUser, Content: task.Instruction},
 	}
 
-	maxTurns := task.MaxTurns
-	if maxTurns <= 0 {
-		maxTurns = r.MaxTurns
+	maxSteps := task.MaxTurns
+	if maxSteps <= 0 {
+		maxSteps = r.MaxSteps
 	}
 
 	sp := r.SystemPrompt
@@ -93,7 +93,7 @@ func (r *Runner) Run(ctx context.Context, task *Task) *RunResult {
 	}
 	defer func() { _ = os.Chdir(origCWD) }()
 	loop := agentloop.New(r.client, r.registry, agentloop.Config{
-		MaxTurns:     maxTurns,
+		MaxSteps:     maxSteps,
 		SystemPrompt: sp,
 	})
 	metrics := NewRunMetrics(task.Name)
@@ -113,11 +113,11 @@ func (r *Runner) Run(ctx context.Context, task *Task) *RunResult {
 			streamBuf.WriteString(e.ContentDelta)
 		case agentloop.ToolCallStart:
 			if r.Verbose {
-				fmt.Fprintf(&verboseBuf, "  [turn %d] TOOL START: %s(%s)\n", e.Turn, e.ToolCallName, e.Arguments)
+				fmt.Fprintf(&verboseBuf, "  [step %d] TOOL START: %s(%s)\n", e.Step, e.ToolCallName, e.Arguments)
 			}
 			pendingArgs[e.ToolCallID] = e.Arguments
 		case agentloop.ToolCallResult:
-			tm := TurnMetrics{Turn: e.Turn}
+			tm := TurnMetrics{Turn: e.Step}
 			args := pendingArgs[e.ToolCallID]
 			delete(pendingArgs, e.ToolCallID)
 			if r.Verbose {
@@ -126,7 +126,7 @@ func (r *Runner) Run(ctx context.Context, task *Task) *RunResult {
 					resultPreview = resultPreview[:200] + "..."
 				}
 				fmt.Fprintf(&verboseBuf, "  [turn %d] TOOL DONE:  %s -> %s (err=%v kind=%s)\n",
-					e.Turn, e.ToolCallName, resultPreview, e.Error, e.ErrorKind)
+					e.Step, e.ToolCallName, resultPreview, e.Error, e.ErrorKind)
 			}
 			rec := ToolCallRecord{
 				Name:      e.ToolCallName,
@@ -168,17 +168,17 @@ func (r *Runner) Run(ctx context.Context, task *Task) *RunResult {
 				tm.ToolCalls = append(tm.ToolCalls, rec)
 				metrics.RecordTurn(tm)
 			}
-		case agentloop.LoopDone:
+		case agentloop.TurnDone:
 			if r.Verbose {
 				streamText := streamBuf.String()
 				if len(streamText) > 500 {
 					streamText = streamText[:500] + "...[truncated]"
 				}
-				fmt.Fprintf(&verboseBuf, "  [turn %d] STREAM TEXT: %s\n", e.Turn, streamText)
-				fmt.Fprintf(&verboseBuf, "  [turn %d] LOOP DONE: reason=%s err=%v\n", e.Turn, e.Reason, e.Err)
+				fmt.Fprintf(&verboseBuf, "  [step %d] STREAM TEXT: %s\n", e.Step, streamText)
+				fmt.Fprintf(&verboseBuf, "  [step %d] TURN DONE: reason=%s err=%v\n", e.Step, e.Reason, e.Err)
 			}
 			if e.Reason == agentloop.ReasonToolFatal || e.Err != nil {
-				tm := TurnMetrics{Turn: e.Turn, Abandoned: true}
+				tm := TurnMetrics{Turn: e.Step, Abandoned: true}
 				metrics.RecordTurn(tm)
 			}
 		}

@@ -67,7 +67,7 @@ func main() {
 	// 3. 构建 system prompt(edit 使用指南)
 	sysPrompt := buildEditSystemPrompt()
 	runner := llmedit.NewRunner(client, registry, sysPrompt)
-	runner.MaxTurns = 10
+	runner.MaxSteps = 10
 	runner.Model = cfg.Model
 
 	// 4. 加载任务

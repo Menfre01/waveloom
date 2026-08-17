@@ -77,8 +77,8 @@ func TestExecuteEnterPlanMode_Success(t *testing.T) {
 		Arguments: `{}`,
 	}
 
-	ch := make(chan TurnEvent, 4)
-	result, err := l.executeEnterPlanMode(context.Background(), tc, &LoopState{}, ch)
+	ch := make(chan StepEvent, 4)
+	result, err := l.executeEnterPlanMode(context.Background(), tc, &TurnState{}, ch)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -111,8 +111,8 @@ func TestExecuteEnterPlanMode_AlreadyInPlan(t *testing.T) {
 		Arguments: `{}`,
 	}
 
-	ch := make(chan TurnEvent, 4)
-	result, err := l.executeEnterPlanMode(context.Background(), tc, &LoopState{}, ch)
+	ch := make(chan StepEvent, 4)
+	result, err := l.executeEnterPlanMode(context.Background(), tc, &TurnState{}, ch)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -135,8 +135,8 @@ func TestExecuteEnterPlanMode_NoResponder(t *testing.T) {
 		Arguments: `{}`,
 	}
 
-	ch := make(chan TurnEvent, 4)
-	result, err := l.executeEnterPlanMode(context.Background(), tc, &LoopState{}, ch)
+	ch := make(chan StepEvent, 4)
+	result, err := l.executeEnterPlanMode(context.Background(), tc, &TurnState{}, ch)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -161,8 +161,8 @@ func TestExecuteEnterPlanMode_UserDeclined(t *testing.T) {
 		Arguments: `{}`,
 	}
 
-	ch := make(chan TurnEvent, 4)
-	result, err := l.executeEnterPlanMode(context.Background(), tc, &LoopState{}, ch)
+	ch := make(chan StepEvent, 4)
+	result, err := l.executeEnterPlanMode(context.Background(), tc, &TurnState{}, ch)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -187,8 +187,8 @@ func TestExecuteEnterPlanMode_UserError(t *testing.T) {
 		Arguments: `{}`,
 	}
 
-	ch := make(chan TurnEvent, 4)
-	result, err := l.executeEnterPlanMode(context.Background(), tc, &LoopState{}, ch)
+	ch := make(chan StepEvent, 4)
+	result, err := l.executeEnterPlanMode(context.Background(), tc, &TurnState{}, ch)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -214,8 +214,8 @@ func TestExecuteEnterPlanMode_GeneratesPlanFile(t *testing.T) {
 		Arguments: `{}`,
 	}
 
-	ch := make(chan TurnEvent, 4)
-	result, err := l.executeEnterPlanMode(context.Background(), tc, &LoopState{}, ch)
+	ch := make(chan StepEvent, 4)
+	result, err := l.executeEnterPlanMode(context.Background(), tc, &TurnState{}, ch)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -241,7 +241,7 @@ func TestExecuteEnterPlanMode_InjectsStartMessage(t *testing.T) {
 		PlanFile:      "/tmp/plan-test.md",
 	})
 
-	state := &LoopState{
+	state := &TurnState{
 		Messages: []llm.Message{
 			{Role: llm.RoleUser, Content: "help me plan"},
 		},
@@ -253,7 +253,7 @@ func TestExecuteEnterPlanMode_InjectsStartMessage(t *testing.T) {
 		Arguments: `{}`,
 	}
 
-	ch := make(chan TurnEvent, 4)
+	ch := make(chan StepEvent, 4)
 	result, err := l.executeEnterPlanMode(context.Background(), tc, state, ch)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -287,8 +287,8 @@ func TestExecuteExitPlanMode_NotInPlanMode(t *testing.T) {
 		Arguments: `{}`,
 	}
 
-	ch := make(chan TurnEvent, 4)
-	result, err := l.executeExitPlanMode(context.Background(), tc, &LoopState{}, ch)
+	ch := make(chan StepEvent, 4)
+	result, err := l.executeExitPlanMode(context.Background(), tc, &TurnState{}, ch)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -314,8 +314,8 @@ func TestExecuteExitPlanMode_PlanFileNotFound(t *testing.T) {
 		Arguments: `{}`,
 	}
 
-	ch := make(chan TurnEvent, 4)
-	result, err := l.executeExitPlanMode(context.Background(), tc, &LoopState{}, ch)
+	ch := make(chan StepEvent, 4)
+	result, err := l.executeExitPlanMode(context.Background(), tc, &TurnState{}, ch)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -351,8 +351,8 @@ func TestExecuteExitPlanMode_NoResponder(t *testing.T) {
 		Arguments: `{}`,
 	}
 
-	ch := make(chan TurnEvent, 4)
-	result, err := l.executeExitPlanMode(context.Background(), tc, &LoopState{}, ch)
+	ch := make(chan StepEvent, 4)
+	result, err := l.executeExitPlanMode(context.Background(), tc, &TurnState{}, ch)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -389,8 +389,8 @@ func TestExecuteExitPlanMode_UserRejected(t *testing.T) {
 		Arguments: `{}`,
 	}
 
-	ch := make(chan TurnEvent, 4)
-	result, err := l.executeExitPlanMode(context.Background(), tc, &LoopState{}, ch)
+	ch := make(chan StepEvent, 4)
+	result, err := l.executeExitPlanMode(context.Background(), tc, &TurnState{}, ch)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -434,8 +434,8 @@ func TestExecuteExitPlanMode_UserRejectedNoFeedback(t *testing.T) {
 		Arguments: `{}`,
 	}
 
-	ch := make(chan TurnEvent, 4)
-	result, err := l.executeExitPlanMode(context.Background(), tc, &LoopState{}, ch)
+	ch := make(chan StepEvent, 4)
+	result, err := l.executeExitPlanMode(context.Background(), tc, &TurnState{}, ch)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -467,7 +467,7 @@ func TestExecuteExitPlanMode_ApprovalSuccess(t *testing.T) {
 	l.plan = true
 	l.planPairID = "test4"
 
-	state := &LoopState{
+	state := &TurnState{
 		Messages: []llm.Message{
 			{Role: llm.RoleUser, Content: "go"},
 		},
@@ -479,7 +479,7 @@ func TestExecuteExitPlanMode_ApprovalSuccess(t *testing.T) {
 		Arguments: `{}`,
 	}
 
-	ch := make(chan TurnEvent, 4)
+	ch := make(chan StepEvent, 4)
 	result, err := l.executeExitPlanMode(context.Background(), tc, state, ch)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -520,8 +520,8 @@ func TestExecuteExitPlanMode_ApprovalError(t *testing.T) {
 		Arguments: `{}`,
 	}
 
-	ch := make(chan TurnEvent, 4)
-	result, err := l.executeExitPlanMode(context.Background(), tc, &LoopState{}, ch)
+	ch := make(chan StepEvent, 4)
+	result, err := l.executeExitPlanMode(context.Background(), tc, &TurnState{}, ch)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -744,7 +744,7 @@ func TestExecuteToolCalls_EnterPlanMode(t *testing.T) {
 	registry.Register(&mockUserInteractionTool{name: "exit_plan_mode", requiresUI: true})
 	l.toolRegistry = registry
 
-	state := &LoopState{
+	state := &TurnState{
 		Messages: []llm.Message{
 			{Role: llm.RoleUser, Content: "test"},
 		},
@@ -754,7 +754,7 @@ func TestExecuteToolCalls_EnterPlanMode(t *testing.T) {
 		makeToolCall("tc1", "enter_plan_mode", `{}`),
 	}
 
-	ch := make(chan TurnEvent, 16)
+	ch := make(chan StepEvent, 16)
 	go func() { for range ch {} }()
 
 	msgs, reason, err := l.executeToolCalls(context.Background(), calls, state, ch)
@@ -798,7 +798,7 @@ func TestExecuteToolCalls_ExitPlanMode(t *testing.T) {
 	registry.Register(&mockUserInteractionTool{name: "exit_plan_mode", requiresUI: true})
 	l.toolRegistry = registry
 
-	state := &LoopState{
+	state := &TurnState{
 		Messages: []llm.Message{
 			{Role: llm.RoleUser, Content: "test"},
 		},
@@ -808,7 +808,7 @@ func TestExecuteToolCalls_ExitPlanMode(t *testing.T) {
 		makeToolCall("tc1", "exit_plan_mode", `{}`),
 	}
 
-	ch := make(chan TurnEvent, 16)
+	ch := make(chan StepEvent, 16)
 	go func() { for range ch {} }()
 
 	msgs, reason, err := l.executeToolCalls(context.Background(), calls, state, ch)
@@ -1106,7 +1106,6 @@ func TestRestorePlanMode_DoesNotGeneratePairID(t *testing.T) {
 	}
 }
 
-
 // ============================================================================
 // generatePlanFilePath fallback 路径测试
 // ============================================================================
@@ -1121,7 +1120,6 @@ func TestGeneratePlanFilePath_Unique(t *testing.T) {
 		t.Errorf("expected different plan file paths, got same: %s", path1)
 	}
 }
-
 
 // ============================================================================
 // REGRESSION: todo_update 多 in_progress → user 消息必须在 tool 消息之后
@@ -1155,7 +1153,7 @@ func TestExecuteToolCalls_TodoMultiInProgressMessageOrder(t *testing.T) {
 	}
 	id1, id2 := snapshot[0].ID, snapshot[1].ID
 
-	state := &LoopState{
+	state := &TurnState{
 		Messages: []llm.Message{
 			{Role: llm.RoleUser, Content: "test"},
 		},
@@ -1169,7 +1167,7 @@ func TestExecuteToolCalls_TodoMultiInProgressMessageOrder(t *testing.T) {
 		makeToolCall("tc1", "todo_update", args),
 	}
 
-	ch := make(chan TurnEvent, 16)
+	ch := make(chan StepEvent, 16)
 	go func() { for range ch {} }()
 
 	msgs, reason, err := l.executeToolCalls(context.Background(), calls, state, ch)
@@ -1227,7 +1225,7 @@ func TestExecuteToolCalls_TodoSingleInProgressNoWarning(t *testing.T) {
 	snapshot := ts.Snapshot()
 	id1 := snapshot[0].ID
 
-	state := &LoopState{
+	state := &TurnState{
 		Messages: []llm.Message{
 			{Role: llm.RoleUser, Content: "test"},
 		},
@@ -1238,7 +1236,7 @@ func TestExecuteToolCalls_TodoSingleInProgressNoWarning(t *testing.T) {
 		makeToolCall("tc1", "todo_update", args),
 	}
 
-	ch := make(chan TurnEvent, 16)
+	ch := make(chan StepEvent, 16)
 	go func() { for range ch {} }()
 
 	msgs, reason, err := l.executeToolCalls(context.Background(), calls, state, ch)

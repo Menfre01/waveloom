@@ -60,8 +60,8 @@ func TestRegression_SandboxStatusSurvivesTimeoutCtx(t *testing.T) {
 		UserResponder: nil,
 	})
 
-	state := &LoopState{}
-	ch := make(chan TurnEvent, 16)
+	state := &TurnState{}
+	ch := make(chan StepEvent, 16)
 
 	msgs, termReason, execErr := loop.executeToolCalls(context.Background(), []llm.ToolCall{
 		{ID: "tc1", Name: "bash", Arguments: `{"command": "ls"}`},
@@ -100,8 +100,8 @@ func TestRegression_BashSubagentGetsSandbox(t *testing.T) {
 		SandboxMgr:  mgr,
 		ToolTimeout: 5 * 1000 * 1000 * 1000,
 	})
-	state := &LoopState{}
-	ch := make(chan TurnEvent, 16)
+	state := &TurnState{}
+	ch := make(chan StepEvent, 16)
 
 	_, _, execErr := loop.executeToolCalls(context.Background(), []llm.ToolCall{
 		{ID: "tc1", Name: "bash_subagent", Arguments: `{"command": "ls"}`},

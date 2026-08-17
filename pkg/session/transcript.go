@@ -403,7 +403,7 @@ type AgentMetadata struct {
 	AgentType        string `json:"agentType"`
 	Description      string `json:"description,omitempty"`
 	Model            string `json:"model,omitempty"`
-	TotalTurns       int    `json:"totalTurns,omitempty"`
+	TotalSteps       int    `json:"totalTurns,omitempty"` // 字段名对齐 step 语义;json tag 保留 totalTurns 兼容旧 meta
 	PromptTokens     int    `json:"promptTokens,omitempty"`
 	CompletionTokens int    `json:"completionTokens,omitempty"`
 }

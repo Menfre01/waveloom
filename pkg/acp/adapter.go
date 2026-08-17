@@ -72,7 +72,7 @@ func (a *adapter) Stats() adapterStats {
 	}
 }
 
-func (a *adapter) consumeEvents(ctx context.Context, ch <-chan agentloop.TurnEvent) (agentloop.LoopDone, bool) {
+func (a *adapter) consumeEvents(ctx context.Context, ch <-chan agentloop.StepEvent) (agentloop.TurnDone, bool) {
 	for {
 		select {
 		case <-ctx.Done():
@@ -81,16 +81,16 @@ func (a *adapter) consumeEvents(ctx context.Context, ch <-chan agentloop.TurnEve
 			// 若提前返回,真实历史会被丢弃,调用方 CompleteRun(nil) 会用空历史
 			// 整体替换会话上下文(数据损坏)。转入纯消费循环等待真实 LoopDone。
 			for ev := range ch {
-				if e, ok := ev.(agentloop.LoopDone); ok {
+				if e, ok := ev.(agentloop.TurnDone); ok {
 					return e, true
 				}
 			}
 			// 通道关闭仍未收到 LoopDone(契约被违反的防御路径):返回合成值,
 			// 调用方必须检查 bool 跳过 CompleteRun。
-			return agentloop.LoopDone{Reason: agentloop.ReasonCompleted}, false
+			return agentloop.TurnDone{Reason: agentloop.ReasonCompleted}, false
 		case ev, ok := <-ch:
 			if !ok {
-				return agentloop.LoopDone{Reason: agentloop.ReasonCompleted}, false
+				return agentloop.TurnDone{Reason: agentloop.ReasonCompleted}, false
 			}
 			switch e := ev.(type) {
 			case agentloop.StreamDelta:
@@ -101,13 +101,13 @@ func (a *adapter) consumeEvents(ctx context.Context, ch <-chan agentloop.TurnEve
 				a.handleToolCallStream(e)
 			case agentloop.ToolCallResult:
 				a.handleToolCallResult(e)
-			case agentloop.TurnStats:
-				a.handleTurnStats(e)
+			case agentloop.StepStats:
+				a.handleStepStats(e)
 			case agentloop.PlanModeEnter:
 				a.handlePlanModeEnter(e)
 			case agentloop.PlanModeExit:
 				a.handlePlanModeExit(e)
-			case agentloop.LoopDone:
+			case agentloop.TurnDone:
 				return e, true
 			default:
 				slog.Debug("acp: unknown event type", "type", ev)
@@ -439,10 +439,10 @@ func rebuildDiffText(h tool.DiffHunk) (oldText, newText string) {
 }
 
 // ---------------------------------------------------------------------------
-// TurnStats → UsageUpdateContent
+// StepStats → UsageUpdateContent
 // ---------------------------------------------------------------------------
 
-func (a *adapter) handleTurnStats(e agentloop.TurnStats) {
+func (a *adapter) handleStepStats(e agentloop.StepStats) {
 	a.promptTokens += e.PromptTokens
 	a.completionTokens += e.CompletionTokens
 	a.cacheHitTokens += e.CacheHitTokens

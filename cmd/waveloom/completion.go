@@ -35,7 +35,7 @@ _waveloom() {
 
     case "$prev" in
         waveloom)
-            opts="setup ls mcp completion --model --provider --system-prompt --max-turns --context-limit --theme --locale --log-level --bypass-permissions --tool-timeout --resume --continue --settings --version --help"
+            opts="setup ls mcp completion --model --provider --system-prompt --max-steps --max-turns --context-limit --theme --locale --log-level --bypass-permissions --tool-timeout --resume --continue --settings --version --help"
             COMPREPLY=( $(compgen -W "$opts" -- "$cur") )
             return 0
             ;;
@@ -62,7 +62,7 @@ _waveloom() {
         *)
             ;;
     esac
-    opts="setup ls mcp completion --model --provider --system-prompt --max-turns --context-limit --theme --locale --log-level --bypass-permissions --tool-timeout --resume --continue --settings --version --help"
+    opts="setup ls mcp completion --model --provider --system-prompt --max-steps --max-turns --context-limit --theme --locale --log-level --bypass-permissions --tool-timeout --resume --continue --settings --version --help"
     COMPREPLY=( $(compgen -W "$opts" -- "$cur") )
     return 0
 }
@@ -86,7 +86,8 @@ _waveloom() {
         '--model[指定模型名]:model:(deepseek-v4-pro deepseek-v4-flash gpt-4o proplan)'
         '--provider[LLM Provider]:provider:(kimi deepseek openai)'
         '--system-prompt[自定义系统提示词]:prompt'
-        '--max-turns[最大轮数，0不限制]:turns'
+        '--max-steps[最大步数,0不限制]:steps'
+        '--max-turns[最大步数,0不限制(旧名)]:steps'
         '--context-limit[上下文窗口大小]:limit'
         '--theme[主题]:theme:(auto dark light darkcolorblind lightcolorblind)'
         '--locale[界面语言]:locale:(auto zh-CN en-US)'
@@ -136,7 +137,8 @@ complete -c waveloom -n __fish_use_subcommand -a completion -d "输出 shell 补
 complete -c waveloom -l model -d "指定模型名" -a "deepseek-v4-pro deepseek-v4-flash gpt-4o proplan"
 complete -c waveloom -l provider -d "LLM Provider" -a "kimi deepseek openai"
 complete -c waveloom -l system-prompt -d "自定义系统提示词" -r
-complete -c waveloom -l max-turns -d "最大轮数，0不限制" -r
+complete -c waveloom -l max-steps -d "最大步数,0不限制" -r
+complete -c waveloom -l max-turns -d "最大步数,0不限制(旧名)" -r
 complete -c waveloom -l context-limit -d "上下文窗口大小" -r
 complete -c waveloom -l theme -d "主题" -a "auto dark light darkcolorblind lightcolorblind"
 complete -c waveloom -l locale -d "界面语言" -a "auto zh-CN en-US"

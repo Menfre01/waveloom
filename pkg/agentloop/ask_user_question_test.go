@@ -51,9 +51,9 @@ func TestExecuteAskUserQuestion_SingleSelect(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	ch := make(chan TurnEvent, 4)
+	ch := make(chan StepEvent, 4)
 
-	result, err := l.executeAskUserQuestion(ctx, tc, &LoopState{}, ch)
+	result, err := l.executeAskUserQuestion(ctx, tc, &TurnState{}, ch)
 	if err != nil {
 		t.Fatalf("executeAskUserQuestion unexpected error: %v", err)
 	}
@@ -95,9 +95,9 @@ func TestExecuteAskUserQuestion_MultiSelect(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	ch := make(chan TurnEvent, 4)
+	ch := make(chan StepEvent, 4)
 
-	result, err := l.executeAskUserQuestion(ctx, tc, &LoopState{}, ch)
+	result, err := l.executeAskUserQuestion(ctx, tc, &TurnState{}, ch)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -129,9 +129,9 @@ func TestExecuteAskUserQuestion_UserDeclined(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	ch := make(chan TurnEvent, 4)
+	ch := make(chan StepEvent, 4)
 
-	result, err := l.executeAskUserQuestion(ctx, tc, &LoopState{}, ch)
+	result, err := l.executeAskUserQuestion(ctx, tc, &TurnState{}, ch)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -156,9 +156,9 @@ func TestExecuteAskUserQuestion_NoResponder(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	ch := make(chan TurnEvent, 4)
+	ch := make(chan StepEvent, 4)
 
-	result, err := l.executeAskUserQuestion(ctx, tc, &LoopState{}, ch)
+	result, err := l.executeAskUserQuestion(ctx, tc, &TurnState{}, ch)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -186,9 +186,9 @@ func TestExecuteAskUserQuestion_ContextCancelled(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	ch := make(chan TurnEvent, 4)
+	ch := make(chan StepEvent, 4)
 
-	result, err := l.executeAskUserQuestion(ctx, tc, &LoopState{}, ch)
+	result, err := l.executeAskUserQuestion(ctx, tc, &TurnState{}, ch)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -211,9 +211,9 @@ func TestExecuteAskUserQuestion_InvalidJSON(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	ch := make(chan TurnEvent, 4)
+	ch := make(chan StepEvent, 4)
 
-	result, err := l.executeAskUserQuestion(ctx, tc, &LoopState{}, ch)
+	result, err := l.executeAskUserQuestion(ctx, tc, &TurnState{}, ch)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -225,9 +225,9 @@ func TestExecuteAskUserQuestion_InvalidJSON(t *testing.T) {
 	}
 }
 
-func TestAskUserQuestionEvent_ImplementsTurnEvent(t *testing.T) {
-	// AskUserQuestionEvent is a concrete struct — verifying it satisfies TurnEvent at compile time.
-	var _ TurnEvent = AskUserQuestionEvent{}
+func TestAskUserQuestionEvent_ImplementsStepEvent(t *testing.T) {
+	// AskUserQuestionEvent is a concrete struct — verifying it satisfies StepEvent at compile time.
+	var _ StepEvent = AskUserQuestionEvent{}
 }
 
 func TestQuestionResponseTypes(t *testing.T) {

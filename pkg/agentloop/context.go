@@ -16,13 +16,13 @@ type (
 )
 
 // WithEventCallback injects a callback for subagent events into ctx.
-func WithEventCallback(ctx context.Context, cb func(TurnEvent)) context.Context {
+func WithEventCallback(ctx context.Context, cb func(StepEvent)) context.Context {
 	return context.WithValue(ctx, eventCallbackKey{}, cb)
 }
 
 // EventCallbackFromContext extracts the event callback from ctx.
-func EventCallbackFromContext(ctx context.Context) func(TurnEvent) {
-	cb, _ := ctx.Value(eventCallbackKey{}).(func(TurnEvent))
+func EventCallbackFromContext(ctx context.Context) func(StepEvent) {
+	cb, _ := ctx.Value(eventCallbackKey{}).(func(StepEvent))
 	return cb
 }
 

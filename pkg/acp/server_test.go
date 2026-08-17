@@ -33,7 +33,7 @@ func serverWithInput(input string) (*Server, *strings.Builder) {
 		SystemPrompt: "test",
 		BuildVersion: "test",
 		CWD:          "/tmp",
-		MaxTurns:     10,
+		MaxSteps:     10,
 	})
 	s.transport = transport
 	return s, &buf

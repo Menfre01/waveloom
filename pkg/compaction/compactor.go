@@ -18,7 +18,7 @@ type TieredCompactor struct {
 	summarizer        Summarizer
 	config            CompactionConfig
 	lastResult        CompactionResult
-	totalTurns        int // 会话级累计 turn 数（由 ContextManager 通过 AdvanceTurn 推进）
+	totalTurns        int // 会话级累计 turn 数(由 ContextManager 通过 AdvanceTurn 推进;一次 Run = 一个 turn)
 }
 
 // NewCompactor 创建一个新的 TieredCompactor。

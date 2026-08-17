@@ -9,18 +9,19 @@ import (
 	"github.com/Menfre01/waveloom/pkg/llm"
 )
 
-// Compactor 执行上下文压缩。Loop 在每轮 LLM 调用 + tool 执行完毕后调用。
+// Compactor 执行上下文压缩。Loop 在每个 step(LLM 调用 + tool 执行)完毕后调用。
 // 实现方持有压缩状态（watermark、decisions、summaries），原地修改 messages。
 type Compactor interface {
 	Compact(ctx context.Context, messages *[]llm.Message, contextTokens int) Tick
 	// AdvanceTurn 推进会话级累计 turn 计数并返回新值。
-	// 由 ContextManager 在每轮 PrepareRun 中调用，确保与 TUI HUD Loop 计数一致。
+	// 由 ContextManager 在每轮 PrepareRun 中调用,确保与 TUI HUD Turns 计数一致。
+	// 注意:此计数按 Run()(一次用户 prompt = 一个 turn)递增,与 Loop 内部 StepCount 不同。
 	AdvanceTurn() int
 	// LastResult 返回最近一次压缩结果。无历史时返回零值。
 	LastResult() CompactionResult
 }
 
-// Tick 是单轮压缩结果，作为 TurnEvent 推送 TUI 实时更新 HUD。
+// Tick 是单 step 压缩结果,作为 StepEvent 推送 TUI 实时更新 HUD。
 type Tick struct {
 	Tier                     int     // 触发 tier (0/1/2/3)
 	HardLimitReached         bool    // 硬临界值触发（≥98% 或 Tier3 连续失败）

@@ -58,7 +58,7 @@ func newTestServer() *Server {
 		SystemPrompt: "You are a helpful assistant.",
 		BuildVersion: "test",
 		CWD:          "/tmp",
-		MaxTurns:     10,
+		MaxSteps:     10,
 	})
 }
 

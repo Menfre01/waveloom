@@ -47,13 +47,13 @@ type Messages struct {
 	SysSkillActivated    string // 含 %s
 	SysSkillLoadFailed   string // 含 %s, %s
 
-	// ── Loop done ─────────────────────────────────────────
-	LoopCompleted   string // 含 %d, %s, %s, %s
-	LoopMaxTurns    string // 含 %d, %s, %s, %s
-	LoopAborted     string // 含 %s
-	LoopToolTimeout string // 含 %s, %s, %s
-	LoopModelError  string // 含 %s, %v
-	LoopToolFatal   string // 含 %s, %v
+	// ── Turn done ─────────────────────────────────────────
+	TurnCompleted   string // 含 %d, %s, %s, %s
+	TurnMaxSteps    string // 含 %d, %s, %s, %s
+	TurnAborted     string // 含 %s
+	TurnToolTimeout string // 含 %s, %s, %s
+	TurnModelError  string // 含 %s, %v
+	TurnToolFatal   string // 含 %s, %v
 
 	// ── Update ────────────────────────────────────────────
 
@@ -241,7 +241,7 @@ type Messages struct {
 	SetupLocaleEnUSLabel string
 
 	// ── Subagent suffix ──────────────────────────────────
-	SubagentTurnsFmt string // 含 %d，如 "%d轮" / "%d turns"
+	SubagentTurnsFmt string // 含 %d,如 "%d步" / "%d steps"
 
 	// ── Rewind overlay ────────────────────────────────────
 	RewindTitle            string // "Rewind"
@@ -299,12 +299,12 @@ var zhCN = Messages{
 	SysSkillLoadFailed:   "Skill 加载失败: %s — %s",
 
 	// Loop
-	LoopCompleted:   "完成（%d轮, %s, ↑%s, ↓%s）",
-	LoopMaxTurns:    "已达最大轮次（%d轮, %s, ↑%s, ↓%s）。继续对话。",
-	LoopAborted:     "已中断（%s）",
-	LoopToolTimeout: "工具执行超时（%s %s）%s",
-	LoopModelError:  "Model error (%s, %v)",
-	LoopToolFatal:   "Tool error (%s, %v)",
+	TurnCompleted:   "完成(%d步, %s, ↑%s, ↓%s)",
+	TurnMaxSteps:    "已达最大步数(%d步, %s, ↑%s, ↓%s)。继续对话。",
+	TurnAborted:     "已中断(%s)",
+	TurnToolTimeout: "工具执行超时(%s %s)%s",
+	TurnModelError:  "Model error (%s, %v)",
+	TurnToolFatal:   "Tool error (%s, %v)",
 
 	// Thought
 	ThoughtThinking:     "思考中...",
@@ -499,7 +499,7 @@ var zhCN = Messages{
   --locale LANG           界面语言: auto（默认）/ zh-CN / en-US
                           auto 从 LANG 环境变量自动检测
   --log-level            日志级别: debug / info（默认）/ warn / error
-  --max-turns N           最大 turn 数（0=无限制）
+  --max-steps N           最大 step 数(0=无限制;旧名 --max-turns 兼容)
   --system-prompt TEXT    系统提示词
   --context-limit N       上下文窗口 token 上限，支持 1M / 200k / 1048576 等格式（默认: 1M）
   --bypass-permissions    跳过权限检查(TUI 交互确认;one-shot/ACP 默认启用)
@@ -560,7 +560,7 @@ var zhCN = Messages{
 	SetupLocaleEnUSLabel: "English   (en-US)",
 
 	// Subagent suffix
-	SubagentTurnsFmt: "%d轮",
+	SubagentTurnsFmt: "%d步",
 
 	// Rewind
 	RewindTitle:            "时间回溯",
@@ -613,12 +613,12 @@ var enUS = Messages{
 	SysSkillLoadFailed:   "Skill load failed: %s — %s",
 
 	// Loop
-	LoopCompleted:   "Done (%d turns, %s, ↑%s, ↓%s)",
-	LoopMaxTurns:    "Max turns reached (%d turns, %s, ↑%s, ↓%s). Continue.",
-	LoopAborted:     "Aborted (%s)",
-	LoopToolTimeout: "Tool timeout (%s %s) %s",
-	LoopModelError:  "Model error (%s, %v)",
-	LoopToolFatal:   "Tool error (%s, %v)",
+	TurnCompleted:   "Done (%d steps, %s, ↑%s, ↓%s)",
+	TurnMaxSteps:    "Max steps reached (%d steps, %s, ↑%s, ↓%s). Continue.",
+	TurnAborted:     "Aborted (%s)",
+	TurnToolTimeout: "Tool timeout (%s %s) %s",
+	TurnModelError:  "Model error (%s, %v)",
+	TurnToolFatal:   "Tool error (%s, %v)",
 
 	// Thought
 	ThoughtThinking:     "Thinking...",
@@ -812,7 +812,7 @@ Options:
   --locale LANG           Interface language: auto (default) / zh-CN / en-US
                           auto detects from LANG environment variable
   --log-level            Log level: debug / info (default) / warn / error
-  --max-turns N           Max turns (0=unlimited)
+  --max-steps N           Max steps (0=unlimited; legacy alias --max-turns)
   --system-prompt TEXT    System prompt
   --context-limit N       Context window token limit, supports 1M / 200k / 1048576 etc. (default: 1M)
   --bypass-permissions    Skip permission checks (TUI prompts; one-shot/ACP enable by default)
@@ -873,7 +873,7 @@ Environment variables:
 	SetupLocaleEnUSLabel: "English   (en-US)",
 
 	// Subagent suffix
-	SubagentTurnsFmt: "%d turns",
+	SubagentTurnsFmt: "%d steps",
 
 	// Rewind
 	RewindTitle:            "Rewind",

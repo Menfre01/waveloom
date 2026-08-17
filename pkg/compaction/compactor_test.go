@@ -408,7 +408,7 @@ func TestCompact_Tier3_ConsecutiveFailures(t *testing.T) {
 	}
 	usage := int(float64(DefaultContextLimit) * 0.96)
 
-	// Round 1: Tier 3 失败，failures 0→1
+	// Round 1: Tier 3 失败,failures 0→1
 	messages1 := buildMessages()
 	c.AdvanceTurn()
 	tick1 := c.Compact(context.Background(), &messages1, usage)
@@ -422,7 +422,7 @@ func TestCompact_Tier3_ConsecutiveFailures(t *testing.T) {
 		t.Fatal("round 1: hard limit should not trigger on first failure")
 	}
 
-	// Round 2: Tier 3 再次失败，failures 1→2（本轮仍不触发硬限）
+	// Round 2: Tier 3 再次失败,failures 1→2(本轮仍不触发硬限)
 	messages2 := buildMessages()
 	c.AdvanceTurn()
 	tick2 := c.Compact(context.Background(), &messages2, usage)

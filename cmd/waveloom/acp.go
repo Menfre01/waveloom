@@ -226,7 +226,7 @@ Options:
 		SystemPrompt: systemPrompt,
 		BuildVersion: Version,
 		CWD:          cwd,
-		MaxTurns:     0, // ACP 模式下默认不限制 turn 数
+		MaxSteps:     0, // ACP 模式下默认不限制 step 数
 		Guard:        guard,
 		SandboxMgr:   sandboxMgr,
 		SessionDir:   acpSessionDir,

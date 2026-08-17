@@ -25,7 +25,7 @@ func TestExecuteTodoWrite_NilTodoState(t *testing.T) {
 	loop := New(nil, registry, Config{
 		TodoState: nil})
 
-	ch := make(chan TurnEvent, 1)
+	ch := make(chan StepEvent, 1)
 	result := loop.executeTodoMutate(context.Background(), llm.ToolCall{
 		ID:   "call_1",
 		Name: "todo_create",
@@ -50,7 +50,7 @@ func TestExecuteTodoWrite_InvalidJSON(t *testing.T) {
 	ts := todo.NewTodoState()
 	loop := New(nil, registry, Config{TodoState: ts})
 
-	ch := make(chan TurnEvent, 1)
+	ch := make(chan StepEvent, 1)
 	result := loop.executeTodoMutate(context.Background(), llm.ToolCall{
 		ID:        "call_1",
 		Name:      "todo_create",
@@ -75,7 +75,7 @@ func TestExecuteTodoWrite_CreateNew(t *testing.T) {
 	ts := todo.NewTodoState()
 	loop := New(nil, registry, Config{TodoState: ts})
 
-	ch := make(chan TurnEvent, 2)
+	ch := make(chan StepEvent, 2)
 	result := loop.executeTodoMutate(context.Background(), llm.ToolCall{
 		ID:   "call_1",
 		Name: "todo_create",
@@ -126,7 +126,7 @@ func TestExecuteTodoWrite_UpdateByID(t *testing.T) {
 	ts := todo.NewTodoState()
 	loop := New(nil, registry, Config{TodoState: ts})
 
-	ch := make(chan TurnEvent, 4)
+	ch := make(chan StepEvent, 4)
 
 	// Call 1: create items
 	_ = loop.executeTodoMutate(context.Background(), llm.ToolCall{
@@ -278,7 +278,7 @@ func TestExecuteTodoWrite_AllDoneClearsState(t *testing.T) {
 	ts := todo.NewTodoState()
 	loop := New(nil, registry, Config{TodoState: ts})
 
-	ch := make(chan TurnEvent, 4)
+	ch := make(chan StepEvent, 4)
 
 	// Call 1: create 2 items
 	_ = loop.executeTodoMutate(context.Background(), llm.ToolCall{
@@ -322,7 +322,7 @@ func TestExecuteTodoWrite_TwoCallsInSameTurn(t *testing.T) {
 	ts := todo.NewTodoState()
 	loop := New(nil, registry, Config{TodoState: ts})
 
-	ch := make(chan TurnEvent, 4)
+	ch := make(chan StepEvent, 4)
 
 	// Call 1: create 3 items
 	_ = loop.executeTodoMutate(context.Background(), llm.ToolCall{
@@ -375,7 +375,7 @@ func TestExecuteTodoWrite_ContextCancelled(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	ch := make(chan TurnEvent)
+	ch := make(chan StepEvent)
 	result := loop.executeTodoMutate(ctx, llm.ToolCall{
 		ID:   "call_1",
 		Name: "todo_update",
@@ -399,7 +399,7 @@ func TestExecuteTodoWrite_NoOpDetection(t *testing.T) {
 	registry.Register(tool.Wrap(&tool.TodoCreate{})); registry.Register(tool.Wrap(&tool.TodoUpdate{}))
 	loop := New(nil, registry, Config{TodoState: ts})
 
-	ch := make(chan TurnEvent, 2)
+	ch := make(chan StepEvent, 2)
 
 	// Send the same item with same status by ID → no-op
 	result := loop.executeTodoMutate(context.Background(), llm.ToolCall{
@@ -533,7 +533,7 @@ func TestTodoReminderText_ContainsStalenessCount(t *testing.T) {
 	summary := "## Current Todo Status\n→ Verify status accuracy before taking action.\n[pending] Task A\n"
 	text := todoReminderText(summary, 4)
 
-	if !contains(text, "4 turns since last todo_update") {
+	if !contains(text, "4 steps since last todo_update") {
 		t.Errorf("todoReminderText missing staleness count, got: %s", text)
 	}
 	if contains(text, "Ignore if not applicable") {
@@ -548,7 +548,7 @@ func TestTodoReminderText_DifferentStalenessValues(t *testing.T) {
 	summary := "## Current Todo Status\n[pending] Task A\n"
 	for _, n := range []int{2, 5, 10} {
 		text := todoReminderText(summary, n)
-		expected := fmt.Sprintf("%d turns since last todo_update", n)
+		expected := fmt.Sprintf("%d steps since last todo_update", n)
 		if !contains(text, expected) {
 			t.Errorf("staleness=%d: expected %q in text, got: %s", n, expected, text)
 		}
@@ -562,16 +562,16 @@ func TestTodoReminderText_DifferentStalenessValues(t *testing.T) {
 func TestUpdateTodoCounters_NoActiveTasksResetsCounters(t *testing.T) {
 	ts := todo.NewTodoState()
 	loop := New(nil, nil, Config{TodoState: ts})
-	loop.turnsSinceLastTodoWrite = 5
-	loop.turnsSinceLastTodoReminder = 3
+	loop.stepsSinceLastTodoWrite = 5
+	loop.stepsSinceLastTodoReminder = 3
 
 	loop.updateTodoCounters(nil)
 
-	if loop.turnsSinceLastTodoWrite != 0 {
-		t.Errorf("turnsSinceLastTodoWrite = %d, want 0", loop.turnsSinceLastTodoWrite)
+	if loop.stepsSinceLastTodoWrite != 0 {
+		t.Errorf("stepsSinceLastTodoWrite = %d, want 0", loop.stepsSinceLastTodoWrite)
 	}
-	if loop.turnsSinceLastTodoReminder != 0 {
-		t.Errorf("turnsSinceLastTodoReminder = %d, want 0", loop.turnsSinceLastTodoReminder)
+	if loop.stepsSinceLastTodoReminder != 0 {
+		t.Errorf("stepsSinceLastTodoReminder = %d, want 0", loop.stepsSinceLastTodoReminder)
 	}
 }
 
@@ -581,16 +581,16 @@ func TestUpdateTodoCounters_WithActiveTasksIncrements(t *testing.T) {
 		Todos: []todo.TodoItem{
 			{Content: "Task A", Status: "in_progress"}}})
 	loop := New(nil, nil, Config{TodoState: ts})
-	loop.turnsSinceLastTodoWrite = 1
-	loop.turnsSinceLastTodoReminder = 1
+	loop.stepsSinceLastTodoWrite = 1
+	loop.stepsSinceLastTodoReminder = 1
 
 	loop.updateTodoCounters(nil)
 
-	if loop.turnsSinceLastTodoWrite != 2 {
-		t.Errorf("turnsSinceLastTodoWrite = %d, want 2", loop.turnsSinceLastTodoWrite)
+	if loop.stepsSinceLastTodoWrite != 2 {
+		t.Errorf("stepsSinceLastTodoWrite = %d, want 2", loop.stepsSinceLastTodoWrite)
 	}
-	if loop.turnsSinceLastTodoReminder != 2 {
-		t.Errorf("turnsSinceLastTodoReminder = %d, want 2", loop.turnsSinceLastTodoReminder)
+	if loop.stepsSinceLastTodoReminder != 2 {
+		t.Errorf("stepsSinceLastTodoReminder = %d, want 2", loop.stepsSinceLastTodoReminder)
 	}
 }
 
@@ -604,17 +604,17 @@ func TestMaybeInjectTodoReminder_BelowThresholdNoInject(t *testing.T) {
 		Todos: []todo.TodoItem{
 			{Content: "Task A", Status: "in_progress"}}})
 	loop := New(nil, nil, Config{TodoState: ts})
-	loop.turnsSinceLastTodoWrite = 1
-	loop.turnsSinceLastTodoReminder = 0
+	loop.stepsSinceLastTodoWrite = 1
+	loop.stepsSinceLastTodoReminder = 0
 
-	state := &LoopState{Messages: []llm.Message{}}
+	state := &TurnState{Messages: []llm.Message{}}
 	loop.maybeInjectTodoReminder(state)
 
 	if len(state.Messages) != 0 {
 		t.Error("should NOT inject reminder when below idleTodoWrite threshold")
 	}
-	if loop.turnsSinceLastTodoReminder != 0 {
-		t.Errorf("turnsSinceLastTodoReminder = %d, want 0", loop.turnsSinceLastTodoReminder)
+	if loop.stepsSinceLastTodoReminder != 0 {
+		t.Errorf("stepsSinceLastTodoReminder = %d, want 0", loop.stepsSinceLastTodoReminder)
 	}
 }
 
@@ -624,10 +624,10 @@ func TestMaybeInjectTodoReminder_AtThresholdInjects(t *testing.T) {
 		Todos: []todo.TodoItem{
 			{Content: "Task A", Status: "in_progress"}}})
 	loop := New(nil, nil, Config{TodoState: ts})
-	loop.turnsSinceLastTodoWrite = 2
-	loop.turnsSinceLastTodoReminder = 2
+	loop.stepsSinceLastTodoWrite = 2
+	loop.stepsSinceLastTodoReminder = 2
 
-	state := &LoopState{Messages: []llm.Message{}}
+	state := &TurnState{Messages: []llm.Message{}}
 	loop.maybeInjectTodoReminder(state)
 
 	if len(state.Messages) != 1 {
@@ -636,14 +636,14 @@ func TestMaybeInjectTodoReminder_AtThresholdInjects(t *testing.T) {
 	if !strings.HasPrefix(state.Messages[0].Content, "## Current Todo Status") {
 		t.Error("injected reminder should start with '## Current Todo Status'")
 	}
-	if !contains(state.Messages[0].Content, "2 turns since last todo_update") {
+	if !contains(state.Messages[0].Content, "2 steps since last todo_update") {
 		t.Error("reminder should contain staleness count")
 	}
-	if loop.turnsSinceLastTodoReminder != 0 {
-		t.Errorf("turnsSinceLastTodoReminder = %d, want 0", loop.turnsSinceLastTodoReminder)
+	if loop.stepsSinceLastTodoReminder != 0 {
+		t.Errorf("stepsSinceLastTodoReminder = %d, want 0", loop.stepsSinceLastTodoReminder)
 	}
-	if loop.turnsSinceLastTodoWrite != 2 {
-		t.Errorf("turnsSinceLastTodoWrite = %d, want 2", loop.turnsSinceLastTodoWrite)
+	if loop.stepsSinceLastTodoWrite != 2 {
+		t.Errorf("stepsSinceLastTodoWrite = %d, want 2", loop.stepsSinceLastTodoWrite)
 	}
 }
 
@@ -653,10 +653,10 @@ func TestMaybeInjectTodoReminder_ReminderIntervalEnforced(t *testing.T) {
 		Todos: []todo.TodoItem{
 			{Content: "Task A", Status: "in_progress"}}})
 	loop := New(nil, nil, Config{TodoState: ts})
-	loop.turnsSinceLastTodoWrite = 3
-	loop.turnsSinceLastTodoReminder = 1
+	loop.stepsSinceLastTodoWrite = 3
+	loop.stepsSinceLastTodoReminder = 1
 
-	state := &LoopState{Messages: []llm.Message{}}
+	state := &TurnState{Messages: []llm.Message{}}
 	loop.maybeInjectTodoReminder(state)
 
 	if len(state.Messages) != 0 {
@@ -667,10 +667,10 @@ func TestMaybeInjectTodoReminder_ReminderIntervalEnforced(t *testing.T) {
 func TestMaybeInjectTodoReminder_NoTasksSkips(t *testing.T) {
 	ts := todo.NewTodoState()
 	loop := New(nil, nil, Config{TodoState: ts})
-	loop.turnsSinceLastTodoWrite = 10
-	loop.turnsSinceLastTodoReminder = 10
+	loop.stepsSinceLastTodoWrite = 10
+	loop.stepsSinceLastTodoReminder = 10
 
-	state := &LoopState{Messages: []llm.Message{}}
+	state := &TurnState{Messages: []llm.Message{}}
 	loop.maybeInjectTodoReminder(state)
 
 	if len(state.Messages) != 0 {
@@ -684,10 +684,10 @@ func TestMaybeInjectTodoReminder_UpdatesExistingSlot(t *testing.T) {
 		Todos: []todo.TodoItem{
 			{Content: "Task A", Status: "in_progress"}}})
 	loop := New(nil, nil, Config{TodoState: ts})
-	loop.turnsSinceLastTodoWrite = 2
-	loop.turnsSinceLastTodoReminder = 2
+	loop.stepsSinceLastTodoWrite = 2
+	loop.stepsSinceLastTodoReminder = 2
 
-	state := &LoopState{Messages: []llm.Message{
+	state := &TurnState{Messages: []llm.Message{
 		{Role: llm.RoleUser, Content: "## Current Todo Status\n[pending] Old Task\n"}}}
 	loop.maybeInjectTodoReminder(state)
 
@@ -775,11 +775,11 @@ func TestExecuteTodoWrite_ResetsReminderCounters(t *testing.T) {
 	registry := tool.NewRegistry()
 	registry.Register(tool.Wrap(&tool.TodoCreate{})); registry.Register(tool.Wrap(&tool.TodoUpdate{}))
 	loop := New(nil, registry, Config{TodoState: ts})
-	loop.turnsSinceLastTodoWrite = 7
-	loop.turnsSinceLastTodoReminder = 5
+	loop.stepsSinceLastTodoWrite = 7
+	loop.stepsSinceLastTodoReminder = 5
 	loop.lastChanceTodoInjected = true
 
-	ch := make(chan TurnEvent, 2)
+	ch := make(chan StepEvent, 2)
 	result := loop.executeTodoMutate(context.Background(), llm.ToolCall{
 		ID:   "call_1",
 		Name: "todo_create",
@@ -790,11 +790,11 @@ func TestExecuteTodoWrite_ResetsReminderCounters(t *testing.T) {
 	if result == nil || result.Error != nil {
 		t.Fatalf("todo_create failed: %v", result)
 	}
-	if loop.turnsSinceLastTodoWrite != 0 {
-		t.Errorf("turnsSinceLastTodoWrite = %d, want 0", loop.turnsSinceLastTodoWrite)
+	if loop.stepsSinceLastTodoWrite != 0 {
+		t.Errorf("stepsSinceLastTodoWrite = %d, want 0", loop.stepsSinceLastTodoWrite)
 	}
-	if loop.turnsSinceLastTodoReminder != 0 {
-		t.Errorf("turnsSinceLastTodoReminder = %d, want 0", loop.turnsSinceLastTodoReminder)
+	if loop.stepsSinceLastTodoReminder != 0 {
+		t.Errorf("stepsSinceLastTodoReminder = %d, want 0", loop.stepsSinceLastTodoReminder)
 	}
 	if loop.lastChanceTodoInjected {
 		t.Error("lastChanceTodoInjected should be false after successful todo_create / todo_update")
@@ -826,7 +826,7 @@ func TestExecuteTodoWrite_ResetsLastChanceFlag(t *testing.T) {
 	loop := New(nil, registry, Config{TodoState: ts})
 	loop.lastChanceTodoInjected = true
 
-	ch := make(chan TurnEvent, 2)
+	ch := make(chan StepEvent, 2)
 	result := loop.executeTodoMutate(context.Background(), llm.ToolCall{
 		ID:   "call_1",
 		Name: "todo_update",
@@ -850,7 +850,7 @@ func TestExecuteTodoWrite_UpdateByIDWithDifferentContent(t *testing.T) {
 	ts := todo.NewTodoState()
 	loop := New(nil, registry, Config{TodoState: ts})
 
-	ch := make(chan TurnEvent, 4)
+	ch := make(chan StepEvent, 4)
 
 	// Call 1: create 2 items — 第二个未完成任务防止 allDone 清空
 	_ = loop.executeTodoMutate(context.Background(), llm.ToolCall{

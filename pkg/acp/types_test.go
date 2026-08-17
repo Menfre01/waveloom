@@ -242,7 +242,7 @@ func TestACPStopReason(t *testing.T) {
 	}{
 		{"completed", "end_turn"},
 		{"aborted", "cancelled"},
-		{"max_turns", "max_turn_requests"},
+		{"max_steps", "max_turn_requests"},
 		{"model_error", "refusal"},
 		{"unknown", "end_turn"},
 		{"", "end_turn"},

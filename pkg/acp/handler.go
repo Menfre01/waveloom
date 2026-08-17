@@ -141,7 +141,7 @@ func (s *Server) handleSessionNew(req JSONRPCRequest) {
 	loop := agentloop.New(s.llmClient, childRegistry, agentloop.Config{
 		SystemPrompt: s.systemPrompt,
 		Guard:        guard,
-		MaxTurns:     s.maxTurns,
+		MaxSteps:     s.maxSteps,
 		SandboxMgr:   s.sandboxMgr,
 		TodoState:    todoState,
 		Compactor:    cm.Compactor(), // 上下文压缩在 Loop 内每轮执行(与 TUI 一致)
@@ -641,7 +641,7 @@ func (s *Server) loadSessionFromDisk(sessionID string) (*SessionState, error) {
 	loop := agentloop.New(s.llmClient, childRegistry, agentloop.Config{
 		SystemPrompt: s.systemPrompt,
 		Guard:        guard,
-		MaxTurns:     s.maxTurns,
+		MaxSteps:     s.maxSteps,
 		SandboxMgr:   s.sandboxMgr,
 		TodoState:    todoState,
 		Compactor:    cm.Compactor(),

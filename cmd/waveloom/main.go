@@ -365,7 +365,7 @@ waitLoop:
 	if cfg.OneShot == "" {
 		// 16.5 加载 Hook Runner(RTK 等 hooks)
 		hookRunner := loadHookRunner()
-		runTUI(llmClient, registry, guard, sandboxMgr, expander, modelChoice, planModel, subModel, cfg.Theme, cfg.ContextLimit, cfg.MaxTurns, cfg.ToolTimeout, cfg.ToolTimeoutSource, cfg.BypassPerm, ctxMgr, isResume, sessionDir, globalPath, projectPath, agentsMdText, loc, todoState, hookRunner, agentTool, mcpManager, lspManager)
+		runTUI(llmClient, registry, guard, sandboxMgr, expander, modelChoice, planModel, subModel, cfg.Theme, cfg.ContextLimit, cfg.MaxSteps, cfg.ToolTimeout, cfg.ToolTimeoutSource, cfg.BypassPerm, ctxMgr, isResume, sessionDir, globalPath, projectPath, agentsMdText, loc, todoState, hookRunner, agentTool, mcpManager, lspManager)
 		return
 	}
 

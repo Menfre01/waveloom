@@ -14,7 +14,7 @@
 cmd/waveloom/    CLI 入口(main, config, runner, tui)
 pkg/
   acp/           ACP v1 Agent 端(JSON-RPC over stdio),对接 cc-connect/Zed/JetBrains 等客户端
-  agentloop/     Think-Act-Observe 循环(Run → <-chan TurnEvent)
+  agentloop/     Think-Act-Observe 循环(Run → <-chan StepEvent;一次 Run = 一个 turn)
   bash/          Shell 命令 AST 解析与危险命令安全检测
   compaction/    四级水位线上下文压缩(Snip/Prune/Summarize)
   environment/   工具链探测

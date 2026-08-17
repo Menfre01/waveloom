@@ -28,8 +28,8 @@ func TestRunContentAndToolCallsTogether(t *testing.T) {
 	if finalEv.Reason != ReasonCompleted {
 		t.Errorf("expected ReasonCompleted, got %s", finalEv.Reason)
 	}
-	if finalEv.Turn != 2 {
-		t.Errorf("expected 2 turns, got %d", finalEv.Turn)
+	if finalEv.Step != 2 {
+		t.Errorf("expected 2 steps, got %d", finalEv.Step)
 	}
 
 	asstMsg := finalEv.Messages[1]

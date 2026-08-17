@@ -306,26 +306,26 @@ type model struct {
 	hudLatMs          int64
 	hudCost          float64 // 会话级累计费用(元),每次 token 增量到达时按当时模型计价累加
 	hudCurrency      pricing.Currency // 当前币种,随 locale 切换
-	turnStartTime     time.Time // 本轮启动时间，用于计算延迟
+	turnStartTime     time.Time // 本 turn 启动时间,用于计算延迟
 
-	// loop 级增量（透传给 CompleteRun → cm.stats，loop 结束归零）
+	// loop 级增量(透传给 CompleteRun → cm.stats,loop 结束归零)
 	loopPrompt     int
 	loopCompl      int
 	loopCacheHit   int
 	loopCacheMiss  int
 	loopReasoning  int
-	lastTurnPrompt int // 本 loop 最后一个 TurnStats 的 PromptTokens（供 CompleteRun 透传）
-	lastTurnCompl  int // 本 loop 最后一个 TurnStats 的 CompletionTokens
+	lastStepPrompt int // 本 loop 最后一个 StepStats 的 PromptTokens(供 CompleteRun 透传)
+	lastStepCompl  int // 本 loop 最后一个 StepStats 的 CompletionTokens
 
 	hudBalance      string // 余额显示字符串，空表示未查询或不支持
 	hudBalanceAvail bool   // 账户是否有可用余额
 
 	contextLimit      int           // 上下文窗口 token 上限
-	maxTurns          int           // --max-turns（0 = 无限制）
+	maxSteps          int           // --max-steps(0 = 无限制)
 	toolTimeout       time.Duration // --tool-timeout（0 = 无限制）
 	toolTimeoutSource string        // 超时配置来源（CLI / settings.json / 默认）
 	bypassPerm        bool
-	lastPromptTokens  int // ctx bar 实时值（TurnStats → API 真实值，Tier 3 完成 → 归零）
+	lastPromptTokens  int // ctx bar 实时值(StepStats → API 真实值,Tier 3 完成 → 归零)
 
 	// Session 管理
 	agentsMdText  string            // AGENTS.md 文本，/new 时重新注入
@@ -374,7 +374,7 @@ type model struct {
 	planStartSent         bool                           // [plan:start] 已注入消息历史（退出时需配对 [plan:end]）
 	pendingPlanRestore    string                         // resume 时推迟到 wireLoop() 后恢复 Loop plan 状态
 	cancelRun             context.CancelFunc             // 取消当前运行的 agent loop（nil 表示无运行中 loop）
-	runGeneration         int                            // 每次 doTurn 递增，闭包捕获后用于 LoopDone 去重
+	runGeneration         int                            // 每次 doTurn 递增,闭包捕获后用于 TurnDone 去重
 	themeMode             string                         // 当前主题模式: auto / dark / light
 	autoDark              bool                           // 启动时 auto 检测结果（lipgloss 直接查询）：true = 深色背景
 	autoDarkFromTea       bool                           // Bubble Tea BackgroundColorMsg 检测结果：true = 深色背景
@@ -510,7 +510,7 @@ func colorHex(c color.Color) string {
 // ---------------------------------------------------------------------------
 
 // newTUIModel 创建 TUI model，依赖由外部注入（LLM client / tool registry / guard / expander / locale）。
-func newTUIModel(llmClient llm.Client, registry tool.Registry, guard permission.Guard, sandboxMgr *sandbox.SandboxManager, expander *reference.Expander, modelChoice, planModel, subModel string, theme string, contextLimit int, maxTurns int, toolTimeout time.Duration, toolTimeoutSource string, loc Locale, todoState *todo.TodoState, hookRunner *hook.Runner) *model {
+func newTUIModel(llmClient llm.Client, registry tool.Registry, guard permission.Guard, sandboxMgr *sandbox.SandboxManager, expander *reference.Expander, modelChoice, planModel, subModel string, theme string, contextLimit int, maxSteps int, toolTimeout time.Duration, toolTimeoutSource string, loc Locale, todoState *todo.TodoState, hookRunner *hook.Runner) *model {
 	cwd, _ := os.Getwd()
 	cm := session.New(buildSystemPrompt(cwd, loc))
 	lc := messagesFor(loc)
@@ -617,7 +617,7 @@ func newTUIModel(llmClient llm.Client, registry tool.Registry, guard permission.
 		planModel:         planModel,
 		subModel:          subModel,
 		contextLimit:      contextLimit,
-		maxTurns:          maxTurns,
+		maxSteps:          maxSteps,
 		toolTimeout:       toolTimeout,
 		toolTimeoutSource: toolTimeoutSource,
 		glamourRenderer:   glamourR,
@@ -666,7 +666,7 @@ func (m *model) wireLoop() {
 		}
 	}
 	m.loop = agentloop.New(m.llmClient, m.registry, agentloop.Config{
-		MaxTurns:      m.maxTurns,
+		MaxSteps:      m.maxSteps,
 		SystemPrompt:  "",
 		Guard:         guard,
 		SandboxMgr:    m.sandboxMgr,
@@ -674,7 +674,7 @@ func (m *model) wireLoop() {
 		Compactor:     m.cm.Compactor(),
 		ToolTimeout:   m.toolTimeout,
 		AgentsMD:      m.agentsMdText,
-		EventCallback: func(ev agentloop.TurnEvent) {
+		EventCallback: func(ev agentloop.StepEvent) {
 			if m.program != nil {
 				m.program.Send(ev)
 			}
@@ -911,7 +911,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.flushTranscript()
 		return m, nil
 
-	case agentloop.TurnStats:
+	case agentloop.StepStats:
 		m.loopPrompt += msg.PromptTokens // per-loop 增量 → CompleteRun
 		m.loopCompl += msg.CompletionTokens
 		m.loopCacheHit += msg.CacheHitTokens
@@ -934,8 +934,8 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			} else {
 				m.lastPromptTokens = msg.PromptTokens
 			}
-			m.lastTurnPrompt = msg.PromptTokens
-			m.lastTurnCompl = msg.CompletionTokens
+			m.lastStepPrompt = msg.PromptTokens
+			m.lastStepCompl = msg.CompletionTokens
 		}
 		if msg.Compaction.SummaryDone {
 			m.lastPromptTokens = 0
@@ -1006,8 +1006,8 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
-	case agentloop.LoopDoneWithGen:
-		m.handleLoopDone(msg.LoopDone, msg.Generation)
+	case agentloop.TurnDoneWithGen:
+		m.handleTurnDone(msg.TurnDone, msg.Generation)
 		m.flushTranscript()
 		return m, nil
 
@@ -1015,10 +1015,10 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Todo 面板更新，仅更新本地引用（renderTodoPanel 从 todoState 读取）
 		return m, nil
 
-	case agentloop.LoopDone:
-		// 不应该走到这里——所有 LoopDone 都应该被 goroutine 包装为 LoopDoneWithGen。
-		// 保留此分支作为防御（如单次模式 runner.go 直接使用 agentloop.LoopDone）。
-		m.handleLoopDone(msg, 0)
+	case agentloop.TurnDone:
+		// 不应该走到这里——所有 TurnDone 都应该被 goroutine 包装为 TurnDoneWithGen。
+		// 保留此分支作为防御(如单次模式 runner.go 直接使用 agentloop.TurnDone)。
+		m.handleTurnDone(msg, 0)
 		m.flushTranscript()
 		return m, nil
 
@@ -1828,10 +1828,10 @@ func truncateToolStreamOutput(s string) string {
 	return head + strings.Join(tail, "\n")
 }
 
-// handleLoopDone 处理循环终止。
+// handleTurnDone 处理 turn 终止。
 // generation 为 loop 启动时的 runGeneration 值。
-// generation > 0 且与当前 runGeneration 不一致 → 该 LoopDone 属于已被取代的旧 loop。
-func (m *model) handleLoopDone(ev agentloop.LoopDone, generation int) {
+// generation > 0 且与当前 runGeneration 不一致 → 该 TurnDone 属于已被取代的旧 turn。
+func (m *model) handleTurnDone(ev agentloop.TurnDone, generation int) {
 	isStale := generation > 0 && generation != m.runGeneration
 	var loopIn, loopOut int
 	var elapsedMs int64
@@ -1859,7 +1859,7 @@ func (m *model) handleLoopDone(ev agentloop.LoopDone, generation int) {
 		// 提交到 ContextManager（stats 累加 + 落盘；压缩已在 Loop 内完成）
 		// 先同步当前 todo 列表到持久化层
 		m.cm.SetTodoItems(serializeTodoItems(m.todoState))
-		result := m.cm.CompleteRun(ev.Messages, m.loopPrompt, m.lastTurnPrompt, m.loopCompl, m.loopCacheHit, m.loopCacheMiss, m.loopReasoning, m.hudModel, elapsedMs, string(ev.Reason))
+	result := m.cm.CompleteRun(ev.Messages, m.loopPrompt, m.lastStepPrompt, m.loopCompl, m.loopCacheHit, m.loopCacheMiss, m.loopReasoning, m.hudModel, elapsedMs, string(ev.Reason))
 
 		// FileHistory: 为当前 user turn 拍快照（在所有 tool call 完成后）
 		if m.fh != nil && m.fhSessionDir != "" {
@@ -1878,8 +1878,8 @@ func (m *model) handleLoopDone(ev agentloop.LoopDone, generation int) {
 		m.loopCacheHit = 0
 		m.loopCacheMiss = 0
 		m.loopReasoning = 0
-		m.lastTurnPrompt = 0
-		m.lastTurnCompl = 0
+		m.lastStepPrompt = 0
+		m.lastStepCompl = 0
 
 		// Tier 3 完成后 ctx bar 归零，等待下一个 TurnStats 用 API 真实值恢复
 		if result.Compaction.Tier3SummaryDone {
@@ -1929,21 +1929,21 @@ func (m *model) handleLoopDone(ev agentloop.LoopDone, generation int) {
 			m.paras = append(m.paras, Paragraph{
 				Type:      paraSystem,
 				State:     stateDone,
-				Text:      fmt.Sprintf(m.msg().LoopCompleted, ev.Turn, elapsedStr, shortTokens(loopIn), shortTokens(loopOut)),
+				Text:      fmt.Sprintf(m.msg().TurnCompleted, ev.Step, elapsedStr, shortTokens(loopIn), shortTokens(loopOut)),
 				NotifKind: notifInfo,
 			})
-		case agentloop.ReasonMaxTurns:
+		case agentloop.ReasonMaxSteps:
 			m.paras = append(m.paras, Paragraph{
 				Type:      paraSystem,
 				State:     stateDone,
-				Text:      fmt.Sprintf(m.msg().LoopMaxTurns, ev.Turn, elapsedStr, shortTokens(loopIn), shortTokens(loopOut)),
+				Text:      fmt.Sprintf(m.msg().TurnMaxSteps, ev.Step, elapsedStr, shortTokens(loopIn), shortTokens(loopOut)),
 				NotifKind: notifInfo,
 			})
 		case agentloop.ReasonAborted:
-			abortText := fmt.Sprintf(m.msg().LoopAborted, elapsedStr)
+			abortText := fmt.Sprintf(m.msg().TurnAborted, elapsedStr)
 			abortKind := notifInfo
 			if m.toolTimeout > 0 && isTimeoutError(ev.Err) {
-				abortText = fmt.Sprintf(m.msg().LoopToolTimeout, m.toolTimeoutSource, formatDuration(m.toolTimeout.Milliseconds()), elapsedStr)
+				abortText = fmt.Sprintf(m.msg().TurnToolTimeout, m.toolTimeoutSource, formatDuration(m.toolTimeout.Milliseconds()), elapsedStr)
 				abortKind = notifError
 			}
 			m.paras = append(m.paras, Paragraph{
@@ -1956,13 +1956,13 @@ func (m *model) handleLoopDone(ev agentloop.LoopDone, generation int) {
 			m.paras = append(m.paras, Paragraph{
 				Type:      paraSystem,
 				State:     stateDone,
-				Text:      fmt.Sprintf(m.msg().LoopModelError, elapsedStr, humanizeError(ev.Err)),
+				Text:      fmt.Sprintf(m.msg().TurnModelError, elapsedStr, humanizeError(ev.Err)),
 				NotifKind: notifError,
 			})
 		case agentloop.ReasonToolFatal:
-			text := fmt.Sprintf(m.msg().LoopToolFatal, elapsedStr, humanizeError(ev.Err))
+			text := fmt.Sprintf(m.msg().TurnToolFatal, elapsedStr, humanizeError(ev.Err))
 			if m.toolTimeout > 0 && isTimeoutError(ev.Err) {
-				text = fmt.Sprintf(m.msg().LoopToolTimeout, m.toolTimeoutSource, formatDuration(m.toolTimeout.Milliseconds()), elapsedStr)
+				text = fmt.Sprintf(m.msg().TurnToolTimeout, m.toolTimeoutSource, formatDuration(m.toolTimeout.Milliseconds()), elapsedStr)
 			}
 			m.paras = append(m.paras, Paragraph{
 				Type:      paraSystem,
@@ -2098,7 +2098,7 @@ func (m *model) handleSubagentEnd(ev subagent.SubagentEnd) {
 	for i := len(m.paras) - 1; i >= 0; i-- {
 		p := &m.paras[i]
 		if p.Type == paraSubagent && p.State == stateStreaming && p.SubagentToolCallID == ev.ToolCallID {
-			p.SubagentTurns = ev.TotalTurns
+			p.SubagentTurns = ev.TotalSteps
 			p.SubagentPromptTok = ev.PromptTokens
 			p.SubagentComplTok = ev.CompletionTokens
 			p.ToolDurMs = ev.DurationMs
@@ -2335,7 +2335,7 @@ func (m *model) buildSubagentParagraph(agentID string, entries []session.Transcr
 		p.SubagentType = meta.AgentType
 		p.SubagentPrompt = meta.Description
 		p.SubagentModel = meta.Model
-		p.SubagentTurns = meta.TotalTurns
+		p.SubagentTurns = meta.TotalSteps
 		p.SubagentPromptTok = meta.PromptTokens
 		p.SubagentComplTok = meta.CompletionTokens
 	}
@@ -2688,7 +2688,7 @@ func (m *model) doTurn(userInput string) tea.Cmd {
 		expanded = userInput
 	}
 
-	// 前置更新：Loop 计数器 +1，HUD 显示"正要开始第 N 轮"
+	// 前置更新:turn 计数器 +1,HUD 显示"正要开始第 N turn"
 	m.hudTurns++
 
 	// 若已有运行中的 loop,先取消并清除上一轮 PrepareRun 残留的 user 消息。
@@ -2779,9 +2779,9 @@ func (m *model) doTurn(userInput string) tea.Cmd {
 		defer cancel()
 
 		for ev := range m.loop.Run(ctx, messagesSnapshot) {
-			// 将 LoopDone 包装为 loopDoneWithGen，携带代数用于 handleLoopDone 去重。
-			if done, ok := ev.(agentloop.LoopDone); ok {
-				ev = agentloop.LoopDoneWithGen{LoopDone: done, Generation: gen}
+			// 将 TurnDone 包装为 TurnDoneWithGen,携带代数用于 handleTurnDone 去重。
+			if done, ok := ev.(agentloop.TurnDone); ok {
+				ev = agentloop.TurnDoneWithGen{TurnDone: done, Generation: gen}
 			}
 			// 推送事件到 TUI（goroutine-safe via buffered channel）
 			if m.program != nil {
@@ -3407,7 +3407,7 @@ func (m *model) renderFooter() string {
 	// Line 2: cache + tok + turns + messages + latency + balance
 	compactingPart := m.renderCacheRate()
 	tokensPart := styleFooterLabel.Render("tok") + " " + styleFooterValue.Render(shortTokens(m.hudPromptTokens)+"/"+shortTokens(m.hudComplTokens))
-	turnsPart := styleFooterLabel.Render("Loop") + " " + styleFooterValue.Render(fmt.Sprintf("%d", m.hudTurns))
+	turnsPart := styleFooterLabel.Render("Turns") + " " + styleFooterValue.Render(fmt.Sprintf("%d", m.hudTurns))
 	messagesPart := styleFooterLabel.Render("M") + " " + styleFooterValue.Render(fmt.Sprintf("%d", m.hudMessages))
 	latencyPart := m.renderLatency()
 	balancePart := m.renderBalance()
@@ -4435,8 +4435,8 @@ func (m *model) handleSlashCommand(input string) tea.Cmd {
 			return func() tea.Msg {
 				defer cancel()
 				for ev := range m.loop.Run(ctx, messagesSnapshot) {
-					if done, ok := ev.(agentloop.LoopDone); ok {
-						ev = agentloop.LoopDoneWithGen{LoopDone: done, Generation: gen}
+					if done, ok := ev.(agentloop.TurnDone); ok {
+						ev = agentloop.TurnDoneWithGen{TurnDone: done, Generation: gen}
 					}
 					if m.program != nil {
 						m.program.Send(ev)
@@ -4921,8 +4921,8 @@ func runTUI(llmClient llm.Client, registry tool.Registry, guard permission.Guard
 	m.hudCacheMiss = ctxMgr.Stats().TotalCacheMissTokens
 	m.hudPromptTokens = ctxMgr.Stats().TotalPromptTokens
 	m.hudComplTokens = ctxMgr.Stats().TotalCompletionTokens
-	// REGRESSION: --resume 后 hudTurns 未从 Stats.TotalTurns 恢复，状态栏计数从 0 开始。
-	// 无法单测：runTUI 依赖 Bubble Tea Program 实例。
+	// REGRESSION: --resume 后 hudTurns 未从 Stats.TotalTurns 恢复,状态栏计数从 0 开始。
+	// 无法单测:runTUI 依赖 Bubble Tea Program 实例。
 	m.hudTurns = ctxMgr.Stats().TotalTurns
 	m.hudCost = ctxMgr.Stats().TotalCost // REGRESSION: --resume 后 hudCost 未从 Stats 恢复,状态栏费用从 0 开始。
 	// ctx bar 初始为 0，首个 TurnStats 会用 API 精确值更新

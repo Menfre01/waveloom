@@ -1,6 +1,8 @@
 // Package agentloop 实现 Waveloom Code Agent 的 Think-Act-Observe 循环。
 //
-// Loop 是连接 LLM Client 和 Tool System 的编排器，在每个 turn 中：
+// 术语对齐 ACP/Claude Code 生态:一次 Loop.Run() 执行 = 一个 turn(一次用户消息
+// 的完整回应);turn 内每次 LLM 调用 + 工具执行 = 一个 step。
+// Loop 是连接 LLM Client 和 Tool System 的编排器,在每个 step 中:
 // 1. 组装上下文，调用 LLM（Think）
 // 2. 解析响应，执行工具（Act）
 // 3. 收集结果，更新状态（Observe）
@@ -31,9 +33,9 @@ import (
 // Config 保存 Loop 的不可变配置。
 // 构造时传入，运行期不变。
 type Config struct {
-	// MaxTurns 最大 turn 数，0 表示无限制。
-	// 每次调用 LLM 后 TurnCount 加 1，达到上限时循环终止。
-	MaxTurns int
+	// MaxSteps 最大 step 数,0 表示无限制。
+	// 每次调用 LLM 后 StepCount 加 1,达到上限时 turn 终止。
+	MaxSteps int
 
 	// SystemPrompt 系统提示词，Run 启动时作为 Messages 的第一条 system 消息注入。
 	// 为空时不注入，调用方需自行在 messages 中包含 system 消息。
@@ -66,9 +68,9 @@ type Config struct {
 	// 仅在 plan 模式下有效。
 	PlanFile string
 
-	// EventCallback 在工具执行 ctx 中注入的回调，供 AgentTool 等嵌套工具向父通道推送事件。
-	// nil → 不注入（不影响现有路径）。
-	EventCallback func(TurnEvent)
+	// EventCallback 在工具执行 ctx 中注入的回调,供 AgentTool 等嵌套工具向父通道推送事件。
+	// nil → 不注入(不影响现有路径)。
+	EventCallback func(StepEvent)
 
 	// AgentsMD 项目 AGENTS.md 文本，注入到 cold subagent 的上下文。
 	// 空字符串 → 不注入。
@@ -104,26 +106,26 @@ func DefaultConfig() Config {
 }
 
 // ---------------------------------------------------------------------------
-// LoopState — 迭代间可变状态
+// TurnState — turn 内 step 间可变状态
 // ---------------------------------------------------------------------------
 
-// LoopState 持有迭代间可变的状态。
-type LoopState struct {
-	Messages  []llm.Message
-	TurnCount int
+// TurnState 持有一次 turn(Run 执行)内 step 间可变的状态。
+type TurnState struct {
+	Messages []llm.Message
+	StepCount int
 
 	// ConsecutiveEmpty 记录连续收到空响应的次数。
 	// 当 LLM 连续返回无 content 且无 tool_calls 的推理专用响应时递增，	// 达到上限后循环终止以防止死循环。
 	ConsecutiveEmpty int
 
-	// AnyToolSucceeded 标记本轮是否有任何工具成功执行。
+// AnyToolSucceeded 标记本 step 是否有任何工具成功执行。
 	// 成功时重置退避计数器。
 	AnyToolSucceeded bool
 }
 
 // maxConsecutiveSameError 是同类 (工具 + 错误) 连续失败的容忍上限。
 // 达到后 loop 强制终止，避免 LLM 陷入无限重试探测。
-// 阈值设为 8 轮：其中第 3、第 5 轮会注入提醒消息引导 LLM 改变策略，// 8 轮后仍未改变则判定为死循环强制终止。
+// 阈值设为 8 轮:其中第 3、第 5 轮会注入提醒消息引导 LLM 改变策略,// 8 轮后仍未改变则判定为死循环强制终止。
 const maxConsecutiveSameError = 8
 
 // planProMaxContextTokens 是 plan mode 使用 PlanModel 的上下文上限(对齐
@@ -131,11 +133,11 @@ const maxConsecutiveSameError = 8
 // 避免超长上下文使用 pro 模型烧钱。
 const planProMaxContextTokens = 200_000
 
-// warnThresholds 定义需要注入提醒消息的连续失败轮次。
+// warnThresholds 定义需要注入提醒消息的连续失败 step 数。
 // 阶梯:3 → 5 → 8(终止)
 var warnThresholds = map[int]bool{3: true, 5: true}
 
-// todoReminderInterval 定义 todo 周期性提醒的间隔（assistant turn 数）。
+// todoReminderInterval 定义 todo 周期性提醒的间隔(assistant step 数)。
 // 首次提醒在 idleTodoWrite（距上次 todo_update 达到此值）时触发，// 后续提醒至少间隔 idleTodoReminder 轮。
 const (
 	idleTodoWrite    = 2 // 超过此值无 todo_update → 注入提醒
@@ -146,15 +148,15 @@ const (
 // TerminalReason — 终止原因
 // ---------------------------------------------------------------------------
 
-// TerminalReason 描述 Loop 终止的原因。
+// TerminalReason 描述一个 turn(Loop.Run 执行)终止的原因。
 type TerminalReason string
 
 const (
 	// ReasonCompleted LLM 给出最终答案，无 tool call。
 	ReasonCompleted TerminalReason = "completed"
 
-	// ReasonMaxTurns 达到 MaxTurns 限制。
-	ReasonMaxTurns TerminalReason = "max_turns"
+	// ReasonMaxSteps 达到 MaxSteps 限制。
+	ReasonMaxSteps TerminalReason = "max_steps"
 
 	// ReasonAborted ctx 被取消。
 	ReasonAborted TerminalReason = "aborted"
@@ -200,11 +202,11 @@ type Loop struct {
 
 	// ── todo 周期性提醒（会话级，跨 Run() 持久化）──
 
-	// turnsSinceLastTodoWrite 记录自上次 todo_update 调用以来的 assistant turn 数。
-	turnsSinceLastTodoWrite int
+	// stepsSinceLastTodoWrite 记录自上次 todo_update 调用以来的 assistant step 数。
+	stepsSinceLastTodoWrite int
 
-	// turnsSinceLastTodoReminder 记录自上次注入 todo 提醒以来的 assistant turn 数。
-	turnsSinceLastTodoReminder int
+	// stepsSinceLastTodoReminder 记录自上次注入 todo 提醒以来的 assistant step 数。
+	stepsSinceLastTodoReminder int
 	// lastChanceTodoInjected 在 loop 即将以 ReasonCompleted 终止时，	// 若检测到残留的非 completed todo 项，注入一次"最后机会"提醒后置为 true。
 	// todo_update 成功执行时重置为 false。防止 LLM 忘记最后一次 todo 更新导致残留。
 	lastChanceTodoInjected bool
@@ -295,18 +297,18 @@ func (l *Loop) ResetPlanMode() {
 	l.approvedPlan = ""
 }
 
-// Run 执行主循环，逐轮推送 TurnEvent 到返回的 channel。
-// channel 在 loop 终止后关闭，最后一个事件为 PhaseDone。
+// Run 执行一次 turn(一次用户 prompt 的完整回应),逐 step 推送 StepEvent 到返回的 channel。
+// channel 在 turn 终止后关闭,最后一个事件为 TurnDone。
 //
 // 不变量：
 // 1. 消息顺序：System → User → Assistant → Tool → Assistant → ... 严格遵守
-// 2. Turn 计数：每次调用 LLM 后 +1，表示已完成的轮次数（无论工具执行结果如何）
-// 3. 终止互斥：每个 Run 有且仅有一个 PhaseDone 事件
-// 4. 错误不丢上下文：即使因错误终止，PhaseDone.Messages 仍包含已执行的操作历史
+// 2. Step 计数:每次调用 LLM 后 +1,表示已完成的 step 数(无论工具执行结果如何)
+// 3. 终止互斥:每个 Run 有且仅有一个 TurnDone 事件
+// 4. 错误不丢上下文:即使因错误终止,TurnDone.Messages 仍包含已执行的操作历史
 // 5. Context 优先：每次迭代开始先检查 ctx.Err()
 // 6. 并发安全：ConcurrentSafe 工具并行执行，非安全工具串行执行
-func (l *Loop) Run(ctx context.Context, messages []llm.Message) <-chan TurnEvent {
-	ch := make(chan TurnEvent, 32)
+func (l *Loop) Run(ctx context.Context, messages []llm.Message) <-chan StepEvent {
+	ch := make(chan StepEvent, 32)
 
 	go func() {
 		// REGRESSION: lastChanceTodoInjected 曾跨 prompt 残留——同 session
@@ -319,23 +321,23 @@ func (l *Loop) Run(ctx context.Context, messages []llm.Message) <-chan TurnEvent
 		defer func() {
 			if l.hookRunner != nil {
 				_ = l.hookRunner.RunStop(context.Background(), "loop terminated")
-				l.hookRunner.RunNotification("LoopDone", "loop terminated")
+			l.hookRunner.RunNotification("TurnDone", "turn terminated")
 			}
 		}()
 		defer close(ch)
 
-		// panic 防御：捕获 loop 内任何未预期 panic，转为 LoopDone 事件后关闭 channel，		// 确保消费者（TUI/runner）不会因 channel 关闭而无 LoopDone 导致永久等待。
-		var state *LoopState
+		// panic 防御:捕获 turn 内任何未预期 panic,转为 TurnDone 事件后关闭 channel,		// 确保消费者(TUI/runner)不会因 channel 关闭而无 TurnDone 导致永久等待。
+		var state *TurnState
 		defer func() {
 			if r := recover(); r != nil {
 				msgs := messages
-				turn := 0
+				steps := 0
 				if state != nil {
 					msgs = state.Messages
-					turn = state.TurnCount
+					steps = state.StepCount
 				}
-				ch <- LoopDone{
-					Turn:     turn,
+				ch <- TurnDone{
+					Step:     steps,
 					Reason:   ReasonToolFatal,
 					Err:      fmt.Errorf("panic: %v", r),
 					Messages: msgs,
@@ -353,15 +355,15 @@ func (l *Loop) Run(ctx context.Context, messages []llm.Message) <-chan TurnEvent
 			}
 		}
 
-		state = &LoopState{
+		state = &TurnState{
 			Messages: messages,
 		}
 
 		for l.shouldContinue(state) {
 			// 1. Context 取消检查
 			if err := ctx.Err(); err != nil {
-				ch <- LoopDone{
-					Turn:     state.TurnCount,
+				ch <- TurnDone{
+					Step:     state.StepCount,
 					Reason:   ReasonAborted,
 					Err:      err,
 					Messages: state.Messages,
@@ -371,29 +373,29 @@ func (l *Loop) Run(ctx context.Context, messages []llm.Message) <-chan TurnEvent
 
 		// 2. THINK: 流式调用 LLM
 		l.verbose("→ LLM call #%d  (messages=%d, tools=%d)\n",
-			state.TurnCount+1, len(state.Messages), len(l.toolRegistry.List()))
+			state.StepCount+1, len(state.Messages), len(l.toolRegistry.List()))
 
-		messagesForTurn := state.Messages
-			// messagesForTurn 是每轮重建的临时切片。injectTodoStatus 通过 Append
-			// 在末尾追加 todo-status 消息，仅影响 messagesForTurn，不修改 state.Messages。
+		messagesForStep := state.Messages
+			// messagesForStep 是每个 step 重建的临时切片。injectTodoStatus 通过 Append
+			// 在末尾追加 todo-status 消息,仅影响 messagesForStep,不修改 state.Messages。
 			// 追加使用 Append 策略以避免破坏前缀缓存（Update 的 API 费用是 Append 的 19x）。
 
 			// 每轮注入当前 todo 状态，确保 LLM 始终可见活跃任务
-			l.injectTodoStatus(&messagesForTurn)
+			l.injectTodoStatus(&messagesForStep)
 
-			var lastPromptTokens int      // 本轮 API 返回的 prompt_tokens
-			var lastUsage       *llm.UsageInfo // 暂存 usage,压缩后统一推送 TurnStats
+			var lastPromptTokens int      // 本 step API 返回的 prompt_tokens
+			var lastUsage       *llm.UsageInfo // 暂存 usage,压缩后统一推送 StepStats
 			var lastModel       string         // 暂存 model
 			sendCtx := ctx
-			model := l.resolveModel(messagesForTurn)
+			model := l.resolveModel(messagesForStep)
 			if model != "" {
 				sendCtx = llm.WithModelOverride(ctx, model)
 			}
-			streamCh, err := l.llmClient.SendMessageStream(sendCtx, messagesForTurn, toLLMToolSpecs(l.toolRegistry.List()))
+			streamCh, err := l.llmClient.SendMessageStream(sendCtx, messagesForStep, toLLMToolSpecs(l.toolRegistry.List()))
 			if err != nil {
 				l.verbose("  ← ERROR: %v\n", err)
-				ch <- LoopDone{
-					Turn:     state.TurnCount,
+				ch <- TurnDone{
+					Step:     state.StepCount,
 					Reason:   ReasonModelError,
 					Err:      fmt.Errorf("llm call: %w", err),
 					Messages: state.Messages,
@@ -415,8 +417,8 @@ func (l *Loop) Run(ctx context.Context, messages []llm.Message) <-chan TurnEvent
 
 					// Context 取消 → 不回退，立即终止
 					if errors.Is(ev.Err, context.Canceled) || errors.Is(ev.Err, context.DeadlineExceeded) {
-						ch <- LoopDone{
-							Turn:     state.TurnCount,
+						ch <- TurnDone{
+							Step:     state.StepCount,
 							Reason:   ReasonAborted,
 							Err:      ev.Err,
 							Messages: state.Messages,
@@ -426,7 +428,7 @@ func (l *Loop) Run(ctx context.Context, messages []llm.Message) <-chan TurnEvent
 
 					// 回退到非流式调用（自带重试）
 					l.verbose("  ← falling back to non-streaming\n")
-					resp, fallbackErr := l.llmClient.SendMessage(sendCtx, messagesForTurn, toLLMToolSpecs(l.toolRegistry.List()))
+					resp, fallbackErr := l.llmClient.SendMessage(sendCtx, messagesForStep, toLLMToolSpecs(l.toolRegistry.List()))
 					if fallbackErr != nil {
 						l.verbose("  ← FALLBACK ERROR: %v\n", fallbackErr)
 
@@ -436,8 +438,8 @@ func (l *Loop) Run(ctx context.Context, messages []llm.Message) <-chan TurnEvent
 							reason = ReasonAborted
 						}
 
-						ch <- LoopDone{
-							Turn:     state.TurnCount,
+						ch <- TurnDone{
+							Step:     state.StepCount,
 							Reason:   reason,
 							Err:      fmt.Errorf("stream error: %w (fallback: %v)", ev.Err, fallbackErr),
 							Messages: state.Messages,
@@ -468,7 +470,7 @@ func (l *Loop) Run(ctx context.Context, messages []llm.Message) <-chan TurnEvent
 					contentBuf += ev.Delta
 					reasoningBuf += ev.ReasoningDelta
 					if !sendEvent(ctx, ch, StreamDelta{
-						Turn:           state.TurnCount + 1,
+						Step:           state.StepCount + 1,
 						ContentDelta:   ev.Delta,
 						ReasoningDelta: ev.ReasoningDelta,
 					}) {
@@ -486,7 +488,7 @@ func (l *Loop) Run(ctx context.Context, messages []llm.Message) <-chan TurnEvent
 				// Responses API 模式下搜索由服务端自动执行并注入上下文,
 				// 此事件仅用于 TUI 展示,不进入 toolCalls(无需本地执行)。
 				if ev.WebSearchStatus != "" {
-					if virtual := webSearchVirtualEvent(ev, state.TurnCount+1, webSearchStartedAt); virtual != nil {
+				if virtual := webSearchVirtualEvent(ev, state.StepCount+1, webSearchStartedAt); virtual != nil {
 						if !sendEvent(ctx, ch, virtual) {
 							// ctx 已取消,排空 streamCh 防止生产者 goroutine 泄漏
 							go func() {
@@ -519,8 +521,8 @@ func (l *Loop) Run(ctx context.Context, messages []llm.Message) <-chan TurnEvent
 
 			// 流消费循环可能因 ctx 取消而中断，在此统一检测
 			if err := ctx.Err(); err != nil {
-				ch <- LoopDone{
-					Turn:     state.TurnCount,
+				ch <- TurnDone{
+					Step:     state.StepCount,
 					Reason:   ReasonAborted,
 					Err:      err,
 					Messages: state.Messages,
@@ -595,15 +597,15 @@ func (l *Loop) Run(ctx context.Context, messages []llm.Message) <-chan TurnEvent
 				}
 				state.Messages = append(state.Messages, warnMsg)
 			}
-			state.TurnCount++
+			state.StepCount++
 
 			// 6. 无工具调用且有实际内容 → 完成；空响应继续下一轮
 			if len(toolCalls) == 0 {
 				if emptyResponse {
 					if state.ConsecutiveEmpty > 3 {
 						l.verbose("    → too many consecutive empty responses (%d), aborting\n", state.ConsecutiveEmpty)
-						ch <- LoopDone{
-							Turn:     state.TurnCount,
+						ch <- TurnDone{
+							Step:     state.StepCount,
 							Reason:   ReasonModelError,
 							Err:      fmt.Errorf("too many consecutive empty responses (%d)", state.ConsecutiveEmpty),
 							Messages: state.Messages,
@@ -616,14 +618,14 @@ func (l *Loop) Run(ctx context.Context, messages []llm.Message) <-chan TurnEvent
 				l.verbose("    %s\n", truncateText(contentBuf, 120))
 
 				// 无工具调用时 step 7-8（工具执行 + 压缩检查）不会执行，在此补发。
-				// 压缩检查（如有 Compactor）→ TurnStats
+				// 压缩检查(如有 Compactor)→ StepStats
 				var compacted bool
 				if l.config.Compactor != nil && lastPromptTokens > 0 {
 					tick := l.config.Compactor.Compact(ctx, &state.Messages, lastPromptTokens)
 					compacted = true
 					if lastUsage != nil {
-						ch <- TurnStats{
-							Turn:             state.TurnCount,
+						ch <- StepStats{
+							Step:             state.StepCount,
 							Model:            lastModel,
 							PromptTokens:     lastPromptTokens,
 							CompletionTokens: lastUsage.CompletionTokens,
@@ -635,8 +637,8 @@ func (l *Loop) Run(ctx context.Context, messages []llm.Message) <-chan TurnEvent
 						}
 					}
 					if tick.HardLimitReached {
-						ch <- LoopDone{
-							Turn:     state.TurnCount,
+						ch <- TurnDone{
+							Step:     state.StepCount,
 							Reason:   ReasonModelError,
 							Err:      fmt.Errorf("%s", tick.HardLimitReason),
 							Messages: state.Messages,
@@ -645,8 +647,8 @@ func (l *Loop) Run(ctx context.Context, messages []llm.Message) <-chan TurnEvent
 					}
 				}
 			if !compacted && lastUsage != nil {
-				ch <- TurnStats{
-					Turn:             state.TurnCount,
+				ch <- StepStats{
+					Step:             state.StepCount,
 					Model:            lastModel,
 					PromptTokens:     lastPromptTokens,
 					CompletionTokens: lastUsage.CompletionTokens,
@@ -657,7 +659,7 @@ func (l *Loop) Run(ctx context.Context, messages []llm.Message) <-chan TurnEvent
 				}
 			}
 
-			// 最后机会：终止前检测残留的非 completed todo 项，			// 注入提醒并给 LLM 一次额外 turn 调用 todo_update。
+			// 最后机会:终止前检测残留的非 completed todo 项,			// 注入提醒并给 LLM 一次额外 step 调用 todo_update。
 			if l.config.TodoState != nil && !l.lastChanceTodoInjected {
 				snapshot := l.config.TodoState.Snapshot()
 				hasIncomplete := false
@@ -679,8 +681,8 @@ func (l *Loop) Run(ctx context.Context, messages []llm.Message) <-chan TurnEvent
 				}
 			}
 
-				ch <- LoopDone{
-					Turn:     state.TurnCount,
+				ch <- TurnDone{
+					Step:     state.StepCount,
 					Reason:   ReasonCompleted,
 					Messages: state.Messages,
 				}
@@ -712,8 +714,8 @@ func (l *Loop) Run(ctx context.Context, messages []llm.Message) <-chan TurnEvent
 					}
 				}
 
-				ch <- LoopDone{
-					Turn:     state.TurnCount,
+				ch <- TurnDone{
+					Step:     state.StepCount,
 					Reason:   reason,
 					Err:      execErr,
 					Messages: state.Messages,
@@ -721,16 +723,16 @@ func (l *Loop) Run(ctx context.Context, messages []llm.Message) <-chan TurnEvent
 				return
 			}
 
-			// 8. 压缩检查 + 推送本轮 TurnStats（合并压缩结果）
+			// 8. 压缩检查 + 推送本 step StepStats(合并压缩结果)
 			var compacted bool
 			if l.config.Compactor != nil && lastPromptTokens > 0 {
 				tick := l.config.Compactor.Compact(ctx, &state.Messages, lastPromptTokens)
 				compacted = true
 
-				// 推送合并后的 TurnStats（含压缩字段）
+				// 推送合并后的 StepStats(含压缩字段)
 				if lastUsage != nil {
-					ch <- TurnStats{
-						Turn:             state.TurnCount,
+					ch <- StepStats{
+						Step:             state.StepCount,
 						Model:            lastModel,
 						PromptTokens:     lastPromptTokens,
 						CompletionTokens: lastUsage.CompletionTokens,
@@ -742,20 +744,20 @@ func (l *Loop) Run(ctx context.Context, messages []llm.Message) <-chan TurnEvent
 					}
 				}
 
-				if tick.HardLimitReached {
-					ch <- LoopDone{
-						Turn:     state.TurnCount,
-						Reason:   ReasonModelError,
+					if tick.HardLimitReached {
+						ch <- TurnDone{
+							Step:     state.StepCount,
+							Reason:   ReasonModelError,
 						Err:      fmt.Errorf("%s", tick.HardLimitReason),
 						Messages: state.Messages,
 					}
 					return
 				}
 			}
-		// 无压缩器时仍推送 TurnStats
-		if !compacted && lastUsage != nil {
-			ch <- TurnStats{
-				Turn:             state.TurnCount,
+		// 无压缩器时仍推送 StepStats
+			if !compacted && lastUsage != nil {
+				ch <- StepStats{
+					Step:             state.StepCount,
 				Model:            lastModel,
 				PromptTokens:     lastPromptTokens,
 				CompletionTokens: lastUsage.CompletionTokens,
@@ -770,10 +772,10 @@ func (l *Loop) Run(ctx context.Context, messages []llm.Message) <-chan TurnEvent
 		l.maybeInjectTodoReminder(state)
 		}
 
-		l.verbose("  ⚠ stopped: max turns reached (%d)\n", l.config.MaxTurns)
-		ch <- LoopDone{
-			Turn:     state.TurnCount,
-			Reason:   ReasonMaxTurns,
+		l.verbose("  ⚠ stopped: max steps reached (%d)\n", l.config.MaxSteps)
+		ch <- TurnDone{
+			Step:     state.StepCount,
+			Reason:   ReasonMaxSteps,
 			Messages: state.Messages,
 		}
 	}()
@@ -782,29 +784,29 @@ func (l *Loop) Run(ctx context.Context, messages []llm.Message) <-chan TurnEvent
 }
 
 // shouldContinue 判断循环是否应继续。
-// MaxTurns=0 表示无限制，始终继续。
-func (l *Loop) shouldContinue(state *LoopState) bool {
-	if l.config.MaxTurns == 0 {
+// MaxSteps=0 表示无限制,始终继续。
+func (l *Loop) shouldContinue(state *TurnState) bool {
+	if l.config.MaxSteps == 0 {
 		return true
 	}
-	return state.TurnCount < l.config.MaxTurns
+	return state.StepCount < l.config.MaxSteps
 }
 
-// resolveModel 解析本轮请求使用的模型。
+// resolveModel 解析本 step 请求使用的模型。
 // Model == llm.ModelChoiceProPlan 时启用 proplan 语义(对齐 Claude Code opusplan):
 //   plan mode 且上下文 < planProMaxContextTokens → PlanModel(pro)
 //   其余 → SubModel(flash)
 // 锚点缺失时互备兜底,两者皆空 → 空(不注入 override,用 client 默认)。
 // 不变量:返回值绝不等于 llm.ModelChoiceProPlan —— "proplan" 字符串不进 API。
-func (l *Loop) resolveModel(messagesForTurn []llm.Message) string {
+func (l *Loop) resolveModel(messagesForStep []llm.Message) string {
 	model := l.config.Model
 	if model != llm.ModelChoiceProPlan {
 		return model
 	}
 	ctxTokens := l.lastPromptTokens
-	if ctxTokens == 0 && len(messagesForTurn) > 0 {
+	if ctxTokens == 0 && len(messagesForStep) > 0 {
 		// resume 后 lastPromptTokens 为 0(API 用量未知),按消息内容估算兜底
-		ctxTokens = estimateContextTokens(messagesForTurn)
+		ctxTokens = estimateContextTokens(messagesForStep)
 	}
 	if l.plan && ctxTokens < planProMaxContextTokens {
 		model = l.config.PlanModel
@@ -864,12 +866,12 @@ func toLLMToolSpecs(specs []tool.ToolSpec) []llm.ToolSpec {
 // - completed → ToolCallResult:段落完成,展示搜索结果注入说明
 // - searching 中间态无附加信息,忽略
 // 虚拟事件不进入 toolCalls 列表,不会触发本地执行或产生 tool 消息。
-func webSearchVirtualEvent(ev llm.StreamingEvent, turn int, startedAt map[string]time.Time) TurnEvent {
+func webSearchVirtualEvent(ev llm.StreamingEvent, step int, startedAt map[string]time.Time) StepEvent {
 	switch ev.WebSearchStatus {
 	case "in_progress":
 		startedAt[ev.WebSearchCallID] = time.Now()
 		return ToolCallStart{
-			Turn:         turn,
+			Step:         step,
 			ToolCallID:   ev.WebSearchCallID,
 			ToolCallName: "web_search",
 			Arguments:    "{}",
@@ -882,7 +884,7 @@ func webSearchVirtualEvent(ev llm.StreamingEvent, turn int, startedAt map[string
 		if _, ok := startedAt[ev.WebSearchCallID]; !ok {
 			startedAt[ev.WebSearchCallID] = time.Now()
 			return ToolCallStart{
-				Turn:         turn,
+				Step:         step,
 				ToolCallID:   ev.WebSearchCallID,
 				ToolCallName: "web_search",
 				Arguments:    "{}",
@@ -903,7 +905,7 @@ func webSearchVirtualEvent(ev llm.StreamingEvent, turn int, startedAt map[string
 			result += fmt.Sprintf(" — %q", query)
 		}
 		return ToolCallResult{
-			Turn:         turn,
+			Step:         step,
 			ToolCallID:   ev.WebSearchCallID,
 			ToolCallName: "web_search",
 			DurationMs:   durationMs,
@@ -933,8 +935,8 @@ func truncateText(s string, maxLen int) string {
 	return string(runes[:maxLen]) + "…"
 }
 
-// sendEvent 发送事件到 channel，若 ctx 已取消则跳过发送并返回 false。
-func sendEvent(ctx context.Context, ch chan<- TurnEvent, ev TurnEvent) bool {
+// sendEvent 发送事件到 channel,若 ctx 已取消则跳过发送并返回 false。
+func sendEvent(ctx context.Context, ch chan<- StepEvent, ev StepEvent) bool {
 	select {
 	case ch <- ev:
 		return true
@@ -953,7 +955,7 @@ func todoLastChanceText(summary string) string {
 
 // injectTodoStatus 在每轮 LLM 调用前将当前 todo 状态注入消息列表。
 // 始终追加新消息（Append 策略），不更新已有消息以避免破坏前缀缓存。
-// messagesForTurn 是每轮重建的临时切片，追加的消息不会泄漏到 state.Messages。
+// messagesForStep 是每个 step 重建的临时切片,追加的消息不会泄漏到 state.Messages。
 func (l *Loop) injectTodoStatus(msgs *[]llm.Message) {
 	if l.config.TodoState == nil {
 		return
@@ -973,31 +975,31 @@ func todoStatusText(summary string) string {
 	return summary
 }
 
-// todoReminderText 构造 todo 提醒消息文本：状态摘要 + 提醒引导。
-func todoReminderText(summary string, turnsSince int) string {
+// todoReminderText 构造 todo 提醒消息文本:状态摘要 + 提醒引导。
+func todoReminderText(summary string, stepsSince int) string {
 	return summary + "\n\n" +
-		fmt.Sprintf("[system:todo] %d turns since last todo_update. Your todo list is stale — call todo_update NOW to update task statuses. Mark completed tasks as 'completed' and set the next pending task to 'in_progress'.", turnsSince)
+		fmt.Sprintf("[system:todo] %d steps since last todo_update. Your todo list is stale — call todo_update NOW to update task statuses. Mark completed tasks as 'completed' and set the next pending task to 'in_progress'.", stepsSince)
 }
 
-// updateTodoCounters 在每轮工具执行后更新 todo 提醒计数器。
+// updateTodoCounters 在每个 step 工具执行后更新 todo 提醒计数器。
 // 当无活跃任务时保持计数器归零（无需提醒）；否则递增。
 // 注意：todo_create / todo_update 成功执行时计数器已在 executeTodoMutate 内重置，// 此处仅处理递增逻辑。
 func (l *Loop) updateTodoCounters(toolCalls []llm.ToolCall) {
-	// 无活跃任务时无需提醒，保持计数器归零
+	// 无活跃任务时无需提醒,保持计数器归零
 	if l.config.TodoState != nil && len(l.config.TodoState.Snapshot()) == 0 {
-		l.turnsSinceLastTodoWrite = 0
-		l.turnsSinceLastTodoReminder = 0
+		l.stepsSinceLastTodoWrite = 0
+		l.stepsSinceLastTodoReminder = 0
 		return
 	}
 
-	l.turnsSinceLastTodoWrite++
-	l.turnsSinceLastTodoReminder++
+	l.stepsSinceLastTodoWrite++
+	l.stepsSinceLastTodoReminder++
 }
 
-// maybeInjectTodoReminder 在距上次 todo_update 超过 idleTodoWrite 轮后，// 向 messages 追加当前 todo 状态快照 + 提醒文字。
+// maybeInjectTodoReminder 在距上次 todo_update 超过 idleTodoWrite 个 step 后,// 向 messages 追加当前 todo 状态快照 + 提醒文字。
 // 使用 Append 策略避免破坏前缀缓存。
-// 两次提醒之间至少间隔 idleTodoReminder 轮。
-func (l *Loop) maybeInjectTodoReminder(state *LoopState) {
+// 两次提醒之间至少间隔 idleTodoReminder 个 step。
+func (l *Loop) maybeInjectTodoReminder(state *TurnState) {
 	if l.config.TodoState == nil {
 		return
 	}
@@ -1007,14 +1009,14 @@ func (l *Loop) maybeInjectTodoReminder(state *LoopState) {
 		return
 	}
 
-	if l.turnsSinceLastTodoWrite < idleTodoWrite || l.turnsSinceLastTodoReminder < idleTodoReminder {
+	if l.stepsSinceLastTodoWrite < idleTodoWrite || l.stepsSinceLastTodoReminder < idleTodoReminder {
 		return
 	}
 
 	// 注入提醒后重置提醒计数器（但保留 todo_update 计数器，	// 因为提醒不能替代真正的 todo_update 更新）
-	l.turnsSinceLastTodoReminder = 0
+	l.stepsSinceLastTodoReminder = 0
 
-	msg := todoReminderText(l.config.TodoState.StatusSummary(), l.turnsSinceLastTodoWrite)
+	msg := todoReminderText(l.config.TodoState.StatusSummary(), l.stepsSinceLastTodoWrite)
 
 	state.Messages = append(state.Messages, llm.Message{
 		Role:    llm.RoleUser,

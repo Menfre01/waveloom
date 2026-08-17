@@ -10,7 +10,7 @@ import "github.com/Menfre01/waveloom/pkg/agentloop"
 
 // SubagentStart 表示子 agent 开始执行。
 type SubagentStart struct {
-	Turn       int    // 当前 turn 序号
+	Step       int    // 当前 step 序号
 	ToolCallID string // 父级 agent 工具调用 ID
 	AgentType  string // "fork" | "evaluate" | "Explore" | "verification"
 	Prompt     string // 委派的任务描述
@@ -18,7 +18,7 @@ type SubagentStart struct {
 	Model      string // 子 agent 模型，空 = 继承主模型
 }
 
-func (SubagentStart) TurnEvent() {}
+func (SubagentStart) StepEvent() {}
 
 // ---------------------------------------------------------------------------
 // SubagentEventKind — 子 agent 内部事件类型
@@ -37,7 +37,7 @@ const (
 
 // SubagentEvent 聚合子 agent 内部产生的一次事件。
 type SubagentEvent struct {
-	Turn       int
+	Step       int
 	ToolCallID string
 	Kind       SubagentEventKind
 
@@ -52,17 +52,17 @@ type SubagentEvent struct {
 	ToolError  string
 }
 
-func (SubagentEvent) TurnEvent() {}
+func (SubagentEvent) StepEvent() {}
 
 // ---------------------------------------------------------------------------
 // SubagentEnd — 子 agent 执行完毕
 // ---------------------------------------------------------------------------
 
 type SubagentEnd struct {
-	Turn             int
+	Step             int
 	ToolCallID       string
-	Model            string // 子 agent 实际使用的模型（空 = 继承主模型）
-	TotalTurns       int
+	Model            string // 子 agent 实际使用的模型(空 = 继承主模型)
+	TotalSteps       int
 	PromptTokens     int // ↑ 输入 token
 	CompletionTokens int // ↓ 输出 token
 	CacheHitTokens   int // 子 agent 累计缓存命中 token
@@ -71,11 +71,11 @@ type SubagentEnd struct {
 	Error            string // 非空表示异常终止
 
 }
-func (SubagentEnd) TurnEvent() {}
+func (SubagentEnd) StepEvent() {}
 
-// Compile-time check: these types implement agentloop.TurnEvent.
+// Compile-time check: these types implement agentloop.StepEvent.
 var (
-	_ agentloop.TurnEvent = SubagentStart{}
-	_ agentloop.TurnEvent = SubagentEvent{}
-	_ agentloop.TurnEvent = SubagentEnd{}
+	_ agentloop.StepEvent = SubagentStart{}
+	_ agentloop.StepEvent = SubagentEvent{}
+	_ agentloop.StepEvent = SubagentEnd{}
 )

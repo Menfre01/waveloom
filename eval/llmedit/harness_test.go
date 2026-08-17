@@ -71,7 +71,7 @@ func TestHarnessSmoke(t *testing.T) {
 	RegisterEditTools(registry)
 
 	runner := NewRunner(client, registry, "You are a coding agent.")
-	runner.MaxTurns = 2
+	runner.MaxSteps = 2
 
 	ctx := context.Background()
 	result := runner.Run(ctx, task)

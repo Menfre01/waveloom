@@ -28,7 +28,7 @@ func runOneShot(cfg CLIConfig, llmClient llm.Client, registry tool.Registry, gua
 	lc := messagesFor(loc)
 	// Context Manager 已管理 system prompt，Loop 无需重复注入
 	loopCfg := agentloop.Config{
-		MaxTurns:     cfg.MaxTurns,
+		MaxSteps:     cfg.MaxSteps,
 		SystemPrompt: "",
 		ToolTimeout:  cfg.ToolTimeout,
 		AgentsMD:     agentsMdText,
@@ -99,23 +99,23 @@ func runOneShot(cfg CLIConfig, llmClient llm.Client, registry tool.Registry, gua
 	ctx = context.Background()
 	fmt.Fprintf(os.Stderr, lc.OneShotHeader, cwd)
 
-	// Drain 事件 channel，取最终 LoopDone 事件 + 累计 token 统计
+	// Drain 事件 channel,取最终 TurnDone 事件 + 累计 token 统计
 	startTime := time.Now()
-	var finalEv agentloop.LoopDone
+	var finalEv agentloop.TurnDone
 	var runPromptTokens, runComplTokens, runCacheHit, runCacheMiss, runReasoningTokens int
-	var lastTurnPrompt int // 最后一个 TurnStats 的 PromptTokens（完整上下文）
+	var lastStepPrompt int // 最后一个 StepStats 的 PromptTokens(完整上下文)
 	for ev := range loop.Run(ctx, messages) {
 		switch e := ev.(type) {
-		case agentloop.TurnStats:
+		case agentloop.StepStats:
 			runPromptTokens += e.PromptTokens
 			runComplTokens += e.CompletionTokens
 			runCacheHit += e.CacheHitTokens
 			runCacheMiss += e.CacheMissTokens
 			runReasoningTokens += e.ReasoningTokens
 			if e.PromptTokens > 0 {
-				lastTurnPrompt = e.PromptTokens
+				lastStepPrompt = e.PromptTokens
 			}
-		case agentloop.LoopDone:
+		case agentloop.TurnDone:
 			finalEv = e
 		}
 	}
@@ -128,7 +128,7 @@ func runOneShot(cfg CLIConfig, llmClient llm.Client, registry tool.Registry, gua
 	}
 
 	// 提交完整消息历史到 Context Manager（单次模式无 duration 统计，传 0）
-	_ = cm.CompleteRun(finalEv.Messages, runPromptTokens, lastTurnPrompt, runComplTokens, runCacheHit, runCacheMiss, runReasoningTokens, cfg.Model, 0, string(finalEv.Reason))
+	_ = cm.CompleteRun(finalEv.Messages, runPromptTokens, lastStepPrompt, runComplTokens, runCacheHit, runCacheMiss, runReasoningTokens, cfg.Model, 0, string(finalEv.Reason))
 
 	// 输出最后一条 assistant 消息
 	for i := len(finalEv.Messages) - 1; i >= 0; i-- {
@@ -138,8 +138,8 @@ func runOneShot(cfg CLIConfig, llmClient llm.Client, registry tool.Registry, gua
 		}
 	}
 
-	// footer：格式对齐 subagent 输出 (model, N轮, 2.3s, ↑12.5k, ↓3.2k)
-	turnsText := fmt.Sprintf(lc.SubagentTurnsFmt, finalEv.Turn)
+	// footer:格式对齐 subagent 输出 (model, N步, 2.3s, ↑12.5k, ↓3.2k)
+	turnsText := fmt.Sprintf(lc.SubagentTurnsFmt, finalEv.Step)
 	fmt.Fprintf(os.Stderr, lc.OneShotFooter,
 		model,
 		turnsText,

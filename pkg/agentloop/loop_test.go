@@ -114,11 +114,11 @@ func (m *mockLLMClient) ListModels(ctx context.Context) ([]llm.ModelInfo, error)
 	return nil, nil
 }
 
-// drainEvents 消费 channel 直到关闭，返回最后一个 LoopDone 事件。
-func drainEvents(ch <-chan TurnEvent) LoopDone {
-	var last LoopDone
+// drainEvents 消费 channel 直到关闭,返回最后一个 TurnDone 事件。
+func drainEvents(ch <-chan StepEvent) TurnDone {
+	var last TurnDone
 	for ev := range ch {
-		if done, ok := ev.(LoopDone); ok {
+		if done, ok := ev.(TurnDone); ok {
 			last = done
 		}
 	}
@@ -416,8 +416,8 @@ func TestRunCompletesImmediately(t *testing.T) {
 	if finalEv.Reason != ReasonCompleted {
 		t.Errorf("expected ReasonCompleted, got %s", finalEv.Reason)
 	}
-	if finalEv.Turn != 1 {
-		t.Errorf("expected 1 turn (1 LLM call), got %d", finalEv.Turn)
+	if finalEv.Step != 1 {
+		t.Errorf("expected 1 step (1 LLM call), got %d", finalEv.Step)
 	}
 	if len(finalEv.Messages) != 2 {
 		t.Errorf("expected 2 messages (user + assistant), got %d", len(finalEv.Messages))
@@ -450,8 +450,8 @@ func TestRunSingleToolCall(t *testing.T) {
 	if finalEv.Reason != ReasonCompleted {
 		t.Errorf("expected ReasonCompleted, got %s", finalEv.Reason)
 	}
-	if finalEv.Turn != 2 {
-		t.Errorf("expected 2 turns (2 LLM calls), got %d", finalEv.Turn)
+	if finalEv.Step != 2 {
+		t.Errorf("expected 2 steps (2 LLM calls), got %d", finalEv.Step)
 	}
 	// 消息序列: user → assistant(tool call) → tool(result) → assistant(text)
 	if len(finalEv.Messages) != 4 {
@@ -493,8 +493,8 @@ func TestRunMultipleToolCalls(t *testing.T) {
 	if finalEv.Reason != ReasonCompleted {
 		t.Errorf("expected ReasonCompleted, got %s", finalEv.Reason)
 	}
-	if finalEv.Turn != 2 {
-		t.Errorf("expected 2 turns (2 LLM calls), got %d", finalEv.Turn)
+	if finalEv.Step != 2 {
+		t.Errorf("expected 2 steps (2 LLM calls), got %d", finalEv.Step)
 	}
 	// 消息: user → assistant(3 tool calls) → tool(tc1) → tool(tc2) → tool(tc3) → assistant(text)
 	if len(finalEv.Messages) != 6 {
@@ -538,8 +538,8 @@ func TestRunMultipleTurns(t *testing.T) {
 	if finalEv.Reason != ReasonCompleted {
 		t.Errorf("expected ReasonCompleted, got %s", finalEv.Reason)
 	}
-	if finalEv.Turn != 3 {
-		t.Errorf("expected 3 turns (3 LLM calls), got %d", finalEv.Turn)
+	if finalEv.Step != 3 {
+		t.Errorf("expected 3 steps (3 LLM calls), got %d", finalEv.Step)
 	}
 	// 消息: user → asst(tc1) → tool(tc1) → asst(tc2) → tool(tc2) → asst(text) = 6
 	if len(finalEv.Messages) != 6 {
@@ -551,8 +551,8 @@ func TestRunMultipleTurns(t *testing.T) {
 // 2. 终止条件测试
 // ============================================================================
 
-func TestRunMaxTurns(t *testing.T) {
-	// 每轮都返回 tool call，设置 MaxTurns=2
+func TestRunMaxSteps(t *testing.T) {
+	// 每步都返回 tool call,设置 MaxSteps=2
 	client := &mockLLMClient{
 		responses: []*llm.Response{
 			makeToolCallResponse("", makeToolCall("tc1", "read_file", `{"file_path":"/tmp/a.txt"}`)),
@@ -560,7 +560,7 @@ func TestRunMaxTurns(t *testing.T) {
 			makeToolCallResponse("", makeToolCall("tc3", "read_file", `{"file_path":"/tmp/c.txt"}`))}}
 	readTool := newSuccessTool("read_file", true, "ok")
 	registry := newTestRegistry(readTool)
-	loop := New(client, registry, Config{MaxTurns: 2})
+	loop := New(client, registry, Config{MaxSteps: 2})
 
 	finalEv := drainEvents(loop.Run(context.Background(), []llm.Message{
 		{Role: llm.RoleUser, Content: "read files"}}))
@@ -568,21 +568,21 @@ func TestRunMaxTurns(t *testing.T) {
 	if finalEv.Err != nil {
 		t.Fatalf("unexpected error: %v", finalEv.Err)
 	}
-	if finalEv.Reason != ReasonMaxTurns {
-		t.Errorf("expected ReasonMaxTurns, got %s", finalEv.Reason)
+	if finalEv.Reason != ReasonMaxSteps {
+		t.Errorf("expected ReasonMaxSteps, got %s", finalEv.Reason)
 	}
-	if finalEv.Turn != 2 {
-		t.Errorf("expected 2 turns, got %d", finalEv.Turn)
+	if finalEv.Step != 2 {
+		t.Errorf("expected 2 steps, got %d", finalEv.Step)
 	}
 }
 
-func TestRunZeroMaxTurns(t *testing.T) {
-	// MaxTurns=0 表示无限制，LLM 无工具调用时正常完成
+func TestRunZeroMaxSteps(t *testing.T) {
+	// MaxSteps=0 表示无限制,LLM 无工具调用时正常完成
 	client := &mockLLMClient{
 		responses: []*llm.Response{
 			makeTextResponse("Here is the answer.")}}
 	registry := newTestRegistry()
-	loop := New(client, registry, Config{MaxTurns: 0})
+	loop := New(client, registry, Config{MaxSteps: 0})
 
 	finalEv := drainEvents(loop.Run(context.Background(), []llm.Message{
 		{Role: llm.RoleUser, Content: "hello"}}))
@@ -593,8 +593,8 @@ func TestRunZeroMaxTurns(t *testing.T) {
 	if finalEv.Reason != ReasonCompleted {
 		t.Errorf("expected ReasonCompleted, got %s", finalEv.Reason)
 	}
-	if finalEv.Turn != 1 {
-		t.Errorf("expected 1 turn (1 LLM call), got %d", finalEv.Turn)
+	if finalEv.Step != 1 {
+		t.Errorf("expected 1 step (1 LLM call), got %d", finalEv.Step)
 	}
 }
 
@@ -711,8 +711,8 @@ func TestRunRecoverableError(t *testing.T) {
 	if finalEv.Reason != ReasonCompleted {
 		t.Errorf("expected ReasonCompleted, got %s", finalEv.Reason)
 	}
-	if finalEv.Turn != 2 {
-		t.Errorf("expected 2 turns (2 LLM calls), got %d", finalEv.Turn)
+	if finalEv.Step != 2 {
+		t.Errorf("expected 2 steps (2 LLM calls), got %d", finalEv.Step)
 	}
 	// 验证错误消息作为 tool 消息内容返回
 	toolMsg := finalEv.Messages[2]
@@ -754,8 +754,8 @@ func TestRunRecoverableErrorsDoNotTerminate(t *testing.T) {
 		t.Errorf("expected ReasonCompleted, got %s", finalEv.Reason)
 	}
 	// 3 轮 LLM 调用（2 次 tool return + 1 次 final answer）
-	if finalEv.Turn != 3 {
-		t.Errorf("expected 3 turns, got %d", finalEv.Turn)
+	if finalEv.Step != 3 {
+		t.Errorf("expected 3 steps, got %d", finalEv.Step)
 	}
 }
 
@@ -793,8 +793,8 @@ func TestRunConsecutiveSameErrorsTerminate(t *testing.T) {
 		t.Errorf("expected ReasonToolFatal, got %s", finalEv.Reason)
 	}
 	// 8 轮 LLM 调用后终止
-	if finalEv.Turn != 8 {
-		t.Errorf("expected 8 turns, got %d", finalEv.Turn)
+	if finalEv.Step != 8 {
+		t.Errorf("expected 8 steps, got %d", finalEv.Step)
 	}
 }
 
@@ -853,8 +853,8 @@ func TestRunDifferentRecoverableErrors(t *testing.T) {
 		t.Errorf("expected ReasonCompleted, got %s", finalEv.Reason)
 	}
 	// 每种错误出现 2 次，都没有超过 3 次限制
-	if finalEv.Turn != 5 {
-		t.Errorf("expected 5 turns (5 LLM calls), got %d", finalEv.Turn)
+	if finalEv.Step != 5 {
+		t.Errorf("expected 5 steps (5 LLM calls), got %d", finalEv.Step)
 	}
 }
 
@@ -902,8 +902,8 @@ func TestRunBackoffResetBySuccess(t *testing.T) {
 		t.Errorf("expected ReasonToolFatal, got %s", finalEv.Reason)
 	}
 	// 11 轮 LLM 调用后终止（2 error + 1 success + 8 error）
-	if finalEv.Turn != 11 {
-		t.Errorf("expected 11 turns, got %d", finalEv.Turn)
+	if finalEv.Step != 11 {
+		t.Errorf("expected 11 steps, got %d", finalEv.Step)
 	}
 }
 
@@ -954,8 +954,8 @@ func TestRunMixedErrorsSameBatchNoBackoff(t *testing.T) {
 	if finalEv.Reason != ReasonCompleted {
 		t.Errorf("expected ReasonCompleted, got %s", finalEv.Reason)
 	}
-	if finalEv.Turn != 4 {
-		t.Errorf("expected 4 turns, got %d", finalEv.Turn)
+	if finalEv.Step != 4 {
+		t.Errorf("expected 4 steps, got %d", finalEv.Step)
 	}
 }
 
@@ -1003,8 +1003,8 @@ func TestRegression_SameErrorKindDifferentToolResetsCounter(t *testing.T) {
 		t.Errorf("expected ReasonToolFatal, got %s", finalEv.Reason)
 	}
 	// 3 bash + 8 read_file = 11 轮后终止（第 12 个响应不可达）
-	if finalEv.Turn != 11 {
-		t.Errorf("expected 11 turns, got %d", finalEv.Turn)
+	if finalEv.Step != 11 {
+		t.Errorf("expected 11 steps, got %d", finalEv.Step)
 	}
 }
 
@@ -1100,7 +1100,7 @@ func TestConcurrentToolsRunInParallel(t *testing.T) {
 		makeToolCall("c3", "t3", `{}`)}
 
 	loop := New(nil, registry, DefaultConfig())
-	state := &LoopState{
+	state := &TurnState{
 		Messages: nil}
 
 	// 在 goroutine 中执行，因为 executeToolCalls 会阻塞等待所有工具完成
@@ -1111,7 +1111,7 @@ func TestConcurrentToolsRunInParallel(t *testing.T) {
 	}
 	resultCh := make(chan execResult, 1)
 	go func() {
-		ch := make(chan TurnEvent, 32)
+		ch := make(chan StepEvent, 32)
 		msgs, reason, err := loop.executeToolCalls(context.Background(), calls, state, ch)
 		go func() { for range ch {} }()
 		resultCh <- execResult{msgs, reason, err}
@@ -1176,14 +1176,14 @@ func TestSerialToolsRunSequentially(t *testing.T) {
 
 	registry := newTestRegistry(t1, t2, t3)
 	loop := New(nil, registry, DefaultConfig())
-	state := &LoopState{}
+	state := &TurnState{}
 
 	calls := []llm.ToolCall{
 		makeToolCall("c1", "t1", `{}`),
 		makeToolCall("c2", "t2", `{}`),
 		makeToolCall("c3", "t3", `{}`)}
 
-	ch := make(chan TurnEvent, 32)
+	ch := make(chan StepEvent, 32)
 	msgs, reason, err := loop.executeToolCalls(context.Background(), calls, state, ch)
 	go func() { for range ch {} }()
 	if err != nil {
@@ -1232,7 +1232,7 @@ func TestMixedConcurrentAndSerialTools(t *testing.T) {
 
 	registry := newTestRegistry(c1, c2, s1, s2)
 	loop := New(nil, registry, DefaultConfig())
-	state := &LoopState{}
+	state := &TurnState{}
 
 	calls := []llm.ToolCall{
 		makeToolCall("cc1", "c1", `{}`),
@@ -1241,7 +1241,7 @@ func TestMixedConcurrentAndSerialTools(t *testing.T) {
 		makeToolCall("sc2", "s2", `{}`)}
 
 	start := time.Now()
-	ch := make(chan TurnEvent, 32)
+	ch := make(chan StepEvent, 32)
 	msgs, reason, err := loop.executeToolCalls(context.Background(), calls, state, ch)
 	go func() { for range ch {} }()
 	elapsed := time.Since(start)
@@ -1284,22 +1284,22 @@ func TestMixedConcurrentAndSerialTools(t *testing.T) {
 
 func TestConfigDefaultValues(t *testing.T) {
 	cfg := DefaultConfig()
-	if cfg.MaxTurns != 0 {
-		t.Errorf("expected MaxTurns=0 (unlimited), got %d", cfg.MaxTurns)
+	if cfg.MaxSteps != 0 {
+		t.Errorf("expected MaxSteps=0 (unlimited), got %d", cfg.MaxSteps)
 	}
 }
 
 func TestNewAppliesDefaults(t *testing.T) {
 	loop := New(nil, nil, Config{})
-	if loop.config.MaxTurns != 0 {
-		t.Errorf("expected MaxTurns=0 (unlimited), got %d", loop.config.MaxTurns)
+	if loop.config.MaxSteps != 0 {
+		t.Errorf("expected MaxSteps=0 (unlimited), got %d", loop.config.MaxSteps)
 	}
 }
 
 func TestNewPreservesExplicitValues(t *testing.T) {
-	loop := New(nil, nil, Config{MaxTurns: 10})
-	if loop.config.MaxTurns != 10 {
-		t.Errorf("expected MaxTurns=10, got %d", loop.config.MaxTurns)
+	loop := New(nil, nil, Config{MaxSteps: 10})
+	if loop.config.MaxSteps != 10 {
+		t.Errorf("expected MaxSteps=10, got %d", loop.config.MaxSteps)
 	}
 }
 
@@ -1405,12 +1405,12 @@ func TestConcurrentToolExecutionError(t *testing.T) {
 		execErr:        execErr}
 	registry := newTestRegistry(errorTool)
 	loop := New(nil, registry, DefaultConfig())
-	state := &LoopState{}
+	state := &TurnState{}
 
 	calls := []llm.ToolCall{
 		makeToolCall("tc1", "failing_tool", `{}`)}
 
-	ch := make(chan TurnEvent, 32)
+	ch := make(chan StepEvent, 32)
 	_, reason, err := loop.executeToolCalls(context.Background(), calls, state, ch)
 	go func() { for range ch {} }()
 	if err == nil {
@@ -1432,12 +1432,12 @@ func TestSerialToolExecutionError(t *testing.T) {
 		execErr:        execErr}
 	registry := newTestRegistry(errorTool)
 	loop := New(nil, registry, DefaultConfig())
-	state := &LoopState{}
+	state := &TurnState{}
 
 	calls := []llm.ToolCall{
 		makeToolCall("tc1", "serial_failing_tool", `{}`)}
 
-	ch := make(chan TurnEvent, 32)
+	ch := make(chan StepEvent, 32)
 	_, reason, err := loop.executeToolCalls(context.Background(), calls, state, ch)
 	go func() { for range ch {} }()
 	if err == nil {
@@ -1581,14 +1581,14 @@ func TestConcurrentPartialRecoverableError(t *testing.T) {
 
 	registry := newTestRegistry(success1, success2, errTool)
 	loop := New(nil, registry, DefaultConfig())
-	state := &LoopState{}
+	state := &TurnState{}
 
 	calls := []llm.ToolCall{
 		makeToolCall("tc1", "tool_a", `{}`),
 		makeToolCall("tc2", "tool_b", `{}`),
 		makeToolCall("tc3", "tool_c", `{}`)}
 
-	ch := make(chan TurnEvent, 32)
+	ch := make(chan StepEvent, 32)
 	msgs, reason, err := loop.executeToolCalls(context.Background(), calls, state, ch)
 	go func() { for range ch {} }()
 	if err != nil {
@@ -1630,13 +1630,13 @@ func TestConcurrentPartialFatalError(t *testing.T) {
 
 	registry := newTestRegistry(successTool, fatalTool)
 	loop := New(nil, registry, DefaultConfig())
-	state := &LoopState{}
+	state := &TurnState{}
 
 	calls := []llm.ToolCall{
 		makeToolCall("tc1", "tool_ok", `{}`),
 		makeToolCall("tc2", "tool_bad", `{}`)}
 
-	ch := make(chan TurnEvent, 32)
+	ch := make(chan StepEvent, 32)
 	_, reason, err := loop.executeToolCalls(context.Background(), calls, state, ch)
 	go func() { for range ch {} }()
 	if err == nil {
@@ -1728,13 +1728,13 @@ func TestSameTurnMultipleRecoverableErrors(t *testing.T) {
 
 	registry := newTestRegistry(readErrTool, grepErrTool)
 	loop := New(nil, registry, DefaultConfig())
-	state := &LoopState{}
+	state := &TurnState{}
 
 	calls := []llm.ToolCall{
 		makeToolCall("tc1", "read_file", `{}`),
 		makeToolCall("tc2", "grep", `{}`)}
 
-	ch := make(chan TurnEvent, 32)
+	ch := make(chan StepEvent, 32)
 	msgs, reason, err := loop.executeToolCalls(context.Background(), calls, state, ch)
 	go func() { for range ch {} }()
 	if err != nil {
@@ -1760,13 +1760,13 @@ func TestMixedConcurrentSerialWithRecoverableError(t *testing.T) {
 
 	registry := newTestRegistry(concurrentTool, serialErrTool)
 	loop := New(nil, registry, DefaultConfig())
-	state := &LoopState{}
+	state := &TurnState{}
 
 	calls := []llm.ToolCall{
 		makeToolCall("tc1", "concurrent_read", `{}`),
 		makeToolCall("tc2", "serial_write", `{}`)}
 
-	ch := make(chan TurnEvent, 32)
+	ch := make(chan StepEvent, 32)
 	msgs, reason, err := loop.executeToolCalls(context.Background(), calls, state, ch)
 	go func() { for range ch {} }()
 	if err != nil {
@@ -1874,10 +1874,10 @@ func TestRunDoesNotMutateInputMessages(t *testing.T) {
 	}
 }
 
-// --- 6i. MaxTurns 达到时消息序列完整性 ---
+// --- 6i. MaxSteps 达到时消息序列完整性 ---
 
-func TestRunMaxTurnsMessageSequenceComplete(t *testing.T) {
-	// MaxTurns=2，执行 2 轮后停止
+func TestRunMaxStepsMessageSequenceComplete(t *testing.T) {
+	// MaxSteps=2,执行 2 步后停止
 	// 消息链应完整：user → asst(tool1) → tool1 → asst(tool2) → tool2
 	client := &mockLLMClient{
 		responses: []*llm.Response{
@@ -1887,7 +1887,7 @@ func TestRunMaxTurnsMessageSequenceComplete(t *testing.T) {
 		}}
 	readTool := newSuccessTool("read_file", true, "ok")
 	registry := newTestRegistry(readTool)
-	loop := New(client, registry, Config{MaxTurns: 2})
+	loop := New(client, registry, Config{MaxSteps: 2})
 
 	finalEv := drainEvents(loop.Run(context.Background(), []llm.Message{
 		{Role: llm.RoleUser, Content: "read files"}}))
@@ -1895,12 +1895,12 @@ func TestRunMaxTurnsMessageSequenceComplete(t *testing.T) {
 	if finalEv.Err != nil {
 		t.Fatalf("unexpected error: %v", finalEv.Err)
 	}
-	if finalEv.Reason != ReasonMaxTurns {
-		t.Errorf("expected ReasonMaxTurns, got %s", finalEv.Reason)
+	if finalEv.Reason != ReasonMaxSteps {
+		t.Errorf("expected ReasonMaxSteps, got %s", finalEv.Reason)
 	}
 
 	// 消息序列: user → asst(tc1) → tool(tc1) → asst(tc2) → tool(tc2) = 5 条
-	// 注意：第 2 轮执行完 tool 后 TurnCount=2，shouldContinue 返回 false，
+	// 注意:第 2 步执行完 tool 后 StepCount=2,shouldContinue 返回 false,
 	// 但 assistant(tool2) 消息在 tool 执行前已追加，tool 消息也已追加
 	expectedLen := 5 // user + asst1 + tool1 + asst2 + tool2
 	if len(finalEv.Messages) != expectedLen {
@@ -2355,8 +2355,8 @@ func TestRunGuardSkipToolPreservesMessageSequence(t *testing.T) {
 func TestShouldContinue(t *testing.T) {
 	tests := []struct {
 		name      string
-		maxTurns  int
-		turnCount int
+		maxSteps  int
+		stepCount int
 		want      bool
 	}{
 		{"unlimited", 0, 0, true},
@@ -2368,8 +2368,8 @@ func TestShouldContinue(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			loop := New(nil, nil, Config{MaxTurns: tt.maxTurns})
-			state := &LoopState{TurnCount: tt.turnCount}
+			loop := New(nil, nil, Config{MaxSteps: tt.maxSteps})
+			state := &TurnState{StepCount: tt.stepCount}
 			got := loop.shouldContinue(state)
 			if got != tt.want {
 				t.Errorf("shouldContinue() = %v, want %v", got, tt.want)
@@ -2403,7 +2403,7 @@ func (m *mockCompactor) LastResult() compaction.CompactionResult { return m.last
 // 压缩集成测试
 // ---------------------------------------------------------------------------
 
-func TestRunWithCompactor_TurnStatsIncludesCompaction(t *testing.T) {
+func TestRunWithCompactor_StepStatsIncludesCompaction(t *testing.T) {
 	comp := &mockCompactor{
 		tick: compaction.Tick{
 			Tier:               1,
@@ -2421,14 +2421,14 @@ func TestRunWithCompactor_TurnStatsIncludesCompaction(t *testing.T) {
 				Content: "done",
 				Usage:   &llm.UsageInfo{PromptTokens: 650000}}}}
 
-	loop := New(client, newTestRegistry(newSuccessTool("test_tool", true, "ok")), Config{MaxTurns: 3, Compactor: comp})
+	loop := New(client, newTestRegistry(newSuccessTool("test_tool", true, "ok")), Config{MaxSteps: 3, Compactor: comp})
 	events := loop.Run(context.Background(), []llm.Message{
 		{Role: llm.RoleSystem, Content: "test"},
 		{Role: llm.RoleUser, Content: "hello"}})
 
 	var gotCompaction bool
 	for ev := range events {
-		if ts, ok := ev.(TurnStats); ok {
+		if ts, ok := ev.(StepStats); ok {
 			if ts.Compaction.HasCompaction() {
 				gotCompaction = true
 				if ts.Compaction.Tier != 1 {
@@ -2444,7 +2444,7 @@ func TestRunWithCompactor_TurnStatsIncludesCompaction(t *testing.T) {
 		}
 	}
 	if !gotCompaction {
-		t.Fatal("expected TurnStats with CompactionInfo.HasCompaction() == true")
+		t.Fatal("expected StepStats with CompactionInfo.HasCompaction() == true")
 	}
 }
 
@@ -2461,13 +2461,13 @@ func TestRunWithCompactor_NoCompaction(t *testing.T) {
 				Content: "done",
 				Usage:   &llm.UsageInfo{PromptTokens: 300000}}}}
 
-	loop := New(client, newTestRegistry(newSuccessTool("test_tool", true, "ok")), Config{MaxTurns: 3, Compactor: comp})
+	loop := New(client, newTestRegistry(newSuccessTool("test_tool", true, "ok")), Config{MaxSteps: 3, Compactor: comp})
 	events := loop.Run(context.Background(), []llm.Message{
 		{Role: llm.RoleSystem, Content: "test"},
 		{Role: llm.RoleUser, Content: "hello"}})
 
 	for ev := range events {
-		if ts, ok := ev.(TurnStats); ok {
+		if ts, ok := ev.(StepStats); ok {
 			if ts.Compaction.HasCompaction() {
 				t.Fatal("expected HasCompaction() == false for Tier 0 with 0 savings")
 			}
@@ -2489,32 +2489,32 @@ func TestRunWithCompactor_HardLimitReached(t *testing.T) {
 		responses: []*llm.Response{
 			makeToolCallResponseWithUsage("working", 650000, makeToolCall("c1", "test_tool", `{}`))}}
 
-	loop := New(client, newTestRegistry(newSuccessTool("test_tool", true, "ok")), Config{MaxTurns: 5, Compactor: comp})
+	loop := New(client, newTestRegistry(newSuccessTool("test_tool", true, "ok")), Config{MaxSteps: 5, Compactor: comp})
 	events := loop.Run(context.Background(), []llm.Message{
 		{Role: llm.RoleSystem, Content: "test"},
 		{Role: llm.RoleUser, Content: "hello"}})
 
-	var loopDone *LoopDone
+	var turnDone *TurnDone
 	for ev := range events {
-		if ts, ok := ev.(TurnStats); ok {
+		if ts, ok := ev.(StepStats); ok {
 			if !ts.Compaction.HardLimitReached {
-				t.Fatal("expected HardLimitReached in TurnStats")
+				t.Fatal("expected HardLimitReached in StepStats")
 			}
 		}
-		if ld, ok := ev.(LoopDone); ok {
-			loopDone = &ld
-		}
+	if ld, ok := ev.(TurnDone); ok {
+		turnDone = &ld
 	}
-	if loopDone == nil {
-		t.Fatal("expected LoopDone event")
-		return
-	}
-	if loopDone.Reason != ReasonModelError {
-		t.Errorf("expected ReasonModelError, got %s", loopDone.Reason)
-	}
-	if loopDone.Err == nil || loopDone.Err.Error() != "usage" {
-		t.Errorf("expected error 'usage', got %v", loopDone.Err)
-	}
+}
+if turnDone == nil {
+	t.Fatal("expected TurnDone event")
+	return
+}
+if turnDone.Reason != ReasonModelError {
+	t.Errorf("expected ReasonModelError, got %s", turnDone.Reason)
+}
+if turnDone.Err == nil || turnDone.Err.Error() != "usage" {
+	t.Errorf("expected error 'usage', got %v", turnDone.Err)
+}
 }
 
 func TestRunWithCompactor_Tier3SummaryDone(t *testing.T) {
@@ -2532,13 +2532,13 @@ func TestRunWithCompactor_Tier3SummaryDone(t *testing.T) {
 				Content: "summarized",
 				Usage:   &llm.UsageInfo{PromptTokens: 960000}}}}
 
-	loop := New(client, newTestRegistry(newSuccessTool("test_tool", true, "ok")), Config{MaxTurns: 3, Compactor: comp})
+	loop := New(client, newTestRegistry(newSuccessTool("test_tool", true, "ok")), Config{MaxSteps: 3, Compactor: comp})
 	events := loop.Run(context.Background(), []llm.Message{
 		{Role: llm.RoleSystem, Content: "test"},
 		{Role: llm.RoleUser, Content: "hello"}})
 
 	for ev := range events {
-		if ts, ok := ev.(TurnStats); ok {
+		if ts, ok := ev.(StepStats); ok {
 			if !ts.Compaction.SummaryDone {
 				t.Fatal("expected SummaryDone true for Tier 3")
 			}
@@ -2560,19 +2560,19 @@ func TestRunEmptyResponseConsecutiveAbort(t *testing.T) {
 	}
 	client.responses[0].Usage = &llm.UsageInfo{PromptTokens: 100}
 
-	loop := New(client, newTestRegistry(), Config{MaxTurns: 0})
+	loop := New(client, newTestRegistry(), Config{MaxSteps: 0})
 	events := loop.Run(context.Background(), []llm.Message{
 		{Role: llm.RoleSystem, Content: "test"},
 		{Role: llm.RoleUser, Content: "go"}})
 
-	var done *LoopDone
+	var done *TurnDone
 	for ev := range events {
-		if ld, ok := ev.(LoopDone); ok {
+		if ld, ok := ev.(TurnDone); ok {
 			done = &ld
 		}
 	}
 	if done == nil {
-		t.Fatal("expected LoopDone")
+		t.Fatal("expected TurnDone")
 		return
 	}
 	if done.Reason != ReasonModelError {
@@ -2592,19 +2592,19 @@ func TestRunEmptyResponse_RecoversAfterNonEmpty(t *testing.T) {
 		}}
 	client.responses[3].Usage = &llm.UsageInfo{PromptTokens: 100}
 
-	loop := New(client, newTestRegistry(newSuccessTool("test_tool", true, "ok")), Config{MaxTurns: 0})
+	loop := New(client, newTestRegistry(newSuccessTool("test_tool", true, "ok")), Config{MaxSteps: 0})
 	events := loop.Run(context.Background(), []llm.Message{
 		{Role: llm.RoleSystem, Content: "test"},
 		{Role: llm.RoleUser, Content: "go"}})
 
-	var done *LoopDone
+	var done *TurnDone
 	for ev := range events {
-		if ld, ok := ev.(LoopDone); ok {
+		if ld, ok := ev.(TurnDone); ok {
 			done = &ld
 		}
 	}
 	if done == nil {
-		t.Fatal("expected LoopDone")
+		t.Fatal("expected TurnDone")
 		return
 	}
 	if done.Reason != ReasonCompleted {
@@ -2624,19 +2624,19 @@ func TestRegression_EmptyResponseNoReasoningPreserved(t *testing.T) {
 			{Content: "", ReasoningContent: "one more thought...", Usage: &llm.UsageInfo{PromptTokens: 100}},
 			{Content: "", ReasoningContent: "final reasoning...", Usage: &llm.UsageInfo{PromptTokens: 100}}}}
 
-	loop := New(client, newTestRegistry(), Config{MaxTurns: 0})
+	loop := New(client, newTestRegistry(), Config{MaxSteps: 0})
 	events := loop.Run(context.Background(), []llm.Message{
 		{Role: llm.RoleSystem, Content: "test"},
 		{Role: llm.RoleUser, Content: "go"}})
 
-	var done *LoopDone
+	var done *TurnDone
 	for ev := range events {
-		if ld, ok := ev.(LoopDone); ok {
+		if ld, ok := ev.(TurnDone); ok {
 			done = &ld
 		}
 	}
 	if done == nil {
-		t.Fatal("expected LoopDone")
+		t.Fatal("expected TurnDone")
 		return
 	}
 	if done.Reason != ReasonModelError {
@@ -2666,19 +2666,19 @@ func TestRunStreamError_FallbackSuccess(t *testing.T) {
 			{Content: "fallback response", Usage: &llm.UsageInfo{PromptTokens: 500}}},
 		streamErrors: []error{streamErr}}
 
-	loop := New(client, newTestRegistry(), Config{MaxTurns: 2})
+	loop := New(client, newTestRegistry(), Config{MaxSteps: 2})
 	events := loop.Run(context.Background(), []llm.Message{
 		{Role: llm.RoleSystem, Content: "test"},
 		{Role: llm.RoleUser, Content: "hello"}})
 
-	var done *LoopDone
+	var done *TurnDone
 	for ev := range events {
-		if ld, ok := ev.(LoopDone); ok {
+		if ld, ok := ev.(TurnDone); ok {
 			done = &ld
 		}
 	}
 	if done == nil {
-		t.Fatal("expected LoopDone")
+		t.Fatal("expected TurnDone")
 		return
 	}
 	if done.Reason != ReasonCompleted {
@@ -2695,19 +2695,19 @@ func TestRunStreamError_FallbackFailure(t *testing.T) {
 		errors:       []error{nil, sendMsgErr}, // SendMessageStream ok, SendMessage fails
 		streamErrors: []error{streamErr}}
 
-	loop := New(client, newTestRegistry(), Config{MaxTurns: 2})
+	loop := New(client, newTestRegistry(), Config{MaxSteps: 2})
 	events := loop.Run(context.Background(), []llm.Message{
 		{Role: llm.RoleSystem, Content: "test"},
 		{Role: llm.RoleUser, Content: "hello"}})
 
-	var done *LoopDone
+	var done *TurnDone
 	for ev := range events {
-		if ld, ok := ev.(LoopDone); ok {
+		if ld, ok := ev.(TurnDone); ok {
 			done = &ld
 		}
 	}
 	if done == nil {
-		t.Fatal("expected LoopDone")
+		t.Fatal("expected TurnDone")
 		return
 	}
 	if done.Reason != ReasonModelError {
@@ -2724,19 +2724,19 @@ func TestRunStreamDeadlineExceeded(t *testing.T) {
 	client := &mockLLMClient{
 		streamErrors: []error{streamErr}}
 
-	loop := New(client, newTestRegistry(), Config{MaxTurns: 2})
+	loop := New(client, newTestRegistry(), Config{MaxSteps: 2})
 	events := loop.Run(context.Background(), []llm.Message{
 		{Role: llm.RoleSystem, Content: "test"},
 		{Role: llm.RoleUser, Content: "hello"}})
 
-	var done *LoopDone
+	var done *TurnDone
 	for ev := range events {
-		if ld, ok := ev.(LoopDone); ok {
+		if ld, ok := ev.(TurnDone); ok {
 			done = &ld
 		}
 	}
 	if done == nil {
-		t.Fatal("expected LoopDone")
+		t.Fatal("expected TurnDone")
 		return
 	}
 	if done.Reason != ReasonAborted {
@@ -2760,19 +2760,19 @@ func TestRunToolNilResult(t *testing.T) {
 		responses: []*llm.Response{
 			makeToolCallResponseWithUsage("working", 500, makeToolCall("c1", "nil_tool", `{}`))}}
 
-	loop := New(client, newTestRegistry(nilTool), Config{MaxTurns: 2})
+	loop := New(client, newTestRegistry(nilTool), Config{MaxSteps: 2})
 	events := loop.Run(context.Background(), []llm.Message{
 		{Role: llm.RoleSystem, Content: "test"},
 		{Role: llm.RoleUser, Content: "go"}})
 
-	var done *LoopDone
+	var done *TurnDone
 	for ev := range events {
-		if ld, ok := ev.(LoopDone); ok {
+		if ld, ok := ev.(TurnDone); ok {
 			done = &ld
 		}
 	}
 	if done == nil {
-		t.Fatal("expected LoopDone")
+		t.Fatal("expected TurnDone")
 		return
 	}
 	// nilTool 在 serial 路径执行（非 concurrentSafe？不，concurrentSafe=true）
@@ -2981,7 +2981,7 @@ func (m *slowMockLLMClient) ListModels(ctx context.Context) ([]llm.ModelInfo, er
 }
 
 func TestRunStreamDeltaContextCancellation(t *testing.T) {
-	// 在流式 delta 发送过程中取消 ctx → loop 应终止并推送 LoopDone(ReasonAborted)
+	// 在流式 delta 发送过程中取消 ctx → turn 应终止并推送 TurnDone(ReasonAborted)
 	ctx, cancel := context.WithCancel(context.Background())
 
 	client := &slowMockLLMClient{}
@@ -2997,19 +2997,19 @@ func TestRunStreamDeltaContextCancellation(t *testing.T) {
 		cancel()
 	}()
 
-	var lastLoopDone *LoopDone
+	var lastTurnDone *TurnDone
 	for ev := range ch {
-		if ld, ok := ev.(LoopDone); ok {
-			lastLoopDone = &ld
+		if ld, ok := ev.(TurnDone); ok {
+			lastTurnDone = &ld
 		}
 	}
 
-	if lastLoopDone == nil {
-		t.Fatal("expected LoopDone after context cancellation")
+	if lastTurnDone == nil {
+		t.Fatal("expected TurnDone after context cancellation")
 		return
 	}
-	if lastLoopDone.Reason != ReasonAborted {
-		t.Errorf("expected ReasonAborted, got %s", lastLoopDone.Reason)
+	if lastTurnDone.Reason != ReasonAborted {
+		t.Errorf("expected ReasonAborted, got %s", lastTurnDone.Reason)
 	}
 }
 
@@ -3042,8 +3042,8 @@ func TestSendEvent_ContextCancelled(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	// nil channel — send 永远阻塞，只有 ctx.Done() 可用
-	var nilCh chan TurnEvent
-	result := sendEvent(ctx, nilCh, StreamDelta{Turn: 1, ContentDelta: "x"})
+	var nilCh chan StepEvent
+	result := sendEvent(ctx, nilCh, StreamDelta{Step: 1, ContentDelta: "x"})
 	if result {
 		t.Error("expected false when ctx is cancelled")
 	}
@@ -3051,8 +3051,8 @@ func TestSendEvent_ContextCancelled(t *testing.T) {
 
 func TestSendEvent_Success(t *testing.T) {
 	ctx := context.Background()
-	ch := make(chan TurnEvent, 1)
-	result := sendEvent(ctx, ch, StreamDelta{Turn: 1, ContentDelta: "x"})
+	ch := make(chan StepEvent, 1)
+	result := sendEvent(ctx, ch, StreamDelta{Step: 1, ContentDelta: "x"})
 	if !result {
 		t.Error("expected true when ctx is not cancelled")
 	}
@@ -3068,10 +3068,10 @@ func TestExecuteToolCalls_UnknownTool(t *testing.T) {
 	calls := []llm.ToolCall{
 		makeToolCall("tc1", "nonexistent_tool", `{}`)}
 
-	ch := make(chan TurnEvent, 16)
+	ch := make(chan StepEvent, 16)
 	go func() { for range ch {} }()
 
-	_, reason, err := l.executeToolCalls(context.Background(), calls, &LoopState{}, ch)
+	_, reason, err := l.executeToolCalls(context.Background(), calls, &TurnState{}, ch)
 	if err == nil {
 		t.Fatal("expected error for unknown tool")
 	}
@@ -3274,7 +3274,7 @@ func TestExecuteToolCalls_ContextCancelledDuringConcurrent(t *testing.T) {
 		makeToolCall("tc1", "tool_a", `{}`),
 		makeToolCall("tc2", "tool_b", `{}`)}
 
-	ch := make(chan TurnEvent, 16)
+	ch := make(chan StepEvent, 16)
 	go func() { for range ch {} }()
 
 	// 在 goroutine 中启动 executeToolCalls，工具启动后阻塞在 proceedCh 上
@@ -3282,7 +3282,7 @@ func TestExecuteToolCalls_ContextCancelledDuringConcurrent(t *testing.T) {
 	var execErr error
 	done := make(chan struct{})
 	go func() {
-		_, reason, execErr = l.executeToolCalls(ctx, calls, &LoopState{}, ch)
+		_, reason, execErr = l.executeToolCalls(ctx, calls, &TurnState{}, ch)
 		close(done)
 	}()
 
@@ -3314,14 +3314,14 @@ func TestExecuteToolCalls_ContextCancelledDuringSerialSend(t *testing.T) {
 	calls := []llm.ToolCall{
 		makeToolCall("tc1", "serial_tool", `{}`)}
 
-	ch := make(chan TurnEvent) // 无缓冲 channel — sendEvent 会阻塞
+	ch := make(chan StepEvent) // 无缓冲 channel — sendEvent 会阻塞
 	// 在 goroutine 中执行，立即取消 ctx
 	go func() {
 		time.Sleep(10 * time.Millisecond)
 		cancel()
 	}()
 
-	_, reason, err := l.executeToolCalls(ctx, calls, &LoopState{}, ch)
+	_, reason, err := l.executeToolCalls(ctx, calls, &TurnState{}, ch)
 	// 取消后 sendEvent 应返回 false，触发 ReasonAborted
 	if err == nil {
 		t.Fatal("expected error when ctx is cancelled during send")
@@ -3414,9 +3414,9 @@ func TestRegression_StaleTodoOnComplete_NoInfiniteLoop(t *testing.T) {
 		t.Errorf("expected ReasonCompleted, got %s", finalEv.Reason)
 	}
 
-	// 验证 Turn 数：最多 2 轮（第一轮触发提醒，第二轮正常完成）
-	if finalEv.Turn > 2 {
-		t.Errorf("expected at most 2 turns, got %d — possible infinite loop", finalEv.Turn)
+	// 验证 Step 数:最多 2 步(第一步触发提醒,第二步正常完成)
+	if finalEv.Step > 2 {
+		t.Errorf("expected at most 2 steps, got %d — possible infinite loop", finalEv.Step)
 	}
 
 	// 验证消息中包含 last-chance 提醒
@@ -3453,7 +3453,7 @@ func TestRegression_LastChanceTodoResetAcrossRuns(t *testing.T) {
 	loop := New(client, registry, Config{
 		TodoState: ts})
 
-	reminderIn := func(ev LoopDone) bool {
+	reminderIn := func(ev TurnDone) bool {
 		for _, msg := range ev.Messages {
 			if strings.Contains(msg.Content, "You are about to finish, but your todo list still has incomplete tasks") {
 				return true
@@ -3597,7 +3597,7 @@ func proPlanLoop(t *testing.T, plan bool, sub, planModel string) (*mockLLMClient
 		Model:     llm.ModelChoiceProPlan,
 		SubModel:  sub,
 		PlanModel: planModel,
-		MaxTurns:  2,
+		MaxSteps:  2,
 	})
 	if plan {
 		loop.SetPlanMode("plan.md")
@@ -3608,7 +3608,7 @@ func proPlanLoop(t *testing.T, plan bool, sub, planModel string) (*mockLLMClient
 // TestProPlanChoice_Disabled 回归:Model 非 proplan 时,全场景使用 Model(现状不变)。
 func TestProPlanChoice_Disabled(t *testing.T) {
 	client := &mockLLMClient{}
-	loop := New(client, newTestRegistry(), Config{Model: "deepseek-v4-pro", MaxTurns: 2})
+	loop := New(client, newTestRegistry(), Config{Model: "deepseek-v4-pro", MaxSteps: 2})
 	loop.SetPlanMode("plan.md")
 	drainEvents(loop.Run(context.Background(), []llm.Message{
 		{Role: llm.RoleUser, Content: "do something"},
@@ -3673,7 +3673,7 @@ func TestProPlanChoice_PlanOver200kDegrades(t *testing.T) {
 		Model:     llm.ModelChoiceProPlan,
 		SubModel:  "flash-x",
 		PlanModel: "pro-x",
-		MaxTurns:  3,
+		MaxSteps:  3,
 	})
 	// 第一轮:非 plan,lastPromptTokens=0 → SubModel
 	drainEvents(loop.Run(context.Background(), []llm.Message{
@@ -3711,7 +3711,7 @@ func TestProPlanChoice_PlanUnder200kUsesPro(t *testing.T) {
 		Model:     llm.ModelChoiceProPlan,
 		SubModel:  "flash-x",
 		PlanModel: "pro-x",
-		MaxTurns:  3,
+		MaxSteps:  3,
 	})
 	drainEvents(loop.Run(context.Background(), []llm.Message{
 		{Role: llm.RoleUser, Content: "do something"},
@@ -3742,7 +3742,7 @@ func TestProPlanChoice_ResumeEstimate(t *testing.T) {
 		Model:     llm.ModelChoiceProPlan,
 		SubModel:  "flash-x",
 		PlanModel: "pro-x",
-		MaxTurns:  1,
+		MaxSteps:  1,
 	})
 	loop.SetPlanMode("plan.md")
 	// ~700k ASCII 字符 ≈ 210k tokens(0.3 token/字符)× 1.3 安全系数 ≈ 273k > 200k 守卫阈值
@@ -3787,7 +3787,7 @@ func TestProPlanChoice_AnchorFallback(t *testing.T) {
 		client := &mockLLMClient{}
 		loop := New(client, newTestRegistry(), Config{
 			Model:    llm.ModelChoiceProPlan,
-			MaxTurns: 1,
+			MaxSteps: 1,
 		})
 		loop.SetPlanMode("plan.md")
 		drainEvents(loop.Run(context.Background(), []llm.Message{
@@ -3807,7 +3807,7 @@ func TestProPlanChoice_AnchorFallback(t *testing.T) {
 			Model:     llm.ModelChoiceProPlan,
 			PlanModel: llm.ModelChoiceProPlan,
 			SubModel:  llm.ModelChoiceProPlan,
-			MaxTurns:  1,
+			MaxSteps:  1,
 		})
 		loop.SetPlanMode("plan.md")
 		drainEvents(loop.Run(context.Background(), []llm.Message{
@@ -3873,14 +3873,14 @@ func TestWebSearchVirtualEvent(t *testing.T) {
 			}
 			switch ev := got.(type) {
 			case ToolCallStart:
-				if ev.Turn != 3 || ev.ToolCallID != tt.ev.WebSearchCallID || ev.ToolCallName != "web_search" {
+				if ev.Step != 3 || ev.ToolCallID != tt.ev.WebSearchCallID || ev.ToolCallName != "web_search" {
 					t.Errorf("ToolCallStart = %+v, want turn=3 id=%s name=web_search", ev, tt.ev.WebSearchCallID)
 				}
 				if !ev.ServerSide {
 					t.Error("ToolCallStart.ServerSide = false, want true")
 				}
 			case ToolCallResult:
-				if ev.Turn != 3 || ev.ToolCallID != tt.ev.WebSearchCallID || ev.ToolCallName != "web_search" {
+				if ev.Step != 3 || ev.ToolCallID != tt.ev.WebSearchCallID || ev.ToolCallName != "web_search" {
 					t.Errorf("ToolCallResult = %+v, want turn=3 id=%s name=web_search", ev, tt.ev.WebSearchCallID)
 				}
 				if !ev.ServerSide {

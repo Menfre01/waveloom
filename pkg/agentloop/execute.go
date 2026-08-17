@@ -51,7 +51,7 @@ func (l *Loop) effectiveTimeout(name string) time.Duration {
 	return l.config.ToolTimeout
 }
 
-func (l *Loop) executeToolCalls(ctx context.Context, calls []llm.ToolCall, state *LoopState, ch chan<- TurnEvent) (msgs []llm.Message, termReason TerminalReason, execErr error) {
+func (l *Loop) executeToolCalls(ctx context.Context, calls []llm.ToolCall, state *TurnState, ch chan<- StepEvent) (msgs []llm.Message, termReason TerminalReason, execErr error) {
 	// Inject EventCallback + ParentMessages into tool execution context.
 	// Sub-tools like AgentTool read these to create nested loops and forward events.
 	if l.config.EventCallback != nil {
@@ -70,7 +70,7 @@ func (l *Loop) executeToolCalls(ctx context.Context, calls []llm.ToolCall, state
 		ctx = WithAgentsMD(ctx, l.config.AgentsMD)
 	}
 
-	// Inject session-level ReadStateStore for read/edit conflict detection (跨 turn 持久化).
+// Inject session-level ReadStateStore for read/edit conflict detection (跨 step 持久化).
 ctx = tool.WithReadState(ctx, l.readStateStore)
 	// Inject LSP Manager for tools that need symbol/document out-of-band access (e.g., read outline).
 	if l.config.LSPManager != nil {
@@ -108,7 +108,7 @@ ctx = tool.WithReadState(ctx, l.readStateStore)
 
 	for _, tc := range concurrent {
 		if !sendEvent(ctx, ch, ToolCallStart{
-			Turn:         state.TurnCount,
+			Step:         state.StepCount,
 			ToolCallID:   tc.ID,
 			ToolCallName: tc.Name,
 			Arguments:    tc.Arguments,
@@ -119,7 +119,7 @@ ctx = tool.WithReadState(ctx, l.readStateStore)
 		if l.checkPermission(l.withSandboxStatus(ctx, tc), tc, results, skip) {
 			r := results[tc.ID]
 			if !sendEvent(ctx, ch, ToolCallResult{
-				Turn:         state.TurnCount,
+				Step:         state.StepCount,
 				ToolCallID:   tc.ID,
 				ToolCallName: tc.Name,
 				Result:       r.Content,
@@ -214,9 +214,9 @@ ctx = tool.WithReadState(ctx, l.readStateStore)
 				var execErr error
 				if l.toolRegistry.IsStreamable(tc.Name) {
 				result, execErr = l.toolRegistry.ExecuteStreaming(execCtx, tc.Name, toolArgs, func(chunk string) {
-					sendEvent(ctx, ch, ToolCallStream{
-						Turn: state.TurnCount, ToolCallID: tc.ID,
-						ToolCallName: tc.Name, Chunk: tool.SanitizeToolOutput(chunk),
+				sendEvent(ctx, ch, ToolCallStream{
+					Step: state.StepCount, ToolCallID: tc.ID,
+					ToolCallName: tc.Name, Chunk: tool.SanitizeToolOutput(chunk),
 					})
 				})
 				} else {
@@ -311,7 +311,7 @@ ctx = tool.WithReadState(ctx, l.readStateStore)
 	for _, tc := range toExec {
 		r := results[tc.ID]
 		ev := ToolCallResult{
-			Turn:         state.TurnCount,
+			Step:         state.StepCount,
 			ToolCallID:   tc.ID,
 			ToolCallName: tc.Name,
 			DurationMs:   durations[tc.ID].Milliseconds(),
@@ -331,7 +331,7 @@ ctx = tool.WithReadState(ctx, l.readStateStore)
 	// 4. 串行组（每个工具独立判断）
 	for _, tc := range serial {
 		if !sendEvent(ctx, ch, ToolCallStart{
-			Turn:         state.TurnCount,
+			Step:         state.StepCount,
 			ToolCallID:   tc.ID,
 			ToolCallName: tc.Name,
 			Arguments:    tc.Arguments,
@@ -348,7 +348,7 @@ ctx = tool.WithReadState(ctx, l.readStateStore)
 					results[tc.ID] = result
 					durations[tc.ID] = 0
 					ev := ToolCallResult{
-						Turn:         state.TurnCount,
+						Step:         state.StepCount,
 						ToolCallID:   tc.ID,
 						ToolCallName: tc.Name,
 						DurationMs:   0,
@@ -373,7 +373,7 @@ ctx = tool.WithReadState(ctx, l.readStateStore)
 					results[tc.ID] = result
 					durations[tc.ID] = 0
 					ev := ToolCallResult{
-						Turn:         state.TurnCount,
+						Step:         state.StepCount,
 						ToolCallID:   tc.ID,
 						ToolCallName: tc.Name,
 						DurationMs:   0,
@@ -398,7 +398,7 @@ ctx = tool.WithReadState(ctx, l.readStateStore)
 				durations[tc.ID] = 0
 
 				ev := ToolCallResult{
-					Turn:         state.TurnCount,
+					Step:         state.StepCount,
 					ToolCallID:   tc.ID,
 					ToolCallName: tc.Name,
 					DurationMs:   0,
@@ -427,9 +427,9 @@ ctx = tool.WithReadState(ctx, l.readStateStore)
 			results[tc.ID] = result
 			durations[tc.ID] = 0
 
-			ev := ToolCallResult{
-				Turn:         state.TurnCount,
-				ToolCallID:   tc.ID,
+				ev := ToolCallResult{
+					Step:         state.StepCount,
+					ToolCallID:   tc.ID,
 				ToolCallName: tc.Name,
 				DurationMs:   0,
 			}
@@ -449,7 +449,7 @@ ctx = tool.WithReadState(ctx, l.readStateStore)
 		if l.checkPermission(l.withSandboxStatus(ctx, tc), tc, results, skip) {
 			r := results[tc.ID]
 			if !sendEvent(ctx, ch, ToolCallResult{
-				Turn:         state.TurnCount,
+				Step:         state.StepCount,
 				ToolCallID:   tc.ID,
 				ToolCallName: tc.Name,
 				Result:       r.Content,
@@ -511,7 +511,7 @@ ctx = tool.WithReadState(ctx, l.readStateStore)
 		if l.toolRegistry.IsStreamable(tc.Name) {
 		result, execErr = l.toolRegistry.ExecuteStreaming(execCtx, tc.Name, toolArgs, func(chunk string) {
 			sendEvent(ctx, ch, ToolCallStream{
-				Turn: state.TurnCount, ToolCallID: tc.ID,
+				Step: state.StepCount, ToolCallID: tc.ID,
 				ToolCallName: tc.Name, Chunk: tool.SanitizeToolOutput(chunk),
 			})
 		})
@@ -550,9 +550,9 @@ ctx = tool.WithReadState(ctx, l.readStateStore)
 			len(result.Content), truncateText(result.Content, 60),
 		)
 
-		ev := ToolCallResult{
-			Turn:         state.TurnCount,
-			ToolCallID:   tc.ID,
+				ev := ToolCallResult{
+					Step:         state.StepCount,
+					ToolCallID:   tc.ID,
 			ToolCallName: tc.Name,
 			DurationMs:   durations[tc.ID].Milliseconds(),
 			Result:       result.Content,
@@ -911,7 +911,7 @@ func (l *Loop) checkPermission(ctx context.Context, tc llm.ToolCall, results map
 
 // executeTodoMutate 处理 todo_create / todo_update 工具调用。
 // 解析参数 → 增量合并到 TodoState → 推送 TodoUpdateEvent → 返回格式化结果给 LLM。
-func (l *Loop) executeTodoMutate(ctx context.Context, tc llm.ToolCall, state *LoopState, ch chan<- TurnEvent) *tool.ToolResult {
+func (l *Loop) executeTodoMutate(ctx context.Context, tc llm.ToolCall, state *TurnState, ch chan<- StepEvent) *tool.ToolResult {
 	if l.config.TodoState == nil {
 		return &tool.ToolResult{
 			Content: "todo_create / todo_update is not available (TodoState not configured).",
@@ -932,8 +932,8 @@ func (l *Loop) executeTodoMutate(ctx context.Context, tc llm.ToolCall, state *Lo
 	result := l.config.TodoState.Apply(params)
 
 	// 成功更新后重置周期性提醒计数器
-	l.turnsSinceLastTodoWrite = 0
-	l.turnsSinceLastTodoReminder = 0
+	l.stepsSinceLastTodoWrite = 0
+	l.stepsSinceLastTodoReminder = 0
 	l.lastChanceTodoInjected = false
 	// 推送更新事件给 TUI
 	if !sendEvent(ctx, ch, TodoUpdateEvent{Items: result.Items}) {
@@ -978,7 +978,7 @@ func (l *Loop) executeTodoMutate(ctx context.Context, tc llm.ToolCall, state *Lo
 
 // executeAskUserQuestion 处理 ask_user_question 工具调用。
 // 发送通知事件后通过 UserResponder.AnswerQuestion() 阻塞等待用户回答。
-func (l *Loop) executeAskUserQuestion(ctx context.Context, tc llm.ToolCall, state *LoopState, ch chan<- TurnEvent) (*tool.ToolResult, error) {
+func (l *Loop) executeAskUserQuestion(ctx context.Context, tc llm.ToolCall, state *TurnState, ch chan<- StepEvent) (*tool.ToolResult, error) {
 	// 解析问题参数
 	var params struct {
 		Questions []struct {
@@ -1021,7 +1021,7 @@ func (l *Loop) executeAskUserQuestion(ctx context.Context, tc llm.ToolCall, stat
 
 	// 发送通知事件（非阻塞，TUI 可据此做渲染准备）
 	if !sendEvent(ctx, ch, AskUserQuestionEvent{
-		Turn:       state.TurnCount,
+		Step:       state.StepCount,
 		ToolCallID: tc.ID,
 		Questions:  prompts,
 	}) {
@@ -1087,7 +1087,7 @@ func formatAnswersAsText(questions []QuestionPrompt, responses []QuestionRespons
 
 // executeEnterPlanMode 处理 enter_plan_mode 工具调用。
 // 通过 UserResponder.EnterPlan() 阻塞等待用户确认，然后设置 plan 模式状态。
-func (l *Loop) executeEnterPlanMode(ctx context.Context, tc llm.ToolCall, state *LoopState, ch chan<- TurnEvent) (*tool.ToolResult, error) {
+func (l *Loop) executeEnterPlanMode(ctx context.Context, tc llm.ToolCall, state *TurnState, ch chan<- StepEvent) (*tool.ToolResult, error) {
 	// 已在 plan 模式中（如用户通过 Shift+Tab 提前进入）→ 直接返回成功
 	if l.plan {
 		return &tool.ToolResult{
@@ -1135,7 +1135,7 @@ Remember: DO NOT write or edit any source files — these operations will be blo
 		l.config.Guard.EnterPlanMode(l.config.PlanFile)
 	}
 
-	emitPlanEnter(ctx, ch, state.TurnCount, l.config.PlanFile, l.planPairID)
+	emitPlanEnter(ctx, ch, state.StepCount, l.config.PlanFile, l.planPairID)
 
 	return &tool.ToolResult{
 		Content: fmt.Sprintf(`Entered plan mode. You should now focus on exploring the codebase and designing an implementation approach.
@@ -1155,7 +1155,7 @@ Remember: DO NOT write or edit any source files — these operations will be blo
 
 // executeExitPlanMode 处理 exit_plan_mode 工具调用。
 // 读取 plan 文件内容，通过 UserResponder.ApprovePlan() 提交审批。
-func (l *Loop) executeExitPlanMode(ctx context.Context, tc llm.ToolCall, state *LoopState, ch chan<- TurnEvent) (*tool.ToolResult, error) {
+func (l *Loop) executeExitPlanMode(ctx context.Context, tc llm.ToolCall, state *TurnState, ch chan<- StepEvent) (*tool.ToolResult, error) {
 	// 校验：仅 plan 模式下有效
 	if !l.plan {
 		return &tool.ToolResult{
@@ -1226,7 +1226,7 @@ func (l *Loop) executeExitPlanMode(ctx context.Context, tc llm.ToolCall, state *
 		l.config.Guard.ExitPlanMode()
 	}
 
-	emitPlanExit(ctx, ch, state.TurnCount, planStr, l.config.PlanFile)
+	emitPlanExit(ctx, ch, state.StepCount, planStr, l.config.PlanFile)
 
 	return &tool.ToolResult{
 		Content: "Plan approved. The approved plan is in the next user message ([plan:end #xxxx]).",
@@ -1319,14 +1319,14 @@ func randInt(max int) int {
 }
 
 // emitPlanEnter 发送 PlanModeEnter 事件到 channel。
-func emitPlanEnter(ctx context.Context, ch chan<- TurnEvent, turn int, planFile, pairID string) {
-	sendEvent(ctx, ch, PlanModeEnter{Turn: turn, PlanFile: planFile, PairID: pairID})
+func emitPlanEnter(ctx context.Context, ch chan<- StepEvent, step int, planFile, pairID string) {
+	sendEvent(ctx, ch, PlanModeEnter{Step: step, PlanFile: planFile, PairID: pairID})
 }
 
 // emitPlanExit 发送 PlanModeExit 事件到 channel。
-func emitPlanExit(ctx context.Context, ch chan<- TurnEvent, turn int, plan, filePath string) {
+func emitPlanExit(ctx context.Context, ch chan<- StepEvent, step int, plan, filePath string) {
 	sendEvent(ctx, ch, PlanModeExit{
-		Turn:     turn,
+		Step:     step,
 		Plan:     plan,
 		FilePath: filePath,
 		Approved: true, // 仅在审批通过后调用

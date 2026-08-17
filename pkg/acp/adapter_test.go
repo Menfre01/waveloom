@@ -60,25 +60,25 @@ func TestConsumeEventsStreamDelta(t *testing.T) {
 	sendFn, getNotifs := captureNotifs(t)
 	ad := newAdapter("test-session", sendFn)
 
-	ch := make(chan agentloop.TurnEvent, 10)
+	ch := make(chan agentloop.StepEvent, 10)
 	ctx := context.Background()
 
 	// Send a StreamDelta with content
 	ch <- agentloop.StreamDelta{
-		Turn:         1,
+		Step:         1,
 		ContentDelta: "Hello, ",
 	}
 	ch <- agentloop.StreamDelta{
-		Turn:         1,
+		Step:         1,
 		ContentDelta: "world!",
 	}
 	// Send a StreamDelta with reasoning
 	ch <- agentloop.StreamDelta{
-		Turn:           1,
+		Step:           1,
 		ReasoningDelta: "thinking...",
 	}
-	// Send LoopDone to terminate
-	ch <- agentloop.LoopDone{
+	// Send TurnDone to terminate
+	ch <- agentloop.TurnDone{
 		Reason: agentloop.ReasonCompleted,
 	}
 	close(ch)
@@ -129,15 +129,15 @@ func TestConsumeEventsStreamDelta(t *testing.T) {
 	}
 }
 
-func TestConsumeEventsLoopDone(t *testing.T) {
+func TestConsumeEventsTurnDone(t *testing.T) {
 	sendFn, _ := captureNotifs(t)
 	ad := newAdapter("test-session", sendFn)
 
-	ch := make(chan agentloop.TurnEvent, 1)
+	ch := make(chan agentloop.StepEvent, 1)
 	ctx := context.Background()
 
-	ch <- agentloop.LoopDone{
-		Turn:   3,
+	ch <- agentloop.TurnDone{
+		Step:   3,
 		Reason: agentloop.ReasonCompleted,
 	}
 	close(ch)
@@ -149,8 +149,8 @@ func TestConsumeEventsLoopDone(t *testing.T) {
 	if loopDone.Reason != agentloop.ReasonCompleted {
 		t.Errorf("reason = %q, want %q", loopDone.Reason, agentloop.ReasonCompleted)
 	}
-	if loopDone.Turn != 3 {
-		t.Errorf("turn = %d, want 3", loopDone.Turn)
+	if loopDone.Step != 3 {
+		t.Errorf("step = %d, want 3", loopDone.Step)
 	}
 }
 
@@ -158,13 +158,13 @@ func TestConsumeEventsChannelClose(t *testing.T) {
 	sendFn, _ := captureNotifs(t)
 	ad := newAdapter("test-session", sendFn)
 
-	ch := make(chan agentloop.TurnEvent)
+	ch := make(chan agentloop.StepEvent)
 	ctx := context.Background()
-	close(ch) // channel closed without LoopDone
+	close(ch) // channel closed without TurnDone
 
 	loopDone, ok := ad.consumeEvents(ctx, ch)
 	if ok {
-		t.Error("expected ok=false when channel closes without LoopDone")
+		t.Error("expected ok=false when channel closes without TurnDone")
 	}
 	if loopDone.Reason != agentloop.ReasonCompleted {
 		t.Errorf("reason = %q, want %q", loopDone.Reason, agentloop.ReasonCompleted)
@@ -175,14 +175,14 @@ func TestConsumeEventsContextCancellation(t *testing.T) {
 	sendFn, _ := captureNotifs(t)
 	ad := newAdapter("test-session", sendFn)
 
-	ch := make(chan agentloop.TurnEvent)
+	ch := make(chan agentloop.StepEvent)
 	ctx, cancel := context.WithCancel(context.Background())
 
-	// Cancel immediately; channel closes without LoopDone (loop contract violated)
+	// Cancel immediately; channel closes without TurnDone (loop contract violated)
 	cancel()
 	close(ch)
 
-	// consumeEvents must not return a synthetic LoopDone as real: it drains
+	// consumeEvents must not return a synthetic TurnDone as real: it drains
 	// until channel close, then reports ok=false.
 	loopDone, ok := ad.consumeEvents(ctx, ch)
 	if ok {
@@ -198,15 +198,15 @@ func TestConsumeEventsContextCancellationDrain(t *testing.T) {
 	ad := newAdapter("test-session", sendFn)
 
 	// Channel with buffered events that haven't been consumed yet
-	ch := make(chan agentloop.TurnEvent, 3)
-	ch <- agentloop.StreamDelta{Turn: 1, ContentDelta: "hello"}
-	ch <- agentloop.StreamDelta{Turn: 1, ContentDelta: "world"}
+	ch := make(chan agentloop.StepEvent, 3)
+	ch <- agentloop.StreamDelta{Step: 1, ContentDelta: "hello"}
+	ch <- agentloop.StreamDelta{Step: 1, ContentDelta: "world"}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	close(ch)
 
-	// consumeEvents drains buffered events until channel close (no LoopDone)
+	// consumeEvents drains buffered events until channel close (no TurnDone)
 	loopDone, ok := ad.consumeEvents(ctx, ch)
 	if ok {
 		t.Error("expected ok=false on cancellation")
@@ -216,32 +216,32 @@ func TestConsumeEventsContextCancellationDrain(t *testing.T) {
 	}
 }
 
-func TestRegression_CancelPreservesLoopDoneMessages(t *testing.T) {
-	// REGRESSION: consumeEvents 曾在 ctx.Done() 分支立即返回合成 LoopDone
-	// (Messages=nil),把 Loop 取消后发送的携带真实 Messages 的 LoopDone 排空
+func TestRegression_CancelPreservesTurnDoneMessages(t *testing.T) {
+	// REGRESSION: consumeEvents 曾在 ctx.Done() 分支立即返回合成 TurnDone
+	// (Messages=nil),把 Loop 取消后发送的携带真实 Messages 的 TurnDone 排空
 	// 丢弃;调用方对合成值无条件调用 CompleteRun(nil),用空历史整体替换会话
 	// 上下文(数据损坏,每次 session/cancel 约 50% 概率触发)。
-	// 根因修复:ctx.Done() 分支转入纯消费循环,等待真实 LoopDone。
+	// 根因修复:ctx.Done() 分支转入纯消费循环,等待真实 TurnDone。
 	sendFn, _ := captureNotifs(t)
 	ad := newAdapter("test-session", sendFn)
 
-	ch := make(chan agentloop.TurnEvent, 2)
+	ch := make(chan agentloop.StepEvent, 2)
 	ctx, cancel := context.WithCancel(context.Background())
 
-	// 模拟 Loop 契约:取消后仍先发送带真实 Messages 的 LoopDone 再关闭通道
+	// 模拟 Loop 契约:取消后仍先发送带真实 Messages 的 TurnDone 再关闭通道
 	realMessages := []llm.Message{
 		{Role: llm.RoleUser, Content: "hello"},
 		{Role: llm.RoleAssistant, Content: "hi"},
 	}
 	go func() {
 		cancel()
-		ch <- agentloop.LoopDone{Reason: agentloop.ReasonAborted, Messages: realMessages}
+		ch <- agentloop.TurnDone{Reason: agentloop.ReasonAborted, Messages: realMessages}
 		close(ch)
 	}()
 
 	loopDone, ok := ad.consumeEvents(ctx, ch)
 	if !ok {
-		t.Fatal("real LoopDone must not be lost on cancellation (ok=false)")
+		t.Fatal("real TurnDone must not be lost on cancellation (ok=false)")
 	}
 	if len(loopDone.Messages) != len(realMessages) {
 		t.Errorf("messages lost on cancel: got %d, want %d", len(loopDone.Messages), len(realMessages))
@@ -255,19 +255,19 @@ func TestConsumeEventsPlanMode(t *testing.T) {
 	sendFn, getNotifs := captureNotifs(t)
 	ad := newAdapter("test-session", sendFn)
 
-	ch := make(chan agentloop.TurnEvent, 10)
+	ch := make(chan agentloop.StepEvent, 10)
 	ctx := context.Background()
 
 	ch <- agentloop.PlanModeEnter{
-		Turn:     1,
+		Step:     1,
 		PlanFile: "/tmp/plan.md",
 	}
 	ch <- agentloop.PlanModeExit{
-		Turn:     2,
+		Step:     2,
 		Plan:     "do the thing",
 		Approved: true,
 	}
-	ch <- agentloop.LoopDone{Reason: agentloop.ReasonCompleted}
+	ch <- agentloop.TurnDone{Reason: agentloop.ReasonCompleted}
 	close(ch)
 
 	loopDone, _ := ad.consumeEvents(ctx, ch)
@@ -301,15 +301,15 @@ func TestConsumeEventsPlanModeRejected(t *testing.T) {
 	sendFn, getNotifs := captureNotifs(t)
 	ad := newAdapter("test-session", sendFn)
 
-	ch := make(chan agentloop.TurnEvent, 2)
+	ch := make(chan agentloop.StepEvent, 2)
 	ctx := context.Background()
 
 	ch <- agentloop.PlanModeExit{
-		Turn:     2,
+		Step:     2,
 		Plan:     "bad plan",
 		Approved: false,
 	}
-	ch <- agentloop.LoopDone{Reason: agentloop.ReasonCompleted}
+	ch <- agentloop.TurnDone{Reason: agentloop.ReasonCompleted}
 	close(ch)
 
 	_, _ = ad.consumeEvents(ctx, ch)
@@ -334,12 +334,12 @@ func TestConsumeEventsMessageIDConsistency(t *testing.T) {
 		t.Error("messageID should not be empty")
 	}
 
-	ch := make(chan agentloop.TurnEvent, 3)
+	ch := make(chan agentloop.StepEvent, 3)
 	ctx := context.Background()
 
-	ch <- agentloop.StreamDelta{Turn: 1, ContentDelta: "a"}
-	ch <- agentloop.StreamDelta{Turn: 1, ContentDelta: "b"}
-	ch <- agentloop.LoopDone{Reason: agentloop.ReasonCompleted}
+	ch <- agentloop.StreamDelta{Step: 1, ContentDelta: "a"}
+	ch <- agentloop.StreamDelta{Step: 1, ContentDelta: "b"}
+	ch <- agentloop.TurnDone{Reason: agentloop.ReasonCompleted}
 	close(ch)
 
 	ad.consumeEvents(ctx, ch)
@@ -362,13 +362,13 @@ func TestConsumeEventsIgnoresEmptyDeltas(t *testing.T) {
 	sendFn, getNotifs := captureNotifs(t)
 	ad := newAdapter("test-session", sendFn)
 
-	ch := make(chan agentloop.TurnEvent, 3)
+	ch := make(chan agentloop.StepEvent, 3)
 	ctx := context.Background()
 
 	// Empty delta should not trigger notification
-	ch <- agentloop.StreamDelta{Turn: 1}
-	ch <- agentloop.StreamDelta{Turn: 1, ContentDelta: "visible"}
-	ch <- agentloop.LoopDone{Reason: agentloop.ReasonCompleted}
+	ch <- agentloop.StreamDelta{Step: 1}
+	ch <- agentloop.StreamDelta{Step: 1, ContentDelta: "visible"}
+	ch <- agentloop.TurnDone{Reason: agentloop.ReasonCompleted}
 	close(ch)
 
 	ad.consumeEvents(ctx, ch)
@@ -393,16 +393,16 @@ func TestConsumeEventsToolCallStart(t *testing.T) {
 	sendFn, getNotifs := captureNotifs(t)
 	ad := newAdapter("test-session", sendFn)
 
-	ch := make(chan agentloop.TurnEvent, 3)
+	ch := make(chan agentloop.StepEvent, 3)
 	ctx := context.Background()
 
 	ch <- agentloop.ToolCallStart{
-		Turn:         1,
+		Step:         1,
 		ToolCallID:   "tc-001",
 		ToolCallName: "bash",
 		Arguments:    `{"command":"go test ./..."}`,
 	}
-	ch <- agentloop.LoopDone{Reason: agentloop.ReasonCompleted}
+	ch <- agentloop.TurnDone{Reason: agentloop.ReasonCompleted}
 	close(ch)
 
 	ad.consumeEvents(ctx, ch)
@@ -431,14 +431,14 @@ func TestConsumeEventsToolCallResultSuccess(t *testing.T) {
 	sendFn, getNotifs := captureNotifs(t)
 	ad := newAdapter("test-session", sendFn)
 
-	ch := make(chan agentloop.TurnEvent, 2)
+	ch := make(chan agentloop.StepEvent, 2)
 	ctx := context.Background()
 
 	ch <- agentloop.ToolCallResult{
 		ToolCallID: "tc-001", ToolCallName: "read",
 		Result: "file content here", DurationMs: 42,
 	}
-	ch <- agentloop.LoopDone{Reason: agentloop.ReasonCompleted}
+	ch <- agentloop.TurnDone{Reason: agentloop.ReasonCompleted}
 	close(ch)
 
 	ad.consumeEvents(ctx, ch)
@@ -459,14 +459,14 @@ func TestConsumeEventsToolCallResultError(t *testing.T) {
 	sendFn, getNotifs := captureNotifs(t)
 	ad := newAdapter("test-session", sendFn)
 
-	ch := make(chan agentloop.TurnEvent, 2)
+	ch := make(chan agentloop.StepEvent, 2)
 	ctx := context.Background()
 
 	ch <- agentloop.ToolCallResult{
 		ToolCallID: "tc-002", ToolCallName: "bash",
 		Error: "command failed", ErrorKind: "command_failed",
 	}
-	ch <- agentloop.LoopDone{Reason: agentloop.ReasonCompleted}
+	ch <- agentloop.TurnDone{Reason: agentloop.ReasonCompleted}
 	close(ch)
 
 	ad.consumeEvents(ctx, ch)
@@ -488,7 +488,7 @@ func TestConsumeEventsToolCallResultDiff(t *testing.T) {
 	sendFn, getNotifs := captureNotifs(t)
 	ad := newAdapter("test-session", sendFn)
 
-	ch := make(chan agentloop.TurnEvent, 2)
+	ch := make(chan agentloop.StepEvent, 2)
 	ctx := context.Background()
 
 	ch <- agentloop.ToolCallResult{
@@ -509,7 +509,7 @@ func TestConsumeEventsToolCallResultDiff(t *testing.T) {
 			Lines: []tool.DiffLine{{Kind: tool.DiffDel, Content: "old"}},
 		}},
 	}
-	ch <- agentloop.LoopDone{Reason: agentloop.ReasonCompleted}
+	ch <- agentloop.TurnDone{Reason: agentloop.ReasonCompleted}
 	close(ch)
 
 	ad.consumeEvents(ctx, ch)
@@ -555,23 +555,23 @@ func TestConsumeEventsToolCallResultDiff(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// TurnStats 测试
+// StepStats 测试
 // ---------------------------------------------------------------------------
 
-func TestConsumeEventsTurnStats(t *testing.T) {
+func TestConsumeEventsStepStats(t *testing.T) {
 	sendFn, getNotifs := captureNotifs(t)
 	ad := newAdapter("test-session", sendFn)
 
-	ch := make(chan agentloop.TurnEvent, 2)
+	ch := make(chan agentloop.StepEvent, 2)
 	ctx := context.Background()
 
-	ch <- agentloop.TurnStats{
-		Turn: 3, Model: "deepseek-chat",
+	ch <- agentloop.StepStats{
+		Step: 3, Model: "deepseek-chat",
 		PromptTokens: 1500, CompletionTokens: 200,
 		CacheHitTokens: 1000, CacheMissTokens: 500,
 		ReasoningTokens: 50, MessageCount: 12,
 	}
-	ch <- agentloop.LoopDone{Reason: agentloop.ReasonCompleted}
+	ch <- agentloop.TurnDone{Reason: agentloop.ReasonCompleted}
 	close(ch)
 
 	ad.consumeEvents(ctx, ch)
@@ -588,18 +588,18 @@ func TestConsumeEventsTurnStats(t *testing.T) {
 	}
 }
 
-func TestConsumeEventsTurnStatsAccumulated(t *testing.T) {
+func TestConsumeEventsStepStatsAccumulated(t *testing.T) {
 	// usage_update 的 used 取当轮上下文 token(与 TUI HUD 同源);
 	// adapter.Stats() 供 handler 提交 CompleteRun 用(累积)。
 	sendFn, getNotifs := captureNotifs(t)
 	ad := newAdapter("test-session", sendFn)
 
-	ch := make(chan agentloop.TurnEvent, 3)
+	ch := make(chan agentloop.StepEvent, 3)
 	ctx := context.Background()
 
-	ch <- agentloop.TurnStats{PromptTokens: 100, CompletionTokens: 20, MessageCount: 5}
-	ch <- agentloop.TurnStats{PromptTokens: 50, CompletionTokens: 10, MessageCount: 6}
-	ch <- agentloop.LoopDone{Reason: agentloop.ReasonCompleted}
+	ch <- agentloop.StepStats{PromptTokens: 100, CompletionTokens: 20, MessageCount: 5}
+	ch <- agentloop.StepStats{PromptTokens: 50, CompletionTokens: 10, MessageCount: 6}
+	ch <- agentloop.TurnDone{Reason: agentloop.ReasonCompleted}
 	close(ch)
 
 	ad.consumeEvents(ctx, ch)
@@ -623,17 +623,17 @@ func TestConsumeEventsTurnStatsAccumulated(t *testing.T) {
 	}
 }
 
-func TestConsumeEventsTurnStatsContextLimit(t *testing.T) {
+func TestConsumeEventsStepStatsContextLimit(t *testing.T) {
 	// REGRESSION: usage_update 的 size 曾错误传消息条数;官方语义为
 	// "Total context window size in tokens"——配置窗口容量后必须用之。
 	sendFn, getNotifs := captureNotifs(t)
 	ad := newAdapterWithContextLimit("test-session", sendFn, 1_000_000)
 
-	ch := make(chan agentloop.TurnEvent, 2)
+	ch := make(chan agentloop.StepEvent, 2)
 	ctx := context.Background()
 
-	ch <- agentloop.TurnStats{PromptTokens: 100, CompletionTokens: 20, MessageCount: 5}
-	ch <- agentloop.LoopDone{Reason: agentloop.ReasonCompleted}
+	ch <- agentloop.StepStats{PromptTokens: 100, CompletionTokens: 20, MessageCount: 5}
+	ch <- agentloop.TurnDone{Reason: agentloop.ReasonCompleted}
 	close(ch)
 
 	ad.consumeEvents(ctx, ch)
@@ -653,25 +653,25 @@ func TestConsumeEventsTurnStatsContextLimit(t *testing.T) {
 	}
 }
 
-func TestConsumeEventsTurnStatsCompactionAware(t *testing.T) {
+func TestConsumeEventsStepStatsCompactionAware(t *testing.T) {
 	// used 压缩感知(与 TUI ctx bar 同逻辑):
 	// 有压缩 → PromptTokens - TokensSaved;Tier 3 摘要后 → 0。
 	sendFn, getNotifs := captureNotifs(t)
 	ad := newAdapter("test-session", sendFn)
 
-	ch := make(chan agentloop.TurnEvent, 4)
+	ch := make(chan agentloop.StepEvent, 4)
 	ctx := context.Background()
 
-	ch <- agentloop.TurnStats{PromptTokens: 100, CompletionTokens: 20}
-	ch <- agentloop.TurnStats{
+	ch <- agentloop.StepStats{PromptTokens: 100, CompletionTokens: 20}
+	ch <- agentloop.StepStats{
 		PromptTokens: 200, CompletionTokens: 30,
 		Compaction: agentloop.CompactionInfo{Tier: 1, TokensSaved: 60},
 	}
-	ch <- agentloop.TurnStats{
+	ch <- agentloop.StepStats{
 		PromptTokens: 150, CompletionTokens: 10,
 		Compaction: agentloop.CompactionInfo{Tier: 3, SummaryDone: true},
 	}
-	ch <- agentloop.LoopDone{Reason: agentloop.ReasonCompleted}
+	ch <- agentloop.TurnDone{Reason: agentloop.ReasonCompleted}
 	close(ch)
 
 	ad.consumeEvents(ctx, ch)
@@ -718,7 +718,7 @@ func TestConsumeEventsToolCallStream(t *testing.T) {
 	sendFn, getNotifs := captureNotifs(t)
 	ad := newAdapter("test-session", sendFn)
 
-	ch := make(chan agentloop.TurnEvent, 3)
+	ch := make(chan agentloop.StepEvent, 3)
 	ctx := context.Background()
 
 	ch <- agentloop.ToolCallStream{
@@ -729,7 +729,7 @@ func TestConsumeEventsToolCallStream(t *testing.T) {
 		ToolCallID: "tc-001", ToolCallName: "bash",
 		Chunk: "OK\n",
 	}
-	ch <- agentloop.LoopDone{Reason: agentloop.ReasonCompleted}
+	ch <- agentloop.TurnDone{Reason: agentloop.ReasonCompleted}
 	close(ch)
 
 	ad.consumeEvents(ctx, ch)
@@ -760,7 +760,7 @@ func TestConsumeEventsBashFullSequence(t *testing.T) {
 	sendFn, getNotifs := captureNotifs(t)
 	ad := newAdapter("test-session", sendFn)
 
-	ch := make(chan agentloop.TurnEvent, 5)
+	ch := make(chan agentloop.StepEvent, 5)
 	ctx := context.Background()
 
 	ch <- agentloop.ToolCallStart{
@@ -773,7 +773,7 @@ func TestConsumeEventsBashFullSequence(t *testing.T) {
 		ToolCallID: "tc-bash-1", ToolCallName: "bash",
 		Result: "✅ Command executed successfully (exit code 0)\n\nstdout:\ntotal 8\n...", DurationMs: 120,
 	}
-	ch <- agentloop.LoopDone{Reason: agentloop.ReasonCompleted}
+	ch <- agentloop.TurnDone{Reason: agentloop.ReasonCompleted}
 	close(ch)
 
 	ad.consumeEvents(ctx, ch)

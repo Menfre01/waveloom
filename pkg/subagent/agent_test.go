@@ -203,7 +203,7 @@ func TestAgentTool_ExecuteCold_UnknownTypeDefaultsToEvaluate(t *testing.T) {
 
 func TestAgentTool_ExecuteCold_SubagentStartEvent(t *testing.T) {
 	ctx := context.Background()
-	ctx = agentloop.WithEventCallback(ctx, func(ev agentloop.TurnEvent) {
+	ctx = agentloop.WithEventCallback(ctx, func(ev agentloop.StepEvent) {
 		// 验证事件类型
 		if _, ok := ev.(SubagentStart); !ok {
 			if subEnd, ok := ev.(SubagentEnd); ok {
@@ -229,7 +229,7 @@ func TestAgentTool_ExecuteCold_SubagentEndError(t *testing.T) {
 	errLLM := &errorLLM{}
 	ctx := context.Background()
 	var gotError bool
-	ctx = agentloop.WithEventCallback(ctx, func(ev agentloop.TurnEvent) {
+	ctx = agentloop.WithEventCallback(ctx, func(ev agentloop.StepEvent) {
 		if subEnd, ok := ev.(SubagentEnd); ok && subEnd.Error != "" {
 			gotError = true
 		}
@@ -311,23 +311,23 @@ func TestForwardEvents_TextAggregation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	ch := make(chan agentloop.TurnEvent, 10)
+	ch := make(chan agentloop.StepEvent, 10)
 	go func() {
 		ch <- agentloop.StreamDelta{ContentDelta: "hello "}
 		ch <- agentloop.StreamDelta{ContentDelta: "world"}
-		ch <- agentloop.LoopDone{Turn: 1}
+		ch <- agentloop.TurnDone{Step: 1}
 		close(ch)
 	}()
 
-	aggregated, turns, promptTok, complTok, _, _, _, err := forwardEvents(ctx, ch, nil, "")
+	aggregated, steps, promptTok, complTok, _, _, _, err := forwardEvents(ctx, ch, nil, "")
 	if err != nil {
 		t.Fatalf("forwardEvents error: %v", err)
 	}
 	if aggregated != "hello world" {
 		t.Errorf("aggregated = %q, want %q", aggregated, "hello world")
 	}
-	if turns != 1 {
-		t.Errorf("turns = %d, want 1", turns)
+	if steps != 1 {
+		t.Errorf("steps = %d, want 1", steps)
 	}
 	if promptTok != 0 || complTok != 0 {
 		t.Errorf("promptTokens = %d, complTokens = %d, want 0, 0", promptTok, complTok)
@@ -341,19 +341,19 @@ func TestForwardEvents_ReasoningDelta_SubagentThought(t *testing.T) {
 	defer cancel()
 
 	var events []SubagentEvent
-	cb := func(ev agentloop.TurnEvent) {
+	cb := func(ev agentloop.StepEvent) {
 		if se, ok := ev.(SubagentEvent); ok {
 			events = append(events, se)
 		}
 	}
 
-	ch := make(chan agentloop.TurnEvent, 10)
+	ch := make(chan agentloop.StepEvent, 10)
 	go func() {
 		ch <- agentloop.StreamDelta{ReasoningDelta: "let me think about this..."}
 		ch <- agentloop.StreamDelta{ContentDelta: "the answer is 42"}
 		ch <- agentloop.StreamDelta{ReasoningDelta: "actually, double-checking..."}
 		ch <- agentloop.StreamDelta{ContentDelta: " yes, 42"}
-		ch <- agentloop.LoopDone{Turn: 1}
+		ch <- agentloop.TurnDone{Step: 1}
 		close(ch)
 	}()
 
@@ -389,18 +389,18 @@ func TestForwardEvents_ToolEventsProduceCallback(t *testing.T) {
 	defer cancel()
 
 	var events []SubagentEvent
-	cb := func(ev agentloop.TurnEvent) {
+	cb := func(ev agentloop.StepEvent) {
 		if se, ok := ev.(SubagentEvent); ok {
 			events = append(events, se)
 		}
 	}
 
-	ch := make(chan agentloop.TurnEvent, 10)
+	ch := make(chan agentloop.StepEvent, 10)
 	go func() {
 		ch <- agentloop.StreamDelta{ContentDelta: "thinking..."}
 		ch <- agentloop.ToolCallStart{ToolCallName: "read", Arguments: `{"file_path":"x.go"}`}
 		ch <- agentloop.ToolCallResult{ToolCallName: "read", Result: "file content", DurationMs: 42}
-		ch <- agentloop.LoopDone{Turn: 1}
+		ch <- agentloop.TurnDone{Step: 1}
 		close(ch)
 	}()
 
@@ -427,7 +427,7 @@ func TestForwardEvents_WriteOperationsTracking(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	ch := make(chan agentloop.TurnEvent, 10)
+	ch := make(chan agentloop.StepEvent, 10)
 	go func() {
 		ch <- agentloop.StreamDelta{ContentDelta: "done."}
 		ch <- agentloop.ToolCallResult{
@@ -438,7 +438,7 @@ func TestForwardEvents_WriteOperationsTracking(t *testing.T) {
 			ToolCallName: "edit",
 			Result:       "@@ -1,0 +1,2 @@\n+added line\n+another\n",
 		}
-		ch <- agentloop.LoopDone{Turn: 1}
+		ch <- agentloop.TurnDone{Step: 1}
 		close(ch)
 	}()
 
@@ -458,24 +458,24 @@ func TestForwardEvents_WriteOperationsTracking(t *testing.T) {
 	}
 }
 
-func TestForwardEvents_TurnStatsAccumulation(t *testing.T) {
+func TestForwardEvents_StepStatsAccumulation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	ch := make(chan agentloop.TurnEvent, 10)
+	ch := make(chan agentloop.StepEvent, 10)
 	go func() {
-		ch <- agentloop.TurnStats{PromptTokens: 100, CompletionTokens: 50, CacheHitTokens: 60, CacheMissTokens: 40}
-		ch <- agentloop.TurnStats{PromptTokens: 200, CompletionTokens: 75, CacheHitTokens: 120, CacheMissTokens: 80}
-		ch <- agentloop.LoopDone{Turn: 2}
+		ch <- agentloop.StepStats{PromptTokens: 100, CompletionTokens: 50, CacheHitTokens: 60, CacheMissTokens: 40}
+		ch <- agentloop.StepStats{PromptTokens: 200, CompletionTokens: 75, CacheHitTokens: 120, CacheMissTokens: 80}
+		ch <- agentloop.TurnDone{Step: 2}
 		close(ch)
 	}()
 
-	_, turns, promptTok, complTok, cacheHitTok, cacheMissTok, _, err := forwardEvents(ctx, ch, nil, "")
+	_, steps, promptTok, complTok, cacheHitTok, cacheMissTok, _, err := forwardEvents(ctx, ch, nil, "")
 	if err != nil {
 		t.Fatalf("forwardEvents error: %v", err)
 	}
-	if turns != 2 {
-		t.Errorf("turns = %d, want 2", turns)
+	if steps != 2 {
+		t.Errorf("steps = %d, want 2", steps)
 	}
 	if promptTok != 300 || complTok != 125 {
 		t.Errorf("promptTokens = %d, complTokens = %d, want 300, 125", promptTok, complTok)
@@ -485,20 +485,20 @@ func TestForwardEvents_TurnStatsAccumulation(t *testing.T) {
 	}
 }
 
-func TestForwardEvents_LoopDoneError(t *testing.T) {
+func TestForwardEvents_TurnDoneError(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	expectedErr := errors.New("subagent crashed")
-	ch := make(chan agentloop.TurnEvent, 10)
+	ch := make(chan agentloop.StepEvent, 10)
 	go func() {
-		ch <- agentloop.LoopDone{Turn: 0, Err: expectedErr}
+		ch <- agentloop.TurnDone{Step: 0, Err: expectedErr}
 		close(ch)
 	}()
 
 	_, _, _, _, _, _, _, err := forwardEvents(ctx, ch, nil, "")
 	if err == nil {
-		t.Fatal("expected error from LoopDone")
+		t.Fatal("expected error from TurnDone")
 	}
 	if !errors.Is(err, expectedErr) {
 		t.Errorf("err = %v, want %v", err, expectedErr)
@@ -509,9 +509,9 @@ func TestForwardEvents_EmptyStream(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	ch := make(chan agentloop.TurnEvent, 1)
+	ch := make(chan agentloop.StepEvent, 1)
 	go func() {
-		ch <- agentloop.LoopDone{Turn: 0}
+		ch <- agentloop.TurnDone{Step: 0}
 		close(ch)
 	}()
 
@@ -531,17 +531,17 @@ func TestForwardEvents_ToolCallStreamEvent(t *testing.T) {
 	defer cancel()
 
 	var events []SubagentEvent
-	cb := func(ev agentloop.TurnEvent) {
+	cb := func(ev agentloop.StepEvent) {
 		if se, ok := ev.(SubagentEvent); ok {
 			events = append(events, se)
 		}
 	}
 
-	ch := make(chan agentloop.TurnEvent, 10)
+	ch := make(chan agentloop.StepEvent, 10)
 	go func() {
 		ch <- agentloop.ToolCallStream{ToolCallName: "bash_subagent", Chunk: "line1\n"}
 		ch <- agentloop.ToolCallStream{ToolCallName: "bash_subagent", Chunk: "line2\n"}
-		ch <- agentloop.LoopDone{Turn: 1}
+		ch <- agentloop.TurnDone{Step: 1}
 		close(ch)
 	}()
 
@@ -570,13 +570,13 @@ func TestForwardEvents_ToolCallResultError(t *testing.T) {
 	defer cancel()
 
 	var events []SubagentEvent
-	cb := func(ev agentloop.TurnEvent) {
+	cb := func(ev agentloop.StepEvent) {
 		if se, ok := ev.(SubagentEvent); ok {
 			events = append(events, se)
 		}
 	}
 
-	ch := make(chan agentloop.TurnEvent, 10)
+	ch := make(chan agentloop.StepEvent, 10)
 	go func() {
 		ch <- agentloop.ToolCallResult{
 			ToolCallName: "read",
@@ -584,7 +584,7 @@ func TestForwardEvents_ToolCallResultError(t *testing.T) {
 			DurationMs:   15,
 			Error:        "file_not_found: /nonexistent.go",
 		}
-		ch <- agentloop.LoopDone{Turn: 1}
+		ch <- agentloop.TurnDone{Step: 1}
 		close(ch)
 	}()
 
@@ -607,57 +607,57 @@ func TestForwardEvents_ToolCallResultError(t *testing.T) {
 	}
 }
 
-func TestForwardEvents_ChannelCloseWithoutLoopDone(t *testing.T) {
+func TestForwardEvents_ChannelCloseWithoutTurnDone(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	ch := make(chan agentloop.TurnEvent, 10)
+	ch := make(chan agentloop.StepEvent, 10)
 	go func() {
 		ch <- agentloop.StreamDelta{ContentDelta: "partial"}
 		close(ch)
 	}()
 
-	aggregated, turns, _, _, _, _, _, err := forwardEvents(ctx, ch, nil, "")
+	aggregated, steps, _, _, _, _, _, err := forwardEvents(ctx, ch, nil, "")
 	if err != nil {
 		t.Fatalf("forwardEvents error: %v", err)
 	}
 	if aggregated != "partial" {
 		t.Errorf("aggregated = %q, want %q", aggregated, "partial")
 	}
-	if turns != 0 {
-		t.Errorf("turns = %d, want 0 (no LoopDone)", turns)
+	if steps != 0 {
+		t.Errorf("steps = %d, want 0 (no TurnDone)", steps)
 	}
 }
 
 // REGRESSION: forwardEvents 只返回最后一个 turn 的文本,丢弃中间推理过程,
 // 节省主 agent 的 token 消耗。
-func TestRegression_ForwardEvents_OnlyLastTurnText(t *testing.T) {
+func TestRegression_ForwardEvents_OnlyLastStepText(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	ch := make(chan agentloop.TurnEvent, 10)
+	ch := make(chan agentloop.StepEvent, 10)
 	go func() {
 		// Turn 1(中间推理,应被丢弃)
-		ch <- agentloop.StreamDelta{Turn: 1, ContentDelta: "turn 1 thinking..."}
-		ch <- agentloop.StreamDelta{Turn: 1, ContentDelta: " more turn 1"}
-		ch <- agentloop.ToolCallStart{Turn: 1, ToolCallName: "read", Arguments: `{"file_path":"a.go"}`}
-		ch <- agentloop.ToolCallResult{Turn: 1, ToolCallName: "read", Result: "content", DurationMs: 10}
+		ch <- agentloop.StreamDelta{Step: 1, ContentDelta: "step 1 thinking..."}
+		ch <- agentloop.StreamDelta{Step: 1, ContentDelta: " more step 1"}
+		ch <- agentloop.ToolCallStart{Step: 1, ToolCallName: "read", Arguments: `{"file_path":"a.go"}`}
+		ch <- agentloop.ToolCallResult{Step: 1, ToolCallName: "read", Result: "content", DurationMs: 10}
 		// Turn 2(最终结论,应保留)
-		ch <- agentloop.StreamDelta{Turn: 2, ContentDelta: "conclusion"}
-		ch <- agentloop.StreamDelta{Turn: 2, ContentDelta: " finalized"}
-		ch <- agentloop.LoopDone{Turn: 2}
+		ch <- agentloop.StreamDelta{Step: 2, ContentDelta: "conclusion"}
+		ch <- agentloop.StreamDelta{Step: 2, ContentDelta: " finalized"}
+		ch <- agentloop.TurnDone{Step: 2}
 		close(ch)
 	}()
 
-	lastTurnText, turns, _, _, _, _, _, err := forwardEvents(ctx, ch, nil, "")
+	lastStepText, steps, _, _, _, _, _, err := forwardEvents(ctx, ch, nil, "")
 	if err != nil {
 		t.Fatalf("forwardEvents error: %v", err)
 	}
-	if lastTurnText != "conclusion finalized" {
-		t.Errorf("lastTurnText = %q, want %q", lastTurnText, "conclusion finalized")
+	if lastStepText != "conclusion finalized" {
+		t.Errorf("lastStepText = %q, want %q", lastStepText, "conclusion finalized")
 	}
-	if turns != 2 {
-		t.Errorf("turns = %d, want 2", turns)
+	if steps != 2 {
+		t.Errorf("steps = %d, want 2", steps)
 	}
 }
 
@@ -981,13 +981,13 @@ func TestEvaluateSystemPrompt_ContainsAssessmentFormat(t *testing.T) {
 	}
 }
 
-// REGRESSION: Explore agents use exploreMaxTurns (25), not coldMaxTurns (50).
+// REGRESSION: Explore agents use exploreMaxSteps (25), not coldMaxSteps (50).
 // This is verified indirectly: the stub LLM always returns "ok" immediately,
 // so the agent completes in 1 turn regardless of limit. The limit is a safety
 // ceiling, not a minimum. We verify the constant value is lower.
-func TestExploreMaxTurns_LowerThanCold(t *testing.T) {
-	if exploreMaxTurns >= coldMaxTurns {
-		t.Errorf("exploreMaxTurns (%d) should be lower than coldMaxTurns (%d)", exploreMaxTurns, coldMaxTurns)
+func TestExploreMaxSteps_LowerThanCold(t *testing.T) {
+	if exploreMaxSteps >= coldMaxSteps {
+		t.Errorf("exploreMaxSteps (%d) should be lower than coldMaxSteps (%d)", exploreMaxSteps, coldMaxSteps)
 	}
 }
 
@@ -1185,14 +1185,14 @@ func contains(s []string, v string) bool {
 func BenchmarkForwardEvents(b *testing.B) {
 	for b.Loop() {
 		ctx, cancel := context.WithCancel(context.Background())
-		ch := make(chan agentloop.TurnEvent, 100)
+		ch := make(chan agentloop.StepEvent, 100)
 		go func() {
 			for i := 0; i < 50; i++ {
 				ch <- agentloop.StreamDelta{ContentDelta: "some text content"}
 			}
 			ch <- agentloop.ToolCallStart{ToolCallName: "read", Arguments: `{"file_path":"/path/to/file.go"}`}
 			ch <- agentloop.ToolCallResult{ToolCallName: "read", Result: "content", DurationMs: 42}
-			ch <- agentloop.LoopDone{Turn: 3}
+			ch <- agentloop.TurnDone{Step: 3}
 			close(ch)
 		}()
 		_, _, _, _, _, _, _, _ = forwardEvents(ctx, ch, nil, "")

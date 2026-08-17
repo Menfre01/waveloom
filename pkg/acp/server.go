@@ -40,7 +40,7 @@ type Server struct {
 	systemPrompt string
 	buildVersion string
 	cwd          string
-	maxTurns     int
+	maxSteps     int
 	guard        permission.Guard            // ACP 入口注入(已启用 autoAllow 二元决策);nil → 每 session fallback 裸 Guard
 	sandboxMgr   *sandbox.SandboxManager     // ACP 入口注入(自动激活);nil → Shell 不包装
 	sessionDir   string                      // session 持久化目录(空 → 不落盘)
@@ -88,7 +88,7 @@ type ServerConfig struct {
 	SystemPrompt string
 	BuildVersion string
 	CWD          string
-	MaxTurns     int
+	MaxSteps     int
 	Guard        permission.Guard            // 可选:ACP 入口注入(已 EnableAutoAllow)
 	SandboxMgr   *sandbox.SandboxManager     // 可选:ACP 入口注入(自动激活)
 	SessionDir   string                      // session 持久化目录(空 → 不落盘)
@@ -115,7 +115,7 @@ func NewServer(cfg ServerConfig) *Server {
 		systemPrompt: cfg.SystemPrompt,
 		buildVersion: cfg.BuildVersion,
 		cwd:          cfg.CWD,
-		maxTurns:     cfg.MaxTurns,
+		maxSteps:     cfg.MaxSteps,
 		guard:        cfg.Guard,
 		sandboxMgr:   cfg.SandboxMgr,
 		sessionDir:   cfg.SessionDir,

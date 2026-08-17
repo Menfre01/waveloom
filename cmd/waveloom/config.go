@@ -18,7 +18,7 @@ type CLIConfig struct {
 	ShowHelp     bool
 	ShowVersion  bool
 	Setup        bool   // 首次设置向导
-	MaxTurns     int
+	MaxSteps     int
 	SystemPrompt string
 	Model        string
 	Provider     string // --provider，覆盖配置文件中的 provider（查找 profiles 中匹配项）
@@ -53,7 +53,8 @@ func parseCLI() CLIConfig {
 	}
 
 	fs.StringVar(&cfg.Model, "model", "", "LLM 模型名称(默认从环境变量 LLM_MODEL 读取;proplan = plan 用 model、日常用 sub_model)")
-	fs.IntVar(&cfg.MaxTurns, "max-turns", 0, "最大 turn 数(0=无限制)")
+	fs.IntVar(&cfg.MaxSteps, "max-steps", 0, "最大 step 数(0=无限制)")
+	fs.IntVar(&cfg.MaxSteps, "max-turns", 0, "最大 step 数(0=无限制;旧名,兼容保留)")
 	fs.StringVar(&cfg.SystemPrompt, "system-prompt", "", "系统提示词")
 	fs.StringVar(&contextLimitRaw, "context-limit", "", "上下文窗口 token 上限(默认读 settings 的 compaction.context_limit_tokens,再默认 1M)")
 	fs.StringVar(&cfg.Theme, "theme", "auto", "主题模式 (auto/dark/light),auto 自动检测终端背景色")

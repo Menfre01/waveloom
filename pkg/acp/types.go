@@ -531,7 +531,7 @@ func ACPStopReason(reason string) string {
 		return "end_turn"
 	case "aborted":
 		return "cancelled"
-	case "max_turns":
+	case "max_steps":
 		return "max_turn_requests"
 	case "model_error":
 		return "refusal"

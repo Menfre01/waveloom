@@ -87,7 +87,7 @@ func (a *AgentTool) newCompactor() compaction.Compactor {
 }
 
 // saveSubagentTranscript 将 subagent 事件持久化为 JSONL 文件和 metadata。
-func (a *AgentTool) saveSubagentTranscript(agentID, agentType, description, model string, totalTurns, promptTok, complTok int, events []SubagentEvent) {
+func (a *AgentTool) saveSubagentTranscript(agentID, agentType, description, model string, totalSteps, promptTok, complTok int, events []SubagentEvent) {
 	if a.sessionsDir == "" || a.sessionID == "" {
 		return
 	}
@@ -96,7 +96,7 @@ func (a *AgentTool) saveSubagentTranscript(agentID, agentType, description, mode
 		AgentType:        agentType,
 		Description:      description,
 		Model:            model,
-		TotalTurns:       totalTurns,
+		TotalSteps:       totalSteps,
 		PromptTokens:     promptTok,
 		CompletionTokens: complTok,
 	})
@@ -218,9 +218,9 @@ func (a *AgentTool) Schema() json.RawMessage {
 // ---------------------------------------------------------------------------
 
 const (
-	forkMaxTurns    = 50
-	coldMaxTurns    = 50
-	exploreMaxTurns = 25
+	forkMaxSteps    = 50
+	coldMaxSteps    = 50
+	exploreMaxSteps = 25
 
 	// forkBoilerplateTag 是 fork 身份边界的 XML 标签,用于:
 	// 1. 告知 fork 子 agent 它是 fork 而非主 agent(身份识别)
@@ -391,7 +391,7 @@ func (a *AgentTool) executeFork(ctx context.Context, p AgentParams) (*tool.ToolR
 	defer subCancel()
 
 	subLoop := agentloop.New(client, registry, agentloop.Config{
-		MaxTurns:      forkMaxTurns,
+		MaxSteps:      forkMaxSteps,
 		SystemPrompt:  "", // messages already contain system prompt
 		Guard:         a.subGuard(),
 		SandboxMgr:    a.SandboxMgr,
@@ -411,7 +411,7 @@ func (a *AgentTool) executeFork(ctx context.Context, p AgentParams) (*tool.ToolR
 		cb(SubagentStart{Prompt: p.Description, AgentType: agentType, InheritCtx: true, ToolCallID: toolCallID, Model: model})
 	}
 
-	lastTurnText, totalTurns, promptTok, complTok, cacheHitTok, cacheMissTok, events, err := forwardEvents(subCtx, subLoop.Run(subCtx, messages), cb, toolCallID)
+	lastStepText, totalSteps, promptTok, complTok, cacheHitTok, cacheMissTok, events, err := forwardEvents(subCtx, subLoop.Run(subCtx, messages), cb, toolCallID)
 	if err != nil {
 		if cb != nil {
 			cb(SubagentEnd{ToolCallID: toolCallID, Model: model, DurationMs: time.Since(startTime).Milliseconds(), Error: err.Error()})
@@ -426,13 +426,13 @@ func (a *AgentTool) executeFork(ctx context.Context, p AgentParams) (*tool.ToolR
 	classified := classify(events, a.WorkspaceDir)
 
 	if cb != nil {
-		cb(SubagentEnd{ToolCallID: toolCallID, Model: model, TotalTurns: totalTurns, PromptTokens: promptTok, CompletionTokens: complTok, CacheHitTokens: cacheHitTok, CacheMissTokens: cacheMissTok, DurationMs: time.Since(startTime).Milliseconds()})
+		cb(SubagentEnd{ToolCallID: toolCallID, Model: model, TotalSteps: totalSteps, PromptTokens: promptTok, CompletionTokens: complTok, CacheHitTokens: cacheHitTok, CacheMissTokens: cacheMissTok, DurationMs: time.Since(startTime).Milliseconds()})
 	}
 	// 持久化 subagent JSONL
-	a.saveSubagentTranscript(toolCallID, agentType, p.Description, model, totalTurns, promptTok, complTok, events)
+	a.saveSubagentTranscript(toolCallID, agentType, p.Description, model, totalSteps, promptTok, complTok, events)
 
 	return &tool.ToolResult{
-		Content: fmt.Sprintf("(fork subagent completed, %d turns, %d+%d tokens)\n\n%s%s", totalTurns, promptTok, complTok, lastTurnText, formatFindings(classified)),
+		Content: fmt.Sprintf("(fork subagent completed, %d steps, %d+%d tokens)\n\n%s%s", totalSteps, promptTok, complTok, lastStepText, formatFindings(classified)),
 		Meta:    tool.ToolMeta{Duration: time.Since(startTime)},
 	}, nil
 }
@@ -472,9 +472,9 @@ func (a *AgentTool) executeCold(ctx context.Context, p AgentParams) (*tool.ToolR
 
 	// All cold agents are read-only on project files — they don't need AGENTS.md
 	// coding standards. Dropping it saves prompt tokens.
-	maxTurns := coldMaxTurns
+	maxSteps := coldMaxSteps
 	if p.SubagentType == "explore" {
-		maxTurns = exploreMaxTurns // 搜索任务更快完成
+		maxSteps = exploreMaxSteps // 搜索任务更快完成
 	}
 
 	subCtx, subCancel := context.WithCancel(ctx)
@@ -484,7 +484,7 @@ func (a *AgentTool) executeCold(ctx context.Context, p AgentParams) (*tool.ToolR
 	client := a.LLMClient
 	a.mu.RUnlock()
 	subLoop := agentloop.New(client, subRegistry, agentloop.Config{
-		MaxTurns:      maxTurns,
+		MaxSteps:      maxSteps,
 		SystemPrompt:  sp,
 		Guard:         a.subGuard(),
 		SandboxMgr:    a.SandboxMgr,
@@ -509,7 +509,7 @@ func (a *AgentTool) executeCold(ctx context.Context, p AgentParams) (*tool.ToolR
 		cb(SubagentStart{Prompt: p.Description, AgentType: p.SubagentType, InheritCtx: false, ToolCallID: toolCallID, Model: model})
 	}
 
-	lastTurnText, totalTurns, promptTok, complTok, cacheHitTok, cacheMissTok, events, err := forwardEvents(subCtx, subLoop.Run(subCtx, messages), cb, toolCallID)
+	lastStepText, totalSteps, promptTok, complTok, cacheHitTok, cacheMissTok, events, err := forwardEvents(subCtx, subLoop.Run(subCtx, messages), cb, toolCallID)
 	if err != nil {
 		if cb != nil {
 			cb(SubagentEnd{ToolCallID: toolCallID, Model: model, DurationMs: time.Since(startTime).Milliseconds(), Error: err.Error()})
@@ -524,13 +524,13 @@ func (a *AgentTool) executeCold(ctx context.Context, p AgentParams) (*tool.ToolR
 	classified := classify(events, a.WorkspaceDir)
 
 	if cb != nil {
-		cb(SubagentEnd{ToolCallID: toolCallID, Model: model, TotalTurns: totalTurns, PromptTokens: promptTok, CompletionTokens: complTok, CacheHitTokens: cacheHitTok, CacheMissTokens: cacheMissTok, DurationMs: time.Since(startTime).Milliseconds()})
+		cb(SubagentEnd{ToolCallID: toolCallID, Model: model, TotalSteps: totalSteps, PromptTokens: promptTok, CompletionTokens: complTok, CacheHitTokens: cacheHitTok, CacheMissTokens: cacheMissTok, DurationMs: time.Since(startTime).Milliseconds()})
 	}
 	// 持久化 subagent JSONL
-	a.saveSubagentTranscript(toolCallID, p.SubagentType, p.Description, model, totalTurns, promptTok, complTok, events)
+	a.saveSubagentTranscript(toolCallID, p.SubagentType, p.Description, model, totalSteps, promptTok, complTok, events)
 
 	return &tool.ToolResult{
-		Content: fmt.Sprintf("(subagent [%s] completed, %d turns, %d+%d tokens)\n\n%s%s", p.SubagentType, totalTurns, promptTok, complTok, lastTurnText, formatFindings(classified)),
+		Content: fmt.Sprintf("(subagent [%s] completed, %d steps, %d+%d tokens)\n\n%s%s", p.SubagentType, totalSteps, promptTok, complTok, lastStepText, formatFindings(classified)),
 		Meta:    tool.ToolMeta{Duration: time.Since(startTime)},
 	}, nil
 }
@@ -742,14 +742,14 @@ type writeOp struct {
 	LinesDel int
 }
 
-func forwardEvents(ctx context.Context, subCh <-chan agentloop.TurnEvent, cb func(agentloop.TurnEvent), toolCallID string) (lastTurnText string, totalTurns int, promptTokens int, completionTokens int, cacheHitTokens int, cacheMissTokens int, events []SubagentEvent, finalErr error) {
+func forwardEvents(ctx context.Context, subCh <-chan agentloop.StepEvent, cb func(agentloop.StepEvent), toolCallID string) (lastStepText string, totalSteps int, promptTokens int, completionTokens int, cacheHitTokens int, cacheMissTokens int, events []SubagentEvent, finalErr error) {
 	var sb strings.Builder
 	var writeOps []writeOp
-	var currentTurn int
-	var lastToolCalls []string // 最后一个 turn 的工具调用名列表(用于空文本兜底)
+	var currentStep int
+	var lastToolCalls []string // 最后一个 step 的工具调用名列表(用于空文本兜底)
 
 	// 缓冲扇出通道:解耦 subagent 事件消费与 TUI 投递。
-	fanout := make(chan agentloop.TurnEvent, 16384)
+	fanout := make(chan agentloop.StepEvent, 16384)
 	fanoutDone := make(chan struct{})
 	go func() {
 		defer close(fanoutDone)
@@ -770,9 +770,9 @@ func forwardEvents(ctx context.Context, subCh <-chan agentloop.TurnEvent, cb fun
 	for ev := range subCh {
 		switch e := ev.(type) {
 		case agentloop.StreamDelta:
-			if e.Turn > currentTurn {
-				// 进入新 turn:只保留最后一个 turn 的文本,丢弃中间推理过程
-				currentTurn = e.Turn
+			if e.Step > currentStep {
+				// 进入新 step:只保留最后一个 step 的文本,丢弃中间推理过程
+				currentStep = e.Step
 				sb.Reset()
 				lastToolCalls = lastToolCalls[:0]
 			}
@@ -813,18 +813,18 @@ func forwardEvents(ctx context.Context, subCh <-chan agentloop.TurnEvent, cb fun
 				writeOps = append(writeOps, op)
 			}
 
-		case agentloop.TurnStats:
+		case agentloop.StepStats:
 			promptTokens += e.PromptTokens
 			completionTokens += e.CompletionTokens
 			cacheHitTokens += e.CacheHitTokens
 			cacheMissTokens += e.CacheMissTokens
 
-		case agentloop.LoopDone:
-			totalTurns = e.Turn
+		case agentloop.TurnDone:
+			totalSteps = e.Step
 			if e.Err != nil {
 				finalErr = e.Err
 			}
-			// 兜底:子 agent 最后一个 turn 无文本输出时,
+			// 兜底:子 agent 最后一个 step 无文本输出时,
 			// 合成非空 fallback 防止 tool_result 内容为空,避免父 agent 因空结果而误解。
 			ensureNonEmpty(&sb, lastToolCalls)
 			if len(writeOps) > 0 {
@@ -839,13 +839,13 @@ func forwardEvents(ctx context.Context, subCh <-chan agentloop.TurnEvent, cb fun
 				}
 				sb.WriteString("</subagent_write_operations>")
 			}
-			return sb.String(), totalTurns, promptTokens, completionTokens, cacheHitTokens, cacheMissTokens, events, finalErr
+		return sb.String(), totalSteps, promptTokens, completionTokens, cacheHitTokens, cacheMissTokens, events, finalErr
 		}
 	}
 	// Channel 关闭但未收到 LoopDone(跨包防御:当前 agentloop.Run 总是会发送 LoopDone,
 	// 但此处做兜底防止未来引入的不发送 LoopDone 的路径导致空文本传播)。
 	ensureNonEmpty(&sb, lastToolCalls)
-	return sb.String(), totalTurns, promptTokens, completionTokens, cacheHitTokens, cacheMissTokens, events, nil
+	return sb.String(), totalSteps, promptTokens, completionTokens, cacheHitTokens, cacheMissTokens, events, nil
 }
 
 // ensureNonEmpty 在 sb 为空时合成非空 fallback 文本。

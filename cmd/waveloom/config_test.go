@@ -285,10 +285,18 @@ func TestParseCLI_ModelFlag(t *testing.T) {
 	}
 }
 
-func TestParseCLI_MaxTurns(t *testing.T) {
+func TestParseCLI_MaxSteps(t *testing.T) {
+	cfg := parseCLIForTest([]string{"--max-steps", "5", "test"})
+	if cfg.MaxSteps != 5 {
+		t.Errorf("expected MaxSteps=5, got %d", cfg.MaxSteps)
+	}
+}
+
+// TestParseCLI_MaxTurnsLegacyAlias 验证旧名 --max-turns 仍可用(兼容)。
+func TestParseCLI_MaxTurnsLegacyAlias(t *testing.T) {
 	cfg := parseCLIForTest([]string{"--max-turns", "5", "test"})
-	if cfg.MaxTurns != 5 {
-		t.Errorf("expected MaxTurns=5, got %d", cfg.MaxTurns)
+	if cfg.MaxSteps != 5 {
+		t.Errorf("expected MaxSteps=5 via --max-turns alias, got %d", cfg.MaxSteps)
 	}
 }
 
@@ -415,8 +423,8 @@ func TestParseCLI_SystemPrompt(t *testing.T) {
 
 func TestParseCLI_DefaultValues(t *testing.T) {
 	cfg := parseCLIForTest([]string{"test"})
-	if cfg.MaxTurns != 0 {
-		t.Errorf("default MaxTurns should be 0, got %d", cfg.MaxTurns)
+	if cfg.MaxSteps != 0 {
+		t.Errorf("default MaxSteps should be 0, got %d", cfg.MaxSteps)
 	}
 	if cfg.Model != "" {
 		t.Errorf("default Model should be empty, got %q", cfg.Model)
@@ -433,12 +441,12 @@ func TestParseCLI_DefaultValues(t *testing.T) {
 // Go flag 包在首个非 flag 参数处停止解析,循环解析修复前 prompt 后的
 // flag 全部失效(评测 runner 调用格式实测受影响,2026-08-10)。
 func TestParseCLI_FlagsAfterPrompt(t *testing.T) {
-	cfg := parseCLIForTest([]string{"fix the bug", "--max-turns", "25", "--no-sandbox", "--bypass-permissions", "--context-limit", "128k"})
+	cfg := parseCLIForTest([]string{"fix the bug", "--max-steps", "25", "--no-sandbox", "--bypass-permissions", "--context-limit", "128k"})
 	if cfg.OneShot != "fix the bug" {
 		t.Errorf("expected OneShot='fix the bug', got %q", cfg.OneShot)
 	}
-	if cfg.MaxTurns != 25 {
-		t.Errorf("expected MaxTurns=25, got %d", cfg.MaxTurns)
+	if cfg.MaxSteps != 25 {
+		t.Errorf("expected MaxSteps=25, got %d", cfg.MaxSteps)
 	}
 	if !cfg.NoSandbox {
 		t.Error("expected NoSandbox=true")
@@ -453,13 +461,13 @@ func TestParseCLI_FlagsAfterPrompt(t *testing.T) {
 
 // REGRESSION: 多个位置参数与 flag 交错时,位置参数按序收集。
 func TestParseCLI_InterleavedPositional(t *testing.T) {
-	cfg := parseCLIForTest([]string{"prompt-a", "--max-turns", "3", "prompt-b"})
+	cfg := parseCLIForTest([]string{"prompt-a", "--max-steps", "3", "prompt-b"})
 	// 单次模式取第一个位置参数为 prompt,后续位置参数不影响解析
 	if cfg.OneShot != "prompt-a" {
 		t.Errorf("expected OneShot='prompt-a', got %q", cfg.OneShot)
 	}
-	if cfg.MaxTurns != 3 {
-		t.Errorf("expected MaxTurns=3, got %d", cfg.MaxTurns)
+	if cfg.MaxSteps != 3 {
+		t.Errorf("expected MaxSteps=3, got %d", cfg.MaxSteps)
 	}
 }
 
@@ -498,15 +506,15 @@ func TestParseCLI_DoubleDashTerminator(t *testing.T) {
 
 // REGRESSION: flag 以 "=" 形式出现(prompt 之后)。
 func TestParseCLI_FlagEqualsFormAfterPrompt(t *testing.T) {
-	cfg := parseCLIForTest([]string{"fix bug", "--no-sandbox=true", "--max-turns=7"})
+	cfg := parseCLIForTest([]string{"fix bug", "--no-sandbox=true", "--max-steps=7"})
 	if cfg.OneShot != "fix bug" {
 		t.Errorf("expected OneShot='fix bug', got %q", cfg.OneShot)
 	}
 	if !cfg.NoSandbox {
 		t.Error("expected NoSandbox=true")
 	}
-	if cfg.MaxTurns != 7 {
-		t.Errorf("expected MaxTurns=7, got %d", cfg.MaxTurns)
+	if cfg.MaxSteps != 7 {
+		t.Errorf("expected MaxSteps=7, got %d", cfg.MaxSteps)
 	}
 }
 
