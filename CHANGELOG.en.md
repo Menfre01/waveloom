@@ -1,3 +1,10 @@
+## [v0.7.3] — 2026-08-17
+
+### Fixed
+- **Preview-text protection fallback**: when the model ends with a preview suffix (colon/dash/arrow/ellipsis) but sends no tool calls, the loop injects a `[system:continue]` reminder and runs one more turn so the announced action is actually executed — a plain-text response is no longer mis-judged as the final answer that aborts the task. The mechanism first shipped in v0.7.0 and regressed when v0.7.1 reverted it; now reimplemented on the current StepCount/MaxSteps semantics, with the prompt-layer Tool Use Discipline restored
+
+---
+
 ## [v0.7.2] — 2026-08-17
 
 ### Added

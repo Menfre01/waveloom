@@ -1,3 +1,12 @@
+## [v0.7.3] — 2026-08-17
+
+### 修复
+- **预告文本保护兜底**:LLM 输出冒号/箭头/省略号等预告后缀但漏发工具调用时,注入 `[system:continue]` 提醒并继续一轮补发工具调用,不再将纯文本响应误判为最终答案而中断任务(预告的动作从未执行)。该机制 v0.7.0 曾实现、v0.7.1 回退后缺陷回归,本轮按当前 StepCount/MaxSteps 语义重新实现,并恢复 prompt 层 Tool Use Discipline 约束
+
+---
+
+📝 [Changelog (English)](https://github.com/Menfre01/waveloom/blob/dev/CHANGELOG.en.md)
+
 ## [v0.7.2] — 2026-08-17
 
 ### 新增功能
