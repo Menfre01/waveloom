@@ -63,6 +63,7 @@ echo "review pkg/llm/ 下的代码" | waveloom
 waveloom ls                     # 列出最近会话
 waveloom --continue             # 恢复最近一次会话
 waveloom --resume <session-id>  # 恢复指定会话
+waveloom --name <name>          # 为新会话命名
 ```
 
 ## @ 文件引用
@@ -82,7 +83,8 @@ waveloom --resume <session-id>  # 恢复指定会话
 | 命令 | 别名 | 说明 |
 |------|------|------|
 | `/new` | `/clear` | 创建全新 session |
-| `/model` | — | 显示或切换模型，可输入模型名快速过滤 |
+| `/model` | — | 显示或切换模型,可输入模型名快速过滤;选择器内按 `e` 配置思考档位 |
+| `/rename` | — | 重命名当前会话 |
 | `/theme` | — | 选择主题（auto / dark / light / darkcolorblind / lightcolorblind） |
 | `/locale` | `/lang` | 切换语言（zh-CN / en-US） |
 | `/provider` | — | 查看或切换 LLM Provider（DeepSeek / Kimi / OpenAI） |

@@ -1,3 +1,21 @@
+## [v0.7.2] — 2026-08-17
+
+### Added
+- **DeepSeek peak/off-peak pricing**: pricing now applies Beijing-time peak hours (9:00-12:00, 14:00-18:00) at ×1 and off-peak hours at ×0.5, with cost stats computed for the current time slot
+- **Session naming**: `--name` names a new session, `/rename` renames it; `waveloom ls` and the TUI header show session names
+- **Thinking-effort panel**: press `e` in the model picker to configure thinking effort, with provider-filtered options (DeepSeek off/high/max, OpenAI low/medium/high, Kimi max) and `off` to disable thinking; HUD label think → effort, and the tok short format supports the M unit
+
+### Fixed
+- **Resume context doubling**: `--resume` now uses JSON as the authoritative context source, fixing doubled context tokens caused by raw JSONL remnants
+- **HUD thinking-effort display**: wrong effort display fixed; profile-configured effort is no longer lost on the startup path
+- **Subagent summary separator**: subagentSuffix joins lazily, eliminating stray and doubled commas
+- **LLM config merge**: ResolveProfile no longer overrides merged config with nil extra_params
+
+### Refactored
+- **agentloop terminology aligned**: loop/turn terms aligned with the ACP/Claude Code ecosystem (turn = one Run, step = internal iteration); behavior unchanged
+
+---
+
 ## [v0.7.1] — 2026-08-15
 
 ### Refactored

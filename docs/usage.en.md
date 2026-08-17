@@ -63,6 +63,7 @@ echo "review the code under pkg/llm/" | waveloom
 waveloom ls                     # List recent sessions
 waveloom --continue             # Resume the most recent session
 waveloom --resume <session-id>  # Resume a specific session
+waveloom --name <name>          # Name a new session
 ```
 
 ## @ File References
@@ -82,7 +83,8 @@ Type `/` in the input to open the command palette with fuzzy search.
 | Command | Alias | Description |
 |---------|-------|-------------|
 | `/new` | `/clear` | Create a new session |
-| `/model` | — | Show or switch model, type to filter |
+| `/model` | — | Show or switch model, type to filter; press `e` in the picker to set thinking effort |
+| `/rename` | — | Rename the current session |
 | `/theme` | — | Select theme (auto / dark / light / darkcolorblind / lightcolorblind) |
 | `/locale` | `/lang` | Switch language (zh-CN / en-US) |
 | `/provider` | — | View or switch LLM provider (DeepSeek / Kimi / OpenAI) |

@@ -1,3 +1,23 @@
+## [v0.7.2] — 2026-08-17
+
+### 新增功能
+- **DeepSeek 峰谷定价**:按北京时间高峰时段(9:00-12:00、14:00-18:00)×1、空闲时段×0.5 计价,费用统计自动按当前时段计算
+- **session 命名**:`--name` 为新会话命名、`/rename` 改名,`waveloom ls` 与 TUI header 展示会话名称
+- **思考档位面板**:模型选择器按 `e` 进入档位面板,按 provider 过滤选项(DeepSeek off/high/max、OpenAI low/medium/high、Kimi max),`off` 关闭思考;HUD 文案 think → effort,tok 短格式支持 M 单位
+
+### 修复
+- **resume 上下文翻倍**:`--resume` 恢复会话以 JSON 为权威上下文源,修复 jsonl 原文残留导致上下文 token 翻倍
+- **HUD 思考档位显示**:档位显示错误修复,profile 形态配置的思考档位在启动路径不再丢失
+- **subagent 摘要行分隔符**:subagentSuffix 延迟拼接,消除孤立逗号与双逗号
+- **LLM 配置合并**:ResolveProfile 不再以 nil extra_params 覆盖合并配置
+
+### 重构
+- **agentloop 术语对齐**:loop/turn 术语对齐 ACP/Claude Code 生态(turn = 一次 Run,step = 内部迭代),行为语义不变
+
+---
+
+📝 [Changelog (English)](https://github.com/Menfre01/waveloom/blob/dev/CHANGELOG.en.md)
+
 ## [v0.7.1] — 2026-08-15
 
 ### 重构
