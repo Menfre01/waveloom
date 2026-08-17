@@ -2,7 +2,10 @@
 // 支持 CNY/USD 双币种,根据 locale 自动选择价格表和货币符号。
 package pricing
 
-import "strings"
+import (
+	"strings"
+	"time"
+)
 
 // Currency 表示计费币种。
 type Currency string
@@ -22,11 +25,13 @@ type Price struct {
 
 // cnyTable 中文价格(元/1M tokens,来自官方中文定价页)。
 // 官方页面: https://api-docs.deepseek.com/zh-cn/quick_start/pricing
+// 2026-08-17 00:00(北京时间)起 DeepSeek 采用峰谷定价:表内为高峰价,
+// 空闲时段(北京时间 9:00-12:00、14:00-18:00 之外)= 高峰价 × 0.5。
 var cnyTable = map[string]Price{
 	// DeepSeek
-	"deepseek/deepseek-v4-flash":  {CacheHit: 0.02, CacheMiss: 1.0, Prompt: 1.0, Output: 2.0},
-	"deepseek/deepseek-v4-pro":    {CacheHit: 0.025, CacheMiss: 3.0, Prompt: 3.0, Output: 6.0},
-	"deepseek/":                   {CacheHit: 0.02, CacheMiss: 1.0, Prompt: 1.0, Output: 2.0},
+	"deepseek/deepseek-v4-flash":  {CacheHit: 0.10, CacheMiss: 3.0, Prompt: 3.0, Output: 9.0},
+	"deepseek/deepseek-v4-pro":    {CacheHit: 0.30, CacheMiss: 9.0, Prompt: 9.0, Output: 27.0},
+	"deepseek/":                   {CacheHit: 0.10, CacheMiss: 3.0, Prompt: 3.0, Output: 9.0},
 
 	// Kimi (Moonshot)
 	"kimi/kimi-k3": {CacheHit: 2.0, CacheMiss: 20.0, Prompt: 20.0, Output: 100.0},
@@ -43,11 +48,14 @@ var cnyTable = map[string]Price{
 
 // usdTable 英文价格($/1M tokens,来自官方英文定价页)。
 // 官方页面: https://api-docs.deepseek.com/quick_start/pricing
+// 2026-08-16 16:00 UTC(2026-08-17 00:00 北京时间)起 DeepSeek 采用峰谷定价:
+// 高峰时段为 UTC 01:00-04:00、06:00-10:00(北京时间 9:00-12:00、14:00-18:00),
+// 空闲时段 = 高峰价 × 0.5。
 var usdTable = map[string]Price{
 	// DeepSeek
-	"deepseek/deepseek-v4-flash":  {CacheHit: 0.0028, CacheMiss: 0.14, Prompt: 0.14, Output: 0.28},
-	"deepseek/deepseek-v4-pro":    {CacheHit: 0.003625, CacheMiss: 0.435, Prompt: 0.435, Output: 0.87},
-	"deepseek/":                   {CacheHit: 0.0028, CacheMiss: 0.14, Prompt: 0.14, Output: 0.28},
+	"deepseek/deepseek-v4-flash":  {CacheHit: 0.014, CacheMiss: 0.44, Prompt: 0.44, Output: 1.32},
+	"deepseek/deepseek-v4-pro":    {CacheHit: 0.044, CacheMiss: 1.32, Prompt: 1.32, Output: 3.96},
+	"deepseek/":                   {CacheHit: 0.014, CacheMiss: 0.44, Prompt: 0.44, Output: 1.32},
 
 	// Kimi (Moonshot)
 	"kimi/kimi-k3": {CacheHit: 0.30, CacheMiss: 3.0, Prompt: 3.0, Output: 15.0},
@@ -70,14 +78,40 @@ func Lookup(provider, model string) Price {
 // LookupCurrency 根据 provider、model 和币种查找价格。
 // 优先精确匹配 model,回退到 provider 通配,最后全局通配。
 func LookupCurrency(provider, model string, c Currency) Price {
-	t := tableFor(c)
-	if p, ok := t[provider+"/"+model]; ok {
-		return p
+	return LookupCurrencyAt(provider, model, c, time.Now())
+}
+
+// LookupCurrencyAt 根据 provider、model、币种和指定时间查找价格。
+// DeepSeek 采用峰谷定价:高峰时段(北京时间 9:00-12:00、14:00-18:00)
+// 使用表内价格,空闲时段为高峰价 × 0.5。
+// 其他 provider(kimi/openai 等)不受峰谷影响,返回表内价格。
+func LookupCurrencyAt(provider, model string, c Currency, at time.Time) Price {
+	table := tableFor(c)
+	p, ok := table[provider+"/"+model]
+	if !ok {
+		p, ok = table[provider+"/"]
 	}
-	if p, ok := t[provider+"/"]; ok {
-		return p
+	if !ok {
+		p = table["*/*"]
 	}
-	return t["*/*"]
+	// 仅 DeepSeek 峰谷定价;空闲时段 = 高峰价 × 0.5
+	if provider == "deepseek" && !IsPeakTime(at) {
+		p.CacheHit *= 0.5
+		p.CacheMiss *= 0.5
+		p.Prompt *= 0.5
+		p.Output *= 0.5
+	}
+	return p
+}
+
+// IsPeakTime 判断指定时间是否处于 DeepSeek 高峰时段。
+// 高峰时段(北京时间): 9:00-12:00、14:00-18:00;其余为空闲时段。
+// 参考: https://api-docs.deepseek.com/zh-cn/quick_start/pricing
+func IsPeakTime(t time.Time) bool {
+	// 北京时间 = UTC+8(无夏令时);FixedZone 名称仅作显示用,不影响转换
+	beijing := t.In(time.FixedZone("UTC+8", 8*3600))
+	h := beijing.Hour()
+	return (h >= 9 && h < 12) || (h >= 14 && h < 18)
 }
 
 // CurrencySymbol 返回币种的显示符号。

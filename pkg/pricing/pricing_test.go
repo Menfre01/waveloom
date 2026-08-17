@@ -2,18 +2,20 @@ package pricing
 
 import (
 	"testing"
+	"time"
 )
 
 func TestLookup_ExactMatch(t *testing.T) {
-	p := Lookup("deepseek", "deepseek-v4-flash")
-	if p.CacheHit != 0.02 || p.CacheMiss != 1.0 || p.Output != 2.0 {
+	// Lookup 委托 LookupCurrency → time.Now();用 LookupCurrencyAt 显式高峰时刻断言表内价
+	p := LookupCurrencyAt("deepseek", "deepseek-v4-flash", CNY, beijingTime(10, 0))
+	if p.CacheHit != 0.10 || p.CacheMiss != 3.0 || p.Output != 9.0 {
 		t.Errorf("deepseek-v4-flash: got %+v", p)
 	}
 }
 
 func TestLookup_ProviderWildcard(t *testing.T) {
-	p := Lookup("deepseek", "deepseek-unknown-model")
-	if p.CacheHit != 0.02 || p.CacheMiss != 1.0 || p.Output != 2.0 {
+	p := LookupCurrencyAt("deepseek", "deepseek-unknown-model", CNY, beijingTime(10, 0))
+	if p.CacheHit != 0.10 || p.CacheMiss != 3.0 || p.Output != 9.0 {
 		t.Errorf("deepseek wildcard: got %+v, expected V4 Flash fallback", p)
 	}
 }
@@ -40,37 +42,47 @@ func TestLookup_Kimi(t *testing.T) {
 }
 
 func TestLookupCurrency_CNY(t *testing.T) {
-	p := LookupCurrency("deepseek", "deepseek-v4-pro", CNY)
-	if p.CacheHit != 0.025 || p.CacheMiss != 3.0 || p.Output != 6.0 {
+	p := LookupCurrencyAt("deepseek", "deepseek-v4-pro", CNY, beijingTime(10, 0))
+	if p.CacheHit != 0.30 || p.CacheMiss != 9.0 || p.Output != 27.0 {
 		t.Errorf("CNY v4-pro: got %+v", p)
 	}
 }
 
 func TestLookupCurrency_USD(t *testing.T) {
-	p := LookupCurrency("deepseek", "deepseek-v4-pro", USD)
-	if p.CacheHit != 0.003625 || p.CacheMiss != 0.435 || p.Output != 0.87 {
+	p := LookupCurrencyAt("deepseek", "deepseek-v4-pro", USD, beijingTime(10, 0))
+	if p.CacheHit != 0.044 || p.CacheMiss != 1.32 || p.Output != 3.96 {
 		t.Errorf("USD v4-pro: got %+v", p)
 	}
 }
 
 func TestLookupCurrency_USD_Kimi(t *testing.T) {
-	p := LookupCurrency("kimi", "kimi-k3", USD)
+	p := LookupCurrencyAt("kimi", "kimi-k3", USD, beijingTime(10, 0))
 	if p.CacheHit != 0.30 || p.CacheMiss != 3.0 || p.Output != 15.0 {
 		t.Errorf("USD kimi-k3: got %+v", p)
 	}
 }
 
 func TestLookupCurrency_USD_OpenAI(t *testing.T) {
-	p := LookupCurrency("openai", "gpt-4o", USD)
+	p := LookupCurrencyAt("openai", "gpt-4o", USD, beijingTime(10, 0))
 	if p.Prompt != 2.50 || p.Output != 10.00 {
 		t.Errorf("USD gpt-4o: got %+v", p)
 	}
 }
 
 func TestLookupCurrency_FallsBackToGlobal(t *testing.T) {
-	p := LookupCurrency("unknown", "unknown-model", USD)
+	p := LookupCurrencyAt("unknown", "unknown-model", USD, beijingTime(10, 0))
 	if p.Prompt != 1.00 || p.Output != 2.00 {
 		t.Errorf("USD global fallback: got %+v", p)
+	}
+}
+
+// TestLookupCurrency_DelegatesToNow 验证 LookupCurrency 委托 LookupCurrencyAt(time.Now())。
+func TestLookupCurrency_DelegatesToNow(t *testing.T) {
+	now := time.Now()
+	got := LookupCurrency("deepseek", "deepseek-v4-flash", CNY)
+	want := LookupCurrencyAt("deepseek", "deepseek-v4-flash", CNY, now)
+	if got != want {
+		t.Errorf("LookupCurrency = %+v, want LookupCurrencyAt(now) = %+v", got, want)
 	}
 }
 
@@ -93,13 +105,83 @@ func TestCurrencySymbol(t *testing.T) {
 
 func TestTableFor(t *testing.T) {
 	cnyT := tableFor(CNY)
-	if cnyT["deepseek/deepseek-v4-flash"].CacheHit != 0.02 {
-		t.Error("CNY table should have deepseek-v4-flash at 0.02")
+	if cnyT["deepseek/deepseek-v4-flash"].CacheHit != 0.10 {
+		t.Error("CNY table should have deepseek-v4-flash at 0.10 (peak)")
 	}
 
 	usdT := tableFor(USD)
-	if usdT["deepseek/deepseek-v4-flash"].CacheHit != 0.0028 {
-		t.Error("USD table should have deepseek-v4-flash at 0.0028")
+	if usdT["deepseek/deepseek-v4-flash"].CacheHit != 0.014 {
+		t.Error("USD table should have deepseek-v4-flash at 0.014 (peak)")
+	}
+}
+
+// beijingTime 构造北京时间(UTC+8)的指定时刻,用于峰谷定价边界测试。
+func beijingTime(hour, min int) time.Time {
+	return time.Date(2026, 8, 17, hour, min, 0, 0, time.FixedZone("CST", 8*3600))
+}
+
+func TestIsPeakTime(t *testing.T) {
+	tests := []struct {
+		name string
+		t    time.Time
+		want bool
+	}{
+		{"peak start 09:00", beijingTime(9, 0), true},
+		{"peak mid 11:59", beijingTime(11, 59), true},
+		{"off-peak 08:59", beijingTime(8, 59), false},
+		{"off-peak noon 12:00", beijingTime(12, 0), false},
+		{"off-peak 13:59", beijingTime(13, 59), false},
+		{"peak start 14:00", beijingTime(14, 0), true},
+		{"peak mid 17:59", beijingTime(17, 59), true},
+		{"off-peak 18:00", beijingTime(18, 0), false},
+		{"off-peak night 23:00", beijingTime(23, 0), false},
+		{"off-peak dawn 00:00", beijingTime(0, 0), false},
+		// UTC 输入转换:2026-08-16 16:00 UTC = 北京 2026-08-17 00:00(空闲)
+		{"utc input converted to beijing", time.Date(2026, 8, 16, 16, 0, 0, 0, time.UTC), false},
+	}
+	for _, tt := range tests {
+		if got := IsPeakTime(tt.t); got != tt.want {
+			t.Errorf("IsPeakTime(%s) = %v, want %v", tt.name, got, tt.want)
+		}
+	}
+}
+
+func TestLookupCurrencyAt_OffPeakHalf(t *testing.T) {
+	// 高峰时段:表内价格原样
+	peak := LookupCurrencyAt("deepseek", "deepseek-v4-flash", CNY, beijingTime(10, 0))
+	if peak.CacheHit != 0.10 || peak.CacheMiss != 3.0 || peak.Output != 9.0 {
+		t.Errorf("peak price: got %+v", peak)
+	}
+
+	// 空闲时段:高峰价 × 0.5
+	off := LookupCurrencyAt("deepseek", "deepseek-v4-flash", CNY, beijingTime(13, 0))
+	if off.CacheHit != 0.05 || off.CacheMiss != 1.5 || off.Output != 4.5 {
+		t.Errorf("off-peak price: got %+v", off)
+	}
+
+	// pro 空闲:0.30/9.0/27.0 → 0.15/4.5/13.5
+	proOff := LookupCurrencyAt("deepseek", "deepseek-v4-pro", CNY, beijingTime(13, 0))
+	if proOff.CacheHit != 0.15 || proOff.CacheMiss != 4.5 || proOff.Output != 13.5 {
+		t.Errorf("pro off-peak price: got %+v", proOff)
+	}
+}
+
+func TestLookupCurrencyAt_NonDeepSeekUnaffected(t *testing.T) {
+	// kimi/openai 无峰谷定价,空闲时段价格不变
+	off := LookupCurrencyAt("kimi", "kimi-k3", CNY, beijingTime(13, 0))
+	if off.CacheHit != 2.0 || off.CacheMiss != 20.0 || off.Output != 100.0 {
+		t.Errorf("kimi off-peak should be unchanged: got %+v", off)
+	}
+}
+
+func TestLookupCurrencyAt_USD_OffPeakHalf(t *testing.T) {
+	peak := LookupCurrencyAt("deepseek", "deepseek-v4-pro", USD, beijingTime(10, 0))
+	if peak.CacheHit != 0.044 || peak.CacheMiss != 1.32 || peak.Output != 3.96 {
+		t.Errorf("USD peak price: got %+v", peak)
+	}
+	off := LookupCurrencyAt("deepseek", "deepseek-v4-pro", USD, beijingTime(13, 0))
+	if off.CacheHit != 0.022 || off.CacheMiss != 0.66 || off.Output != 1.98 {
+		t.Errorf("USD off-peak price: got %+v", off)
 	}
 }
 
