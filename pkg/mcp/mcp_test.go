@@ -529,6 +529,7 @@ func TestLoadClaudeJSON(t *testing.T) {
 }
 
 func TestLoadConfigs_MergeAndPriority(t *testing.T) {
+	isolateClaudeDesktop(t)
 	homeDir := t.TempDir()
 	projectDir := t.TempDir()
 

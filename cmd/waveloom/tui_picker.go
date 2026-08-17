@@ -825,8 +825,9 @@ func relativizePaths(paths []string, cwd string) []string {
 
 // isHiddenOrBinary 检查路径是否应被过滤。
 func isHiddenOrBinary(path string) bool {
-	// 检查每个路径段是否以 . 开头（隐藏文件/目录），排除 . 和 ..（合法路径导航）
-	parts := strings.Split(path, string(filepath.Separator))
+	// 检查每个路径段是否以 . 开头(隐藏文件/目录),排除 . 和 ..(合法路径导航)
+	// 同时按 / 与 \ 拆分:Windows 上 resolveTilde 等路径可能混用两种分隔符
+	parts := strings.FieldsFunc(path, func(r rune) bool { return r == '/' || r == '\\' })
 	for _, p := range parts {
 		if strings.HasPrefix(p, ".") && p != "." && p != ".." {
 			return true

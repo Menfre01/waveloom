@@ -713,9 +713,17 @@ func TestPrefixHelpers(t *testing.T) {
 // setup.go — saveAndFinish / needsSetup
 // ---------------------------------------------------------------------------
 
+// setTestHome 同时设置 HOME(Unix)与 USERPROFILE(Windows),
+// 使 os.UserHomeDir() 在测试中指向 dir。
+func setTestHome(t *testing.T, dir string) {
+	t.Helper()
+	t.Setenv("HOME", dir)
+	t.Setenv("USERPROFILE", dir)
+}
+
 func TestSaveAndFinish(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home)
+	setTestHome(t, home)
 
 	m := newSetupModel(LocaleEnUS)
 	m.state.apiKey = "sk-test-1234"
@@ -759,7 +767,7 @@ func TestSaveAndFinish(t *testing.T) {
 
 func TestNeedsSetup(t *testing.T) {
 	t.Run("env var LLM_API_KEY satisfies", func(t *testing.T) {
-		t.Setenv("HOME", t.TempDir())
+		setTestHome(t, t.TempDir())
 		t.Setenv("LLM_API_KEY", "sk-env")
 		if needsSetup() {
 			t.Error("LLM_API_KEY set → no setup needed")
@@ -768,7 +776,7 @@ func TestNeedsSetup(t *testing.T) {
 
 	t.Run("global settings with key satisfies", func(t *testing.T) {
 		home := t.TempDir()
-		t.Setenv("HOME", home)
+		setTestHome(t, home)
 		t.Setenv("LLM_API_KEY", "")
 		raw, _ := json.Marshal(map[string]any{"llm": map[string]any{"api_key": "sk-x"}})
 		p := filepath.Join(home, ".waveloom", "settings.json")
@@ -784,7 +792,7 @@ func TestNeedsSetup(t *testing.T) {
 	})
 
 	t.Run("nothing configured requires setup", func(t *testing.T) {
-		t.Setenv("HOME", t.TempDir())
+		setTestHome(t, t.TempDir())
 		t.Setenv("LLM_API_KEY", "")
 		if !needsSetup() {
 			t.Error("expected setup needed")
@@ -798,7 +806,7 @@ func TestNeedsSetup(t *testing.T) {
 
 func TestLoadHookRunner(t *testing.T) {
 	t.Run("no hook files yields nil", func(t *testing.T) {
-		t.Setenv("HOME", t.TempDir())
+		setTestHome(t, t.TempDir())
 		if got := loadHookRunner(); got != nil {
 			t.Errorf("expected nil runner, got %v", got)
 		}
@@ -806,7 +814,7 @@ func TestLoadHookRunner(t *testing.T) {
 
 	t.Run("global hook config loads", func(t *testing.T) {
 		home := t.TempDir()
-		t.Setenv("HOME", home)
+		setTestHome(t, home)
 		raw := []byte(`{
 			"hooks": {
 				"PreToolUse": [

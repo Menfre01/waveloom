@@ -22,6 +22,7 @@ import (
 	"os/exec"
 	"os/user"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -618,7 +619,12 @@ func TestExtractDirPrefix(t *testing.T) {
 		{"./sub/a", "./sub/"},
 		{"../wav", "../"},
 		{"..", ".."},
-		{"/abs/path/f.go", "/abs/path/"},
+	}
+	// 绝对路径用例按平台构造:Windows 上无盘符的 / 路径不是绝对路径
+	if runtime.GOOS == "windows" {
+		tests = append(tests, struct{ in, want string }{`C:\abs\path\f.go`, "C:/abs/path/"})
+	} else {
+		tests = append(tests, struct{ in, want string }{"/abs/path/f.go", "/abs/path/"})
 	}
 	for _, tt := range tests {
 		t.Run(tt.in, func(t *testing.T) {

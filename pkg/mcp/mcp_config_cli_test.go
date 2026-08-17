@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -50,11 +51,22 @@ func writeJSON(t *testing.T, path, content string) {
 	}
 }
 
+// isolateClaudeDesktop 在 Windows 上将 %APPDATA% 重定向到临时目录,
+// 防止测试读写 CI 机器上真实的 Claude Desktop 配置
+// (claudeDesktopConfigPath 在 Windows 按 APPDATA 定位)。
+func isolateClaudeDesktop(t *testing.T) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Setenv("APPDATA", filepath.Join(t.TempDir(), "AppData", "Roaming"))
+	}
+}
+
 // ============================================================================
 // config.go — LoadConfigs 多来源优先级
 // ============================================================================
 
 func TestLoadConfigs_FullSourcePriority(t *testing.T) {
+	isolateClaudeDesktop(t)
 	homeDir := t.TempDir()
 	projectDir := t.TempDir()
 
@@ -110,6 +122,7 @@ func TestLoadConfigs_FullSourcePriority(t *testing.T) {
 }
 
 func TestLoadConfigs_NoSources(t *testing.T) {
+	isolateClaudeDesktop(t)
 	configs := LoadConfigs(t.TempDir(), t.TempDir())
 	if len(configs) != 0 {
 		t.Errorf("len = %d, want 0", len(configs))
@@ -182,6 +195,7 @@ func TestLoadClaudeJSON_InvalidJSON(t *testing.T) {
 }
 
 func TestLoadClaudeDesktopConfig(t *testing.T) {
+	isolateClaudeDesktop(t)
 	home := t.TempDir()
 	// 无配置文件
 	if servers := loadClaudeDesktopConfig(home); len(servers) != 0 {
