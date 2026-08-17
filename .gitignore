@@ -19,6 +19,7 @@ dist/
 .waveloom-gocache/
 # 根目录 waveloom 二进制(go build 本地产物)
 /waveloom
+/waveloom.exe
 /llmedit
 # 根目录 harness 二进制(评测遗留构建产物)
 /harness
