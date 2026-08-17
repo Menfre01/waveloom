@@ -207,9 +207,20 @@ type Loop struct {
 
 	// stepsSinceLastTodoReminder 记录自上次注入 todo 提醒以来的 assistant step 数。
 	stepsSinceLastTodoReminder int
-	// lastChanceTodoInjected 在 loop 即将以 ReasonCompleted 终止时，	// 若检测到残留的非 completed todo 项，注入一次"最后机会"提醒后置为 true。
+	// lastChanceTodoInjected 在 loop 即将以 ReasonCompleted 终止时,	// 若检测到残留的非 completed todo 项,注入一次"最后机会"提醒后置为 true。
 	// todo_update 成功执行时重置为 false。防止 LLM 忘记最后一次 todo 更新导致残留。
 	lastChanceTodoInjected bool
+
+	// previewWarned 标记本轮是否已注入过"预告文本无工具调用"提醒(每 Run 最多一次)。
+	// 评测实测(deepseek-v4-flash):模型常输出"接下来:xxx"式预告文本后
+	// 漏发工具调用,若直接终止会导致预告的动作从未执行、任务被迫中断。
+	previewWarned bool
+
+	// previewGraceStep 标记预告注入发生在 MaxSteps 最后一轮时,放行一轮
+	// 补发工具调用。仅放行一次:注入后 continue 回到 for shouldContinue,
+	// 若 StepCount 已满循环会立即退出,模型看不到 [system:continue] 提醒,
+	// 预告的动作永远不执行(REGRESSION,见 shouldContinue)。
+	previewGraceStep bool
 
 	readStateStore    *tool.ReadStateStore
 
@@ -315,6 +326,11 @@ func (l *Loop) Run(ctx context.Context, messages []llm.Message) <-chan StepEvent
 		// 第二个 prompt 的完成前提醒被跳过。Loop 是 session 级持久组件,
 		// 每次 Run(单次 prompt)开始时重置,保证每轮都注入提醒。
 		l.lastChanceTodoInjected = false
+		// 同理:previewWarned 若跨 Run 残留,后续 prompt 的预告文本保护永久失效。
+		l.previewWarned = false
+		// previewGraceStep 同理:仅当轮注入时置位,shouldContinue 消费后复位,
+		// 此处重置防御跨 Run 残留(注入后立即退出等边角路径)。
+		l.previewGraceStep = false
 
 		// goroutine 结束时触发 Stop/Notification hooks。
 		// blocked 返回值在此场景无意义（goroutine 即将退出），仅记录日志。
@@ -681,12 +697,37 @@ func (l *Loop) Run(ctx context.Context, messages []llm.Message) <-chan StepEvent
 				}
 			}
 
-				ch <- TurnDone{
-					Step:     state.StepCount,
-					Reason:   ReasonCompleted,
-					Messages: state.Messages,
+			// 预告文本保护:模型输出了"预告"式文本(以冒号/箭头等结尾,
+			// 暗示接下来还要执行动作)但没有携带工具调用。直接终止会中断任务
+			// (评测实测:模型常以 "启动 xxx:" 结尾后漏发工具调用)。
+			// 注入 [system:continue] 提醒并继续一轮,给模型一次补发工具调用的机会;
+			// 若下一轮仍无工具调用(或本 Run 已提醒过)则正常终止,防死循环。
+			// plan mode 同样生效:计划文本虽常以冒号结尾,但预告式结尾同样可能
+			// 意味着模型漏发了工具调用(如读完文件后未写 plan),给一次补发机会;
+			// previewWarned 保证最多提醒一次,不会造成死循环。
+			if !l.previewWarned && hasPreviewSuffix(contentBuf) {
+				l.previewWarned = true
+				l.verbose("    → preview-style text without tool calls, injecting continue reminder\n")
+				// REGRESSION: 注入后 continue 回到 for l.shouldContinue(state),
+				// 若 StepCount 已达 MaxSteps 会立即退出,模型看不到提醒、
+				// 预告的动作永远不执行。放行一轮(仅一轮,shouldContinue 消费后复位),
+				// 给模型补发工具调用的机会。
+				if l.config.MaxSteps > 0 && state.StepCount >= l.config.MaxSteps {
+					l.previewGraceStep = true
 				}
-				return
+				state.Messages = append(state.Messages, llm.Message{
+					Role:    llm.RoleUser,
+					Content: previewContinueText,
+				})
+				continue
+			}
+
+			ch <- TurnDone{
+				Step:     state.StepCount,
+				Reason:   ReasonCompleted,
+				Messages: state.Messages,
+			}
+			return
 			}
 
 			l.verbose("    → %d tool calls\n", len(toolCalls))
@@ -789,7 +830,18 @@ func (l *Loop) shouldContinue(state *TurnState) bool {
 	if l.config.MaxSteps == 0 {
 		return true
 	}
-	return state.StepCount < l.config.MaxSteps
+	if state.StepCount < l.config.MaxSteps {
+		return true
+	}
+	// REGRESSION: 预告注入发生在最后一轮(StepCount == MaxSteps)时,
+	// 注入后 continue 会在此立即退出,模型看不到 [system:continue] 提醒、
+	// 预告的动作从未执行、任务被误判中断。previewGraceStep 放行一轮
+	// 补发工具调用;消费后立即复位,仅放行一次,不突破 MaxSteps 语义。
+	if l.previewGraceStep {
+		l.previewGraceStep = false
+		return true
+	}
+	return false
 }
 
 // resolveModel 解析本 step 请求使用的模型。
@@ -945,12 +997,60 @@ func sendEvent(ctx context.Context, ch chan<- StepEvent, ev StepEvent) bool {
 	}
 }
 
-// todoLastChanceText 构造最后机会提醒文本：告知 LLM 即将终止但有残留任务。
+// todoLastChanceText 构造最后机会提醒文本:告知 LLM 即将终止但有残留任务。
 func todoLastChanceText(summary string) string {
 	return summary + "\n\n" +
 		"[system:todo] You are about to finish, but your todo list still has incomplete tasks. " +
 		"If all work is actually done, call todo_update to mark them as 'completed' before giving your final answer. " +
 		"If work remains, continue working. This is your last automatic reminder."
+}
+
+// previewContinueText 是模型输出"预告文本"(以冒号/箭头等结尾)但未携带
+// 工具调用时注入的 user 提醒,引导模型补发工具调用或明确收尾。
+// 措辞为后缀形态的事实描述(与 hasPreviewSuffix 的后缀一致),避免误报时
+// 模型困惑;补充"上一条消息已入历史"确认;总结选项提示勿再以预告后缀结尾,
+// 防止再次触发检测。
+const previewContinueText = "[system:continue] Your last message ended with a trailing preview marker (\":\", \"\uFF1A\", \"-\", \"\u2192\" or \"...\") but included no tool calls — that message is already part of the conversation history. If you still intend to perform the announced action, call the tool(s) now. If you are genuinely finished, reply with a final summary (do not end it with a trailing preview marker)."
+
+// hasPreviewSuffix 检测文本是否以"预告后缀"结尾(冒号/中文冒号/连字符/箭头/省略号),
+// 表明模型宣告了下一步动作但未附带工具调用。评测实测(deepseek-v4-flash):
+// 模型常输出 "启动 xxx:" 之类的预告文本后漏发工具调用,导致任务被误判完成。
+func hasPreviewSuffix(text string) bool {
+	t := strings.TrimSpace(text)
+	if t == "" {
+		return false
+	}
+	// REGRESSION: 此前第 5 个后缀是 U+2026(...),与 previewContinueText 文案
+	// 声明的 ASCII "..." 不一致;英文模型输出 "checking files..."(三个 ASCII
+	// 点)时预告防御失效,任务被误判完成。补上 ASCII 三连点,两者都匹配。
+	// REGRESSION: 冒号类后缀仅覆盖 U+003A/U+FF1A,其余视觉形似冒号的变体
+	// (小冒号 U+FE55、比号 U+2236、修饰符冒号 U+A789、竖排冒号 U+FE13、
+	// 比例号 U+2237、亚美尼亚句号 U+0589、希伯来标点 U+05C3、语音学冒号
+	// U+02D0/U+02F8、希腊问号 U+037E)结尾的预告文本被跳过,任务误判完成。
+	// 全部纳入匹配;用 \uXXXX 转义锁定字节,防编辑工具 Unicode 归一化破坏。
+	for _, suffix := range []string{
+		":",      // U+003A COLON
+		"\uFF1A", // FULLWIDTH COLON
+		"\uFE55", // SMALL COLON
+		"\u2236", // RATIO
+		"\uA789", // MODIFIER LETTER COLON
+		"\uFE13", // PRESENTATION FORM FOR VERTICAL COLON
+		"\u2237", // PROPORTION
+		"\u0589", // ARMENIAN FULL STOP
+		"\u05C3", // HEBREW PUNCTUATION SOF PASUQ
+		"\u02D0", // MODIFIER LETTER TRIANGULAR COLON
+		"\u02F8", // MODIFIER LETTER RAISED COLON
+		"\u037E", // GREEK QUESTION MARK
+		"-",
+		"\u2192", // RIGHTWARDS ARROW
+		"...",
+		"\u2026", // HORIZONTAL ELLIPSIS
+	} {
+		if strings.HasSuffix(t, suffix) {
+			return true
+		}
+	}
+	return false
 }
 
 // injectTodoStatus 在每轮 LLM 调用前将当前 todo 状态注入消息列表。

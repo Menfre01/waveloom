@@ -3905,3 +3905,453 @@ func TestWebSearchVirtualEvent(t *testing.T) {
 	}
 }
 
+// ============================================================================
+// 预告文本保护(REGRESSION: v0.7.0 评测驱动改动回退时整体移除,重新实现)
+// ============================================================================
+
+// TestRegression_PreviewTextNoToolCall_ContinueWithToolCall 验证模型输出
+// "预告文本"(以冒号结尾,暗示接下来要执行动作)但没有携带工具调用时,
+// Loop 注入 [system:continue] 提醒并继续,而不是直接终止导致任务中断。
+// 评测实测(deepseek-v4-flash):模型常以 "启动 xxx:" 结尾后漏发工具调用。
+func TestRegression_PreviewTextNoToolCall_ContinueWithToolCall(t *testing.T) {
+	client := &mockLLMClient{
+		responses: []*llm.Response{
+			// 第一轮:预告文本(中文全角冒号结尾),无工具调用 → 应注入 [system:continue] 并继续
+			// \uFF1A = 全角冒号,用转义锁定字节,防编辑工具 Unicode 归一化破坏测试
+			makeTextResponse("启动评测:检查第一批 verdict\uFF1A"),
+			// 第二轮:模型补发工具调用
+			makeToolCallResponse("", makeToolCall("tc1", "read_file", `{"file_path":"/tmp/a.txt"}`)),
+			// 第三轮:正常完成
+			makeTextResponse("All done.")}}
+	readTool := newSuccessTool("read_file", true, "hello")
+	registry := newTestRegistry(readTool)
+	loop := New(client, registry, DefaultConfig())
+
+	finalEv := drainEvents(loop.Run(context.Background(), []llm.Message{
+		{Role: llm.RoleUser, Content: "run eval"}}))
+
+	if finalEv.Err != nil {
+		t.Fatalf("unexpected error: %v", finalEv.Err)
+	}
+	if finalEv.Reason != ReasonCompleted {
+		t.Errorf("expected ReasonCompleted, got %s", finalEv.Reason)
+	}
+	if finalEv.Step != 3 {
+		t.Errorf("expected 3 steps (preview → tool → done), got %d", finalEv.Step)
+	}
+	// 消息: user → assistant(预告) → user([system:continue]) → assistant(tool) → tool(result) → assistant(done)
+	if len(finalEv.Messages) != 6 {
+		t.Errorf("expected 6 messages, got %d", len(finalEv.Messages))
+	}
+	// [system:continue] 提醒必须注入(在 assistant 预告之后)
+	reminderMsg := finalEv.Messages[2]
+	if reminderMsg.Role != llm.RoleUser || !strings.Contains(reminderMsg.Content, "[system:continue]") {
+		t.Errorf("expected [system:continue] reminder at msg[2], got role=%s content=%q", reminderMsg.Role, reminderMsg.Content)
+	}
+}
+
+// TestRegression_PreviewTextNoToolCall_SecondPreviewTerminates 验证预告文本
+// 保护不会无限循环:连续两轮预告文本(无工具调用)时,仅第一轮注入提醒,
+// 第二轮直接终止(防死循环)。
+func TestRegression_PreviewTextNoToolCall_SecondPreviewTerminates(t *testing.T) {
+	client := &mockLLMClient{
+		responses: []*llm.Response{
+			makeTextResponse("启动评测:"),
+			makeTextResponse("继续等待:"),
+			makeTextResponse("unreachable")}}
+	registry := newTestRegistry()
+	loop := New(client, registry, DefaultConfig())
+
+	finalEv := drainEvents(loop.Run(context.Background(), []llm.Message{
+		{Role: llm.RoleUser, Content: "run eval"}}))
+
+	if finalEv.Err != nil {
+		t.Fatalf("unexpected error: %v", finalEv.Err)
+	}
+	if finalEv.Reason != ReasonCompleted {
+		t.Errorf("expected ReasonCompleted, got %s", finalEv.Reason)
+	}
+	if finalEv.Step != 2 {
+		t.Errorf("expected 2 steps (preview → reminder → preview → terminate), got %d", finalEv.Step)
+	}
+	// 提醒只注入一次,第三轮响应不应被消费
+	reminderCount := 0
+	for _, msg := range finalEv.Messages {
+		if strings.Contains(msg.Content, "[system:continue]") {
+			reminderCount++
+		}
+	}
+	if reminderCount != 1 {
+		t.Errorf("expected exactly 1 [system:continue] reminder, got %d", reminderCount)
+	}
+}
+
+// TestRegression_PreviewTextNoToolCall_PlanModeInjects 验证 plan mode 下
+// 预告文本保护同样生效:模型输出以冒号结尾的预告文本(无工具调用)时,
+// 同样注入 [system:continue] 提醒并继续一轮,避免漏发工具调用导致计划中断。
+// previewWarned 保证最多提醒一次,模型再次预告则正常终止,防死循环。
+func TestRegression_PreviewTextNoToolCall_PlanModeInjects(t *testing.T) {
+	client := &mockLLMClient{
+		responses: []*llm.Response{
+			makeTextResponse("计划如下:"),
+			makeTextResponse("计划已完成,等待审批")}}
+	registry := newTestRegistry()
+	loop := New(client, registry, DefaultConfig())
+	loop.plan = true // 同包测试可直接设置 plan 模式
+
+	finalEv := drainEvents(loop.Run(context.Background(), []llm.Message{
+		{Role: llm.RoleUser, Content: "make a plan"}}))
+
+	if finalEv.Err != nil {
+		t.Fatalf("unexpected error: %v", finalEv.Err)
+	}
+	if finalEv.Reason != ReasonCompleted {
+		t.Errorf("expected ReasonCompleted, got %s", finalEv.Reason)
+	}
+	if finalEv.Step != 2 {
+		t.Errorf("expected 2 steps (preview → reminder → done), got %d", finalEv.Step)
+	}
+	// 消息: user → assistant(预告) → user([system:continue]) → assistant(done)
+	if len(finalEv.Messages) != 4 {
+		t.Errorf("expected 4 messages, got %d", len(finalEv.Messages))
+	}
+	// [system:continue] 提醒必须注入(在 assistant 预告之后)
+	reminderMsg := finalEv.Messages[2]
+	if reminderMsg.Role != llm.RoleUser || !strings.Contains(reminderMsg.Content, "[system:continue]") {
+		t.Errorf("expected [system:continue] reminder at msg[2], got role=%s content=%q", reminderMsg.Role, reminderMsg.Content)
+	}
+}
+
+// TestRegression_PreviewTextNoToolCall_PlanModeContinueWithToolCall 验证 plan mode
+// 下注入 [system:continue] 提醒后,模型补发的工具调用正常执行
+// (与非 plan 的 ContinueWithToolCall 对称)。
+func TestRegression_PreviewTextNoToolCall_PlanModeContinueWithToolCall(t *testing.T) {
+	client := &mockLLMClient{
+		responses: []*llm.Response{
+			makeTextResponse("计划如下:"),
+			makeToolCallResponse("", makeToolCall("tc1", "read_file", `{"file_path":"/tmp/a.txt"}`)),
+			makeTextResponse("计划已完成")}}
+	readTool := newSuccessTool("read_file", true, "hello")
+	registry := newTestRegistry(readTool)
+	loop := New(client, registry, DefaultConfig())
+	loop.plan = true // 同包测试可直接设置 plan 模式
+
+	finalEv := drainEvents(loop.Run(context.Background(), []llm.Message{
+		{Role: llm.RoleUser, Content: "make a plan"}}))
+
+	if finalEv.Err != nil {
+		t.Fatalf("unexpected error: %v", finalEv.Err)
+	}
+	if finalEv.Reason != ReasonCompleted {
+		t.Errorf("expected ReasonCompleted, got %s", finalEv.Reason)
+	}
+	if finalEv.Step != 3 {
+		t.Errorf("expected 3 steps (preview → reminder → tool → done), got %d", finalEv.Step)
+	}
+	// 消息: user → assistant(预告) → user([system:continue]) → assistant(tool) → tool(result) → assistant(done)
+	if len(finalEv.Messages) != 6 {
+		t.Errorf("expected 6 messages, got %d", len(finalEv.Messages))
+	}
+	// [system:continue] 提醒必须注入(在 assistant 预告之后)
+	reminderMsg := finalEv.Messages[2]
+	if reminderMsg.Role != llm.RoleUser || !strings.Contains(reminderMsg.Content, "[system:continue]") {
+		t.Errorf("expected [system:continue] reminder at msg[2], got role=%s content=%q", reminderMsg.Role, reminderMsg.Content)
+	}
+	// 提醒后补发的工具调用必须执行成功
+	foundResult := false
+	for _, msg := range finalEv.Messages {
+		if msg.Role == llm.RoleTool && msg.ToolCallID == "tc1" && strings.Contains(msg.Content, "hello") {
+			foundResult = true
+		}
+	}
+	if !foundResult {
+		t.Error("expected read_file tool result with content 'hello' after reminder")
+	}
+}
+
+// TestRegression_PreviewTextNoToolCall_PlanModeSecondPreviewTerminates 验证
+// plan mode 下预告文本保护同样不会无限循环:连续两轮预告文本时仅注入一次提醒,
+// 第二轮直接终止(与非 plan 的 SecondPreviewTerminates 对称)。
+func TestRegression_PreviewTextNoToolCall_PlanModeSecondPreviewTerminates(t *testing.T) {
+	client := &mockLLMClient{
+		responses: []*llm.Response{
+			makeTextResponse("计划如下:"),
+			makeTextResponse("继续推演:"),
+			makeTextResponse("unreachable")}}
+	registry := newTestRegistry()
+	loop := New(client, registry, DefaultConfig())
+	loop.plan = true // 同包测试可直接设置 plan 模式
+
+	finalEv := drainEvents(loop.Run(context.Background(), []llm.Message{
+		{Role: llm.RoleUser, Content: "make a plan"}}))
+
+	if finalEv.Err != nil {
+		t.Fatalf("unexpected error: %v", finalEv.Err)
+	}
+	if finalEv.Reason != ReasonCompleted {
+		t.Errorf("expected ReasonCompleted, got %s", finalEv.Reason)
+	}
+	if finalEv.Step != 2 {
+		t.Errorf("expected 2 steps (preview → reminder → preview → terminate), got %d", finalEv.Step)
+	}
+	// 提醒只注入一次,第三轮响应不应被消费
+	reminderCount := 0
+	for _, msg := range finalEv.Messages {
+		if strings.Contains(msg.Content, "[system:continue]") {
+			reminderCount++
+		}
+	}
+	if reminderCount != 1 {
+		t.Errorf("expected exactly 1 [system:continue] reminder, got %d", reminderCount)
+	}
+}
+
+// TestRegression_PreviewWarnedResetAcrossRuns 验证 previewWarned 在每次 Run
+// 开始时重置(Loop 是 session 级持久组件):若跨 Run 残留,第二个 prompt 的
+// 预告文本保护会永久失效。同一 loop 实例连续两次 Run,第二次仍必须注入
+// [system:continue] 提醒。
+func TestRegression_PreviewWarnedResetAcrossRuns(t *testing.T) {
+	client := &mockLLMClient{
+		responses: []*llm.Response{
+			// Run 1:预告 → 提醒 → 正常收尾
+			makeTextResponse("启动评测:"),
+			makeTextResponse("完成。"),
+			// Run 2:previewWarned 必须已重置,预告 → 提醒 → 正常收尾
+			makeTextResponse("启动评测:"),
+			makeTextResponse("完成。")}}
+	registry := newTestRegistry()
+	loop := New(client, registry, DefaultConfig())
+
+	countReminders := func(msgs []llm.Message) int {
+		n := 0
+		for _, msg := range msgs {
+			if strings.Contains(msg.Content, "[system:continue]") {
+				n++
+			}
+		}
+		return n
+	}
+
+	// 第一次 Run:注入提醒
+	finalEv1 := drainEvents(loop.Run(context.Background(), []llm.Message{
+		{Role: llm.RoleUser, Content: "run eval"}}))
+	if finalEv1.Err != nil {
+		t.Fatalf("first run: unexpected error: %v", finalEv1.Err)
+	}
+	if finalEv1.Step != 2 {
+		t.Fatalf("first run: expected 2 steps, got %d", finalEv1.Step)
+	}
+	if n := countReminders(finalEv1.Messages); n != 1 {
+		t.Fatalf("first run: expected 1 [system:continue] reminder, got %d", n)
+	}
+
+	// 第二次 Run(同 loop 实例):previewWarned 未残留,仍必须注入提醒
+	finalEv2 := drainEvents(loop.Run(context.Background(), []llm.Message{
+		{Role: llm.RoleUser, Content: "run eval"}}))
+	if finalEv2.Err != nil {
+		t.Fatalf("second run: unexpected error: %v", finalEv2.Err)
+	}
+	if finalEv2.Step != 2 {
+		t.Fatalf("second run: expected 2 steps, got %d", finalEv2.Step)
+	}
+	if n := countReminders(finalEv2.Messages); n != 1 {
+		t.Fatalf("second run: expected 1 [system:continue] reminder (previewWarned must reset per Run), got %d", n)
+	}
+}
+
+// TestHasPreviewSuffix 表驱动验证预告后缀检测,锁定字节级行为:
+// 全角冒号(U+FF1A)/省略号(U+2026)必须命中,普通句号/空文本必须不命中。
+func TestHasPreviewSuffix(t *testing.T) {
+	tests := []struct {
+		name string
+		text string
+		want bool
+	}{
+		{"ascii colon", "启动评测:", true},
+		{"fullwidth colon", "开始执行\uFF1A", true},
+		{"small colon", "继续\uFE55", true},
+		{"ratio", "继续\u2236", true},
+		{"modifier colon", "继续\uA789", true},
+		{"vertical colon", "继续\uFE13", true},
+		{"proportion", "继续\u2237", true},
+		{"armenian full stop", "继续\u0589", true},
+		{"hebrew sof pasuq", "继续\u05C3", true},
+		{"triangular colon", "继续\u02D0", true},
+		{"raised colon", "继续\u02F8", true},
+		{"greek question mark", "继续\u037E", true},
+		{"hyphen", "next step -", true},
+		{"arrow", "下一步 →", true},
+		{"ellipsis", "等待结果\u2026", true},
+		{"ascii ellipsis", "checking files...", true},
+		{"period", "全部完成。", false},
+		{"ascii period", "All done.", false},
+		{"question", "继续吗?", false},
+		{"empty", "", false},
+		{"whitespace only", "   ", false},
+		{"colon inside not end", "先看一下:然后再执行", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := hasPreviewSuffix(tt.text); got != tt.want {
+				t.Errorf("hasPreviewSuffix(%q) = %v, want %v", tt.text, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestRegression_PreviewAsciiEllipsisInjects 验证 ASCII 三连点 "..." 结尾的
+// 预告文本同样触发 [system:continue] 注入。
+// REGRESSION: hasPreviewSuffix 此前只匹配 U+2026(...),与 previewContinueText
+// 文案声明的 "..." 不一致;英文模型输出 "checking files..." 时预告防御失效,
+// 任务被误判完成直接中断。
+func TestRegression_PreviewAsciiEllipsisInjects(t *testing.T) {
+	client := &mockLLMClient{
+		responses: []*llm.Response{
+			// 第一轮:ASCII 省略号预告,无工具调用
+			makeTextResponse("Let me check the eval harness..."),
+			// 第二轮:模型补发工具调用
+			makeToolCallResponse("", makeToolCall("tc1", "read_file", `{"file_path":"/tmp/a.txt"}`)),
+			// 第三轮:正常完成
+			makeTextResponse("All done.")}}
+	registry := newTestRegistry(newSuccessTool("read_file", true, "hello"))
+	loop := New(client, registry, DefaultConfig())
+
+	finalEv := drainEvents(loop.Run(context.Background(), []llm.Message{
+		{Role: llm.RoleUser, Content: "check the file"}}))
+
+	if finalEv.Err != nil {
+		t.Fatalf("unexpected error: %v", finalEv.Err)
+	}
+	if finalEv.Reason != ReasonCompleted {
+		t.Errorf("expected ReasonCompleted, got %s", finalEv.Reason)
+	}
+	reminderCount := 0
+	for _, msg := range finalEv.Messages {
+		if strings.Contains(msg.Content, "[system:continue]") {
+			reminderCount++
+		}
+	}
+	if reminderCount != 1 {
+		t.Errorf("expected 1 [system:continue] reminder for ASCII ellipsis preview, got %d", reminderCount)
+	}
+	if client.callCount != 3 {
+		t.Errorf("expected 3 LLM calls (preview → tool → done), got %d", client.callCount)
+	}
+}
+
+// TestRegression_PreviewLastStepMaxStepsGrace 验证预告注入发生在最后一轮
+// (StepCount == MaxSteps)时仍生效:注入后放行一轮(grace step),让模型看到
+// [system:continue] 并补发工具调用,而不是注入后循环立即退出、提醒形同虚设。
+// REGRESSION: 注入分支 continue 回到 for l.shouldContinue(state),StepCount
+// 已满 → 循环退出,模型从未看到提醒,预告的动作永远不执行。
+func TestRegression_PreviewLastStepMaxStepsGrace(t *testing.T) {
+	client := &mockLLMClient{
+		responses: []*llm.Response{
+			// 第一轮(也是最后一轮):预告文本,无工具调用
+			makeTextResponse("启动评测:"),
+			// 第二轮(grace step):模型补发工具调用
+			makeToolCallResponse("", makeToolCall("tc1", "read_file", `{"file_path":"/tmp/a.txt"}`)),
+			// 第三轮:不应被消费(grace step 已用完,循环退出)
+			makeTextResponse("unreachable")}}
+	readTool := newSuccessTool("read_file", true, "hello")
+	execCount := int32(0)
+	readTool.execCount = &execCount
+	registry := newTestRegistry(readTool)
+	loop := New(client, registry, Config{MaxSteps: 1})
+
+	finalEv := drainEvents(loop.Run(context.Background(), []llm.Message{
+		{Role: llm.RoleUser, Content: "run eval"}}))
+
+	if finalEv.Err != nil {
+		t.Fatalf("unexpected error: %v", finalEv.Err)
+	}
+	// 模型必须获得补发机会(共 2 次 LLM 调用,而非 1 次后直接退出)
+	if client.callCount != 2 {
+		t.Errorf("expected 2 LLM calls (preview + grace step), got %d", client.callCount)
+	}
+	// 工具在 grace step 中执行
+	if atomic.LoadInt32(&execCount) != 1 {
+		t.Errorf("expected read_file executed once in grace step, got %d", execCount)
+	}
+	// 提醒必须注入(在 history 中)
+	reminderCount := 0
+	for _, msg := range finalEv.Messages {
+		if strings.Contains(msg.Content, "[system:continue]") {
+			reminderCount++
+		}
+	}
+	if reminderCount != 1 {
+		t.Errorf("expected 1 [system:continue] reminder, got %d", reminderCount)
+	}
+	// grace step 后恢复 MaxSteps 限制:第三轮不可达,以 MaxSteps 终止
+	if finalEv.Reason != ReasonMaxSteps {
+		t.Errorf("expected ReasonMaxSteps after grace step, got %s", finalEv.Reason)
+	}
+}
+
+// TestRegression_PreviewWithToolCallNoInject 验证预告后缀 + 同轮携带 tool_calls
+// 时不注入 [system:continue](预告保护只针对"漏发工具调用"场景,有工具调用即合法,
+// 无需提醒)。
+func TestRegression_PreviewWithToolCallNoInject(t *testing.T) {
+	client := &mockLLMClient{
+		responses: []*llm.Response{
+			// 第一轮:预告式文本 + 同轮工具调用(合法形态,不应注入提醒)
+			makeToolCallResponse("我先看一下代码:", makeToolCall("tc1", "read_file", `{"file_path":"/tmp/a.txt"}`)),
+			// 第二轮:正常完成
+			makeTextResponse("All done.")}}
+	registry := newTestRegistry(newSuccessTool("read_file", true, "hello"))
+	loop := New(client, registry, DefaultConfig())
+
+	finalEv := drainEvents(loop.Run(context.Background(), []llm.Message{
+		{Role: llm.RoleUser, Content: "check the file"}}))
+
+	if finalEv.Err != nil {
+		t.Fatalf("unexpected error: %v", finalEv.Err)
+	}
+	if finalEv.Reason != ReasonCompleted {
+		t.Errorf("expected ReasonCompleted, got %s", finalEv.Reason)
+	}
+	// 有 tool call 的预告式文本:不得注入提醒(避免打扰正常工具调用轮)
+	for _, msg := range finalEv.Messages {
+		if strings.Contains(msg.Content, "[system:continue]") {
+			t.Error("expected NO [system:continue] reminder when tool calls are present in the same response")
+		}
+	}
+	if client.callCount != 2 {
+		t.Errorf("expected 2 LLM calls (tool → done), got %d", client.callCount)
+	}
+}
+
+// TestRegression_PreviewQuoteSuffixNoInject 验证非预告后缀(如引号结尾)的
+// 纯文本不触发 [system:continue] 注入——与 TUI 真实验证一致:模型以 " 结尾
+// 输出预告式句子时,系统未注入提醒(不在 16 种预告后缀中)。
+func TestRegression_PreviewQuoteSuffixNoInject(t *testing.T) {
+	client := &mockLLMClient{
+		responses: []*llm.Response{
+			// 第一轮:以引号结尾的预告式文本,无工具调用 → 不应注入提醒
+			makeTextResponse(`好的,我来处理这个问题"`),
+			// 第二轮:正常完成(确认 loop 未因误判多跑一轮)
+			makeTextResponse("done.")}}
+	registry := newTestRegistry()
+	loop := New(client, registry, DefaultConfig())
+
+	finalEv := drainEvents(loop.Run(context.Background(), []llm.Message{
+		{Role: llm.RoleUser, Content: "go"}}))
+
+	if finalEv.Err != nil {
+		t.Fatalf("unexpected error: %v", finalEv.Err)
+	}
+	if finalEv.Reason != ReasonCompleted {
+		t.Errorf("expected ReasonCompleted, got %s", finalEv.Reason)
+	}
+	for _, msg := range finalEv.Messages {
+		if strings.Contains(msg.Content, "[system:continue]") {
+			t.Error("expected NO [system:continue] reminder for quote-suffix text (not a preview marker)")
+		}
+	}
+	// 引号结尾应直接按最终答案终止:仅 1 次 LLM 调用
+	if client.callCount != 1 {
+		t.Errorf("expected 1 LLM call (quote-suffix = final answer), got %d", client.callCount)
+	}
+}
+
