@@ -635,13 +635,16 @@ func TestVersion_Default(t *testing.T) {
 	}
 }
 
-// ── P0 测试：统一 JSONL 加载优先级 ──
+// ── P0 测试:JSON 为 LLM 上下文权威源 ──
 
-// TestLoadSessionFromFile_JSONLPriority 验证 JSONL 优先于 JSON Messages 字段加载。
-func TestLoadSessionFromFile_JSONLPriority(t *testing.T) {
+// TestLoadSessionFromFile_JSONAuthority 验证 JSON Messages(压缩后权威上下文)
+// 优先于 JSONL 加载。JSONL 仅为事件流水(TUI 回放),不作为 LLM 上下文源。
+// REGRESSION: 压缩只更新 JSON 中的消息内容,JSONL 旧条目保留压缩前原文;
+// 若 resume 优先加载 JSONL,会把未压缩原文重新喂给 LLM,导致上下文翻倍。
+func TestLoadSessionFromFile_JSONAuthority(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "session.json")
 
-	// 先写 JSON（含 3 条消息）和一条 JSONL（含 5 条不同的消息）
+	// 先写 JSON(含 3 条消息)和一条 JSONL(含 5 条不同的消息)
 	jsonMessages := []llm.Message{
 		{Role: llm.RoleUser, ID: "json-1", Content: "json msg 1"},
 		{Role: llm.RoleAssistant, ID: "json-2", Content: "json msg 2"},
@@ -670,11 +673,66 @@ func TestLoadSessionFromFile_JSONLPriority(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadSessionFromFile: %v", err)
 	}
-	if len(loaded) != 5 {
-		t.Fatalf("expected 5 messages from JSONL, got %d", len(loaded))
+	if len(loaded) != 3 {
+		t.Fatalf("expected 3 messages from JSON (authoritative), got %d", len(loaded))
 	}
-	if loaded[0].Content != "jsonl msg 1" {
-		t.Errorf("first message = %q, want %q", loaded[0].Content, "jsonl msg 1")
+	if loaded[0].Content != "json msg 1" {
+		t.Errorf("first message = %q, want %q", loaded[0].Content, "json msg 1")
+	}
+}
+
+// TestLoadSessionFromFile_JSONLNotFeedingContext 验证压缩场景:
+// JSON 中消息已被压缩(截断),JSONL 中同一条消息仍是原文 —— 加载必须取 JSON 压缩后版本。
+// REGRESSION: 此前 JSONL 优先加载会把 2735 字符的原文 tool 输出重新喂给 LLM。
+func TestLoadSessionFromFile_JSONLNotFeedingContext(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "session.json")
+
+	jsonMessages := []llm.Message{
+		{Role: llm.RoleUser, ID: "u-1", Content: "read file"},
+		{
+			Role:       llm.RoleTool,
+			ID:         "t-1",
+			ToolCallID: "call-1",
+			Name:       "bash",
+			// 压缩后:截断的 tool 输出
+			Content: "head... [tool call output compressed] 1000/100000 lines",
+		},
+		{Role: llm.RoleAssistant, ID: "a-1", Content: "done"},
+	}
+	if err := SaveSessionToFile(path, "", jsonMessages, Stats{}, nil, nil, nil, nil, time.Time{}); err != nil {
+		t.Fatalf("SaveSessionToFile: %v", err)
+	}
+
+	// JSONL 保留压缩前原文(模拟压缩发生在 json 更新后、jsonl 未重写)
+	sid := strings.TrimSuffix(filepath.Base(path), ".json")
+	jlPath := TranscriptPath(filepath.Dir(path), sid)
+	rawMessages := []llm.Message{
+		{Role: llm.RoleUser, ID: "u-1", Content: "read file"},
+		{
+			Role:       llm.RoleTool,
+			ID:         "t-1",
+			ToolCallID: "call-1",
+			Name:       "bash",
+			Content:    "完整原文:" + strings.Repeat("x", 5000),
+		},
+		{Role: llm.RoleAssistant, ID: "a-1", Content: "done"},
+	}
+	entries := MessagesToTranscriptEntries(rawMessages, nil, sid, version(), "/cwd", "")
+	if err := WriteTranscriptEntries(jlPath, entries); err != nil {
+		t.Fatalf("WriteTranscriptEntries: %v", err)
+	}
+
+	loaded, _, _, _, _, _, _, _, _, _, err := LoadSessionFromFile(path)
+	if err != nil {
+		t.Fatalf("LoadSessionFromFile: %v", err)
+	}
+	if len(loaded) != 3 {
+		t.Fatalf("expected 3 messages, got %d", len(loaded))
+	}
+	// 必须加载 JSON 中的压缩后内容,而非 JSONL 原文
+	if loaded[1].Content != jsonMessages[1].Content {
+		t.Errorf("tool message = %q..., want compressed version %q (JSONL must not feed LLM context)",
+			loaded[1].Content[:60], jsonMessages[1].Content)
 	}
 }
 

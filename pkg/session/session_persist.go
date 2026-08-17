@@ -41,7 +41,7 @@ type sessionCompaction struct {
 	Decisions  []compaction.CompactionDecision `json:"decisions"`
 	Watermark  compaction.WatermarkState       `json:"watermark"`
 	Summaries  []string                        `json:"summaries,omitempty"`
-	TotalTurns int                             `json:"total_turns"`
+	TotalTurns int                             `json:"total_turns"` // 会话级 turn 计数(一次 Run = 一个 turn);json tag 保留兼容旧 session
 }
 
 // sessionPlanMode 是 plan mode 状态的序列化形式。
@@ -53,7 +53,7 @@ type sessionPlanMode struct {
 // sessionStats 是 Stats 的序列化形式。
 
 type sessionStats struct {
-	TotalTurns            int     `json:"total_turns"`
+	TotalTurns            int     `json:"total_turns"` // 同上:磁盘格式兼容
 	TotalPromptTokens     int     `json:"total_prompt_tokens"`
 	TotalCompletionTokens int     `json:"total_completion_tokens"`
 	TotalCacheHitTokens   int     `json:"total_cache_hit_tokens"`
@@ -171,9 +171,10 @@ func SaveSessionToFile(path string, name string, messages []llm.Message, stats S
 // 后台任务列表、todo items、plan mode、file history 和上次后台检查时间。
 // 文件不存在返回 nil, ..., nil;格式无效返回 error。
 //
-// 加载优先级:
-//  1. 若同目录存在 .jsonl 文件,优先从 JSONL 加载消息(增量恢复)
-//  2. 否则从 JSON 文件的 Messages 字段加载(兼容旧格式)
+// 消息来源:JSON 文件的 Messages 字段(压缩后的权威上下文)。
+// JSONL 仅为增量事件流水(TUI 回放/审计),不作为 LLM 上下文源 ——
+// 压缩只更新 JSON 中的消息内容,JSONL 旧条目保留压缩前原文;
+// 若 resume 优先加载 JSONL,会把未压缩原文重新喂给 LLM,导致上下文翻倍。
 func LoadSessionFromFile(path string) ([]llm.Message, Stats, *compaction.CompactionData, string, string, []task.TaskInfo, []json.RawMessage, *sessionPlanMode, *filehistory.SnapshotData, time.Time, error) {
 	sf, err := loadSessionFile(path)
 	if err != nil {
@@ -183,17 +184,7 @@ func LoadSessionFromFile(path string) ([]llm.Message, Stats, *compaction.Compact
 		return nil, Stats{}, nil, "", "", nil, nil, nil, nil, time.Time{}, nil
 	}
 
-	// 优先从统一 JSONL 加载消息
 	messages := sf.Messages
-	sid := strings.TrimSuffix(filepath.Base(path), ".json")
-	jlPath := TranscriptPath(filepath.Dir(path), sid)
-	if jlEntries, jlErr := LoadTranscriptEntries(jlPath); jlErr == nil && len(jlEntries) > 0 {
-		converted := make([]llm.Message, 0, len(jlEntries))
-		for _, e := range jlEntries {
-			converted = append(converted, e.ToMessage())
-		}
-		messages = converted
-	}
 
 	stats := Stats{
 		TotalTurns:            sf.Stats.TotalTurns,

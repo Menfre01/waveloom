@@ -23,10 +23,10 @@ import (
 	"github.com/Menfre01/waveloom/pkg/task"
 )
 
-// Stats 记录跨轮次的累计统计。
+// Stats 记录跨 step 的累计统计。
 type Stats struct {
 	MessageCount          int     // 当前累积的消息数
-	TotalTurns            int     // 累计完成的 loop 数
+	TotalTurns            int     // 累计完成的 turn 数(一次 Run = 一个 turn;与 Loop 内部 StepCount 不同)
 	TotalPromptTokens     int     // 累计输入 token
 	TotalCompletionTokens int     // 累计输出 token
 	TotalCacheHitTokens   int     // 累计缓存命中 token
@@ -136,7 +136,7 @@ func (cm *ContextManager) PrepareRun(userInput string) ([]llm.Message, string) {
 		Role:    llm.RoleUser,
 		Content: userInput,
 	})
-	// 推进会话级 turn 计数（与 TUI HUD 的 Loop 计数一致）
+	// 推进会话级 turn 计数(与 TUI HUD 的 Turns 计数一致;一次 Run = 一个 turn)
 	cm.compactor.AdvanceTurn()
 
 	snapshot := make([]llm.Message, len(cm.messages))
@@ -534,7 +534,14 @@ func (cm *ContextManager) LoadFromFile(path string) bool {
 	cm.stats = stats
 	cm.sessionPath = path
 	cm.sessionName = name
-	cm.jsonlMessageCount = len(messages) // 标记全部已写入 JSONL
+	// jsonlMessageCount 标记"已写入 JSONL 的消息数",用于增量追加。
+	// messages 来自 json(压缩后权威上下文),条数可能因压缩(Tier3 摘要)与 jsonl 实际行数不同;
+	// 必须按 jsonl 实际行数恢复,否则下次 Save 的追加位置错位,导致 jsonl 与 json 消息序列错乱。
+	if entries, jlErr := LoadTranscriptEntries(TranscriptPath(filepath.Dir(path), strings.TrimSuffix(filepath.Base(path), ".json"))); jlErr == nil {
+		cm.jsonlMessageCount = len(entries)
+	} else {
+		cm.jsonlMessageCount = len(messages)
+	}
 
 	// 恢复压缩状态
 	if compactionData != nil {
