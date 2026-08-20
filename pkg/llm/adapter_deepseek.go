@@ -83,7 +83,9 @@ func (a *deepSeekAdapter) effectiveModel(ctx context.Context) string {
 func (a *deepSeekAdapter) buildChatRequestBody(ctx context.Context, messages []Message, tools []ToolSpec, stream bool) map[string]any {
 	body := make(map[string]any)
 	body["model"] = a.effectiveModel(ctx)
-	body["messages"] = stripReasoningWithoutToolCalls(messages)
+	// 携带 tools 参数时必须完整回传所有 reasoning_content(含无 tool_calls
+	// 轮次),否则 API 400;无 tools 时可剥离无工具调用轮次的 reasoning 省 token。
+	body["messages"] = stripReasoningWithoutToolCalls(messages, len(tools) > 0)
 	body["stream"] = stream
 
 	if len(tools) > 0 {
@@ -123,7 +125,9 @@ func (a *deepSeekAdapter) buildResponsesRequestBody(ctx context.Context, message
 	body := make(map[string]any)
 	body["model"] = a.effectiveModel(ctx)
 
-	instructions, input := buildResponsesInput(messages)
+	// DeepSeek 思考模式:携带 tools 参数的请求必须完整回传所有轮次的
+	// reasoning(含无 tool_calls 的轮次),否则 400。无 tools 时省略。
+	instructions, input := buildResponsesInput(messages, len(tools) > 0)
 	if instructions != "" {
 		body["instructions"] = instructions
 	}
@@ -170,7 +174,10 @@ func (a *deepSeekAdapter) buildResponsesRequestBody(ctx context.Context, message
 // buildResponsesInput 将内部 Message 列表转为 Responses API input items。
 // 返回 (instructions, input):首条 system 消息提取为 instructions 字段,
 // 其余消息转为平级 input items(与 OpenAI Responses 协议一致)。
-func buildResponsesInput(messages []Message) (string, []any) {
+// echoReasoning 为 true 时(请求携带 tools),所有 assistant 轮次的 reasoning
+// 都必须回传(DeepSeek 思考模式要求);为 false 时仅回传带 tool_calls 轮次的
+// reasoning(无工具调用轮次传入会被服务端忽略,省略可省 token)。
+func buildResponsesInput(messages []Message, echoReasoning bool) (string, []any) {
 	var input []any
 	instructions := ""
 	for i, m := range messages {
@@ -190,24 +197,36 @@ func buildResponsesInput(messages []Message) (string, []any) {
 				"content": []any{map[string]any{"type": "input_text", "text": m.Content}},
 			})
 		case RoleAssistant:
+			// REGRESSION(实测 2026-08):DeepSeek Responses API 思考模式对
+			// reasoning item 的校验规则:
+			//   - 请求携带 tools 时,每个 assistant 轮次都必须有 reasoning item;
+			//     且若轮次以 function_call 结尾(输入末尾),reasoning 必须位于
+			//     message item 之前(服务端输出顺序),否则 400 "The
+			//     reasoning_text in the thinking mode must be passed back to
+			//     the API"(实测:message→reasoning→function_call 末尾形态 400,
+			//     reasoning→message→function_call 通过)。
+			//   - reasoning_text 空字符串在部分形态下也会 400,统一以空格占位。
+			// 因此:先输出 reasoning item,再输出 message item,最后 function_call;
+			// echoReasoning(请求携带 tools)时对所有 assistant 轮次无条件输出,
+			// 无 tools 时仅输出有 tool_calls 轮次的 reasoning(无工具调用轮次
+			// 传入会被服务端忽略,省略可省 token)。
+			if len(m.ToolCalls) > 0 || echoReasoning {
+				reasoningText := m.ReasoningContent
+				if reasoningText == "" {
+					reasoningText = " "
+				}
+				input = append(input, map[string]any{
+					"type": "reasoning",
+					"content": []any{
+						map[string]any{"type": "reasoning_text", "text": reasoningText},
+					},
+				})
+			}
 			input = append(input, map[string]any{
 				"role":    "assistant",
 				"content": []any{map[string]any{"type": "output_text", "text": m.Content}},
 			})
-			// 有 tool_calls 时回传 reasoning(明文归并到相邻 assistant 消息,
-			// 与不带 tool_calls 时省略 reasoning 的策略一致:减少冗余 token)
 			if len(m.ToolCalls) > 0 {
-				if m.ReasoningContent != "" {
-					// REGRESSION: 原实现发 summary[summary_text],但 DeepSeek
-					// 文档明确不支持 summary,回传的思维链被服务端忽略。
-					// 正确格式为 content[reasoning_text]。
-					input = append(input, map[string]any{
-						"type": "reasoning",
-						"content": []any{
-							map[string]any{"type": "reasoning_text", "text": m.ReasoningContent},
-						},
-					})
-				}
 				for _, tc := range m.ToolCalls {
 					input = append(input, map[string]any{
 						"type":      "function_call",
@@ -671,12 +690,13 @@ func logResponsesUsageRaw(data []byte, eventType string, usage *responsesUsage) 
 		slog.Info("responses usage", "event", eventType, "raw", string(raw))
 		return
 	}
+	_, miss := responsesCacheTokens(usage)
 	slog.Info("responses usage",
 		"event", eventType,
 		"raw", string(raw),
 		"input_tokens", usage.InputTokens,
 		"cached_tokens", usage.InputTokensDetails.CachedTokens,
-		"cache_miss_tokens", usage.InputTokensDetails.CacheMissTokens,
+		"cache_miss_tokens", miss,
 	)
 }
 
@@ -1014,10 +1034,15 @@ func (a *deepSeekAdapter) ListModels(ctx context.Context, httpClient *http.Clien
 	return result.Data, nil
 }
 
-// stripReasoningWithoutToolCalls 从无 tool_calls 的 assistant 消息中移除 ReasoningContent。
-// DeepSeek 仅要求带 tool_calls 的 assistant 回传 reasoning_content，无 tool_calls 时
-// 回传会增加不必要的 token 消耗。JSONL 中的原始消息不受影响（返回新切片）。
-func stripReasoningWithoutToolCalls(messages []Message) []Message {
+// stripReasoningWithoutToolCalls 在请求不携带 tools(echoReasoning=false)时,
+// 从无 tool_calls 的 assistant 消息中移除 ReasoningContent(DeepSeek 文档:
+// 无工具调用轮次传入会被忽略,省略可省 token)。携带 tools 时必须完整回传
+// 所有 reasoning_content,否则 API 400,此时直接透传原切片。
+// JSONL 中的原始消息不受影响(返回新切片)。
+func stripReasoningWithoutToolCalls(messages []Message, echoReasoning bool) []Message {
+	if echoReasoning {
+		return messages
+	}
 	cleaned := make([]Message, len(messages))
 	for i, m := range messages {
 		cleaned[i] = m

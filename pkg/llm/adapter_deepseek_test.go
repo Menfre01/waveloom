@@ -1180,27 +1180,32 @@ func TestResponsesBuildRequest_InputItems(t *testing.T) {
 		t.Errorf("input[0] = %v, want user input_text", userItem)
 	}
 
-	asstItem := input[1].(map[string]any)
-	asstContent := asstItem["content"].([]any)
-	if asstItem["role"] != "assistant" || asstContent[0].(map[string]any)["type"] != "output_text" {
-		t.Errorf("input[1] = %v, want assistant output_text", asstItem)
-	}
-
-	reasoningItem := input[2].(map[string]any)
+	// REGRESSION(实测 2026-08):reasoning item 必须位于 assistant message 之前
+	// (对齐服务端输出顺序)。reasoning→message→function_call 形态通过校验;
+	// message→reasoning→function_call 且轮次位于输入末尾时,DeepSeek 返回
+	// 400 "The reasoning_text in the thinking mode must be passed back to
+	// the API"。
+	reasoningItem := input[1].(map[string]any)
 	if reasoningItem["type"] != "reasoning" {
-		t.Errorf("input[2].type = %v, want reasoning", reasoningItem["type"])
+		t.Errorf("input[1].type = %v, want reasoning(位于 assistant message 之前)", reasoningItem["type"])
 	}
 	// REGRESSION: 回传 reasoning 必须用 content[reasoning_text](DeepSeek 不支持 summary)
 	reasoningContent := reasoningItem["content"].([]any)
 	if len(reasoningContent) != 1 {
-		t.Fatalf("input[2].content len = %d, want 1", len(reasoningContent))
+		t.Fatalf("input[1].content len = %d, want 1", len(reasoningContent))
 	}
 	rc := reasoningContent[0].(map[string]any)
 	if rc["type"] != "reasoning_text" || rc["text"] != "thinking..." {
-		t.Errorf("input[2].content[0] = %v, want {type: reasoning_text, text: thinking...}", rc)
+		t.Errorf("input[1].content[0] = %v, want {type: reasoning_text, text: thinking...}", rc)
 	}
 	if _, hasSummary := reasoningItem["summary"]; hasSummary {
-		t.Errorf("input[2] 不应包含 summary 字段(DeepSeek 不支持)")
+		t.Errorf("input[1] 不应包含 summary 字段(DeepSeek 不支持)")
+	}
+
+	asstItem := input[2].(map[string]any)
+	asstContent := asstItem["content"].([]any)
+	if asstItem["role"] != "assistant" || asstContent[0].(map[string]any)["type"] != "output_text" {
+		t.Errorf("input[2] = %v, want assistant output_text", asstItem)
 	}
 
 	fcItem := input[3].(map[string]any)
@@ -1944,8 +1949,330 @@ func TestRegression_ResponsesReasoningContent(t *testing.T) {
 		if err != nil {
 			t.Fatalf("ParseResponse error: %v", err)
 		}
-		if resp.ReasoningContent != "content text" {
-			t.Errorf("ReasoningContent = %q, want content text(不重复拼接)", resp.ReasoningContent)
+    	if resp.ReasoningContent != "content text" {
+    		t.Errorf("ReasoningContent = %q, want content text(不重复拼接)", resp.ReasoningContent)
+    	}
+    })
+}
+
+// TestRegression_ResponsesReasoningEchoedWithoutToolCalls 验证 Responses API 路径下,
+// 携带 tools 参数时,无 tool_calls 的 assistant 轮次(如最终回答)的 reasoning
+// 也必须回传。DeepSeek 思考模式要求:携带 tools 参数的请求,后续所有请求必须
+// 完整回传 reasoning_content(含无 tool_calls 轮次),否则 API 返回 400
+// "The reasoning_text in the thinking mode must be passed back to the API"。
+func TestRegression_ResponsesReasoningEchoedWithoutToolCalls(t *testing.T) {
+	adapter := newResponsesAdapter()
+	tools := []ToolSpec{
+		{Name: "read_file", Description: "Read a file", Parameters: map[string]any{"type": "object"}},
+	}
+	// 模拟一轮完整 agent 交互:user → assistant(tool_calls + reasoning)
+	// → tool → assistant(最终回答,无 tool_calls 但有 reasoning)。
+	// 下一轮用户继续提问时,携带 tools 的请求必须回传两轮 assistant 的 reasoning。
+	messages := []Message{
+		{Role: RoleUser, Content: "read the file"},
+		{Role: RoleAssistant, Content: "", ReasoningContent: "I need to read the file first",
+			ToolCalls: []ToolCall{{ID: "call_1", Name: "read_file", Arguments: `{"path":"a.go"}`}}},
+		{Role: RoleTool, ToolCallID: "call_1", Name: "read_file", Content: "file contents"},
+		{Role: RoleAssistant, Content: "Here is the content.", ReasoningContent: "Now I summarize the file"},
+	}
+	req, err := adapter.BuildRequest(context.Background(), messages, tools)
+	if err != nil {
+		t.Fatalf("BuildRequest error: %v", err)
+	}
+	var body map[string]any
+	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	input := body["input"].([]any)
+
+	// 统计 reasoning item 及其文本,必须包含两轮 assistant 的 reasoning:
+	// "I need to read the file first"(tool_calls 轮)和 "Now I summarize the file"(最终回答轮)
+	var reasoningTexts []string
+	for _, item := range input {
+		m := item.(map[string]any)
+		if m["type"] != "reasoning" {
+			continue
 		}
+		content := m["content"].([]any)
+		if len(content) != 1 {
+			t.Fatalf("reasoning item content len = %d, want 1", len(content))
+		}
+		rc := content[0].(map[string]any)
+		if rc["type"] != "reasoning_text" {
+			t.Errorf("reasoning content[0].type = %v, want reasoning_text", rc["type"])
+		}
+		reasoningTexts = append(reasoningTexts, rc["text"].(string))
+	}
+
+	if len(reasoningTexts) != 2 {
+		t.Fatalf("reasoning items = %d, want 2 (tool_calls 轮 + 最终回答轮,缺失将触发 DeepSeek 400), got %v",
+			len(reasoningTexts), reasoningTexts)
+	}
+	want := []string{"I need to read the file first", "Now I summarize the file"}
+	for i, w := range want {
+		if reasoningTexts[i] != w {
+			t.Errorf("reasoning[%d] = %q, want %q", i, reasoningTexts[i], w)
+		}
+	}
+}
+
+// TestRegression_ChatReasoningNotStrippedWithTools 验证 Chat Completions 路径下,
+// 携带 tools 参数时,stripReasoningWithoutToolCalls 不得剥离无 tool_calls 轮次
+// 的 reasoning(DeepSeek 思考模式要求完整回传,否则 400)。
+func TestRegression_ChatReasoningNotStrippedWithTools(t *testing.T) {
+	adapter := newDeepSeekAdapter(ClientConfig{
+		APIKey:  "sk-deepseek",
+		Model:   "custom-chat-model",
+		BaseURL: "https://api.deepseek.com",
 	})
+	tools := []ToolSpec{
+		{Name: "read_file", Description: "Read a file", Parameters: map[string]any{"type": "object"}},
+	}
+	messages := []Message{
+		{Role: RoleUser, Content: "read the file"},
+		{Role: RoleAssistant, Content: "", ReasoningContent: "thinking...",
+			ToolCalls: []ToolCall{{ID: "call_1", Name: "read_file", Arguments: `{"path":"a.go"}`}}},
+		{Role: RoleTool, ToolCallID: "call_1", Name: "read_file", Content: "file contents"},
+		{Role: RoleAssistant, Content: "Here is the content.", ReasoningContent: "final reasoning"},
+	}
+	req, err := adapter.BuildRequest(context.Background(), messages, tools)
+	if err != nil {
+		t.Fatalf("BuildRequest error: %v", err)
+	}
+	var body map[string]any
+	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	msgs := body["messages"].([]any)
+	if len(msgs) != 4 {
+		t.Fatalf("messages len = %d, want 4", len(msgs))
+	}
+	// 最终回答轮(index 3,无 tool_calls)的 reasoning_content 必须保留
+	last := msgs[3].(map[string]any)
+	if rc, ok := last["reasoning_content"].(string); !ok || rc != "final reasoning" {
+		t.Errorf("messages[3].reasoning_content = %v, want %q (携带 tools 时不得剥离)", last["reasoning_content"], "final reasoning")
+	}
+}
+
+// TestRegression_ResponsesReasoningOmittedWithoutTools 验证不带 tools 的请求
+// 省略无 tool_calls 轮次的 reasoning(省 token,DeepSeek 文档:无工具调用轮次
+// 传入会被忽略),与带 tools 时的完整回传策略互补。
+func TestRegression_ResponsesReasoningOmittedWithoutTools(t *testing.T) {
+	adapter := newResponsesAdapter()
+	messages := []Message{
+		{Role: RoleUser, Content: "hi"},
+		{Role: RoleAssistant, Content: "hello", ReasoningContent: "thinking but no tools"},
+	}
+	req, err := adapter.BuildRequest(context.Background(), messages, nil)
+	if err != nil {
+		t.Fatalf("BuildRequest error: %v", err)
+	}
+	var body map[string]any
+	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	input := body["input"].([]any)
+	for _, item := range input {
+		if m := item.(map[string]any); m["type"] == "reasoning" {
+			t.Error("无 tools 时不应输出无 tool_calls 轮次的 reasoning item")
+		}
+	}
+}
+
+// TestRegression_ResponsesReasoningEchoedEmptyWithToolCalls 验证有 tool_calls 但
+// ReasoningContent 为空字符串的 assistant 轮次(如 session 恢复后 thinking 为空,
+// 或模型调用工具时未输出思维链)必须回传 reasoning item。
+// 实测(2026-08):DeepSeek Responses API 对空 reasoning_text 同样返回 400
+// "The reasoning_text in the thinking mode must be passed back to the API",
+// 因此空内容必须以非空占位符(空格)回传。
+func TestRegression_ResponsesReasoningEchoedEmptyWithToolCalls(t *testing.T) {
+	adapter := newResponsesAdapter()
+	tools := []ToolSpec{
+		{Name: "read_file", Description: "Read a file", Parameters: map[string]any{"type": "object"}},
+	}
+	messages := []Message{
+		{Role: RoleUser, Content: "read the file"},
+		// 有 tool_calls 但 reasoning 为空字符串 —— session 恢复的典型形态
+		{Role: RoleAssistant, Content: "", ReasoningContent: "",
+			ToolCalls: []ToolCall{{ID: "call_1", Name: "read_file", Arguments: `{"path":"a.go"}`}}},
+		{Role: RoleTool, ToolCallID: "call_1", Name: "read_file", Content: "file contents"},
+		{Role: RoleUser, Content: "continue"},
+	}
+	req, err := adapter.BuildRequest(context.Background(), messages, tools)
+	if err != nil {
+		t.Fatalf("BuildRequest error: %v", err)
+	}
+	var body map[string]any
+	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	input := body["input"].([]any)
+
+	// 必须存在 reasoning item,且位于 function_call item 之前,
+	// reasoning_text 必须非空(空字符串与缺失同样触发 400)
+	foundReasoning := false
+	for _, item := range input {
+		m := item.(map[string]any)
+		if m["type"] == "reasoning" {
+			foundReasoning = true
+			content := m["content"].([]any)
+			if len(content) != 1 {
+				t.Fatalf("reasoning content len = %d, want 1", len(content))
+			}
+			rc := content[0].(map[string]any)
+			if rc["type"] != "reasoning_text" {
+				t.Errorf("reasoning content[0].type = %v, want reasoning_text", rc["type"])
+			}
+			if text, _ := rc["text"].(string); text == "" {
+				t.Error("reasoning_text 不得为空字符串(实测空文本触发 400),应以空格占位")
+			}
+			break
+		}
+		if m["type"] == "function_call" && !foundReasoning {
+			t.Error("function_call 之前缺少 reasoning item(空 reasoning 也必须回传)")
+		}
+	}
+	if !foundReasoning {
+		t.Fatal("有 tool_calls 的 assistant 轮次必须输出 reasoning item(即使 reasoning 为空)")
+	}
+}
+
+// TestRegression_ResponsesReasoningEchoedEmptyNoToolCallsWithTools 验证携带 tools
+// 时,无 tool_calls 的 assistant 轮次(如最终回答)即使 ReasoningContent 为空
+// 也必须输出 reasoning item 且文本非空。
+// 实测(2026-08):携带 tools 的请求中无 reasoning item 或空 reasoning_text 的
+// assistant 轮次均返回 400 "The reasoning_text in the thinking mode must be
+// passed back to the API"(无 tools 时无此要求,省略可省 token)。
+func TestRegression_ResponsesReasoningEchoedEmptyNoToolCallsWithTools(t *testing.T) {
+	adapter := newResponsesAdapter()
+	tools := []ToolSpec{
+		{Name: "read_file", Description: "Read a file", Parameters: map[string]any{"type": "object"}},
+	}
+	messages := []Message{
+		{Role: RoleUser, Content: "hi"},
+		// 无 tool_calls 且 reasoning 为空 —— 模型未输出思维链的直接回答
+		{Role: RoleAssistant, Content: "hello", ReasoningContent: ""},
+		{Role: RoleUser, Content: "continue"},
+	}
+	req, err := adapter.BuildRequest(context.Background(), messages, tools)
+	if err != nil {
+		t.Fatalf("BuildRequest error: %v", err)
+	}
+	var body map[string]any
+	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	input := body["input"].([]any)
+
+	foundReasoning := false
+	for _, item := range input {
+		m := item.(map[string]any)
+		if m["type"] == "reasoning" {
+			foundReasoning = true
+			content := m["content"].([]any)
+			if len(content) != 1 {
+				t.Fatalf("reasoning content len = %d, want 1", len(content))
+			}
+			rc := content[0].(map[string]any)
+			if text, _ := rc["text"].(string); text == "" {
+				t.Error("reasoning_text 不得为空字符串(实测空文本触发 400),应以空格占位")
+			}
+			break
+		}
+	}
+	if !foundReasoning {
+		t.Fatal("携带 tools 时无 tool_calls 的 assistant 轮次也必须输出 reasoning item")
+	}
+}
+
+// TestRegression_ResponsesReasoningBeforeMessageWithToolCalls 验证带文本内容的
+// tool_call 轮次(assistant 同时有 output_text 与 function_call)在输入末尾时,
+// reasoning item 必须位于 message item 之前。
+// 实测(2026-08):message→reasoning→function_call 且轮次位于输入末尾(如工具
+// 执行后继续请求)时,DeepSeek 返回 400 "The reasoning_text in the thinking
+// mode must be passed back to the API";reasoning→message→function_call
+// (服务端输出顺序)通过。中间轮次两种顺序均被接受。
+func TestRegression_ResponsesReasoningBeforeMessageWithToolCalls(t *testing.T) {
+	adapter := newResponsesAdapter()
+	tools := []ToolSpec{
+		{Name: "read_file", Description: "Read a file", Parameters: map[string]any{"type": "object"}},
+	}
+	messages := []Message{
+		{Role: RoleUser, Content: "read the file"},
+		// 文本 + tool_calls 混合轮次(输入末尾,对应工具执行后的 step2+ 请求)
+		{Role: RoleAssistant, Content: "let me read it", ReasoningContent: "thinking...",
+			ToolCalls: []ToolCall{{ID: "call_1", Name: "read_file", Arguments: `{"path":"a.go"}`}}},
+		{Role: RoleTool, ToolCallID: "call_1", Name: "read_file", Content: "file contents"},
+	}
+	req, err := adapter.BuildRequest(context.Background(), messages, tools)
+	if err != nil {
+		t.Fatalf("BuildRequest error: %v", err)
+	}
+	var body map[string]any
+	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	input := body["input"].([]any)
+
+	// 定位最后一个 assistant 轮次:reasoning 必须在 message 之前,message 在 function_call 之前
+	var reasoningIdx, msgIdx, fcIdx = -1, -1, -1
+	for i, item := range input {
+		m := item.(map[string]any)
+		switch m["type"] {
+		case "reasoning":
+			reasoningIdx = i
+		case nil:
+			if m["role"] == "assistant" {
+				msgIdx = i
+			}
+		case "function_call":
+			if fcIdx == -1 {
+				fcIdx = i
+			}
+		}
+	}
+	if reasoningIdx == -1 || msgIdx == -1 || fcIdx == -1 {
+		t.Fatalf("missing items: reasoning=%d msg=%d fc=%d", reasoningIdx, msgIdx, fcIdx)
+	}
+	if !(reasoningIdx < msgIdx && msgIdx < fcIdx) {
+		t.Errorf("末尾轮次顺序错误:reasoning=%d message=%d function_call=%d, want reasoning < message < function_call(实测 message→reasoning→function_call 触发 400)", reasoningIdx, msgIdx, fcIdx)
+	}
+}
+
+// TestRegression_ChatReasoningEmptyWithToolCalls 验证 chat 路径:有 tool_calls 的
+// assistant 轮次即使 ReasoningContent 为空字符串,携带 tools 时也不得剥离
+// reasoning_content 字段(DeepSeek 要求有 tool_calls 时必须回传,即使空)。
+func TestRegression_ChatReasoningEmptyWithToolCalls(t *testing.T) {
+	adapter := newDeepSeekAdapter(ClientConfig{
+		APIKey:  "sk-deepseek",
+		Model:   "custom-chat-model",
+		BaseURL: "https://api.deepseek.com",
+	})
+	tools := []ToolSpec{
+		{Name: "read_file", Description: "Read a file", Parameters: map[string]any{"type": "object"}},
+	}
+	messages := []Message{
+		{Role: RoleUser, Content: "read the file"},
+		{Role: RoleAssistant, Content: "", ReasoningContent: "",
+			ToolCalls: []ToolCall{{ID: "call_1", Name: "read_file", Arguments: `{"path":"a.go"}`}}},
+		{Role: RoleTool, ToolCallID: "call_1", Name: "read_file", Content: "file contents"},
+		{Role: RoleUser, Content: "continue"},
+	}
+	req, err := adapter.BuildRequest(context.Background(), messages, tools)
+	if err != nil {
+		t.Fatalf("BuildRequest error: %v", err)
+	}
+	var body map[string]any
+	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	msgs := body["messages"].([]any)
+	// 有 tool_calls 的 assistant 消息(index 1)必须保留 reasoning_content 字段
+	asst := msgs[1].(map[string]any)
+	rc, ok := asst["reasoning_content"].(string)
+	if !ok {
+		t.Errorf("messages[1].reasoning_content 字段缺失(有 tool_calls 时必须回传)")
+	} else if rc != "" {
+		t.Errorf("messages[1].reasoning_content = %q, want 空字符串原样回传", rc)
+	}
 }
