@@ -2234,7 +2234,7 @@ func TestRegression_ResponsesReasoningBeforeMessageWithToolCalls(t *testing.T) {
 	if reasoningIdx == -1 || msgIdx == -1 || fcIdx == -1 {
 		t.Fatalf("missing items: reasoning=%d msg=%d fc=%d", reasoningIdx, msgIdx, fcIdx)
 	}
-	if !(reasoningIdx < msgIdx && msgIdx < fcIdx) {
+	if reasoningIdx >= msgIdx || msgIdx >= fcIdx {
 		t.Errorf("末尾轮次顺序错误:reasoning=%d message=%d function_call=%d, want reasoning < message < function_call(实测 message→reasoning→function_call 触发 400)", reasoningIdx, msgIdx, fcIdx)
 	}
 }
