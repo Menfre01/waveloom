@@ -1,3 +1,12 @@
+## [v0.7.4] — 2026-08-20
+
+### 修复
+- **DeepSeek 思考模式 400 报错**:携带 tools 参数的请求未完整回传 reasoning_content(无 tool_calls 轮次被省略、空字符串被过滤、reasoning item 顺序错误),服务端返回 `400 The reasoning_text in the thinking mode must be passed back to the API`,导致多轮工具调用后会话中断。现在带 tools 时对所有 assistant 轮次无条件回传 reasoning(空字符串以空格占位),reasoning item 位于 message item 之前(实测服务端校验顺序要求)
+
+---
+
+📝 [Changelog (English)](https://github.com/Menfre01/waveloom/blob/dev/CHANGELOG.en.md)
+
 ## [v0.7.3] — 2026-08-17
 
 ### 修复

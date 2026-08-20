@@ -1,3 +1,10 @@
+## [v0.7.4] — 2026-08-20
+
+### Fixed
+- **DeepSeek thinking-mode 400 errors**: requests carrying the `tools` parameter did not fully echo back `reasoning_content` (turns without tool calls were stripped, empty strings were filtered out, and the reasoning item was placed in the wrong order), so the server returned `400 The reasoning_text in the thinking mode must be passed back to the API` and multi-turn tool loops aborted mid-session. Now every assistant turn is echoed unconditionally when tools are present (empty reasoning is sent as a space placeholder), and the reasoning item is placed before the message item (the ordering the server validates against, as verified in practice)
+
+---
+
 ## [v0.7.3] — 2026-08-17
 
 ### Fixed
