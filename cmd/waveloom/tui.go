@@ -2778,8 +2778,16 @@ func (m *model) doTurn(userInput string) tea.Cmd {
 	// 拦截仅限 DeepSeek(官方仅 vision-exp 接受图片);OpenAI/Kimi
 	// 等端点由各自 API 决定,adapter 已正确组包,不在此处拦截。
 	if len(images) > 0 && strings.HasPrefix(m.hudModel, "deepseek") && !llm.IsVisionModel(m.hudModel) {
-		m.noticeBanner = fmt.Sprintf("✗ 模型 %s 不支持图片,请 /model 切换 %s",
-			m.hudModel, llm.ModelDeepSeekV4FlashVision)
+		// 错误以系统段落呈现(与 TurnModelError 等终止原因一致),持久可见;
+		// 不写入 noticeBanner——footer 通知会在用户下次输入时被清空,
+		// 既不在对话正文也不持久,用户无法感知拦截原因。
+		m.paras = append(m.paras, Paragraph{
+			Type:      paraSystem,
+			State:     stateDone,
+			Text: fmt.Sprintf("✗ 模型 %s 不支持图片,请 /model 切换 %s",
+				m.hudModel, llm.ModelDeepSeekV4FlashVision),
+			NotifKind: notifError,
+		})
 		return nil
 	}
 

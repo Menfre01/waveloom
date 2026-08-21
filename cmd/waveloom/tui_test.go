@@ -802,8 +802,20 @@ func TestDoTurn_ImageBlockedOnNonVisionModel(t *testing.T) {
 	if cmd != nil {
 		t.Fatal("expected blocked (nil cmd) for non-vision model with image")
 	}
-	if !strings.Contains(m.noticeBanner, llm.ModelDeepSeekV4FlashVision) {
-		t.Errorf("notice banner should mention %s, got %q", llm.ModelDeepSeekV4FlashVision, m.noticeBanner)
+	// REGRESSION: 错误必须以系统段落呈现(对话正文持久可见),而非 footer
+	// banner——noticeBanner 在用户下次输入时被清空,提示会无声消失。
+	if m.noticeBanner != "" {
+		t.Errorf("notice banner should be empty, got %q", m.noticeBanner)
+	}
+	if len(m.paras) != 1 {
+		t.Fatalf("paras = %d, want 1 system paragraph", len(m.paras))
+	}
+	p := m.paras[0]
+	if p.Type != paraSystem || p.State != stateDone || p.NotifKind != notifError {
+		t.Errorf("paragraph = %+v, want paraSystem/stateDone/notifError", p)
+	}
+	if !strings.Contains(p.Text, llm.ModelDeepSeekV4FlashVision) {
+		t.Errorf("paragraph text should mention %s, got %q", llm.ModelDeepSeekV4FlashVision, p.Text)
 	}
 	// 拦截发生在 turn 计数之前,不消耗 turn
 	if m.hudTurns != 0 {
