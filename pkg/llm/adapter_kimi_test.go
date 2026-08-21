@@ -931,3 +931,73 @@ func TestKimiAuthHeaderBearer(t *testing.T) {
 		t.Errorf("value = %q, want Bearer moonshot-key-123", value)
 	}
 }
+
+// --- 多模态影响回归:无图 wire 形状零变化(Kimi 的 reasoning 原样回传要求),有图 blocks 组包 ---
+
+func TestKimiBuildRequest_NoImages_WireShapeUnchanged(t *testing.T) {
+	adapter := newKimiAdapter(ClientConfig{
+		APIKey:  "sk-test",
+		Model:   "kimi-k3",
+		BaseURL: "https://api.moonshot.cn/v1",
+	})
+	messages := []Message{
+		{Role: RoleSystem, Content: "sys"},
+		{Role: RoleAssistant, Content: "hi", ReasoningContent: "thinking"},
+		{Role: RoleUser, Content: "hello"},
+	}
+	req, err := adapter.BuildRequest(context.Background(), messages, nil)
+	if err != nil {
+		t.Fatalf("BuildRequest: %v", err)
+	}
+	var body map[string]any
+	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	msgs := body["messages"].([]any)
+	for _, raw := range msgs {
+		m := raw.(map[string]any)
+		if _, isStr := m["content"].(string); !isStr {
+			t.Errorf("no-image content should be string, got %T", m["content"])
+		}
+		if _, hasImages := m["images"]; hasImages {
+			t.Error("wire must not contain images field")
+		}
+	}
+	// Kimi 关键要求:assistant 消息原样回传(含 reasoning_content)
+	if msgs[1].(map[string]any)["reasoning_content"] != "thinking" {
+		t.Error("kimi assistant reasoning_content should be preserved")
+	}
+}
+
+func TestKimiBuildRequest_WithImages_ContentBlocks(t *testing.T) {
+	adapter := newKimiAdapter(ClientConfig{
+		APIKey:  "sk-test",
+		Model:   "kimi-k3",
+		BaseURL: "https://api.moonshot.cn/v1",
+	})
+	messages := []Message{
+		{Role: RoleUser, Content: "describe", Images: []ImagePart{{MIME: "image/jpeg", B64: "BBBB"}}},
+	}
+	req, err := adapter.BuildRequest(context.Background(), messages, nil)
+	if err != nil {
+		t.Fatalf("BuildRequest: %v", err)
+	}
+	var body map[string]any
+	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	msgs := body["messages"].([]any)
+	w := msgs[0].(map[string]any)
+	blocks := w["content"].([]any)
+	if len(blocks) != 2 {
+		t.Fatalf("blocks = %d, want 2 (text + image_url)", len(blocks))
+	}
+	img := blocks[1].(map[string]any)
+	if img["type"] != "image_url" {
+		t.Errorf("block type = %v, want image_url", img["type"])
+	}
+	iu := img["image_url"].(map[string]any)
+	if iu["url"] != "data:image/jpeg;base64,BBBB" {
+		t.Errorf("image url = %v", iu["url"])
+	}
+}

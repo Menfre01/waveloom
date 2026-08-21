@@ -769,4 +769,75 @@ func TestOpenAIListModelsParseError(t *testing.T) {
 	}
 }
 
+// --- 多模态影响回归:无图 wire 形状零变化,有图 blocks 组包 ---
+
+func TestOpenAIBuildRequest_NoImages_WireShapeUnchanged(t *testing.T) {
+	adapter := newOpenAIAdapter(ClientConfig{
+		APIKey:  "sk-test",
+		Model:   "gpt-4.1",
+		BaseURL: "https://api.openai.com/v1",
+	})
+	messages := []Message{
+		{Role: RoleSystem, Content: "sys"},
+		{Role: RoleAssistant, Content: "hi", ReasoningContent: "thinking"},
+		{Role: RoleUser, Content: "hello"},
+	}
+	req, err := adapter.BuildRequest(context.Background(), messages, nil)
+	if err != nil {
+		t.Fatalf("BuildRequest: %v", err)
+	}
+	var body map[string]any
+	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	msgs := body["messages"].([]any)
+	// 无图消息:content 为 string(与 WireMessages 改动前一致),无 images 字段
+	for _, raw := range msgs {
+		m := raw.(map[string]any)
+		if _, isStr := m["content"].(string); !isStr {
+			t.Errorf("no-image content should be string, got %T", m["content"])
+		}
+		if _, hasImages := m["images"]; hasImages {
+			t.Error("wire must not contain images field")
+		}
+	}
+	// assistant 的 reasoning_content 原样保留(与改动前一致)
+	if msgs[1].(map[string]any)["reasoning_content"] != "thinking" {
+		t.Error("reasoning_content should be preserved")
+	}
+}
+
+func TestOpenAIBuildRequest_WithImages_ContentBlocks(t *testing.T) {
+	adapter := newOpenAIAdapter(ClientConfig{
+		APIKey:  "sk-test",
+		Model:   "gpt-4o",
+		BaseURL: "https://api.openai.com/v1",
+	})
+	messages := []Message{
+		{Role: RoleUser, Content: "describe", Images: []ImagePart{{MIME: "image/png", B64: "AAAA"}}},
+	}
+	req, err := adapter.BuildRequest(context.Background(), messages, nil)
+	if err != nil {
+		t.Fatalf("BuildRequest: %v", err)
+	}
+	var body map[string]any
+	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	msgs := body["messages"].([]any)
+	w := msgs[0].(map[string]any)
+	blocks := w["content"].([]any)
+	if len(blocks) != 2 {
+		t.Fatalf("blocks = %d, want 2 (text + image_url)", len(blocks))
+	}
+	img := blocks[1].(map[string]any)
+	if img["type"] != "image_url" {
+		t.Errorf("block type = %v, want image_url", img["type"])
+	}
+	iu := img["image_url"].(map[string]any)
+	if iu["url"] != "data:image/png;base64,AAAA" {
+		t.Errorf("image url = %v", iu["url"])
+	}
+}
+
 // httpStatusError 用于测试 ClassifyError，在 client.go 中定义。
