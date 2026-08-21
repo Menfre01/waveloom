@@ -8,7 +8,7 @@
 
 # Context Management & Prefix Caching
 
-DeepSeek's prefix cache mechanism: on each request, the API compares `messages[0]` onward against the previous request, finding the longest common prefix. The cached portion is billed at the cache-hit rate; the remainder at the standard rate. **The price gap between cache-hit and cache-miss is massive** — for V4-Flash and V4-Pro, cache-hit price is just **1/50 ~ 1/120** of the cache-miss price.
+DeepSeek's prefix cache mechanism: on each request, the API compares `messages[0]` onward against the previous request, finding the longest common prefix. The cached portion is billed at the cache-hit rate; the remainder at the standard rate. **The price gap between cache-hit and cache-miss is massive** — for V4-Flash and V4-Pro, cache-hit price is just **1/30** of the cache-miss price (after the Aug 2026 price adjustment; previously 1/50 ~ 1/120).
 
 Waveloom systematically optimizes for this:
 

@@ -108,10 +108,17 @@ func TestTableFor(t *testing.T) {
 	if cnyT["deepseek/deepseek-v4-flash"].CacheHit != 0.10 {
 		t.Error("CNY table should have deepseek-v4-flash at 0.10 (peak)")
 	}
+	// 图像理解模型与 flash 同价(官方定价页)
+	if cnyT["deepseek/deepseek-v4-flash-vision-exp"] != cnyT["deepseek/deepseek-v4-flash"] {
+		t.Error("CNY vision-exp should match flash pricing")
+	}
 
 	usdT := tableFor(USD)
 	if usdT["deepseek/deepseek-v4-flash"].CacheHit != 0.014 {
 		t.Error("USD table should have deepseek-v4-flash at 0.014 (peak)")
+	}
+	if usdT["deepseek/deepseek-v4-flash-vision-exp"] != usdT["deepseek/deepseek-v4-flash"] {
+		t.Error("USD vision-exp should match flash pricing")
 	}
 }
 

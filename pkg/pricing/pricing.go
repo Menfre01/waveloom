@@ -31,6 +31,8 @@ var cnyTable = map[string]Price{
 	// DeepSeek
 	"deepseek/deepseek-v4-flash":  {CacheHit: 0.10, CacheMiss: 3.0, Prompt: 3.0, Output: 9.0},
 	"deepseek/deepseek-v4-pro":    {CacheHit: 0.30, CacheMiss: 9.0, Prompt: 9.0, Output: 27.0},
+	// 图像理解模型,价格与 flash 一致(官方定价页)
+	"deepseek/deepseek-v4-flash-vision-exp": {CacheHit: 0.10, CacheMiss: 3.0, Prompt: 3.0, Output: 9.0},
 	"deepseek/":                   {CacheHit: 0.10, CacheMiss: 3.0, Prompt: 3.0, Output: 9.0},
 
 	// Kimi (Moonshot)
@@ -55,6 +57,8 @@ var usdTable = map[string]Price{
 	// DeepSeek
 	"deepseek/deepseek-v4-flash":  {CacheHit: 0.014, CacheMiss: 0.44, Prompt: 0.44, Output: 1.32},
 	"deepseek/deepseek-v4-pro":    {CacheHit: 0.044, CacheMiss: 1.32, Prompt: 1.32, Output: 3.96},
+	// 图像理解模型,价格与 flash 一致(官方定价页)
+	"deepseek/deepseek-v4-flash-vision-exp": {CacheHit: 0.014, CacheMiss: 0.44, Prompt: 0.44, Output: 1.32},
 	"deepseek/":                   {CacheHit: 0.014, CacheMiss: 0.44, Prompt: 0.44, Output: 1.32},
 
 	// Kimi (Moonshot)
