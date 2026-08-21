@@ -141,6 +141,34 @@ type keyMap struct {
 	Help        key.Binding
 }
 
+// rect 表示屏幕上的矩形区域(X/Y 为左上角 0-based 行列坐标)。
+type rect struct {
+	X, Y, W, H int
+}
+
+// contains 判断坐标 (x, y) 是否落在矩形内。
+func (r rect) contains(x, y int) bool {
+	return x >= r.X && x < r.X+r.W && y >= r.Y && y < r.Y+r.H
+}
+
+// inputRectFromLayout 计算输入框在屏幕上的矩形(0-based 坐标)。
+// 布局:styleApp top padding(1) + header + 空行 + body + newContentHint
+// + overlays + todo + picker + separator(1);X 为 styleApp 左 padding(2)。
+func inputRectFromLayout(contentWidth, inputHeight, headerHeight, bodyHeight, newContentHintLines, overlayLines, todoPanelHeight, pickerLines, commandPickerLines int) rect {
+	return rect{
+		X: 2,
+		Y: 1 + headerHeight + bodyHeight + newContentHintLines + overlayLines + todoPanelHeight + pickerLines + commandPickerLines + 1,
+		W: contentWidth,
+		H: inputHeight,
+	}
+}
+
+// configureTextareaKeyMap 调整输入框键位,避免与全局快捷键冲突
+// (v2.2.0 默认 SelectAll=ctrl+g,与 ToggleTheme 冲突 → 改 ctrl+shift+a)。
+func configureTextareaKeyMap(ti *textarea.Model) {
+	ti.KeyMap.SelectAll = key.NewBinding(key.WithKeys("ctrl+shift+a"), key.WithHelp("Ctrl+Shift+A", "Select all"))
+}
+
 // permKeyBindings / questionSingleKeyBindings 等已移至 tui_overlay.go，// 作为接受 *Messages 的函数实现，支持国际化。
 
 var defaultKeys = keyMap{
@@ -346,8 +374,13 @@ type model struct {
 	spTool      spinner.Model  // tool 执行中前缀动画
 	spSubagent  spinner.Model  // subagent 执行中前缀动画（独立视觉）
 	spTodo      spinner.Model  // todo in_progress 前缀动画
-	ctxProgress progress.Model // ctx 窗口进度条（bubbles progress 组件）
+	ctxProgress progress.Model // ctx 窗口进度条(bubbles progress 组件)
 	input       textarea.Model
+
+	// 输入框屏幕矩形(上次渲染缓存,鼠标坐标换算基准)
+	inputRect rect
+	// 鼠标左键拖拽选中进行中(begin → extend → end)
+	mouseDrag bool
 
 	otherInput          textinput.Model // Other 自定义输入框
 	otherInputVisStart  int             // otherInput 水平滚动起始偏移
@@ -527,6 +560,7 @@ func newTUIModel(llmClient llm.Client, registry tool.Registry, guard permission.
 	ti.SetHeight(2)
 	ti.SetWidth(0)
 	ti.SetVirtualCursor(false) // real cursor 避免 virtual cursor 反色 ANSI 泄漏
+	configureTextareaKeyMap(&ti)
 	ti.Focus()
 
 	// Other 自定义输入框（与主输入框同款 real cursor 模式）
@@ -815,18 +849,12 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	// ------------------------------------------------------------------
-	// 鼠标 — 滚轮仅滚动页面内容，不触发输入历史、权限面板、文件选择器。
-	// 文本选择请使用 Shift+点击（终端标准惯例）。
+	// 鼠标 — 滚轮滚动页面;左键按下/拖动在输入框内触发文本选中
+	// (bubbles v2.2.0 textarea selection)。Shift 修饰事件放行给终端
+	// 原生选择(Shift+拖动复制输出文本的既有习惯)。
 	// ------------------------------------------------------------------
 	case tea.MouseMsg:
-		mouse := msg.Mouse()
-		switch mouse.Button {
-		case tea.MouseWheelUp:
-			m.scrollUp(3)
-		case tea.MouseWheelDown:
-			m.scrollDown(3)
-		}
-		return m, nil
+		return m.handleMouse(msg)
 
 	// ------------------------------------------------------------------
 	// 键盘 — 先处理全局/覆盖层快捷键，未消费则传给子组件
@@ -1597,8 +1625,64 @@ func (m *model) handleKeyPress(msg tea.KeyPressMsg) (bool, tea.Cmd) {
 	return false, nil
 }
 
+// handleMouse 处理鼠标事件:滚轮滚动页面;输入框内左键拖拽选中文本
+// (bubbles v2.2.0 textarea selection,接线 Begin/Extend/EndSelection)。
+//
+// 坐标约定:textarea 相对坐标 = 屏幕坐标 - inputRect 左上角;
+// 拖拽越出输入框仍继续扩展(PositionAt 对越界坐标收敛到缓冲区端点)。
+func (m *model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.MouseWheelMsg:
+		mouse := msg.Mouse()
+		switch mouse.Button {
+		case tea.MouseWheelUp:
+			m.scrollUp(3)
+		case tea.MouseWheelDown:
+			m.scrollDown(3)
+		}
+		return m, nil
+
+	case tea.MouseClickMsg:
+		mouse := msg.Mouse()
+		if mouse.Button != tea.MouseLeft || mouse.Mod&tea.ModShift != 0 {
+			return m, nil
+		}
+		// 仅无覆盖层时输入框可见可交互;点击在框外不开始选中
+		if m.overlay != overlayNone || !m.inputRect.contains(mouse.X, mouse.Y) {
+			return m, nil
+		}
+		m.input.BeginSelection(mouse.X-m.inputRect.X, mouse.Y-m.inputRect.Y)
+		m.mouseDrag = true
+		if !m.input.Focused() {
+			m.input.Focus()
+		}
+		return m, nil
+
+	case tea.MouseMotionMsg:
+		if !m.mouseDrag {
+			return m, nil
+		}
+		mouse := msg.Mouse()
+		if mouse.Button != tea.MouseLeft {
+			return m, nil
+		}
+		m.input.ExtendSelection(mouse.X-m.inputRect.X, mouse.Y-m.inputRect.Y)
+		return m, nil
+
+	case tea.MouseReleaseMsg:
+		mouse := msg.Mouse()
+		if mouse.Button != tea.MouseLeft || !m.mouseDrag {
+			return m, nil
+		}
+		m.input.EndSelection()
+		m.mouseDrag = false
+		return m, nil
+	}
+	return m, nil
+}
+
 // ---------------------------------------------------------------------------
-// 流式事件处理（状态机）
+// 流式事件处理(状态机)
 // ---------------------------------------------------------------------------
 
 // handleStreamDelta 处理 LLM 流式增量。
@@ -3066,6 +3150,9 @@ func (m *model) View() tea.View {
 	}
 	m.bodyHeight = bodyHeight
 
+	// 输入框屏幕矩形缓存(鼠标坐标换算基准;与下方光标定位公式同源)
+	m.inputRect = inputRectFromLayout(contentWidth, inputHeight, headerHeight, bodyHeight, newContentHintLines, overlayLines, todoPanelHeight, pickerLines, commandPickerLines)
+
 	// 4. 根据滚动偏移裁剪可见内容
 	filteredLines := allLines
 	allLines = filteredLines
@@ -3170,12 +3257,12 @@ func (m *model) View() tea.View {
 	v.AltScreen = true
 	v.MouseMode = tea.MouseModeCellMotion
 
-	// real cursor 模式：定位输入光标
+	// real cursor 模式:定位输入光标
 	if m.overlay == overlayNone {
 		if cur := m.input.Cursor(); cur != nil {
-			// 布局：styleApp top(1) + header + 空行 + body + newContentHint + overlays + todo + picker + separator(1)
-			cur.Y += 1 + headerHeight + bodyHeight + newContentHintLines + overlayLines + todoPanelHeight + pickerLines + commandPickerLines + 1
-			cur.X += 2 // styleApp 左 padding
+			// 布局偏移统一由 inputRect 提供(与鼠标坐标换算同源)
+			cur.Y += m.inputRect.Y
+			cur.X += m.inputRect.X
 			if cur.X > m.width-2 {
 				cur.X = m.width - 2
 			}
