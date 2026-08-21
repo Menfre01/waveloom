@@ -1,3 +1,21 @@
+## [v0.7.5] — 2026-08-21
+
+### 新增功能
+- **多模态图片识别**:接入 DeepSeek `deepseek-v4-flash-vision-exp` 图像理解模型,输入 `@图片路径` 即可让 Agent 描述图片、OCR 截图文字、分析图表(支持 jpg/png/gif/webp,单图 ≤4MB);图片仅限用户消息,非视觉模型发送前拦截并提示切换
+- **输入框文本选中**:升级 bubbles v2.2.0,支持鼠标拖动选中与键盘选中(Shift+方向键、Ctrl+Shift+A 全选、Ctrl+Shift+C 复制),Ctrl+V 粘贴时替换选中文本
+- **思考强度 low 档**:DeepSeek 档位补齐官方 low 档(off/low/high/max),HUD 三色区分档位(灰/绿/橙)
+- **@ 文件选择器图片搜索**:picker 放行 png/jpg/jpeg/gif/webp,可直接引用图片文件
+
+### 修复
+- **注入扫描器误报**:抓取 GitHub 等含内嵌 JSON/JS 转义的页面反复触发「编码混淆」告警,改为解码验证(指令关键词须与转义字符重叠才命中),fakeContext JSON 分支收紧为完整消息结构(role=system + content)
+- **DeepSeek 定价校准**:缓存命中/未命中输入比例更新为 1/30(文档与描述残留旧比例 1/50~1/120),新增 vision-exp 模型定价
+- **切换模型后历史图片报错**:vision 会话遗留图片在非视觉模型下每轮请求被拦截,改为 wire 层剥离历史图片(切回视觉模型自动恢复)
+- **思考档位映射校准**:low 档不再被错误映射为 high(官方三档语义)
+
+---
+
+📝 [Changelog (English)](https://github.com/Menfre01/waveloom/blob/dev/CHANGELOG.en.md)
+
 ## [v0.7.4] — 2026-08-20
 
 ### 修复

@@ -100,6 +100,7 @@ waveloom
 ## Highlights
 
 - **Prefix cache optimized** — Fixed System Prompt, append-only message history, four-tier watermark compaction. Maximum common prefix stays cache-hot across turns.
+- **Multimodal vision** — Reference images with `@shot.png`; `deepseek-v4-flash-vision-exp` describes screenshots, OCRs text, and analyzes charts.
 - **Permission safety** — Three-tier decisions (allow / deny / ask) with pattern-matching rule engine, backed by a 5-layer tool output security pipeline (Unicode cleaning → injection scan → boundary markers → risk grading → safe truncation). Every write operation requires your confirmation.
 - **OS-level sandbox** — Optional execution isolation via bubblewrap (Linux) / Seatbelt (macOS): read-only root, workspace-only writes, configurable credential masking (`filesystem.denyRead` / `credentials.files`; recommended list in the settings docs), env var stripping, configurable env injection (redirect build-tool caches like `GOPATH`/`GOMODCACHE`/`npm_config_cache` into the workspace), and network control (`off` / `on`). Auto-activated with `--bypass-permissions`; configure via `"sandbox"` in `settings.json` or `--sandbox-network off|on`.
 - **Hook system** — PreToolUse / PostToolUse / Notification / Stop hooks with permission_mode field. Fail-open by default — hook crashes never block tool execution; exit code 2 explicitly blocks. Configured via `settings.json`.

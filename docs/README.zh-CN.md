@@ -99,7 +99,8 @@ waveloom
 
 ## 功能亮点
 
-- **前缀缓存深度优化** — System Prompt 固定，消息只在末尾追加，四级水位线压缩后字节永不变化，最大公共前缀持续命中
+- **前缀缓存深度优化** — System Prompt 固定,消息只在末尾追加,四级水位线压缩后字节永不变化,最大公共前缀持续命中
+- **多模态识图** — `@图片路径` 引用图片,`deepseek-v4-flash-vision-exp` 支持描述截图、OCR 文字、分析图表
 - **权限安全模型** — 三级决策(allow / deny / ask),规则引擎支持模式匹配,底层 5 层工具输出安全管线(Unicode 清洗 → 注入扫描 → 边界标记 → 风险分级 → 安全截断)。写操作和命令执行需要你确认。
 - **OS 级沙箱** — 可选执行隔离:bubblewrap(Linux)/ Seatbelt(macOS)实现只读根、工作区可写、可配置凭据遮蔽(`denyRead`/`credentials.files`,推荐清单见 settings 文档)、环境变量剥离、可配置环境变量注入(把 `GOPATH`/`GOMODCACHE`/`npm_config_cache` 等构建缓存重定向进工作区)与网络控制(`off`/`on`)。`--bypass-permissions` 自动激活;通过 `settings.json` 的 `"sandbox"` 段或 `--sandbox-network off|on` 配置。
 - **Hook 系统** — PreToolUse / PostToolUse / Notification / Stop 四种事件,支持 permission_mode 字段。默认 fail-open——hook 崩溃不阻塞工具执行,exit code 2 显式拦截。通过 `settings.json` 配置。
