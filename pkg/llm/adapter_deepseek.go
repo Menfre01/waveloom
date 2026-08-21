@@ -63,12 +63,19 @@ func (a *deepSeekAdapter) BuildStreamRequest(ctx context.Context, messages []Mes
 }
 
 // isDeepSeekResponsesModel 判断模型是否使用 Responses API(/v1/responses)。
-// 官方文档:Responses API 的 model 可选值为 deepseek-v4-flash / deepseek-v4-pro
-// (旧模型名 deepseek-chat / deepseek-reasoner 已废弃)。其余模型名(自定义
-// baseURL 或第三方 OpenAI 兼容端点)走 Chat Completions。精确匹配配置/override
-// 传入的模型名,带 provider 前缀(如 "deepseek/deepseek-v4-pro")的形式不会命中。
+// 官方文档:Responses API 的 model 可选值为 deepseek-v4-flash / deepseek-v4-pro /
+// deepseek-v4-flash-vision-exp(视觉模型同样支持 Responses API,图片以
+// input_image 内容块承载,见 guides/vision#responses-api;旧模型名
+// deepseek-chat / deepseek-reasoner 已废弃)。其余模型名(自定义 baseURL 或
+// 第三方 OpenAI 兼容端点)走 Chat Completions。精确匹配配置/override 传入的
+// 模型名,带 provider 前缀(如 "deepseek/deepseek-v4-pro")的形式不会命中,
+// 此时走 Chat Completions(前缀名仅对接受该命名的第三方端点有效,官方端点
+// 会返回 model not found);视觉模型经此前缀形式走 chat 时仍携带图片
+// (IsVisionModel 容忍前缀)。
 func isDeepSeekResponsesModel(model string) bool {
-	return model == ModelDeepSeekV4Flash || model == ModelDeepSeekV4Pro
+	return model == ModelDeepSeekV4Flash ||
+		model == ModelDeepSeekV4Pro ||
+		model == ModelDeepSeekV4FlashVision
 }
 
 // effectiveModel 返回实际生效的模型名:ctx 中的 ModelOverride 优先,否则用配置模型。
@@ -121,7 +128,7 @@ func (a *deepSeekAdapter) buildChatRequestBody(ctx context.Context, messages []M
 }
 
 // ---------------------------------------------------------------------------
-// Responses API(deepseek-v4-flash / deepseek-v4-pro)
+// Responses API(deepseek-v4-flash / deepseek-v4-pro / deepseek-v4-flash-vision-exp)
 // ---------------------------------------------------------------------------
 
 // buildResponsesRequestBody 构造 Responses API 请求 body。
@@ -132,7 +139,10 @@ func (a *deepSeekAdapter) buildResponsesRequestBody(ctx context.Context, message
 
 	// DeepSeek 思考模式:携带 tools 参数的请求必须完整回传所有轮次的
 	// reasoning(含无 tool_calls 的轮次),否则 400。无 tools 时省略。
-	instructions, input := buildResponsesInput(messages, len(tools) > 0)
+	// 图片按模型能力决定 wire 层是否携带:视觉模型(vision-exp)的图片转为
+	// input_image 块;非视觉模型剥离历史图片(Message 不变,切回视觉模型
+	// 自动恢复),避免每轮因历史带图失败。
+	instructions, input := buildResponsesInput(messages, len(tools) > 0, IsVisionModel(a.effectiveModel(ctx)))
 	if instructions != "" {
 		body["instructions"] = instructions
 	}
@@ -182,7 +192,9 @@ func (a *deepSeekAdapter) buildResponsesRequestBody(ctx context.Context, message
 // echoReasoning 为 true 时(请求携带 tools),所有 assistant 轮次的 reasoning
 // 都必须回传(DeepSeek 思考模式要求);为 false 时仅回传带 tool_calls 轮次的
 // reasoning(无工具调用轮次传入会被服务端忽略,省略可省 token)。
-func buildResponsesInput(messages []Message, echoReasoning bool) (string, []any) {
+// includeImages 为 false 时忽略 user 消息携带的图片(非视觉模型历史图片在
+// wire 层剥离,Message 不变)。
+func buildResponsesInput(messages []Message, echoReasoning, includeImages bool) (string, []any) {
 	var input []any
 	instructions := ""
 	for i, m := range messages {
@@ -199,7 +211,7 @@ func buildResponsesInput(messages []Message, echoReasoning bool) (string, []any)
 		case RoleUser:
 			input = append(input, map[string]any{
 				"role":    "user",
-				"content": []any{map[string]any{"type": "input_text", "text": m.Content}},
+				"content": responsesUserContent(m.Content, m.Images, includeImages),
 			})
 		case RoleAssistant:
 			// REGRESSION(实测 2026-08):DeepSeek Responses API 思考模式对
@@ -266,6 +278,33 @@ func buildResponsesInput(messages []Message, echoReasoning bool) (string, []any)
 		}
 	}
 	return instructions, input
+}
+
+// responsesUserContent 组装 Responses API user 消息的 content 块数组。
+// 无图(或 includeImages=false 的非视觉模型)时保持单一 input_text 块;
+// 带图时按 OpenAI Responses 协议生成 input_text(文本非空时)+ input_image
+// 块:image_url 为 data URL 字符串(与 Chat Completions 的嵌套对象不同),
+// detail 非空时透传(官方文档:input_image 的 detail 语义与 image_url 一致,
+// low / high / original / auto,省略时服务端默认 auto)。
+func responsesUserContent(text string, images []ImagePart, includeImages bool) []any {
+	if !includeImages || len(images) == 0 {
+		return []any{map[string]any{"type": "input_text", "text": text}}
+	}
+	blocks := make([]any, 0, len(images)+1)
+	if text != "" {
+		blocks = append(blocks, map[string]any{"type": "input_text", "text": text})
+	}
+	for _, img := range images {
+		block := map[string]any{
+			"type":      "input_image",
+			"image_url": img.DataURI(),
+		}
+		if img.Detail != "" {
+			block["detail"] = img.Detail
+		}
+		blocks = append(blocks, block)
+	}
+	return blocks
 }
 
 // buildResponsesTools 将内部 ToolSpec 列表转为 Responses API tools 声明。

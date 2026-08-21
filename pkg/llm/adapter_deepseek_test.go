@@ -68,9 +68,23 @@ func TestDeepSeekBuildRequest_ImagesStrippedOnNonVisionModel(t *testing.T) {
 	if err != nil {
 		t.Fatalf("non-vision model should not reject historical images: %v", err)
 	}
-	// flash 走 Responses API:历史图片由 buildResponsesInput 忽略(仅文本)
+	// flash 走 Responses API:非视觉模型历史图片由 wire 层忽略(仅文本)
 	if req.URL.Path != "/v1/responses" {
 		t.Errorf("path = %q, want /v1/responses (flash is Responses model)", req.URL.Path)
+	}
+	var body map[string]any
+	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	// 首条 system 提取为 instructions,input 仅含 user 消息
+	input := body["input"].([]any)
+	w := input[0].(map[string]any)
+	blocks := w["content"].([]any)
+	if len(blocks) != 1 {
+		t.Fatalf("content blocks = %d, want 1 (text only, image stripped)", len(blocks))
+	}
+	if blocks[0].(map[string]any)["type"] != "input_text" {
+		t.Errorf("block type = %v, want input_text", blocks[0].(map[string]any)["type"])
 	}
 	// 原 Message 未被修改(切回视觉模型后图片恢复)
 	if len(messages[1].Images) != 1 {
@@ -91,23 +105,175 @@ func TestDeepSeekBuildRequest_ImagesAllowedOnVisionModel(t *testing.T) {
 	if err != nil {
 		t.Fatalf("vision model should accept images: %v", err)
 	}
-	// vision-exp 不在 Responses 模型集 → Chat Completions 端点
-	if req.URL.Path != "/v1/chat/completions" {
-		t.Errorf("path = %q, want /v1/chat/completions", req.URL.Path)
+	// vision-exp 已纳入 Responses 模型集(官方模型统一走 /v1/responses),
+	// 图片以 input_image 内容块承载
+	if req.URL.Path != "/v1/responses" {
+		t.Errorf("path = %q, want /v1/responses (vision-exp is Responses model)", req.URL.Path)
 	}
 	var body map[string]any
 	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
 		t.Fatal(err)
 	}
-	msgs := body["messages"].([]any)
-	w := msgs[0].(map[string]any)
+	input := body["input"].([]any)
+	w := input[0].(map[string]any)
 	blocks := w["content"].([]any)
 	if len(blocks) != 2 {
 		t.Fatalf("content blocks = %d, want 2 (text + image)", len(blocks))
 	}
 	img := blocks[1].(map[string]any)
-	if img["type"] != "image_url" {
-		t.Errorf("block type = %v, want image_url", img["type"])
+	if img["type"] != "input_image" {
+		t.Errorf("block type = %v, want input_image", img["type"])
+	}
+	// Responses 协议:input_image 的 image_url 为 data URL 字符串(非嵌套对象)
+	if url, ok := img["image_url"].(string); !ok || url != "data:image/png;base64,AAAA" {
+		t.Errorf("image_url = %#v, want data URL string", img["image_url"])
+	}
+	// 原 Message 未被修改(wire 层只读)
+	if len(messages[0].Images) != 1 {
+		t.Error("original message images must be preserved")
+	}
+}
+
+func TestResponsesBuildRequest_InputImageDetail(t *testing.T) {
+	// detail 透传:input_image 块携带 detail 字段
+	// (官方文档:low / high / original / auto,省略时服务端默认 auto)
+	adapter := newDeepSeekAdapter(ClientConfig{
+		APIKey:  "sk-deepseek",
+		Model:   ModelDeepSeekV4FlashVision,
+		BaseURL: "https://api.deepseek.com",
+	})
+	messages := []Message{
+		{Role: RoleUser, Content: "look", Images: []ImagePart{{MIME: "image/jpeg", B64: "BBBB", Detail: "low"}}},
+	}
+	req, err := adapter.BuildRequest(context.Background(), messages, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	var body map[string]any
+	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	input := body["input"].([]any)
+	w := input[0].(map[string]any)
+	blocks := w["content"].([]any)
+	img := blocks[1].(map[string]any)
+	if img["detail"] != "low" {
+		t.Errorf("detail = %v, want low", img["detail"])
+	}
+	// detail 为空时省略字段
+	messages[0].Images[0].Detail = ""
+	req, err = adapter.BuildRequest(context.Background(), messages, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	input = body["input"].([]any)
+	img = input[0].(map[string]any)["content"].([]any)[1].(map[string]any)
+	if _, has := img["detail"]; has {
+		t.Error("detail should be omitted when empty")
+	}
+}
+
+func TestWireImageBlocks_Detail(t *testing.T) {
+	// chat 路径(Chat Completions image_url 块)同样透传 detail
+	blocks := wireImageBlocks("look", []ImagePart{{MIME: "image/png", B64: "AAAA", Detail: "high"}})
+	if len(blocks) != 2 {
+		t.Fatalf("blocks = %d, want 2", len(blocks))
+	}
+	img := blocks[1].(map[string]any)
+	imageURL := img["image_url"].(map[string]any)
+	if imageURL["detail"] != "high" {
+		t.Errorf("detail = %v, want high", imageURL["detail"])
+	}
+	// detail 为空时省略字段
+	blocks = wireImageBlocks("", []ImagePart{{MIME: "image/png", B64: "AAAA"}})
+	img = blocks[0].(map[string]any)
+	if _, has := img["image_url"].(map[string]any)["detail"]; has {
+		t.Error("detail should be omitted when empty")
+	}
+}
+
+func TestDeepSeekBuildStreamRequest_VisionModelResponses(t *testing.T) {
+	// 流式主路径:vision-exp 同样走 /v1/responses,图片以 input_image 块承载
+	adapter := newDeepSeekAdapter(ClientConfig{
+		APIKey:  "sk-deepseek",
+		Model:   ModelDeepSeekV4FlashVision,
+		BaseURL: "https://api.deepseek.com",
+	})
+	messages := []Message{
+		{Role: RoleUser, Content: "look", Images: []ImagePart{{MIME: "image/png", B64: "AAAA"}}},
+	}
+	req, err := adapter.BuildStreamRequest(context.Background(), messages, nil)
+	if err != nil {
+		t.Fatalf("BuildStreamRequest error: %v", err)
+	}
+	if req.URL.Path != "/v1/responses" {
+		t.Errorf("path = %q, want /v1/responses", req.URL.Path)
+	}
+	var body map[string]any
+	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	if body["stream"] != true {
+		t.Errorf("stream = %v, want true", body["stream"])
+	}
+	blocks := body["input"].([]any)[0].(map[string]any)["content"].([]any)
+	if len(blocks) != 2 || blocks[1].(map[string]any)["type"] != "input_image" {
+		t.Errorf("blocks = %#v, want [input_text, input_image]", blocks)
+	}
+}
+
+func TestResponsesBuildRequest_ImageIncludeByModelOverride(t *testing.T) {
+	// ModelOverride 切换模型时,图片携带能力每请求独立判定(与端点路由同源)。
+	messages := []Message{
+		{Role: RoleUser, Content: "look", Images: []ImagePart{{MIME: "image/png", B64: "AAAA"}}},
+	}
+	// 配置为 flash(非视觉),override 为 vision-exp → 携带 input_image
+	adapter := newDeepSeekAdapter(ClientConfig{
+		APIKey:  "sk-deepseek",
+		Model:   ModelDeepSeekV4Flash,
+		BaseURL: "https://api.deepseek.com",
+	})
+	ctx := WithModelOverride(context.Background(), ModelDeepSeekV4FlashVision)
+	req, err := adapter.BuildRequest(ctx, messages, nil)
+	if err != nil {
+		t.Fatalf("BuildRequest error: %v", err)
+	}
+	if req.URL.Path != "/v1/responses" {
+		t.Errorf("path = %q, want /v1/responses", req.URL.Path)
+	}
+	var body map[string]any
+	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	blocks := body["input"].([]any)[0].(map[string]any)["content"].([]any)
+	if len(blocks) != 2 || blocks[1].(map[string]any)["type"] != "input_image" {
+		t.Errorf("blocks = %#v, want [input_text, input_image] under vision override", blocks)
+	}
+
+	// 配置为 vision-exp,override 为 flash(非视觉)→ 图片剥离,仅文本
+	vision := newDeepSeekAdapter(ClientConfig{
+		APIKey:  "sk-deepseek",
+		Model:   ModelDeepSeekV4FlashVision,
+		BaseURL: "https://api.deepseek.com",
+	})
+	ctx = WithModelOverride(context.Background(), ModelDeepSeekV4Flash)
+	req, err = vision.BuildRequest(ctx, messages, nil)
+	if err != nil {
+		t.Fatalf("BuildRequest error: %v", err)
+	}
+	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	blocks = body["input"].([]any)[0].(map[string]any)["content"].([]any)
+	if len(blocks) != 1 || blocks[0].(map[string]any)["type"] != "input_text" {
+		t.Errorf("blocks = %#v, want [input_text] under non-vision override", blocks)
+	}
+	// 原 Message 未被修改(wire 层只读)
+	if len(messages[0].Images) != 1 {
+		t.Error("original message images must be preserved")
 	}
 }
 

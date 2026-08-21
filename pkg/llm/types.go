@@ -45,6 +45,10 @@ type Message struct {
 type ImagePart struct {
 	MIME string `json:"mime"` // image/jpeg | image/png | image/gif | image/webp
 	B64  string `json:"b64"`  // base64 编码的图片数据
+	// Detail 是 OpenAI 兼容的图片处理细节级别(low / high / original / auto,
+	// DeepSeek 官方文档:image_url / input_image 块均支持 detail 字段)。
+	// 空值省略,服务端默认 auto。wire 层透传,不参与内部存储语义。
+	Detail string `json:"detail,omitempty"`
 }
 
 // DataURI 返回 data: URL 形式,供 adapter 组装 image_url 内容块。
@@ -112,9 +116,13 @@ func wireImageBlocks(text string, images []ImagePart) []any {
 		blocks = append(blocks, map[string]any{"type": "text", "text": text})
 	}
 	for _, img := range images {
+		imageURL := map[string]any{"url": img.DataURI()}
+		if img.Detail != "" {
+			imageURL["detail"] = img.Detail
+		}
 		blocks = append(blocks, map[string]any{
 			"type":      "image_url",
-			"image_url": map[string]any{"url": img.DataURI()},
+			"image_url": imageURL,
 		})
 	}
 	return blocks
@@ -278,8 +286,10 @@ const (
 // 仅作为 curr_model / --model 的选择值,绝不进入 Client 配置或 API 请求。
 const ModelChoiceProPlan = "proplan"
 
-// ModelDeepSeekV4Flash / ModelDeepSeekV4Pro 是 DeepSeek Responses API 支持的模型。
-// Provider=deepseek 且生效模型为二者之一时,adapter 自动切换为 Responses API 格式。
+// ModelDeepSeekV4Flash / ModelDeepSeekV4Pro / ModelDeepSeekV4FlashVision 是
+// DeepSeek Responses API 支持的官方模型集(视觉模型同样支持 Responses,
+// 图片以 input_image 内容块承载)。Provider=deepseek 且生效模型为三者之一时,
+// adapter 自动切换为 Responses API 格式。
 const (
 	ModelDeepSeekV4Flash = "deepseek-v4-flash"
 	ModelDeepSeekV4Pro   = "deepseek-v4-pro"
