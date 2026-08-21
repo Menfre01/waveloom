@@ -153,13 +153,19 @@ func (a *deepSeekAdapter) buildResponsesRequestBody(ctx context.Context, message
 	}
 	body["stream"] = stream
 
-	// extra_params:reasoning_effort → reasoning.effort(原始值,不经 chat 模式的
-	// mapReasoningEffort 重映射——Responses API 接受 OpenAI 兼容的 low/medium/high)
+	// extra_params 映射:
+	//   - reasoning_effort → reasoning.effort(原始值透传,不经 chat 模式的
+	//     mapReasoningEffort 重映射——官方 API 参考:Responses 格式接受
+	//     none/minimal/low/medium/high/xhigh/max,由服务端自行映射强度)
+	//   - thinking: {"type": "disabled"} → reasoning.effort = "none"
+	//     (OpenAI chat 格式的思考开关;Responses 格式以 effort=none 关闭思考,
+	//     若原样透传 thinking 字段会被服务端忽略,思考模式保持默认开启)
+	effort := ""
 	for k, v := range a.extraParams {
 		switch k {
 		case "reasoning_effort":
 			if s, ok := v.(string); ok {
-				body["reasoning"] = map[string]any{"effort": s}
+				effort = s
 			}
 		case "max_tokens":
 			// chat 专用参数;Responses API 用 max_output_tokens
@@ -167,8 +173,21 @@ func (a *deepSeekAdapter) buildResponsesRequestBody(ctx context.Context, message
 				body["max_output_tokens"] = n
 			}
 		default:
+			if k == "thinking" {
+				continue // chat 格式开关已转译为 reasoning.effort,不原样透传
+			}
 			body[k] = v // 不支持的参数服务端静默忽略
 		}
+	}
+	// thinking: disabled 显式关闭思考模式,优先级高于 reasoning_effort
+	// (不依赖 map 迭代顺序——reasoning_effort 先收集,此处统一覆盖)
+	if t, ok := a.extraParams["thinking"].(map[string]any); ok {
+		if tt, _ := t["type"].(string); tt == "disabled" {
+			effort = "none"
+		}
+	}
+	if effort != "" {
+		body["reasoning"] = map[string]any{"effort": effort}
 	}
 
 	// response_format(json_object)→ text.format(Responses API 格式)
@@ -539,15 +558,18 @@ func (a *deepSeekAdapter) ClassifyError(err error) ErrorClass {
 	return ErrorClassRetryable
 }
 
-// mapReasoningEffort 将 OpenAI 兼容值映射为 DeepSeek 支持的值。
-// 官方文档(2026-08-13 更新):思考强度支持 low / high / max 三档;
-// low 为独立档位,不再映射为 high(旧映射会丢失 low 语义)。
+// mapReasoningEffort 将 OpenAI 兼容值映射为 DeepSeek 支持的思考强度档位。
+// 官方映射表(2026 版,deepseek-v4-flash 与 deepseek-v4-pro 一致):
+//   low → low;medium / high / xhigh → high;max → max
+// low 为独立档位,不再映射为 high(旧映射会丢失 low 语义);
+// xhigh 映射为 high 而非 max(旧实现误映射,与 Responses 路径服务端
+// 映射行为不一致——Responses 路径透传原始值,服务端同样将 xhigh 映射为 high)。
 func mapReasoningEffort(effort string) string {
 	switch effort {
 	case "medium":
 		return "high"
 	case "xhigh":
-		return "max"
+		return "high"
 	default:
 		return effort
 	}

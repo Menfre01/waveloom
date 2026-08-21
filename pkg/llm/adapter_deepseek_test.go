@@ -443,10 +443,10 @@ func TestDeepSeekReasoningEffortMapping(t *testing.T) {
 		input    string
 		expected string
 	}{
-		// 官方 2026-08-13 更新:low/high/max 三档,low 为独立档位
+		// 官方映射表(2026 版):low→low、medium/high/xhigh→high、max→max
 		{"low", "low"},
 		{"medium", "high"},
-		{"xhigh", "max"},
+		{"xhigh", "high"},
 		{"high", "high"},
 		{"max", "max"},
 	}
@@ -476,6 +476,61 @@ func TestDeepSeekReasoningEffortMapping(t *testing.T) {
 				t.Errorf("reasoning_effort = %v, want %v (input: %s)", body["reasoning_effort"], tt.expected, tt.input)
 			}
 		})
+	}
+}
+
+func TestResponsesBuildRequest_ThinkingDisabled(t *testing.T) {
+	// REGRESSION: OpenAI chat 格式的 thinking: {"type": "disabled"} 在
+	// Responses 路径必须转译为 reasoning.effort="none";若原样透传 thinking
+	// 字段会被服务端忽略,思考模式保持默认开启,用户无法关闭思考。
+	adapter := newDeepSeekAdapter(ClientConfig{
+		APIKey:  "sk-deepseek",
+		Model:   ModelDeepSeekV4Flash,
+		BaseURL: "https://api.deepseek.com",
+		ExtraParams: map[string]any{
+			"thinking":         map[string]any{"type": "disabled"},
+			"reasoning_effort": "max", // disabled 必须覆盖 effort,与 map 迭代顺序无关
+		},
+	})
+	req, err := adapter.BuildRequest(context.Background(), []Message{{Role: RoleUser, Content: "Hi"}}, nil)
+	if err != nil {
+		t.Fatalf("BuildRequest returned error: %v", err)
+	}
+	var body map[string]any
+	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
+		t.Fatalf("Failed to decode request body: %v", err)
+	}
+	reasoning, ok := body["reasoning"].(map[string]any)
+	if !ok || reasoning["effort"] != "none" {
+		t.Errorf("reasoning = %v, want effort=none (thinking disabled)", body["reasoning"])
+	}
+	if _, has := body["thinking"]; has {
+		t.Error("thinking field must not be passed through to Responses API")
+	}
+
+	// thinking: enabled(或缺失)→ 不写 effort=none,按 reasoning_effort 透传
+	adapter2 := newDeepSeekAdapter(ClientConfig{
+		APIKey:  "sk-deepseek",
+		Model:   ModelDeepSeekV4Flash,
+		BaseURL: "https://api.deepseek.com",
+		ExtraParams: map[string]any{
+			"thinking":         map[string]any{"type": "enabled"},
+			"reasoning_effort": "high",
+		},
+	})
+	req2, err := adapter2.BuildRequest(context.Background(), []Message{{Role: RoleUser, Content: "Hi"}}, nil)
+	if err != nil {
+		t.Fatalf("BuildRequest returned error: %v", err)
+	}
+	if err := json.NewDecoder(req2.Body).Decode(&body); err != nil {
+		t.Fatalf("Failed to decode request body: %v", err)
+	}
+	reasoning = body["reasoning"].(map[string]any)
+	if reasoning["effort"] != "high" {
+		t.Errorf("reasoning.effort = %v, want high (thinking enabled)", reasoning["effort"])
+	}
+	if _, has := body["thinking"]; has {
+		t.Error("thinking field must not be passed through to Responses API")
 	}
 }
 
