@@ -839,12 +839,14 @@ func isHiddenOrBinary(path string) bool {
 		}
 	}
 
-	// 二进制文件扩展名
+	// 二进制文件扩展名。
+	// 注意:图片扩展名(png/jpg/jpeg/gif/webp)不在过滤列表——多模态
+	// @ 引用需要 picker 能搜到图片文件(reference 展开为视觉消息)。
 	ext := strings.ToLower(filepath.Ext(path))
 	switch ext {
 	case ".exe", ".dll", ".so", ".dylib", ".o", ".a", ".class", ".pyc", ".jar",
-		".war", ".zip", ".tar", ".gz", ".bz2", ".7z", ".rar", ".png", ".jpg",
-		".jpeg", ".gif", ".ico", ".pdf", ".woff", ".woff2", ".ttf", ".eot", ".wasm":
+		".war", ".zip", ".tar", ".gz", ".bz2", ".7z", ".rar",
+		".ico", ".pdf", ".woff", ".woff2", ".ttf", ".eot", ".wasm":
 		return true
 	}
 	return false

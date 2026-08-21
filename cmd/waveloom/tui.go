@@ -2767,9 +2767,20 @@ func (m *model) doTurn(userInput string) tea.Cmd {
 	m.saveToHistory(userInput)
 
 	// 0. 解析并展开 @ 引用
-	expanded, _, expandErr := m.expander.Expand(context.Background(), userInput, m.cwd)
+	expanded, refs, expandErr := m.expander.Expand(context.Background(), userInput, m.cwd)
 	if expandErr != nil {
 		expanded = userInput
+	}
+
+	// 0.1 收集图片引用 → 多模态消息;仅视觉模型支持图片,
+	// 非视觉模型直接拦截并提示(不消耗 turn,不发起 API 调用)
+	images := collectImageParts(refs)
+	// 拦截仅限 DeepSeek(官方仅 vision-exp 接受图片);OpenAI/Kimi
+	// 等端点由各自 API 决定,adapter 已正确组包,不在此处拦截。
+	if len(images) > 0 && strings.HasPrefix(m.hudModel, "deepseek") && !llm.IsVisionModel(m.hudModel) {
+		m.noticeBanner = fmt.Sprintf("✗ 模型 %s 不支持图片,请 /model 切换 %s",
+			m.hudModel, llm.ModelDeepSeekV4FlashVision)
+		return nil
 	}
 
 	// 前置更新:turn 计数器 +1,HUD 显示"正要开始第 N turn"
@@ -2799,8 +2810,8 @@ func (m *model) doTurn(userInput string) tea.Cmd {
 		}
 	}
 
-	// 1. PrepareRun — 使用展开后的输入
-	messagesSnapshot, messageID := m.cm.PrepareRun(expanded)
+	// 1. PrepareRun — 使用展开后的输入(含图片)
+	messagesSnapshot, messageID := m.cm.PrepareRunWithImages(expanded, images)
 	// 1.4 上轮用户快捷键退出 plan 模式 → 注入 [plan:end] 通知 LLM
 	if m.planExitPending {
 		endMsg := llm.Message{
@@ -2880,6 +2891,18 @@ func (m *model) doTurn(userInput string) tea.Cmd {
 // ---------------------------------------------------------------------------
 // 输入历史
 // ---------------------------------------------------------------------------
+
+// collectImageParts 从 @ 引用展开结果中提取图片数据(多模态消息)。
+// 文本展开(expanded)中图片已替换为 [📷 文件名] 占位符,图片数据仅经由此处进入消息。
+func collectImageParts(refs []reference.ResolvedRef) []llm.ImagePart {
+	var images []llm.ImagePart
+	for _, r := range refs {
+		if r.Image != nil {
+			images = append(images, llm.ImagePart{MIME: r.Image.MIME, B64: r.Image.B64})
+		}
+	}
+	return images
+}
 
 // saveToHistory 将输入保存到历史列表。跳过空输入和相邻重复。
 func (m *model) saveToHistory(input string) {
@@ -3480,8 +3503,12 @@ func (m *model) renderFooter() string {
 	}
 	modelPart := indicator + styleFooterModel.Render(m.hudModel)
 	if m.hudThinkingEffort != "" {
+		// 三档强度语义:low 灰(轻量) → high 绿(默认) → max 橙(全力)
 		effStyle := styleThinkHigh
-		if m.hudThinkingEffort == "max" {
+		switch m.hudThinkingEffort {
+		case "low":
+			effStyle = styleThinkLow
+		case "max":
 			effStyle = styleThinkMax
 		}
 		modelPart += styleFooterLabel.Render("(effort ") + effStyle.Render(m.hudThinkingEffort) + styleFooterLabel.Render(")")

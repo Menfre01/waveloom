@@ -15,6 +15,8 @@ import (
 
 	"github.com/Menfre01/waveloom/pkg/agentloop"
 	"github.com/Menfre01/waveloom/pkg/llm"
+	"github.com/Menfre01/waveloom/pkg/permission"
+	"github.com/Menfre01/waveloom/pkg/reference"
 	"github.com/Menfre01/waveloom/pkg/session"
 	"github.com/Menfre01/waveloom/pkg/skill"
 	"github.com/Menfre01/waveloom/pkg/pricing"
@@ -753,6 +755,59 @@ func TestTrimParas_FocusBecomesNegative(t *testing.T) {
 
 	if m.focusIndex != -1 {
 		t.Errorf("expected focusIndex=-1 after trim eviction, got %d", m.focusIndex)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// 多模态图片(collectImageParts / doTurn 拦截)
+// ---------------------------------------------------------------------------
+
+func TestCollectImageParts(t *testing.T) {
+	refs := []reference.ResolvedRef{
+		{Ref: reference.Ref{Raw: "@a.png", Kind: reference.KindImage}, Image: &reference.ImageData{MIME: "image/png", B64: "AAA"}},
+		{Ref: reference.Ref{Raw: "@b.txt", Kind: reference.KindFile}, Content: "text"},
+		{Ref: reference.Ref{Raw: "@c.jpg", Kind: reference.KindImage}, Image: &reference.ImageData{MIME: "image/jpeg", B64: "BBB"}},
+	}
+	images := collectImageParts(refs)
+	if len(images) != 2 {
+		t.Fatalf("images = %d, want 2", len(images))
+	}
+	if images[0].MIME != "image/png" || images[0].B64 != "AAA" {
+		t.Errorf("images[0] = %+v", images[0])
+	}
+	if images[1].MIME != "image/jpeg" || images[1].B64 != "BBB" {
+		t.Errorf("images[1] = %+v", images[1])
+	}
+	// 无图片引用 → 空切片
+	if got := collectImageParts(nil); len(got) != 0 {
+		t.Errorf("nil refs should yield empty, got %d", len(got))
+	}
+}
+
+func TestDoTurn_ImageBlockedOnNonVisionModel(t *testing.T) {
+	dir := t.TempDir()
+	imgPath := filepath.Join(dir, "shot.png")
+	if err := os.WriteFile(imgPath, []byte{0x89, 'P', 'N', 'G', 0x0d, 0x0a, 0x1a, 0x0a}, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	guard := permission.NewGuard(permission.WithWorkingDirs(dir))
+	m := &model{
+		cwd:      dir,
+		expander: reference.New(guard),
+		cm:       session.New("system"),
+		hudModel: "deepseek-v4-flash", // 非视觉模型
+	}
+
+	cmd := m.doTurn("@shot.png 看看这张图")
+	if cmd != nil {
+		t.Fatal("expected blocked (nil cmd) for non-vision model with image")
+	}
+	if !strings.Contains(m.noticeBanner, llm.ModelDeepSeekV4FlashVision) {
+		t.Errorf("notice banner should mention %s, got %q", llm.ModelDeepSeekV4FlashVision, m.noticeBanner)
+	}
+	// 拦截发生在 turn 计数之前,不消耗 turn
+	if m.hudTurns != 0 {
+		t.Errorf("hudTurns = %d, want 0", m.hudTurns)
 	}
 }
 

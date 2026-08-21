@@ -194,15 +194,16 @@ func TestHandleModelPickerKey_E_EntersEffortMode(t *testing.T) {
 	if !m.effortPickerMode {
 		t.Fatal("effortPickerMode should be true after pressing e")
 	}
-	if len(m.effortPickerEfforts) != 3 {
-		t.Errorf("deepseek should offer 3 efforts (off/high/max), got %d", len(m.effortPickerEfforts))
+	if len(m.effortPickerEfforts) != 4 {
+		t.Errorf("deepseek should offer 4 efforts (off/low/high/max), got %d", len(m.effortPickerEfforts))
 	}
-	if m.effortPickerEfforts[0].ID != "off" || m.effortPickerEfforts[1].ID != "high" || m.effortPickerEfforts[2].ID != "max" {
-		t.Errorf("deepseek efforts = %+v, want [off high max]", m.effortPickerEfforts)
+	if m.effortPickerEfforts[0].ID != "off" || m.effortPickerEfforts[1].ID != "low" ||
+		m.effortPickerEfforts[2].ID != "high" || m.effortPickerEfforts[3].ID != "max" {
+		t.Errorf("deepseek efforts = %+v, want [off low high max]", m.effortPickerEfforts)
 	}
-	// 当前档位 high 应被高亮(deepseek 档位 [off high max] 中索引 1)
-	if got := m.effortPickerList.Index(); got != 1 {
-		t.Errorf("effort list should highlight current effort high (index 1), got %d", got)
+	// 当前档位 high 应被高亮(deepseek 档位 [off low high max] 中索引 2)
+	if got := m.effortPickerList.Index(); got != 2 {
+		t.Errorf("effort list should highlight current effort high (index 2), got %d", got)
 	}
 }
 
@@ -231,8 +232,8 @@ func TestHandleModelPickerKey_EffortEnterCommits(t *testing.T) {
 	m, store := newTestModelForEffortPicker(t)
 	m.effortPickerMode = true
 	m.buildEffortPickerList()
-	// 选中 "max"(deepseek 档位 [off high max] 索引 2)
-	m.effortPickerList.Select(2)
+	// 选中 "max"(deepseek 档位 [off low high max] 索引 3)
+	m.effortPickerList.Select(3)
 
 	handled, _ := m.handleModelPickerKey(tea.KeyPressMsg{Text: "enter", Code: 'e'})
 	if !handled {
@@ -296,7 +297,7 @@ func TestHandleModelPickerKey_EffortCommitWritesProfile(t *testing.T) {
 	m.hudThinkingEffort = "high"
 	m.effortPickerMode = true
 	m.buildEffortPickerList()
-	m.effortPickerList.Select(2) // max(deepseek [off high max] 索引 2)
+	m.effortPickerList.Select(3) // max(deepseek [off low high max] 索引 3)
 
 	_, _ = m.handleModelPickerKey(tea.KeyPressMsg{Text: "enter", Code: 'e'})
 
@@ -322,7 +323,7 @@ func TestHandleModelPickerKey_EffortOffDisablesThinking(t *testing.T) {
 	m, store := newTestModelForEffortPicker(t)
 	m.effortPickerMode = true
 	m.buildEffortPickerList()
-	m.effortPickerList.Select(0) // off(deepseek [off high max] 索引 0)
+	m.effortPickerList.Select(0) // off(deepseek [off low high max] 索引 0)
 
 	handled, _ := m.handleModelPickerKey(tea.KeyPressMsg{Text: "enter", Code: 'e'})
 	if !handled {

@@ -255,6 +255,7 @@ var (
 	styleFooterLabel       lipgloss.Style
 	styleFooterValue       lipgloss.Style
 	styleFooterValueMuted  lipgloss.Style
+	styleThinkLow          lipgloss.Style // thinking low 档位
 	styleThinkHigh         lipgloss.Style // thinking high 档位
 	styleThinkMax          lipgloss.Style // thinking max 档位
 	styleFooterLatRed      lipgloss.Style
@@ -365,6 +366,7 @@ func applyTheme(p palette) {
 	styleFooterLabel = lipgloss.NewStyle().Foreground(colorGray)
 	styleFooterValue = lipgloss.NewStyle().Foreground(colorFooterValue)
 	styleFooterValueMuted = lipgloss.NewStyle().Foreground(colorGray)
+	styleThinkLow = lipgloss.NewStyle().Foreground(colorGray).Bold(true)
 	styleThinkHigh = lipgloss.NewStyle().Foreground(colorOK).Bold(true)
 	styleThinkMax = lipgloss.NewStyle().Foreground(colorToolCode).Bold(true)
 	styleFooterLatRed = lipgloss.NewStyle().Foreground(colorErr)

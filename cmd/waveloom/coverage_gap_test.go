@@ -501,13 +501,14 @@ func TestDoScanRelative_Basic(t *testing.T) {
 	items := doScanRelative(context.Background(), nil, root, "")
 	paths := pickerPaths(items)
 
-	// 期望路径用 filepath.Join 构造,兼容 Windows 的 \ 分隔符
-	for _, want := range []string{"a.go", "b.txt", "sub", filepath.Join("sub", "c.md")} {
+	// 期望路径用 filepath.Join 构造,兼容 Windows 的 \ 分隔符;
+	// image.png 已放行(多模态 @ 引用需要 picker 可搜到图片)
+	for _, want := range []string{"a.go", "b.txt", "sub", filepath.Join("sub", "c.md"), "image.png"} {
 		if !paths[want] {
 			t.Errorf("missing expected item %q in %v", want, paths)
 		}
 	}
-	for _, banned := range []string{".hidden.txt", ".git", "node_modules", "archive.zip", "image.png", "vendor"} {
+	for _, banned := range []string{".hidden.txt", ".git", "node_modules", "archive.zip", "vendor"} {
 		if paths[banned] {
 			t.Errorf("item %q should be filtered out, got %v", banned, paths)
 		}
@@ -582,10 +583,12 @@ func TestIsHiddenOrBinary(t *testing.T) {
 		{"a.bz2", true},
 		{"a.7z", true},
 		{"a.rar", true},
-		{"photo.png", true},
-		{"photo.JPG", true},
-		{"photo.jpeg", true},
-		{"x.gif", true},
+		// 图片放行:多模态 @ 引用需 picker 可搜到(见 isHiddenOrBinary 注释)
+		{"photo.png", false},
+		{"photo.JPG", false},
+		{"photo.jpeg", false},
+		{"x.gif", false},
+		{"x.webp", false},
 		{"x.ico", true},
 		{"x.pdf", true},
 		{"x.woff2", true},

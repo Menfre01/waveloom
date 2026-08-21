@@ -793,9 +793,10 @@ func (m *model) commitModelSwitch(modelID string) {
 }
 
 // effortChoicesForProvider 返回当前 provider 支持的 thinking 档位。
-// DeepSeek: off/high/max(off 关闭思考;chat 模式 low/medium 经 adapter 映射为
-// high,xhigh→max,故不暴露无效档位);OpenAI 兼容: low/medium/high(无 thinking
-// 参数,不提供 off);Kimi: 仅 max(adapter 强制思考,无法关闭)。
+// DeepSeek: off/low/high/max(官方 2026-08-13 起思考强度三档 low/high/max,
+// off 关闭思考;adapter 映射 medium→high、xhigh→max,故不暴露这两个兼容值);
+// OpenAI 兼容: low/medium/high(无 thinking 参数,不提供 off);
+// Kimi: 仅 max(adapter 强制思考,无法关闭)。
 func effortChoicesForProvider(provider string, lc *Messages) []effortChoice {
 	all := []effortChoice{
 		{ID: "low", Description: lc.EffortDescLow},
@@ -810,10 +811,10 @@ func effortChoicesForProvider(provider string, lc *Messages) []effortChoice {
 	case string(llm.ProviderOpenAI):
 		// OpenAI 兼容协议无 max 档位。
 		return all[:3]
-	default: // deepseek 及其余:off/high/max
+	default: // deepseek 及其余:off/low/high/max
 		return []effortChoice{
 			{ID: "off", Description: lc.EffortDescOff},
-			all[2], all[3],
+			all[0], all[2], all[3],
 		}
 	}
 }
