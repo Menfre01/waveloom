@@ -1,15 +1,14 @@
 ## [v0.7.5] — 2026-08-21
 
 ### Added
-- **Multimodal vision**: DeepSeek `deepseek-v4-flash-vision-exp` image understanding — reference images with `@path.png` to describe, OCR, and analyze charts (jpg/png/gif/webp, ≤4MB each); images are user-only messages, and non-vision models block before sending with a switch hint
+- **Multimodal vision**: DeepSeek `deepseek-v4-flash-vision-exp` image understanding — reference images with `@path.png` to describe, OCR, and analyze charts (jpg/png/gif/webp, ≤4MB each); images are user-only messages, and non-vision models block before sending with a switch hint; historical images are stripped at the wire layer when switching back to a non-vision model, so the conversation continues without clearing the session (restored automatically when switching back)
 - **Input text selection**: bubbles v2.2.0 — mouse drag and keyboard selection (Shift+arrows, Ctrl+Shift+A select all, Ctrl+Shift+C copy); Ctrl+V replaces the selection
 - **Thinking-effort low tier**: DeepSeek options now off/low/high/max (official three-tier semantics); HUD colors each tier (gray/green/orange)
 - **Image search in `@` picker**: png/jpg/jpeg/gif/webp are no longer filtered, so image files can be referenced directly
 
 ### Fixed
 - **Injection-scanner false positives**: pages with inline JSON/JS escapes (e.g. GitHub) repeatedly triggered "Encoding Obfuscation" warnings — detection now decodes escapes and requires the instruction keyword to overlap escaped characters; fake-context JSON tightened to full message structures (role=system + content)
-- **DeepSeek pricing calibration**: cache-hit/miss input ratio updated to 1/30 (docs and descriptions still carried the old 1/50~1/120); vision-exp pricing added
-- **Historical images break non-vision models**: images left in history by a vision session caused every request to be rejected — now stripped at the wire layer (restored automatically when switching back to a vision model)
+- **DeepSeek pricing calibration**: cache-hit/miss input ratio updated to 1/30 (docs and descriptions still carried the old 1/50~1/120)
 - **Thinking-effort mapping calibrated**: `low` is no longer remapped to `high` (official three-tier semantics)
 
 ---
