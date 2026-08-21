@@ -52,6 +52,91 @@ func TestDeepSeekBuildRequest(t *testing.T) {
 	}
 }
 
+func TestDeepSeekBuildRequest_ImagesStrippedOnNonVisionModel(t *testing.T) {
+	// REGRESSION: 历史带图消息在切换非视觉模型后不再整体拦截,
+	// wire 层剥离图片(Message 不变),请求正常发出。
+	adapter := newDeepSeekAdapter(ClientConfig{
+		APIKey:  "sk-deepseek",
+		Model:   "deepseek-v4-flash",
+		BaseURL: "https://api.deepseek.com",
+	})
+	messages := []Message{
+		{Role: RoleSystem, Content: "sys"},
+		{Role: RoleUser, Content: "look at this", Images: []ImagePart{{MIME: "image/png", B64: "AAAA"}}},
+	}
+	req, err := adapter.BuildRequest(context.Background(), messages, nil)
+	if err != nil {
+		t.Fatalf("non-vision model should not reject historical images: %v", err)
+	}
+	// flash 走 Responses API:历史图片由 buildResponsesInput 忽略(仅文本)
+	if req.URL.Path != "/v1/responses" {
+		t.Errorf("path = %q, want /v1/responses (flash is Responses model)", req.URL.Path)
+	}
+	// 原 Message 未被修改(切回视觉模型后图片恢复)
+	if len(messages[1].Images) != 1 {
+		t.Error("original message images must be preserved")
+	}
+}
+
+func TestDeepSeekBuildRequest_ImagesAllowedOnVisionModel(t *testing.T) {
+	adapter := newDeepSeekAdapter(ClientConfig{
+		APIKey:  "sk-deepseek",
+		Model:   ModelDeepSeekV4FlashVision,
+		BaseURL: "https://api.deepseek.com",
+	})
+	messages := []Message{
+		{Role: RoleUser, Content: "look", Images: []ImagePart{{MIME: "image/png", B64: "AAAA"}}},
+	}
+	req, err := adapter.BuildRequest(context.Background(), messages, nil)
+	if err != nil {
+		t.Fatalf("vision model should accept images: %v", err)
+	}
+	// vision-exp 不在 Responses 模型集 → Chat Completions 端点
+	if req.URL.Path != "/v1/chat/completions" {
+		t.Errorf("path = %q, want /v1/chat/completions", req.URL.Path)
+	}
+	var body map[string]any
+	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	msgs := body["messages"].([]any)
+	w := msgs[0].(map[string]any)
+	blocks := w["content"].([]any)
+	if len(blocks) != 2 {
+		t.Fatalf("content blocks = %d, want 2 (text + image)", len(blocks))
+	}
+	img := blocks[1].(map[string]any)
+	if img["type"] != "image_url" {
+		t.Errorf("block type = %v, want image_url", img["type"])
+	}
+}
+
+func TestDeepSeekBuildRequest_ChatCompletionsStripsImagesOnNonVision(t *testing.T) {
+	// 自定义模型(非 Responses 集)走 Chat Completions:非视觉模型 wire 剥离图片
+	adapter := newDeepSeekAdapter(ClientConfig{
+		APIKey:  "sk-deepseek",
+		Model:   "custom-chat-model",
+		BaseURL: "https://api.deepseek.com",
+	})
+	messages := []Message{
+		{Role: RoleUser, Content: "look", Images: []ImagePart{{MIME: "image/png", B64: "AAAA"}}},
+	}
+	req, err := adapter.BuildRequest(context.Background(), messages, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	var body map[string]any
+	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	msgs := body["messages"].([]any)
+	w := msgs[0].(map[string]any)
+	// 图片被剥离:content 保持 string(Message 原样透传),无 blocks
+	if _, isStr := w["content"].(string); !isStr {
+		t.Errorf("content should be plain string after image strip, got %T", w["content"])
+	}
+}
+
 func TestDeepSeekBuildRequestReasoningContent(t *testing.T) {
 	adapter := newDeepSeekAdapter(ClientConfig{
 		APIKey:  "sk-deepseek",
@@ -192,7 +277,8 @@ func TestDeepSeekReasoningEffortMapping(t *testing.T) {
 		input    string
 		expected string
 	}{
-		{"low", "high"},
+		// 官方 2026-08-13 更新:low/high/max 三档,low 为独立档位
+		{"low", "low"},
 		{"medium", "high"},
 		{"xhigh", "max"},
 		{"high", "high"},

@@ -31,6 +31,32 @@ func TestNew_WithSystemPrompt(t *testing.T) {
 	}
 }
 
+func TestPrepareRunWithImages(t *testing.T) {
+	cm := New("system")
+	msgs, _ := cm.PrepareRunWithImages("look at this", []llm.ImagePart{
+		{MIME: "image/png", B64: "AAAA"},
+	})
+	if len(msgs) != 2 {
+		t.Fatalf("messages = %d, want 2", len(msgs))
+	}
+	user := msgs[1]
+	if user.Content != "look at this" {
+		t.Errorf("content = %q", user.Content)
+	}
+	if len(user.Images) != 1 {
+		t.Fatalf("images = %d, want 1", len(user.Images))
+	}
+	if user.Images[0].MIME != "image/png" || user.Images[0].B64 != "AAAA" {
+		t.Errorf("image = %+v", user.Images[0])
+	}
+	// 无图调用不附加图片
+	msgs2, _ := cm.PrepareRunWithImages("plain", nil)
+	user2 := msgs2[len(msgs2)-1]
+	if len(user2.Images) != 0 {
+		t.Error("nil images should not attach any image")
+	}
+}
+
 func TestNew_WithoutSystemPrompt(t *testing.T) {
 	cm := New("")
 	if cm.Stats().MessageCount != 0 {

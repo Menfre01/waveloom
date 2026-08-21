@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"net/http"
+	"strings"
 	"time"
 )
 // Role 表示对话中的消息角色，映射 OpenAI Chat Completions 协议。
@@ -22,19 +23,101 @@ const (
 // Message 表示对话中的一条消息，直接映射 OpenAI 协议的 message 对象。
 // JSON struct tags 配合 omitempty 实现零分配序列化，无需手动 buildMessages。
 type Message struct {
-	ID               string     `json:"id,omitempty"`                 // 不可变 UUID,创建时分配,用于 checkpoint/rewind 追踪
-	Role             Role       `json:"role"`                         // system / user / assistant / tool
-	Content          string     `json:"content,omitempty"`            // 文本内容(tool 角色时为工具执行结果)
-	ReasoningContent string     `json:"reasoning_content"`            // 思考链内容(DeepSeek 要求有 tool_calls 时必须回传,即使是空字符串)
-	ToolCallID       string     `json:"tool_call_id,omitempty"`       // tool 角色时关联的工具调用 ID
-	ToolCalls        []ToolCall `json:"tool_calls,omitempty"`         // assistant 角色时可能包含的工具调用
+	ID               string      `json:"id,omitempty"`           // 不可变 UUID,创建时分配,用于 checkpoint/rewind 追踪
+	Role             Role        `json:"role"`                   // system / user / assistant / tool
+	Content          string      `json:"content,omitempty"`      // 文本内容(tool 角色时为工具执行结果)
+	Images           []ImagePart `json:"images,omitempty"`       // user 消息携带的图片(OpenAI 兼容 image_url 块);仅视觉模型接受
+	ReasoningContent string      `json:"reasoning_content"`      // 思考链内容(DeepSeek 要求有 tool_calls 时必须回传,即使是空字符串)
+	ToolCallID       string      `json:"tool_call_id,omitempty"` // tool 角色时关联的工具调用 ID
+	ToolCalls        []ToolCall  `json:"tool_calls,omitempty"`   // assistant 角色时可能包含的工具调用
 	// WebSearchCalls 是 Responses API 服务端 web_search 工具的输出 item
 	// (assistant 角色)。多轮对话需原样回传,服务端据此恢复搜索结果上下文。
-	WebSearchCalls   []WebSearchCall `json:"web_search_calls,omitempty"`
-	Name             string     `json:"name,omitempty"`               // 可选,工具名(tool 角色时)
-	Model            string     `json:"model,omitempty"`              // assistant: 实际使用的模型名
-	FinishReason     string     `json:"stop_reason,omitempty"`        // assistant: API 返回的 finish_reason
-	Usage            *UsageInfo `json:"usage,omitempty"`              // assistant: token 用量
+	WebSearchCalls []WebSearchCall `json:"web_search_calls,omitempty"`
+	Name           string          `json:"name,omitempty"`        // 可选,工具名(tool 角色时)
+	Model          string          `json:"model,omitempty"`       // assistant: 实际使用的模型名
+	FinishReason   string          `json:"stop_reason,omitempty"` // assistant: API 返回的 finish_reason
+	Usage          *UsageInfo      `json:"usage,omitempty"`       // assistant: token 用量
+}
+
+// ImagePart 携带用户消息中的一张图片(OpenAI 兼容 content 块的 image_url 形式)。
+// 仅 user 消息支持(DeepSeek 官方限制:system/assistant 带图返回 400)。
+// 序列化时由 adapter 合成为 {"type":"image_url","image_url":{"url":...}} 块。
+type ImagePart struct {
+	MIME string `json:"mime"` // image/jpeg | image/png | image/gif | image/webp
+	B64  string `json:"b64"`  // base64 编码的图片数据
+}
+
+// DataURI 返回 data: URL 形式,供 adapter 组装 image_url 内容块。
+func (p ImagePart) DataURI() string {
+	return "data:" + p.MIME + ";base64," + p.B64
+}
+
+// MessagesHaveImages 报告消息列表中是否存在携带图片的消息。
+func MessagesHaveImages(msgs []Message) bool {
+	for _, m := range msgs {
+		if len(m.Images) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// WireMessages 将消息转为 API wire 格式:
+//   - 无图消息原样返回(Message 默认序列化即 OpenAI 兼容,零变化);
+//   - 带图消息的 content 转为 [{type:text},{type:image_url}] 块数组
+//     (OpenAI 兼容格式;images 字段仅内部存储,不进入 wire)。
+func WireMessages(messages []Message) []any {
+	return WireMessagesEx(messages, true)
+}
+
+// WireMessagesEx 同 WireMessages,可按模型能力决定是否携带图片。
+// includeImages=false 时带图消息只保留文本 content:历史图片在 wire 层
+// 剥离(Message.Images 不修改,切换回视觉模型后图片自动恢复),避免
+// 非视觉模型因历史带图消息每轮请求失败。
+func WireMessagesEx(messages []Message, includeImages bool) []any {
+	out := make([]any, 0, len(messages))
+	for _, m := range messages {
+		if len(m.Images) == 0 || !includeImages {
+			out = append(out, m)
+			continue
+		}
+		w := map[string]any{
+			"role":    m.Role,
+			"content": wireImageBlocks(m.Content, m.Images),
+		}
+		if m.ReasoningContent != "" {
+			w["reasoning_content"] = m.ReasoningContent
+		}
+		if m.ToolCallID != "" {
+			w["tool_call_id"] = m.ToolCallID
+		}
+		if m.Name != "" {
+			w["name"] = m.Name
+		}
+		if len(m.ToolCalls) > 0 {
+			w["tool_calls"] = m.ToolCalls
+		}
+		if len(m.WebSearchCalls) > 0 {
+			w["web_search_calls"] = m.WebSearchCalls
+		}
+		out = append(out, w)
+	}
+	return out
+}
+
+// wireImageBlocks 将文本与图片组装为 OpenAI 兼容 content 块数组。
+func wireImageBlocks(text string, images []ImagePart) []any {
+	blocks := make([]any, 0, len(images)+1)
+	if text != "" {
+		blocks = append(blocks, map[string]any{"type": "text", "text": text})
+	}
+	for _, img := range images {
+		blocks = append(blocks, map[string]any{
+			"type":      "image_url",
+			"image_url": map[string]any{"url": img.DataURI()},
+		})
+	}
+	return blocks
 }
 
 // ToolCall 表示 LLM 发起的一次工具调用请求。
@@ -200,7 +283,19 @@ const ModelChoiceProPlan = "proplan"
 const (
 	ModelDeepSeekV4Flash = "deepseek-v4-flash"
 	ModelDeepSeekV4Pro   = "deepseek-v4-pro"
+	// ModelDeepSeekV4FlashVision 是 DeepSeek 多模态(图像理解)模型,
+	// 官方定价与 flash 一致;仅此模型接受图片输入。
+	ModelDeepSeekV4FlashVision = "deepseek-v4-flash-vision-exp"
 )
+
+// IsVisionModel 判断模型是否支持图片输入。
+// 容忍 provider 前缀形式(如 "deepseek/deepseek-v4-flash-vision-exp")。
+func IsVisionModel(model string) bool {
+	if i := strings.IndexByte(model, '/'); i >= 0 {
+		model = model[i+1:]
+	}
+	return model == ModelDeepSeekV4FlashVision
+}
 
 // ClientConfig 在构造 Client 时传入，运行期不可变。
 type ClientConfig struct {
@@ -252,6 +347,7 @@ type RepairAction string
 const (
 	RepairSkipInvalidRole    RepairAction = "skip_invalid_role"     // 消息 Role 为空或非法
 	RepairSkipEmptyAssistant RepairAction = "skip_empty_assistant"  // assistant 消息无 content 且无 tool_calls
+	RepairStripImages        RepairAction = "strip_images"          // 非 user 消息携带图片(仅 user 可带图)
 	RepairStripToolCall      RepairAction = "strip_tool_call"       // ToolCall 缺少 ID / Name
 	RepairStripOrphanCall    RepairAction = "strip_orphan_call"     // ToolCall 无对应 tool 结果消息
 	RepairSkipOrphanTool     RepairAction = "skip_orphan_tool"       // tool 消息无对应 assistant tool_call
@@ -320,6 +416,17 @@ func ValidateMessages(msgs []Message) ([]Message, []RepairEntry) {
 			continue
 		}
 
+		// 1.5 图片仅限 user 消息(官方限制);非 user 消息携带图片一律剥离,
+		// 置于所有分支之前,确保 tool/assistant/system 消息都经过此清洗,
+		// 避免带图消息以 content 块数组上线导致 API 400。
+		if msg.Role != RoleUser && len(msg.Images) > 0 {
+			report = append(report, RepairEntry{
+				Index: idx, Role: msg.Role, Action: RepairStripImages,
+				Detail: "images stripped: only user messages may carry images",
+			})
+			msg.Images = nil
+		}
+
 		// 2. Tool 消息配对 — 无对应 assistant tool_call 则跳过
 		if msg.Role == RoleTool {
 			if msg.ToolCallID == "" || !validToolCallIDs[msg.ToolCallID] {
@@ -333,8 +440,8 @@ func ValidateMessages(msgs []Message) ([]Message, []RepairEntry) {
 			continue
 		}
 
-		// 3. Assistant 消息：校验 tool_calls 字段完整性
-		if msg.Role == RoleAssistant && len(msg.ToolCalls) > 0 {
+	// 3. Assistant 消息:校验 tool_calls 字段完整性
+	if msg.Role == RoleAssistant && len(msg.ToolCalls) > 0 {
 			var valid []ToolCall
 			for _, tc := range msg.ToolCalls {
 				if tc.ID == "" || tc.Name == "" {
@@ -378,10 +485,10 @@ func ValidateMessages(msgs []Message) ([]Message, []RepairEntry) {
 					Detail: "assistant message empty after stripping invalid tool_calls",
 				})
 				continue
-			}
 		}
+	}
 
-		// 4. 空 assistant(无 content 且无 tool_calls)— 占位 "(empty response)" 或反序列化残留
+	// 4. 空 assistant(无 content 且无 tool_calls)— 占位 "(empty response)" 或反序列化残留
 		if msg.Role == RoleAssistant && msg.Content == "" && len(msg.ToolCalls) == 0 && len(msg.WebSearchCalls) == 0 {
 			report = append(report, RepairEntry{
 				Index: idx, Role: msg.Role, Action: RepairSkipEmptyAssistant,

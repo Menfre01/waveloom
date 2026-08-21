@@ -85,7 +85,12 @@ func (a *deepSeekAdapter) buildChatRequestBody(ctx context.Context, messages []M
 	body["model"] = a.effectiveModel(ctx)
 	// 携带 tools 参数时必须完整回传所有 reasoning_content(含无 tool_calls
 	// 轮次),否则 API 400;无 tools 时可剥离无工具调用轮次的 reasoning 省 token。
-	body["messages"] = stripReasoningWithoutToolCalls(messages, len(tools) > 0)
+	// 按模型能力决定 wire 层是否携带图片:非视觉模型剥离历史图片
+	// (Message 不变,切回视觉模型自动恢复),避免每轮因历史带图失败。
+	body["messages"] = WireMessagesEx(
+		stripReasoningWithoutToolCalls(messages, len(tools) > 0),
+		IsVisionModel(a.effectiveModel(ctx)),
+	)
 	body["stream"] = stream
 
 	if len(tools) > 0 {
@@ -496,10 +501,11 @@ func (a *deepSeekAdapter) ClassifyError(err error) ErrorClass {
 }
 
 // mapReasoningEffort 将 OpenAI 兼容值映射为 DeepSeek 支持的值。
-// 官方文档：low/medium → high，xhigh → max。
+// 官方文档(2026-08-13 更新):思考强度支持 low / high / max 三档;
+// low 为独立档位,不再映射为 high(旧映射会丢失 low 语义)。
 func mapReasoningEffort(effort string) string {
 	switch effort {
-	case "low", "medium":
+	case "medium":
 		return "high"
 	case "xhigh":
 		return "max"

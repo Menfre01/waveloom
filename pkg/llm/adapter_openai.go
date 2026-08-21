@@ -62,7 +62,7 @@ func (a *openAIAdapter) buildRequestBody(ctx context.Context, messages []Message
 	} else {
 		body["model"] = a.model
 	}
-	body["messages"] = messages
+	body["messages"] = WireMessages(messages)
 	body["stream"] = stream
 
 	if len(tools) > 0 {

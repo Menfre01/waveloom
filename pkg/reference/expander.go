@@ -2,6 +2,7 @@ package reference
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -19,6 +20,12 @@ import (
 const (
 	maxFileBytes  = 32 * 1024  // 单文件上限 32KB
 	maxTotalBytes = 128 * 1024 // 总展开内容上限 128KB
+	// maxImageBytes 单张图片上限 4MB(base64 后 ~5.3MB,JSONL 持久化友好;
+	// 官方内联上限 32MiB,超限建议压缩或走外部 URL)。
+	maxImageBytes = 4 * 1024 * 1024
+	// maxImageTotalBytes 单轮展开图片总量上限(16MB),防多图撑爆会话
+	// 落盘体积与每轮重发成本。
+	maxImageTotalBytes = 16 * 1024 * 1024
 )
 
 // ---------------------------------------------------------------------------
@@ -69,6 +76,7 @@ func (e *Expander) Expand(ctx context.Context, userInput string, cwd string) (ex
 func (e *Expander) expandRefs(ctx context.Context, refs []Ref, cwd string) ([]ResolvedRef, error) {
 	var resolved []ResolvedRef
 	totalBytes := 0
+	imageTotalBytes := 0
 
 	for _, ref := range refs {
 		// Check total bytes limit
@@ -77,7 +85,7 @@ func (e *Expander) expandRefs(ctx context.Context, refs []Ref, cwd string) ([]Re
 		}
 
 		// Permission check — 文件和目录统一走 read 权限检查
-		if ref.Kind != KindFile && ref.Kind != KindFolder {
+		if ref.Kind != KindFile && ref.Kind != KindFolder && ref.Kind != KindImage {
 			continue
 		}
 		toolName := "read"
@@ -101,6 +109,20 @@ func (e *Expander) expandRefs(ctx context.Context, refs []Ref, cwd string) ([]Re
 			content, readErr = readFileContent(ref.Path)
 		case KindFolder:
 			content, readErr = listDirContent(ref.Path, 2)
+		case KindImage:
+			rr := expandImageRef(ref)
+			if rr.Image != nil {
+				imageTotalBytes += rr.Bytes
+				if imageTotalBytes > maxImageTotalBytes {
+					rr = ResolvedRef{
+						Ref: ref,
+						Error: fmt.Sprintf("total image size exceeds %dMB limit",
+							maxImageTotalBytes/1024/1024),
+					}
+				}
+			}
+			resolved = append(resolved, rr)
+			continue
 		}
 
 		if readErr != nil {
@@ -150,6 +172,35 @@ func readFileContent(path string) (string, error) {
 		return "", fmt.Errorf("file not found: %s", path)
 	}
 	return string(data), nil
+}
+
+// expandImageRef 展开图片引用:读取文件 → base64 编码 → 返回 ResolvedRef。
+// 图片数据不进入文本上下文(Content 仅为可见占位符),由调用方从
+// ResolvedRef.Image 提取注入消息;大小超过 maxImageBytes 时报错。
+func expandImageRef(ref Ref) ResolvedRef {
+	data, err := os.ReadFile(ref.Path)
+	if err != nil {
+		return ResolvedRef{
+			Ref:   ref,
+			Error: fmt.Sprintf("image not found: %s", ref.Path),
+		}
+	}
+	if len(data) > maxImageBytes {
+		return ResolvedRef{
+			Ref: ref,
+			Error: fmt.Sprintf("image exceeds %dMB limit (%d bytes): compress it or use an external URL",
+				maxImageBytes/1024/1024, len(data)),
+		}
+	}
+	return ResolvedRef{
+		Ref:     ref,
+		Content: fmt.Sprintf("[📷 %s]", filepath.Base(ref.Path)),
+		Bytes:   len(data),
+		Image: &ImageData{
+			MIME: mimeForPath(ref.Path),
+			B64:  base64.StdEncoding.EncodeToString(data),
+		},
+	}
 }
 
 // listDirContent 列出目录内容（带深度限制）。

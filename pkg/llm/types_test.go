@@ -1,6 +1,7 @@
 package llm
 
 import (
+	"encoding/json"
 	"testing"
 	"time"
 )
@@ -353,6 +354,137 @@ func searchSub(s, sub string) bool {
 		}
 	}
 	return false
+}
+
+// ---------------------------------------------------------------------------
+// 多模态图片
+// ---------------------------------------------------------------------------
+
+func TestImagePart_DataURI(t *testing.T) {
+	p := ImagePart{MIME: "image/png", B64: "AAAA"}
+	if got := p.DataURI(); got != "data:image/png;base64,AAAA" {
+		t.Errorf("DataURI = %q", got)
+	}
+}
+
+func TestMessagesHaveImages(t *testing.T) {
+	if MessagesHaveImages(nil) {
+		t.Error("nil should not have images")
+	}
+	if MessagesHaveImages([]Message{{Role: RoleUser, Content: "x"}}) {
+		t.Error("plain message should not have images")
+	}
+	if !MessagesHaveImages([]Message{{Role: RoleUser, Images: []ImagePart{{MIME: "image/png", B64: "A"}}}}) {
+		t.Error("message with images should report true")
+	}
+}
+
+func TestIsVisionModel_PrefixTolerant(t *testing.T) {
+	if !IsVisionModel(ModelDeepSeekV4FlashVision) {
+		t.Error("bare vision model name should be vision")
+	}
+	if !IsVisionModel("deepseek/" + ModelDeepSeekV4FlashVision) {
+		t.Error("provider-prefixed vision model should be vision")
+	}
+	if IsVisionModel(ModelDeepSeekV4Flash) {
+		t.Error("flash is not a vision model")
+	}
+	if IsVisionModel("deepseek/" + ModelDeepSeekV4Flash) {
+		t.Error("prefixed flash is not a vision model")
+	}
+}
+
+func TestValidateMessages_StripsImagesFromNonUser(t *testing.T) {
+	msgs := []Message{
+		{Role: RoleAssistant, Content: "hi", Images: []ImagePart{{MIME: "image/png", B64: "A"}}},
+		{Role: RoleTool, ToolCallID: "tc1", Images: []ImagePart{{MIME: "image/png", B64: "C"}}},
+		{Role: RoleUser, Content: "look", Images: []ImagePart{{MIME: "image/png", B64: "B"}}},
+	}
+	// 构造配对的 assistant tool_call,使 tool 消息通过配对检查
+	assistant := msgs[0]
+	assistant.ToolCalls = []ToolCall{{ID: "tc1", Name: "bash", Arguments: "{}"}}
+	msgs[0] = assistant
+	clean, report := ValidateMessages(msgs)
+	if len(clean) != 3 {
+		t.Fatalf("expected 3 messages, got %d", len(clean))
+	}
+	if len(clean[0].Images) != 0 {
+		t.Error("assistant images should be stripped")
+	}
+	if len(clean[1].Images) != 0 {
+		t.Error("tool message images should be stripped (tool branch skips 3b)")
+	}
+	if len(clean[2].Images) != 1 {
+		t.Error("user images should be preserved")
+	}
+	found := false
+	for _, r := range report {
+		if r.Action == RepairStripImages {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("expected RepairStripImages repair entry")
+	}
+}
+
+func TestWireMessages_NoImages_Passthrough(t *testing.T) {
+	msgs := []Message{
+		{Role: RoleSystem, Content: "sys"},
+		{Role: RoleUser, Content: "hi"},
+	}
+	wire := WireMessages(msgs)
+	if len(wire) != 2 {
+		t.Fatalf("len = %d, want 2", len(wire))
+	}
+	// 无图消息原样透传(Message 类型,JSON 形状不变)
+	if _, ok := wire[0].(Message); !ok {
+		t.Errorf("no-image message should pass through as Message, got %T", wire[0])
+	}
+	b, err := json.Marshal(wire[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(b, &m); err != nil {
+		t.Fatal(err)
+	}
+	if _, isStr := m["content"].(string); !isStr {
+		t.Errorf("content should be string, got %T", m["content"])
+	}
+	if _, hasImages := m["images"]; hasImages {
+		t.Error("wire format must not contain images field")
+	}
+}
+
+func TestWireMessages_WithImages_ContentBlocks(t *testing.T) {
+	msgs := []Message{
+		{Role: RoleUser, Content: "describe", Images: []ImagePart{{MIME: "image/png", B64: "AAAA"}}},
+	}
+	wire := WireMessages(msgs)
+	w, ok := wire[0].(map[string]any)
+	if !ok {
+		t.Fatalf("image message should become map, got %T", wire[0])
+	}
+	blocks, ok := w["content"].([]any)
+	if !ok {
+		t.Fatalf("content should be []any, got %T", w["content"])
+	}
+	if len(blocks) != 2 {
+		t.Fatalf("blocks = %d, want 2 (text + image)", len(blocks))
+	}
+	text := blocks[0].(map[string]any)
+	if text["type"] != "text" || text["text"] != "describe" {
+		t.Errorf("text block = %v", text)
+	}
+	img := blocks[1].(map[string]any)
+	if img["type"] != "image_url" {
+		t.Errorf("image block type = %v", img["type"])
+	}
+	iu := img["image_url"].(map[string]any)
+	if iu["url"] != "data:image/png;base64,AAAA" {
+		t.Errorf("image url = %v", iu["url"])
+	}
 }
 
 func messagesEqual(a, b []Message) bool {

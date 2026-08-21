@@ -118,6 +118,12 @@ func (cm *ContextManager) Compactor() compaction.Compactor {
 //
 // 返回值: 完整消息切片, 本条 user 消息的 UUID（供 filehistory 追踪和 rewind 使用）
 func (cm *ContextManager) PrepareRun(userInput string) ([]llm.Message, string) {
+	return cm.PrepareRunWithImages(userInput, nil)
+}
+
+// PrepareRunWithImages 同 PrepareRun,额外携带图片(多模态,仅视觉模型支持)。
+// images 仅附加到本条 user 消息;空切片时行为与 PrepareRun 完全一致。
+func (cm *ContextManager) PrepareRunWithImages(userInput string, images []llm.ImagePart) ([]llm.Message, string) {
 	cm.mu.Lock()
 	defer cm.mu.Unlock()
 
@@ -135,6 +141,7 @@ func (cm *ContextManager) PrepareRun(userInput string) ([]llm.Message, string) {
 		ID:      messageID,
 		Role:    llm.RoleUser,
 		Content: userInput,
+		Images:  images,
 	})
 	// 推进会话级 turn 计数(与 TUI HUD 的 Turns 计数一致;一次 Run = 一个 turn)
 	cm.compactor.AdvanceTurn()

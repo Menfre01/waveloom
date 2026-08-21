@@ -277,18 +277,32 @@ func estimatedTokensFromContent(s string) int {
 }
 
 // estimatedTokensFromMessage 估算单条消息序列化后的 token 数。
-// 直接将 Message 序列化为 JSON（与 API 实际发送格式一致），
-// 对完整 JSON 字符串做 token 估算，自动覆盖所有字段及 JSON 结构开销。
+// 直接将 Message 序列化为 JSON(与 API 实际发送格式一致),
+// 对完整 JSON 字符串做 token 估算,自动覆盖所有字段及 JSON 结构开销。
 //
-// 此估算仅用于保护区计算和内部排序（相对大小），不用于 Tier 触发判断。
+// 图片部分特殊处理:按官方规则每张图缩放后 token 上限(384)计入,
+// 不按 base64 体积估算——否则图片数据(可达数 MB)会撑爆上下文预算,
+// 导致错误触发压缩。
+//
+// 此估算仅用于保护区计算和内部排序(相对大小),不用于 Tier 触发判断。
 func estimatedTokensFromMessage(msg llm.Message) int {
+	if len(msg.Images) > 0 {
+		sanitized := msg
+		sanitized.Images = nil
+		tokens := estimatedTokensFromMessage(sanitized)
+		return tokens + imageTokensPerImage*len(msg.Images)
+	}
 	data, err := json.Marshal(msg)
 	if err != nil {
-		// 回退：逐字段手动估算
+		// 回退:逐字段手动估算
 		return estimatedTokensFromMessageFallback(msg)
 	}
 	return estimatedTokensFromContent(string(data))
 }
+
+// imageTokensPerImage 是 DeepSeek 官方单张图片缩放后的 token 上限
+// (图片自动缩放至 ~800×800 总像素,≤384 tokens/张)。
+const imageTokensPerImage = 384
 
 // estimatedTokensFromMessageFallback 是 estimatedTokensFromMessage 的回退路径，
 // 仅在 json.Marshal 失败时使用（理论上不会发生）。
@@ -302,6 +316,7 @@ func estimatedTokensFromMessageFallback(msg llm.Message) int {
 		tokens += estimatedTokensFromContent(tc.Name)
 		tokens += estimatedTokensFromContent(tc.Arguments)
 	}
+	tokens += imageTokensPerImage * len(msg.Images)
 	tokens += 20 // JSON 结构开销
 	return tokens
 }

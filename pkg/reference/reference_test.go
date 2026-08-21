@@ -510,7 +510,6 @@ func TestExpandFileSuccess(t *testing.T) {
 	dir := t.TempDir()
 	f := makeFile(t, dir, "auth/login.go", "package auth\n\nfunc Login() {}")
 
-
 	guard := newMockGuard()
 
 	expander := New(guard)
@@ -535,7 +534,6 @@ func TestExpandFolderSuccess(t *testing.T) {
 	dir := t.TempDir()
 	d := makeDir(t, dir, "pkg/auth")
 
-
 	guard := newMockGuard()
 
 	expander := New(guard)
@@ -557,7 +555,6 @@ func TestExpandFileNotFound(t *testing.T) {
 	dir := t.TempDir()
 	missing := filepath.Join(dir, "nonexistent.go")
 
-
 	guard := newMockGuard()
 
 	expander := New(guard)
@@ -578,7 +575,6 @@ func TestExpandFileNotFound(t *testing.T) {
 func TestExpandPermissionDenied(t *testing.T) {
 	dir := t.TempDir()
 	f := makeFile(t, dir, "secret.go", "package secret")
-
 
 	guard := newMockGuard()
 	guard.setDecision("read", permission.DecisionDeny)
@@ -602,7 +598,6 @@ func TestExpandMultipleRefs(t *testing.T) {
 	dir := t.TempDir()
 	f1 := makeFile(t, dir, "auth/login.go", "package auth")
 	f2 := makeFile(t, dir, "context/context.go", "package context")
-
 
 	guard := newMockGuard()
 
@@ -631,7 +626,6 @@ func TestExpandMaxTotalBytes(t *testing.T) {
 	f1 := makeFile(t, dir, "a.go", strings.Repeat("x", 100*1024)) // 100KB
 	f2 := makeFile(t, dir, "b.go", "package b")
 
-
 	guard := newMockGuard()
 
 	expander := New(guard)
@@ -654,7 +648,6 @@ func TestExpandMaxTotalBytes(t *testing.T) {
 func TestExpandMaxFileBytes(t *testing.T) {
 	dir := t.TempDir()
 	f := makeFile(t, dir, "big.go", strings.Repeat("x", 40*1024)) // 40KB
-
 
 	guard := newMockGuard()
 
@@ -836,7 +829,6 @@ func TestExpandFullSingleFile(t *testing.T) {
 	dir := t.TempDir()
 	_ = makeFile(t, dir, "auth/login.go", "package auth\n\nfunc Login() {}")
 
-
 	guard := newMockGuard()
 	expander := New(guard)
 
@@ -876,7 +868,6 @@ func TestExpandFullWithFolders(t *testing.T) {
 	_ = makeFile(t, dir, "auth/login.go", "package auth")
 	_ = makeDir(t, dir, "pkg/llm")
 
-
 	guard := newMockGuard()
 	expander := New(guard)
 
@@ -903,7 +894,6 @@ func TestE2EExpandAndReplace(t *testing.T) {
 	dir := t.TempDir()
 	_ = makeFile(t, dir, "auth/login.go", "package auth\n\nfunc Login() {}")
 	_ = makeDir(t, dir, "pkg/context")
-
 
 	guard := newMockGuard()
 	expander := New(guard)
@@ -945,7 +935,6 @@ func TestE2EExpandAndReplace(t *testing.T) {
 func TestAgentsMdExpand_SingleFile(t *testing.T) {
 	dir := t.TempDir()
 	_ = makeFile(t, dir, "docs/coding-style.md", "# 编码规范\n\n- 遵循 Go 惯例\n- 错误统一处理")
-
 
 	guard := newMockGuard()
 	expander := New(guard)
@@ -993,7 +982,6 @@ func TestAgentsMdExpand_FileNotFound(t *testing.T) {
 	dir := t.TempDir()
 	_ = filepath.Join(dir, "nonexistent.md")
 
-
 	guard := newMockGuard()
 	expander := New(guard)
 
@@ -1023,7 +1011,6 @@ func TestAgentsMdExpand_RelativePath(t *testing.T) {
 	dir := t.TempDir()
 	_ = makeFile(t, dir, "sub/dir/rules.md", "# 子目录规范")
 
-
 	guard := newMockGuard()
 	expander := New(guard)
 
@@ -1044,7 +1031,6 @@ func TestAgentsMdExpand_RelativePath(t *testing.T) {
 func TestAgentsMdExpand_AbsolutePath(t *testing.T) {
 	dir := t.TempDir()
 	f := makeFile(t, dir, "global-rules.md", "# 全局规范")
-
 
 	guard := newMockGuard()
 	expander := New(guard)
@@ -1070,7 +1056,6 @@ func TestAgentsMdExpand_MarkdownFile(t *testing.T) {
 	dir := t.TempDir()
 	_ = makeFile(t, dir, "docs/project-overview.md", "# 项目概览\n\nWaveloom 是一个终端编码代理。")
 
-
 	guard := newMockGuard()
 	expander := New(guard)
 
@@ -1092,7 +1077,6 @@ func TestAgentsMdExpand_MultipleMixedRefs(t *testing.T) {
 	dir := t.TempDir()
 	_ = makeFile(t, dir, "specs/agent-loop.md", "# Agent Loop 规格")
 	_ = makeDir(t, dir, "pkg/agentloop")
-
 
 	guard := newMockGuard()
 	expander := New(guard)
@@ -1118,7 +1102,6 @@ func TestAgentsMdExpand_MultipleMixedRefs(t *testing.T) {
 func TestAgentsMdExpand_PermissionDenied(t *testing.T) {
 	dir := t.TempDir()
 	_ = makeFile(t, dir, "secret.md", "# 机密文档")
-
 
 	guard := newMockGuard()
 	guard.setDecision("read", permission.DecisionDeny)
@@ -1147,7 +1130,6 @@ func TestAgentsMdExpand_PartialFailure(t *testing.T) {
 	_ = makeFile(t, dir, "docs/readme.md", "# 说明")
 	_ = filepath.Join(dir, "docs", "changelog.md")
 
-
 	guard := newMockGuard()
 	expander := New(guard)
 
@@ -1172,7 +1154,6 @@ func TestAgentsMdExpand_FuzzyMatch(t *testing.T) {
 	dir := t.TempDir()
 	_ = makeFile(t, dir, "specs/reference-context.md", "# 引用上下文")
 
-
 	guard := newMockGuard()
 	expander := New(guard)
 
@@ -1190,7 +1171,6 @@ func TestAgentsMdExpand_FuzzyMatch(t *testing.T) {
 func TestAgentsMdExpand_ContentAboveRefs(t *testing.T) {
 	dir := t.TempDir()
 	_ = makeFile(t, dir, "specs/agent-loop.md", "# Agent Loop")
-
 
 	guard := newMockGuard()
 	expander := New(guard)
@@ -1241,7 +1221,6 @@ func TestAgentsMdExpand_TotalByteLimit(t *testing.T) {
 	dir := t.TempDir()
 	_ = makeFile(t, dir, "big.md", strings.Repeat("# 大文件\n", 20000)) // ~140KB
 
-
 	guard := newMockGuard()
 	expander := New(guard)
 
@@ -1265,7 +1244,6 @@ func TestAgentsMdExpand_DirectoryRef(t *testing.T) {
 	_ = makeFile(t, dir, "docs/specs/agent-loop.md", "# agent-loop")
 	_ = makeFile(t, dir, "docs/specs/reference.md", "# reference")
 	_ = makeFile(t, dir, "docs/specs/compaction.md", "# compaction")
-
 
 	guard := newMockGuard()
 	expander := New(guard)
@@ -1456,6 +1434,108 @@ func TestRelativePath_Outside(t *testing.T) {
 	rel := relativePath(absPath, cwd)
 	if rel != "/home/user/other/file.go" {
 		t.Errorf("expected absolute path when outside, got %q", rel)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// 多模态图片展开
+// ---------------------------------------------------------------------------
+
+func TestParseRefs_ImageKindDetection(t *testing.T) {
+	dir := t.TempDir()
+	makeFile(t, dir, "shot.png", "x")
+	makeFile(t, dir, "notes.txt", "x")
+	refs := parseRefs("@shot.png @notes.txt", dir)
+	if len(refs) != 2 {
+		t.Fatalf("refs = %d, want 2", len(refs))
+	}
+	if refs[0].Kind != KindImage {
+		t.Errorf("shot.png kind = %v, want KindImage", refs[0].Kind)
+	}
+	if refs[1].Kind != KindFile {
+		t.Errorf("notes.txt kind = %v, want KindFile", refs[1].Kind)
+	}
+}
+
+func TestExpandImageSuccess(t *testing.T) {
+	dir := t.TempDir()
+	f := makeFile(t, dir, "shot.png", "\x89PNG\r\n\x1a\n")
+	guard := newMockGuard()
+	expander := New(guard)
+
+	resolved, err := expander.expandRefs(context.Background(),
+		[]Ref{{Raw: "@shot.png", Path: f, Kind: KindImage}}, dir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(resolved) != 1 {
+		t.Fatalf("expected 1 resolved, got %d", len(resolved))
+	}
+	r := resolved[0]
+	if r.Error != "" {
+		t.Fatalf("expected no error, got %q", r.Error)
+	}
+	if r.Image == nil {
+		t.Fatal("expected Image data for KindImage")
+	}
+	if r.Image.MIME != "image/png" {
+		t.Errorf("MIME = %q, want image/png", r.Image.MIME)
+	}
+	if r.Image.B64 == "" {
+		t.Error("expected base64 data")
+	}
+	if !strings.Contains(r.Content, "shot.png") {
+		t.Errorf("placeholder content = %q, want [📷 shot.png]", r.Content)
+	}
+}
+
+func TestExpandImageTooLarge(t *testing.T) {
+	dir := t.TempDir()
+	f := filepath.Join(dir, "big.png")
+	big := make([]byte, maxImageBytes+1)
+	if err := os.WriteFile(f, big, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	guard := newMockGuard()
+	expander := New(guard)
+
+	resolved, err := expander.expandRefs(context.Background(),
+		[]Ref{{Raw: "@big.png", Path: f, Kind: KindImage}}, dir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(resolved) != 1 {
+		t.Fatalf("expected 1 resolved, got %d", len(resolved))
+	}
+	if resolved[0].Error == "" {
+		t.Fatal("expected size limit error")
+	}
+	if !strings.Contains(resolved[0].Error, "4MB") {
+		t.Errorf("error should mention 4MB limit, got %q", resolved[0].Error)
+	}
+	if resolved[0].Image != nil {
+		t.Error("oversized image should not carry data")
+	}
+}
+
+func TestFormatRefBlock_Image(t *testing.T) {
+	r := ResolvedRef{
+		Ref:     Ref{Raw: "@shot.png", Path: "/proj/shot.png", Kind: KindImage},
+		Content: "[📷 shot.png]",
+	}
+	block := formatRefBlock(r, "/proj")
+	if !strings.Contains(block, "(image)") || !strings.Contains(block, "[📷 shot.png]") {
+		t.Errorf("image block = %q", block)
+	}
+
+	// 错误信息应原样展示(区别于文本文件的 [not found])
+	errRef := ResolvedRef{
+		Ref:   Ref{Raw: "@big.png", Path: "/proj/big.png", Kind: KindImage},
+		Error: "image exceeds 4MB limit",
+	}
+	errBlock := formatRefBlock(errRef, "/proj")
+	if !strings.Contains(errBlock, "4MB") {
+		t.Errorf("error block should carry detail, got %q", errBlock)
 	}
 }
 

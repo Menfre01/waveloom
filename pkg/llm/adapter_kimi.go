@@ -76,7 +76,7 @@ func (a *kimiAdapter) buildRequestBody(ctx context.Context, messages []Message, 
 
 	// Kimi K3 要求原样回传完整的 assistant message（含 reasoning_content），
 	// 不剥离 reasoning。与 DeepSeek adapter 不同，此处直接传递 messages。
-	body["messages"] = messages
+	body["messages"] = WireMessages(messages)
 	body["stream"] = stream
 
 	if len(tools) > 0 {

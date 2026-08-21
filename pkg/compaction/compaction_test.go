@@ -300,6 +300,30 @@ func TestEstimatedTokensFromContent(t *testing.T) {
 	}
 }
 
+func TestEstimatedTokensFromMessage_ImagesFixedCost(t *testing.T) {
+	// 图片按官方单图 token 上限(384)估算,base64 体积不得进入估算
+	base := estimatedTokensFromMessage(llm.Message{Role: llm.RoleUser, Content: "look at this"})
+	big := strings.Repeat("A", 1_000_000) // ~1MB base64 载荷
+	withImg := estimatedTokensFromMessage(llm.Message{
+		Role:    llm.RoleUser,
+		Content: "look at this",
+		Images:  []llm.ImagePart{{MIME: "image/png", B64: big}},
+	})
+	if withImg != base+imageTokensPerImage {
+		t.Errorf("with image = %d, want %d + %d = %d (base64 must not leak into estimate)",
+			withImg, base, imageTokensPerImage, base+imageTokensPerImage)
+	}
+	// 两张图 = 2 × 384
+	base2 := estimatedTokensFromMessage(llm.Message{Role: llm.RoleUser})
+	two := estimatedTokensFromMessage(llm.Message{
+		Role:   llm.RoleUser,
+		Images: []llm.ImagePart{{MIME: "image/png", B64: "A"}, {MIME: "image/jpeg", B64: "B"}},
+	})
+	if two != base2+2*imageTokensPerImage {
+		t.Errorf("two images = %d, want %d + %d", two, base2, 2*imageTokensPerImage)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // FormatSummaryPrompt / FormatSummaryUserMessage
 // ---------------------------------------------------------------------------

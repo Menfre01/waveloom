@@ -25,6 +25,7 @@ type Kind int
 const (
 	KindFile   Kind = iota // @file — 读取文件内容
 	KindFolder             // @folder — 列出目录结构
+	KindImage              // @image — 图片文件(base64 数据,供视觉模型)
 )
 
 // Ref 表示用户输入中解析出的一个 @ 引用。
@@ -39,7 +40,36 @@ type ResolvedRef struct {
 	Ref
 	Content string // 展开后的内容
 	Bytes   int    // 内容字节数
-	Error   string // 展开失败时的错误信息（空 = 成功）
+	Error   string // 展开失败时的错误信息(空 = 成功)
+	// Image 是图片引用的解码数据(仅 KindImage 非 nil)。
+	Image *ImageData
+}
+
+// ImageData 携带图片的 MIME 类型与 base64 数据。
+type ImageData struct {
+	MIME string
+	B64  string
+}
+
+// imageExtMIME 映射图片扩展名到 MIME 类型
+// (DeepSeek vision 支持 JPEG/PNG/GIF/WebP)。
+var imageExtMIME = map[string]string{
+	".jpg":  "image/jpeg",
+	".jpeg": "image/jpeg",
+	".png":  "image/png",
+	".gif":  "image/gif",
+	".webp": "image/webp",
+}
+
+// isImagePath 判断路径扩展名是否为支持的图片格式。
+func isImagePath(path string) bool {
+	_, ok := imageExtMIME[strings.ToLower(filepath.Ext(path))]
+	return ok
+}
+
+// mimeForPath 根据扩展名返回图片 MIME 类型(空 = 非图片)。
+func mimeForPath(path string) string {
+	return imageExtMIME[strings.ToLower(filepath.Ext(path))]
 }
 
 // ---------------------------------------------------------------------------
@@ -83,11 +113,15 @@ func parseRefs(userInput string, cwd string) []Ref {
 		if info, err := os.Stat(absPath); err == nil {
 			if info.IsDir() {
 				kind = KindFolder
+			} else if isImagePath(absPath) {
+				kind = KindImage
 			}
 		} else if matchedPath, isDir, ok := fuzzyMatch(absPath); ok {
 			absPath = matchedPath
 			if isDir {
 				kind = KindFolder
+			} else if isImagePath(absPath) {
+				kind = KindImage
 			}
 		}
 
@@ -309,6 +343,10 @@ func formatRefBlock(r ResolvedRef, cwd string) string {
 	relPath := relativePath(r.Path, cwd)
 
 	if r.Error != "" {
+		// 图片错误携带具体原因(如超限),直接展示;文本/目录沿用 [not found]
+		if r.Kind == KindImage {
+			return fmt.Sprintf("@@ %s (image)  [%s]\n@@", relPath, r.Error)
+		}
 		return fmt.Sprintf("@@ %s  [not found]\n@@", r.Raw)
 	}
 
@@ -322,6 +360,9 @@ func formatRefBlock(r ResolvedRef, cwd string) string {
 
 	case KindFolder:
 		return fmt.Sprintf("@@ %s (directory)\n```\n%s\n```\n@@", relPath, r.Content)
+
+	case KindImage:
+		return fmt.Sprintf("@@ %s (image)\n%s\n@@", relPath, r.Content)
 
 	default:
 		return fmt.Sprintf("@@ %s\n```\n%s\n```\n@@", relPath, r.Content)
