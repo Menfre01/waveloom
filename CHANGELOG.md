@@ -1,3 +1,13 @@
+## [v0.7.6] — 2026-08-22
+
+### 修复
+- **非视觉模型图片拦截提示不可见**:v0.7.5 起提示仅写入 footer 通知条且被下一次输入清空,发送图片后无响应且看不到原因;现改为系统段落常驻对话正文,并保留 /model 切换指引
+- **思考模式开关在 Responses 路径失效**:v0.7.5 起 v4-flash/v4-pro 走 /v1/responses 后,配置 thinking: disabled 无法关闭思考模式(字段被服务端忽略);现转译为 reasoning.effort=none,并校准 xhigh 档位为官方映射(high)
+
+---
+
+📝 [Changelog (English)](https://github.com/Menfre01/waveloom/blob/dev/CHANGELOG.en.md)
+
 ## [v0.7.5] — 2026-08-21
 
 ### 新增功能

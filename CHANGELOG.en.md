@@ -1,3 +1,11 @@
+## [v0.7.6] — 2026-08-22
+
+### Fixed
+- **Image-block hint invisible on non-vision models**: since v0.7.5 the hint lived in the footer banner only and was cleared by the next input, so sending an image produced no response and no visible reason — it is now a persistent system paragraph in the conversation, with the `/model` switch hint kept
+- **Thinking switch ineffective on the Responses API path**: since v0.7.5 v4-flash/v4-pro go through `/v1/responses`, where `thinking: {"type":"disabled"}` is ignored by the server, so thinking mode could not be turned off — it is now translated to `reasoning.effort=none`, and the `xhigh` tier mapping is calibrated to the official `high`
+
+---
+
 ## [v0.7.5] — 2026-08-21
 
 ### Added
