@@ -1,3 +1,18 @@
+## [v0.7.8] — 2026-08-23
+
+### 新增功能
+- **审批框改动预览**:批准 edit/write 前直接展示将写入的改动(edit 显示 diff、write 显示新内容,空内容清空文件时给出警告),审批决策更有依据
+- **auto 主题实时跟随**:周期探测终端背景色(OSC 11),终端深浅配色切换时主题自动跟随;切到 auto 时立即重新检测,无需等待轮询
+
+### 修复
+- **历史用量峰谷误折半**:LookupCurrencyAt 对峰谷定价生效日(2026-08-17 北京时间)之前的时间也套用折半规则,历史账单少算一半;现按生效时刻门槛,生效前一律平价([#7](https://github.com/Menfre01/waveloom/issues/7))
+- **symlink 安装的 skills 不可发现**:scanSkillsDir 不跟随符号链接,通过 symlink 安装到用户级目录(~/.claude/skills)的 skills 无法加载
+- **并发工具结果被慢 agent 拖住**:并行工具中结果已就绪的工具(如 read)要等最慢的 agent 完成才推送,现已就绪即推
+
+---
+
+📝 [Changelog (English)](https://github.com/Menfre01/waveloom/blob/dev/CHANGELOG.en.md)
+
 ## [v0.7.7] — 2026-08-23
 
 ### 修复

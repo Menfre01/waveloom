@@ -1,3 +1,16 @@
+## [v0.7.8] — 2026-08-23
+
+### Added
+- **Change preview in permission dialogs**: before approving an edit/write, the dialog now shows the changes that will be written (diff for edit, new content for write, with a warning when an empty write would truncate the file) — approvals are now based on what you will actually get
+- **Auto theme follows the terminal**: the terminal background color is probed periodically (OSC 11), so the theme switches live when the terminal toggles between light and dark; switching to auto re-detects immediately instead of waiting for the next poll
+
+### Fixed
+- **Historical usage incorrectly halved before peak pricing took effect**: `LookupCurrencyAt` applied the off-peak 50% discount to any time, including dates before peak pricing took effect (2026-08-17 Beijing time), under-billing history by half — it now honors the effective-time threshold and returns list prices for earlier timestamps ([#7](https://github.com/Menfre01/waveloom/issues/7))
+- **Skills installed via symlink were undiscoverable**: `scanSkillsDir` did not follow symlinks, so skills symlinked into user-level directories (~/.claude/skills) never loaded
+- **Ready concurrent tool results held back by slow agents**: with parallel tools, results that finished early (e.g. read) waited for the slowest agent — they are now pushed as soon as they are ready
+
+---
+
 ## [v0.7.7] — 2026-08-23
 
 ### Fixed
