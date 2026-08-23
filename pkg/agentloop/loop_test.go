@@ -1135,9 +1135,80 @@ func TestConcurrentToolsRunInParallel(t *testing.T) {
 		t.Errorf("expected 3 tool messages, got %d", len(res.msgs))
 	}
 
-	// 所有 3 个工具都已完成（不关心具体顺序）
+	// 所有 3 个工具都已完成(不关心具体顺序)
 	if len(execOrder) != 3 {
 		t.Errorf("expected 3 tools executed, got %d: %v", len(execOrder), execOrder)
+	}
+}
+
+// REGRESSION: read + agent 并发调用时,read 的结果事件被延迟到整个并发组
+// 完成(wg.Wait 后统一推送)才可见,TUI 上 read 显示"卡住"。修复:每个工具
+// 完成立即推送自己的 ToolCallResult,不再等慢速工具。
+func TestRegression_FastConcurrentResultPushedBeforeSlowToolFinishes(t *testing.T) {
+	fast := newSuccessTool("fast_tool", true, "fast-result")
+	fast.execDelay = 5 * time.Millisecond
+	slow := newSuccessTool("slow_tool", true, "slow-result")
+	slow.execDelay = 400 * time.Millisecond
+
+	registry := newTestRegistry(fast, slow)
+	loop := New(nil, registry, DefaultConfig())
+	state := &TurnState{}
+
+	calls := []llm.ToolCall{
+		makeToolCall("c1", "fast_tool", `{}`),
+		makeToolCall("c2", "slow_tool", `{}`),
+	}
+
+	ch := make(chan StepEvent, 32)
+	type execResult struct {
+		msgs   []llm.Message
+		reason TerminalReason
+		err    error
+	}
+	resultCh := make(chan execResult, 1)
+	go func() {
+		msgs, reason, err := loop.executeToolCalls(context.Background(), calls, state, ch)
+		resultCh <- execResult{msgs, reason, err}
+	}()
+
+	var fastResultAt, slowResultAt time.Time
+	for ev := range ch {
+		tr, ok := ev.(ToolCallResult)
+		if !ok {
+			continue
+		}
+		switch tr.ToolCallName {
+		case "fast_tool":
+			fastResultAt = time.Now()
+		case "slow_tool":
+			slowResultAt = time.Now()
+		}
+		if !fastResultAt.IsZero() && !slowResultAt.IsZero() {
+			break
+		}
+	}
+
+	if fastResultAt.IsZero() {
+		t.Fatal("fast tool result event never arrived")
+	}
+	if slowResultAt.IsZero() {
+		t.Fatal("slow tool result event never arrived")
+	}
+	// 修复前:fast 结果要等 slow 完成才推送,两者几乎同时;修复后:
+	// fast(5ms)先推,slow(400ms)后推,时间差应接近 395ms。200ms 阈值留余量。
+	if gap := slowResultAt.Sub(fastResultAt); gap < 200*time.Millisecond {
+		t.Errorf("fast tool result was held until slow tool finished (gap %v < 200ms)", gap)
+	}
+
+	res := <-resultCh
+	if res.err != nil {
+		t.Fatalf("unexpected error: %v", res.err)
+	}
+	if res.reason != "" {
+		t.Errorf("expected empty reason, got %s", res.reason)
+	}
+	if len(res.msgs) != 2 {
+		t.Errorf("expected 2 tool messages, got %d", len(res.msgs))
 	}
 }
 

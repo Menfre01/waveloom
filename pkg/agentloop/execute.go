@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/Menfre01/waveloom/pkg/llm"
@@ -141,6 +142,7 @@ ctx = tool.WithReadState(ctx, l.readStateStore)
 		var mu sync.Mutex
 		var wg sync.WaitGroup
 		var firstExecErr error
+		var aborted atomic.Bool // 任一工具结果事件推送失败(ctx 取消/通道关闭)
 		type execResult struct {
 			tc     llm.ToolCall
 			result *tool.ToolResult
@@ -149,6 +151,32 @@ ctx = tool.WithReadState(ctx, l.readStateStore)
 		}
 		resultsCh := make(chan execResult, len(toExec))
 
+		// 结果就绪立即推送 ToolCallResult,避免快速工具(如 read)的结果被
+		// 慢速工具(如 agent)拖住,等整个并发组完成才可见。
+		// REGRESSION: read + agent 并发调用时,read 几毫秒即完成但结果事件
+		// 等到 agent(最长 30 分钟)结束才推送,TUI 上表现为 read "卡住"。
+		pushResult := func(tc llm.ToolCall, result *tool.ToolResult, start time.Time) {
+			if result == nil {
+				return
+			}
+			ev := ToolCallResult{
+				Step:         state.StepCount,
+				ToolCallID:   tc.ID,
+				ToolCallName: tc.Name,
+				DurationMs:   time.Since(start).Milliseconds(),
+				Result:       result.Content,
+				DiffHunks:    result.Meta.DiffHunks,
+			}
+			if result.IsError() {
+				ev.Error = result.Error.Message
+				ev.ErrorKind = result.Error.Kind
+				ev.Fatal = result.Error.Class == tool.ErrorClassFatal
+			}
+			if !sendEvent(ctx, ch, ev) {
+				aborted.Store(true)
+			}
+		}
+
 		for _, tc := range toExec {
 			wg.Add(1)
 			go func(tc llm.ToolCall) {
@@ -156,17 +184,19 @@ ctx = tool.WithReadState(ctx, l.readStateStore)
 			defer func() {
 				if r := recover(); r != nil {
 					slog.Error("tool panic", "tool", tc.Name, "panic", fmt.Sprintf("%v", r))
-					safeSend(resultsCh, execResult{
-						tc: tc,
-						result: &tool.ToolResult{
-							Error: &tool.ToolError{
-								Class:   tool.ErrorClassFatal,
-								Kind:    tool.ErrKindUnknownTool,
-								Message: fmt.Sprintf("panic: %v", r),
-							},
+					panicResult := &tool.ToolResult{
+						Error: &tool.ToolError{
+							Class:   tool.ErrorClassFatal,
+							Kind:    tool.ErrKindUnknownTool,
+							Message: fmt.Sprintf("panic: %v", r),
 						},
-						err:   fmt.Errorf("panic in tool %q: %v", tc.Name, r),
-						start: time.Now(),
+					}
+					pushResult(tc, panicResult, time.Now())
+					safeSend(resultsCh, execResult{
+						tc:     tc,
+						result: panicResult,
+						err:    fmt.Errorf("panic in tool %q: %v", tc.Name, r),
+						start:  time.Now(),
 					})
 				}
 			}()
@@ -239,6 +269,8 @@ ctx = tool.WithReadState(ctx, l.readStateStore)
 				result.Content += "\n[system:hook] Hook warning: " + w
 					}
 				}
+				// 结果就绪立即推送,不等并发组其他工具
+				pushResult(tc, result, start)
 				safeSend(resultsCh, execResult{tc: tc, result: result, err: execErr, start: start})
 
 			}(tc)
@@ -305,30 +337,12 @@ ctx = tool.WithReadState(ctx, l.readStateStore)
 		if firstExecErr != nil {
 			return nil, ReasonToolFatal, fmt.Errorf("concurrent tool execution: %w", firstExecErr)
 		}
-	}
-
-	// 推送已执行并发工具的 ToolCallResult
-	for _, tc := range toExec {
-		r := results[tc.ID]
-		ev := ToolCallResult{
-			Step:         state.StepCount,
-			ToolCallID:   tc.ID,
-			ToolCallName: tc.Name,
-			DurationMs:   durations[tc.ID].Milliseconds(),
-			Result:       r.Content,
-			DiffHunks:    r.Meta.DiffHunks,
-		}
-		if r.IsError() {
-			ev.Error = r.Error.Message
-			ev.ErrorKind = r.Error.Kind
-			ev.Fatal = r.Error.Class == tool.ErrorClassFatal
-		}
-		if !sendEvent(ctx, ch, ev) {
+		if aborted.Load() {
 			return nil, ReasonAborted, ctx.Err()
 		}
 	}
 
-	// 4. 串行组（每个工具独立判断）
+	// 4. 串行组(每个工具独立判断)
 	for _, tc := range serial {
 		if !sendEvent(ctx, ch, ToolCallStart{
 			Step:         state.StepCount,
