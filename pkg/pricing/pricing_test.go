@@ -179,6 +179,40 @@ func TestRegression_WeekendIsOffPeak(t *testing.T) {
 	}
 }
 
+// TestRegression_PreToUNotHalved 回归防护:LookupCurrencyAt 曾对所有时间(含
+// 峰谷定价生效日 2026-08-16 16:00 UTC 之前)套用折半规则,历史用量少算一半。
+// 根因:实现未兑现 peakPricingEffectiveAt 生效时刻门槛,与文件注释声明的
+// 「2026-08-16 16:00 UTC 起采用峰谷定价」矛盾;现有向量均落在生效日之后,
+// 故测试未能覆盖。修复后生效前平价、生效时刻起按峰谷规则计。
+func TestRegression_PreToUNotHalved(t *testing.T) {
+	// 生效前(2026-07-15 周二 20:00 北京时间,issue #7 示例):平价,不打折
+	preToU := time.Date(2026, 7, 15, 20, 0, 0, 0, time.FixedZone("CST", 8*3600))
+	p := LookupCurrencyAt("deepseek", "deepseek-v4-flash", CNY, preToU)
+	if p.CacheHit != 0.10 || p.CacheMiss != 3.0 || p.Output != 9.0 {
+		t.Errorf("生效前应返回平价表内价,got %+v", p)
+	}
+
+	// 生效前一刻(2026-08-16 15:59:59 UTC):仍为平价
+	justBefore := time.Date(2026, 8, 16, 15, 59, 59, 0, time.UTC)
+	p = LookupCurrencyAt("deepseek", "deepseek-v4-flash", CNY, justBefore)
+	if p.Output != 9.0 {
+		t.Errorf("生效前一刻应返回平价表内价,got Output=%v", p.Output)
+	}
+
+	// 生效时刻整(2026-08-16 16:00:00 UTC = 北京 2026-08-17 00:00,空闲时段):折半
+	atEffective := time.Date(2026, 8, 16, 16, 0, 0, 0, time.UTC)
+	p = LookupCurrencyAt("deepseek", "deepseek-v4-flash", CNY, atEffective)
+	if p.CacheHit != 0.05 || p.CacheMiss != 1.5 || p.Output != 4.5 {
+		t.Errorf("生效时刻起应套用峰谷规则(此时为空闲半价),got %+v", p)
+	}
+
+	// 生效后高峰窗口:仍为表内价(门槛不影响高峰)
+	peak := LookupCurrencyAt("deepseek", "deepseek-v4-flash", CNY, beijingTime(10, 0))
+	if peak.Output != 9.0 {
+		t.Errorf("生效后高峰窗口应返回表内价,got Output=%v", peak.Output)
+	}
+}
+
 func TestLookupCurrencyAt_OffPeakHalf(t *testing.T) {
 	// 高峰时段:表内价格原样
 	peak := LookupCurrencyAt("deepseek", "deepseek-v4-flash", CNY, beijingTime(10, 0))

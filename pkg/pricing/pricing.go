@@ -27,6 +27,7 @@ type Price struct {
 // 官方页面: https://api-docs.deepseek.com/zh-cn/quick_start/pricing
 // 2026-08-17 00:00(北京时间)起 DeepSeek 采用峰谷定价:表内为高峰价,
 // 空闲时段(北京时间周一至周五 9:00-12:00、14:00-18:00 之外,含整个周末)= 高峰价 × 0.5。
+// 生效时刻之前为平价(无折半),由 peakPricingEffectiveAt 门槛控制。
 var cnyTable = map[string]Price{
 	// DeepSeek
 	"deepseek/deepseek-v4-flash":  {CacheHit: 0.10, CacheMiss: 3.0, Prompt: 3.0, Output: 9.0},
@@ -53,6 +54,7 @@ var cnyTable = map[string]Price{
 // 2026-08-16 16:00 UTC(2026-08-17 00:00 北京时间)起 DeepSeek 采用峰谷定价:
 // 高峰时段为 UTC 周一至周五 01:00-04:00、06:00-10:00(北京时间 9:00-12:00、14:00-18:00),
 // 空闲时段 = 高峰价 × 0.5。
+// 生效时刻之前为平价(无折半),由 peakPricingEffectiveAt 门槛控制。
 var usdTable = map[string]Price{
 	// DeepSeek
 	"deepseek/deepseek-v4-flash":  {CacheHit: 0.014, CacheMiss: 0.44, Prompt: 0.44, Output: 1.32},
@@ -86,8 +88,9 @@ func LookupCurrency(provider, model string, c Currency) Price {
 }
 
 // LookupCurrencyAt 根据 provider、model、币种和指定时间查找价格。
-// DeepSeek 采用峰谷定价:高峰时段(北京时间周一至周五 9:00-12:00、14:00-18:00)
-// 使用表内价格,空闲时段为高峰价 × 0.5。
+// DeepSeek 自 peakPricingEffectiveAt(2026-08-16 16:00 UTC)起采用峰谷定价:
+// 高峰时段(北京时间周一至周五 9:00-12:00、14:00-18:00)使用表内价格,
+// 空闲时段为高峰价 × 0.5;生效时刻之前为平价,表内价格原样返回。
 // 其他 provider(kimi/openai 等)不受峰谷影响,返回表内价格。
 func LookupCurrencyAt(provider, model string, c Currency, at time.Time) Price {
 	table := tableFor(c)
@@ -98,8 +101,8 @@ func LookupCurrencyAt(provider, model string, c Currency, at time.Time) Price {
 	if !ok {
 		p = table["*/*"]
 	}
-	// 仅 DeepSeek 峰谷定价;空闲时段 = 高峰价 × 0.5
-	if provider == "deepseek" && !IsPeakTime(at) {
+	// 仅 DeepSeek 峰谷定价;生效时刻之前为平价(无折半),生效后空闲时段 = 高峰价 × 0.5
+	if provider == "deepseek" && !at.Before(peakPricingEffectiveAt) && !IsPeakTime(at) {
 		p.CacheHit *= 0.5
 		p.CacheMiss *= 0.5
 		p.Prompt *= 0.5
@@ -107,6 +110,11 @@ func LookupCurrencyAt(provider, model string, c Currency, at time.Time) Price {
 	}
 	return p
 }
+
+// peakPricingEffectiveAt DeepSeek 峰谷定价生效时刻(UTC)。
+// 2026-08-16 16:00 UTC = 2026-08-17 00:00 北京时间;此前的历史时间一律按平价计,
+// 不适用峰谷折半(官方公告: Effective 00:00 Beijing Time on August 17, 2026)。
+var peakPricingEffectiveAt = time.Date(2026, 8, 16, 16, 0, 0, 0, time.UTC)
 
 // IsPeakTime 判断指定时间是否处于 DeepSeek 高峰时段。
 // 高峰时段(北京时间): 周一至周五 9:00-12:00、14:00-18:00;其余(含整个周末)为空闲时段。
