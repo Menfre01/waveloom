@@ -175,6 +175,21 @@ func (l *Loader) List() ([]SkillInfo, error) {
 	return infos, nil
 }
 
+// isDirFollowingSymlink 判断 entry 是否代表目录(跟随 symlink)。
+// os.DirEntry.IsDir() 对 symlink 一律返回 false,而用户级 skills 常以
+// symlink 安装(如 ~/.claude/skills/xxx -> ~/.agents/skills/xxx),必须跟随判断。
+// 悬空链接或指向非目录的链接返回 false。
+func isDirFollowingSymlink(dir string, entry os.DirEntry) bool {
+	if entry.IsDir() {
+		return true
+	}
+	if entry.Type()&os.ModeSymlink == 0 {
+		return false
+	}
+	st, err := os.Stat(filepath.Join(dir, entry.Name()))
+	return err == nil && st.IsDir()
+}
+
 func (l *Loader) scanSkillsDir(dir string, priority int, seen map[string]bool) []SkillInfo {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -183,7 +198,7 @@ func (l *Loader) scanSkillsDir(dir string, priority int, seen map[string]bool) [
 
 	var infos []SkillInfo
 	for _, entry := range entries {
-		if !entry.IsDir() {
+		if !isDirFollowingSymlink(dir, entry) {
 			continue
 		}
 		skillFile := filepath.Join(dir, entry.Name(), "SKILL.md")
@@ -225,7 +240,7 @@ func (l *Loader) scanCommandsDir(dir string, priority int, seen map[string]bool)
 
 	var infos []SkillInfo
 	for _, entry := range entries {
-		if entry.IsDir() {
+		if isDirFollowingSymlink(dir, entry) {
 			continue
 		}
 		name := strings.TrimSuffix(entry.Name(), ".md")

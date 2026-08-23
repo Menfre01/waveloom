@@ -2058,3 +2058,118 @@ body
 		t.Error("malformed frontmatter should not be conditional")
 	}
 }
+
+// REGRESSION: 用户级 skills 以 symlink 安装(~/.claude/skills/xxx -> ~/.agents/skills/xxx),
+// os.DirEntry.IsDir() 对 symlink 一律返回 false,导致 scanSkillsDir 全部跳过,
+// matt-skills 等 symlink 安装的 skills 加载不出来。修复:跟随 symlink 判断目录。
+func TestRegression_ScanSkillsDirFollowsSymlink(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink creation requires admin/dev-mode on Windows")
+	}
+
+	home := tmpDir(t)
+	// 真实 skills 存放在 ~/.agents/skills 风格的外部目录
+	realDir := filepath.Join(home, "agents", "skills")
+	writeFile(t, filepath.Join(realDir, "ask-matt", "SKILL.md"), `---
+name: ask-matt
+description: Ask Matt anything
+---
+
+# Ask Matt
+`)
+	// ~/.claude/skills 下通过 symlink 安装
+	skillsDir := filepath.Join(home, ".claude", "skills")
+	if err := os.MkdirAll(skillsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(realDir, "ask-matt"), filepath.Join(skillsDir, "ask-matt")); err != nil {
+		t.Fatal(err)
+	}
+	// 悬空 symlink 不应导致错误
+	if err := os.Symlink(filepath.Join(realDir, "ghost"), filepath.Join(skillsDir, "ghost")); err != nil {
+		t.Fatal(err)
+	}
+	// 指向普通文件的 symlink 不应被当作 skill 目录
+	plainFile := filepath.Join(home, "notes.txt")
+	writeFile(t, plainFile, "hello")
+	if err := os.Symlink(plainFile, filepath.Join(skillsDir, "not-a-dir")); err != nil {
+		t.Fatal(err)
+	}
+
+	l := newTestLoader(home, home)
+	infos, err := l.List()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	found := false
+	for _, info := range infos {
+		if info.Name == "ask-matt" {
+			found = true
+			if info.Description != "Ask Matt anything" {
+				t.Errorf("description = %q, want %q", info.Description, "Ask Matt anything")
+			}
+		}
+		if info.Name == "ghost" || info.Name == "not-a-dir" {
+			t.Errorf("symlink to missing/file target should be skipped, got %q", info.Name)
+		}
+	}
+	if !found {
+		t.Fatal("symlink-installed skill ask-matt not discovered")
+	}
+}
+
+// REGRESSION: scanCommandsDir 对 symlink 指向目录的条目应跳过,
+// 避免把目录误当作扁平 command 文件处理。
+func TestRegression_ScanCommandsDirSkipsSymlinkToDir(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink creation requires admin/dev-mode on Windows")
+	}
+
+	home := tmpDir(t)
+	cmdsDir := filepath.Join(home, ".claude", "commands")
+	if err := os.MkdirAll(cmdsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// symlink 指向真实 command 文件 → 应正常加载
+	realCmd := filepath.Join(home, "agents", "real-cmd.md")
+	writeFile(t, realCmd, `---
+name: real-cmd
+description: A real command
+---
+body
+`)
+	if err := os.Symlink(realCmd, filepath.Join(cmdsDir, "real-cmd.md")); err != nil {
+		t.Fatal(err)
+	}
+	// symlink 指向目录 → 应跳过
+	dirTarget := filepath.Join(home, "agents", "some-dir")
+	if err := os.MkdirAll(dirTarget, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(dirTarget, filepath.Join(cmdsDir, "some-dir.md")); err != nil {
+		t.Fatal(err)
+	}
+
+	l := newTestLoader(home, home)
+	infos, err := l.List()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	foundReal, foundDir := false, false
+	for _, info := range infos {
+		switch info.Name {
+		case "real-cmd":
+			foundReal = true
+		case "some-dir":
+			foundDir = true
+		}
+	}
+	if !foundReal {
+		t.Error("symlink to command file should be discovered")
+	}
+	if foundDir {
+		t.Error("symlink to directory should be skipped in commands dir")
+	}
+}
