@@ -187,3 +187,17 @@ Release notes 以用户可感知的功能变化为描述单位，分类汇总：
   4. 推送新 tag:`git push origin vX.Y.Z` → workflow 走 create 分支,正式发布
 - **坑(实测踩过)**:先删远端 tag 再 push,会把已发布 release 打成 `untagged + draft`;workflow 幂等 edit 分支不会 publish,网页不可见。若已发生:删草稿 release(`gh release delete --yes`)+ `gh run rerun <run-id>`(view 失败 → create 分支)
 - 重发后必须验证:`gh release view vX.Y.Z --json isDraft,publishedAt,url`(isDraft=false 且 url 为正常 release 页)
+
+## Agent skills
+
+### Issue tracker
+
+Issues and specs live as GitHub issues, operated via the `gh` CLI. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Default vocabulary: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context layout: `CONTEXT.md` + `docs/adr/` at the repo root. See `docs/agents/domain.md`.
