@@ -26,7 +26,7 @@ type Price struct {
 // cnyTable 中文价格(元/1M tokens,来自官方中文定价页)。
 // 官方页面: https://api-docs.deepseek.com/zh-cn/quick_start/pricing
 // 2026-08-17 00:00(北京时间)起 DeepSeek 采用峰谷定价:表内为高峰价,
-// 空闲时段(北京时间 9:00-12:00、14:00-18:00 之外)= 高峰价 × 0.5。
+// 空闲时段(北京时间周一至周五 9:00-12:00、14:00-18:00 之外,含整个周末)= 高峰价 × 0.5。
 var cnyTable = map[string]Price{
 	// DeepSeek
 	"deepseek/deepseek-v4-flash":  {CacheHit: 0.10, CacheMiss: 3.0, Prompt: 3.0, Output: 9.0},
@@ -51,7 +51,7 @@ var cnyTable = map[string]Price{
 // usdTable 英文价格($/1M tokens,来自官方英文定价页)。
 // 官方页面: https://api-docs.deepseek.com/quick_start/pricing
 // 2026-08-16 16:00 UTC(2026-08-17 00:00 北京时间)起 DeepSeek 采用峰谷定价:
-// 高峰时段为 UTC 01:00-04:00、06:00-10:00(北京时间 9:00-12:00、14:00-18:00),
+// 高峰时段为 UTC 周一至周五 01:00-04:00、06:00-10:00(北京时间 9:00-12:00、14:00-18:00),
 // 空闲时段 = 高峰价 × 0.5。
 var usdTable = map[string]Price{
 	// DeepSeek
@@ -86,7 +86,7 @@ func LookupCurrency(provider, model string, c Currency) Price {
 }
 
 // LookupCurrencyAt 根据 provider、model、币种和指定时间查找价格。
-// DeepSeek 采用峰谷定价:高峰时段(北京时间 9:00-12:00、14:00-18:00)
+// DeepSeek 采用峰谷定价:高峰时段(北京时间周一至周五 9:00-12:00、14:00-18:00)
 // 使用表内价格,空闲时段为高峰价 × 0.5。
 // 其他 provider(kimi/openai 等)不受峰谷影响,返回表内价格。
 func LookupCurrencyAt(provider, model string, c Currency, at time.Time) Price {
@@ -109,11 +109,16 @@ func LookupCurrencyAt(provider, model string, c Currency, at time.Time) Price {
 }
 
 // IsPeakTime 判断指定时间是否处于 DeepSeek 高峰时段。
-// 高峰时段(北京时间): 9:00-12:00、14:00-18:00;其余为空闲时段。
+// 高峰时段(北京时间): 周一至周五 9:00-12:00、14:00-18:00;其余(含整个周末)为空闲时段。
 // 参考: https://api-docs.deepseek.com/zh-cn/quick_start/pricing
 func IsPeakTime(t time.Time) bool {
-	// 北京时间 = UTC+8(无夏令时);FixedZone 名称仅作显示用,不影响转换
+	// 北京时间 = UTC+8(无夏令时);FixedZone 名称仅作显示用,不影响转换。
+	// 星期属于厂商时钟,必须在北京时间上取 Weekday()。
 	beijing := t.In(time.FixedZone("UTC+8", 8*3600))
+	switch beijing.Weekday() {
+	case time.Saturday, time.Sunday:
+		return false
+	}
 	h := beijing.Hour()
 	return (h >= 9 && h < 12) || (h >= 14 && h < 18)
 }

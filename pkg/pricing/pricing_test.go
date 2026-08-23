@@ -153,6 +153,32 @@ func TestIsPeakTime(t *testing.T) {
 	}
 }
 
+// TestRegression_WeekendIsOffPeak 回归防护:IsPeakTime 曾遗漏「周一至周五」,
+// 周末高峰窗口(9-12、14-18)被误判为高峰,四项价格均不打五折。
+// 根因:只比较北京时间小时,未排除周六/周日。官方定价页明确高峰时段为
+// 北京时间周一至周五 9:00-12:00、14:00-18:00,其余(含整个周末)为空闲时段。
+func TestRegression_WeekendIsOffPeak(t *testing.T) {
+	satPeakWindow := time.Date(2026, 8, 22, 10, 0, 0, 0, time.FixedZone("CST", 8*3600)) // 周六 10:00
+	sunPeakWindow := time.Date(2026, 8, 23, 15, 0, 0, 0, time.FixedZone("CST", 8*3600)) // 周日 15:00
+	friPeakWindow := time.Date(2026, 8, 21, 10, 0, 0, 0, time.FixedZone("CST", 8*3600)) // 周五 10:00
+
+	if IsPeakTime(satPeakWindow) {
+		t.Error("周六 10:00 应判空闲时段,实际判为高峰")
+	}
+	if IsPeakTime(sunPeakWindow) {
+		t.Error("周日 15:00 应判空闲时段,实际判为高峰")
+	}
+	if !IsPeakTime(friPeakWindow) {
+		t.Error("周五 10:00 应判高峰时段,实际判为空闲")
+	}
+
+	// 周末高峰窗口内应返回空闲半价:0.10/3.0/9.0 → 0.05/1.5/4.5
+	p := LookupCurrencyAt("deepseek", "deepseek-v4-flash", CNY, satPeakWindow)
+	if p.CacheHit != 0.05 || p.CacheMiss != 1.5 || p.Output != 4.5 {
+		t.Errorf("周六 10:00 应返回空闲半价,got %+v", p)
+	}
+}
+
 func TestLookupCurrencyAt_OffPeakHalf(t *testing.T) {
 	// 高峰时段:表内价格原样
 	peak := LookupCurrencyAt("deepseek", "deepseek-v4-flash", CNY, beijingTime(10, 0))
