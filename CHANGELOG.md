@@ -1,3 +1,12 @@
+## [v0.7.7] — 2026-08-23
+
+### 修复
+- **周末误按高峰价计费**:DeepSeek 峰谷定价(v0.7.2 起)未排除周末,周六/周日 9:00-12:00、14:00-18:00 被按高峰价计费,四项价格均为实际账单的两倍;现按官方规则「北京时间周一至周五 9:00-12:00、14:00-18:00」判定,周末全天按空闲时段半价。感谢 [@xyzs996](https://github.com/xyzs996) 反馈与修复建议([#6](https://github.com/Menfre01/waveloom/issues/6))
+
+---
+
+📝 [Changelog (English)](https://github.com/Menfre01/waveloom/blob/dev/CHANGELOG.en.md)
+
 ## [v0.7.6] — 2026-08-22
 
 ### 修复

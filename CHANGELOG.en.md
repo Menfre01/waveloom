@@ -1,3 +1,10 @@
+## [v0.7.7] — 2026-08-23
+
+### Fixed
+- **Weekends billed at peak rates**: the DeepSeek peak/off-peak pricing (since v0.7.2) did not exclude weekends, so Saturday/Sunday 09:00-12:00 and 14:00-18:00 were billed at peak prices — all four rates at double the actual bill. It now follows the official rule "peak hours are Beijing time Monday–Friday 09:00-12:00 and 14:00-18:00", with the whole weekend at off-peak half price. Thanks to [@xyzs996](https://github.com/xyzs996) for the report and suggested fix ([#6](https://github.com/Menfre01/waveloom/issues/6))
+
+---
+
 ## [v0.7.6] — 2026-08-22
 
 ### Fixed
