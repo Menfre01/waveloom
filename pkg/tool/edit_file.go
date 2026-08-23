@@ -326,3 +326,20 @@ func parseRange(s string) (start, count int) {
 	}
 	return
 }
+
+// ParseEditPreview 解析 edit 工具 hunk 参数为结构化 diff(不应用文件),
+// 用于权限审批框的改动预览。解析逻辑与 ApplyHunk 共用 parsePatchFiles /
+// parseDiffHunk,保证预览展示的文件路径与行号和应用时一致。
+// 返回 nil 表示无可预览内容(空 hunk 或全部解析失败)。
+func ParseEditPreview(defaultPath, hunkText string) []DiffHunk {
+	files := parsePatchFiles(hunkText, defaultPath)
+	var out []DiffHunk
+	for _, f := range files {
+		for _, h := range f.hunks {
+			if dh := parseDiffHunk(h.header, h.rawBody, f.path); dh != nil {
+				out = append(out, *dh)
+			}
+		}
+	}
+	return out
+}

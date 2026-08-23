@@ -430,11 +430,17 @@ func (m *model) handleThemePickerKey(msg tea.KeyPressMsg) (bool, tea.Cmd) {
 		return true, cmd
 	case "enter":
 		idx := m.themeList.Index()
+		var cmd tea.Cmd
 		if idx >= 0 && idx < len(themeItems) {
 			m.applyThemeMode(themeItems[idx].mode)
+			// 切到 auto 时立即重新查询终端背景色
+			// (OSC 11 是查询-响应模式,不会主动推送;5s 轮询仅兜底)
+			if m.themeMode == "auto" {
+				cmd = func() tea.Msg { return tea.RequestBackgroundColor() }
+			}
 		}
 		m.closeThemePicker()
-		return true, nil
+		return true, cmd
 	case "esc":
 		m.closeThemePicker()
 		return true, nil

@@ -287,6 +287,91 @@ func TestEditFile_WithoutReadState(t *testing.T) {
 	}
 }
 
+// ---------------------------------------------------------------------------
+// ParseEditPreview — 审批框改动预览解析(不应用文件)
+// ---------------------------------------------------------------------------
+
+func TestParseEditPreview_SingleFileSingleHunk(t *testing.T) {
+	hunks := ParseEditPreview("/proj/main.go", `@@ -2,3 +2,4 @@ func main
+ line1
+-line2
++lineTWO
++line2b
+ line3
+`)
+	if len(hunks) != 1 {
+		t.Fatalf("hunks = %d, want 1", len(hunks))
+	}
+	h := hunks[0]
+	if h.FilePath != "/proj/main.go" {
+		t.Errorf("FilePath = %q, want /proj/main.go", h.FilePath)
+	}
+	if h.OldStart != 2 || h.NewStart != 2 {
+		t.Errorf("start: old=%d new=%d, want 2/2", h.OldStart, h.NewStart)
+	}
+	if len(h.Lines) != 5 {
+		t.Fatalf("lines = %d, want 5", len(h.Lines))
+	}
+	wantKinds := []DiffLineKind{DiffCtx, DiffDel, DiffAdd, DiffAdd, DiffCtx}
+	for i, want := range wantKinds {
+		if h.Lines[i].Kind != want {
+			t.Errorf("line %d kind = %q, want %q", i, h.Lines[i].Kind, want)
+		}
+	}
+	// 行号:上下文 2/2,删除 3/-,新增 -/3、-/4,上下文 4/5
+	// (@@ -2,3 +2,4 覆盖旧文件 2-4 行、新文件 2-5 行)
+	if h.Lines[1].OldNum != 3 || h.Lines[1].NewNum != 0 {
+		t.Errorf("del line num: old=%d new=%d, want 3/0", h.Lines[1].OldNum, h.Lines[1].NewNum)
+	}
+	if h.Lines[2].NewNum != 3 || h.Lines[3].NewNum != 4 {
+		t.Errorf("add line nums: %d %d, want 3 4", h.Lines[2].NewNum, h.Lines[3].NewNum)
+	}
+	if h.Lines[4].OldNum != 4 || h.Lines[4].NewNum != 5 {
+		t.Errorf("trailing ctx num: old=%d new=%d, want 4/5", h.Lines[4].OldNum, h.Lines[4].NewNum)
+	}
+}
+
+func TestParseEditPreview_MultiFile(t *testing.T) {
+	hunks := ParseEditPreview("/proj/main.go", `*** Begin Patch
+*** Update File: a.go
+@@ -1,2 +1,2 @@
+-oldA
++newA
+*** Update File: b.go
+@@ -5 +5 @@
+ b5
+*** End Patch
+`)
+	if len(hunks) != 2 {
+		t.Fatalf("hunks = %d, want 2", len(hunks))
+	}
+	if !strings.HasSuffix(hunks[0].FilePath, "a.go") || !strings.HasSuffix(hunks[1].FilePath, "b.go") {
+		t.Errorf("file paths = %q / %q, want a.go / b.go", hunks[0].FilePath, hunks[1].FilePath)
+	}
+}
+
+func TestParseEditPreview_CountOmittedHeader(t *testing.T) {
+	// "@@ -1 +1 @@" 省略 count 的 header:count 默认 1
+	hunks := ParseEditPreview("/proj/main.go", `@@ -3 +3 @@
+ old3
+-del3
++add3
+`)
+	if len(hunks) != 1 {
+		t.Fatalf("hunks = %d, want 1", len(hunks))
+	}
+	h := hunks[0]
+	if h.OldStart != 3 || h.NewStart != 3 {
+		t.Errorf("start: old=%d new=%d, want 3/3", h.OldStart, h.NewStart)
+	}
+}
+
+func TestParseEditPreview_EmptyReturnsNil(t *testing.T) {
+	if hunks := ParseEditPreview("/proj/main.go", ""); hunks != nil {
+		t.Errorf("empty hunk = %v, want nil", hunks)
+	}
+}
+
 // TestEditFile_NotBeenReadHint — 未读文件编辑失败时,输出必须含可操作的
 // header 提示(单文件编辑省略 *** Update File: 头)。
 func TestEditFile_NotBeenReadHint(t *testing.T) {

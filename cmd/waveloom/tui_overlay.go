@@ -120,9 +120,23 @@ func (m *model) renderPermOverlay(boxWidth int) string {
 			}
 		}
 	}
+
+	// 待审批改动预览(edit/write):复用工具 diff 折叠渲染,
+	// 行数受 maxPreviewWrapped 限制,批准前可看到将要写入的内容
+	if len(m.permReq.diffs) > 0 {
+		var db strings.Builder
+		renderDiffPreview(&db, m.permReq.diffs, innerWidth, "", ViewportCtx{LC: m.msg()})
+		if db.Len() > 0 {
+			contentLines = append(contentLines, "")
+			preview := strings.ReplaceAll(db.String(), permEmptyWriteMarker, m.msg().PermEmptyWrite)
+			for _, dl := range strings.Split(strings.TrimSuffix(preview, "\n"), "\n") {
+				contentLines = append(contentLines, styleOverlayBody.Width(innerWidth).Render(dl))
+			}
+		}
+	}
 	contentLines = append(contentLines, "")
 
-	// 拼接 list 组件，包裹 overlay 背景避免 list viewport 露底
+	// 拼接 list 组件,包裹 overlay 背景避免 list viewport 露底
 	contentLines = append(contentLines, overlayContentStyle.Render(m.permList.View()))
 	contentLines = append(contentLines, "")
 

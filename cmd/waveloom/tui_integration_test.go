@@ -72,14 +72,26 @@ func TestHandleThemePickerKey_EnterSelectsAndCloses(t *testing.T) {
 	// Default themeMode "dark" → selectedIdx=1. Move to index 0 (auto).
 	m.themeList.Select(0)
 	handled, cmd := m.handleThemePickerKey(tea.KeyPressMsg{Text: "enter", Code: '\r'})
-	if !handled || cmd != nil {
-		t.Error("enter should be handled with nil cmd")
+	if !handled || cmd == nil {
+		t.Error("enter on auto should return background-color probe cmd")
 	}
 	if m.overlay != overlayNone {
 		t.Errorf("enter should close theme overlay, got overlay %v", m.overlay)
 	}
 	if m.themeMode != "auto" {
 		t.Errorf("enter on auto should switch theme to 'auto', got %q", m.themeMode)
+	}
+}
+
+func TestHandleThemePickerKey_EnterNonAutoNoCmd(t *testing.T) {
+	m := newTestModelForThemePicker()
+	// 默认选中 dark(index 1);非 auto 主题确认时不应返回查询 cmd
+	handled, cmd := m.handleThemePickerKey(tea.KeyPressMsg{Text: "enter", Code: '\r'})
+	if !handled || cmd != nil {
+		t.Error("enter on dark should be handled with nil cmd")
+	}
+	if m.themeMode != "dark" {
+		t.Errorf("enter on dark should keep theme 'dark', got %q", m.themeMode)
 	}
 }
 

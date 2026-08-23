@@ -742,6 +742,7 @@ func (m *model) Init() tea.Cmd {
 		m.spTodo.Tick,
 		m.checkUpdateCmd(),
 		func() tea.Msg { return tea.RequestBackgroundColor() },
+		m.bgProbeTick(),
 	)
 }
 
@@ -847,6 +848,15 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.reapplyAutoTheme()
 		}
 		return m, nil
+
+	case bgProbeMsg:
+		// 周期轮询终端背景色(auto 主题跟随终端配色切换;
+		// OSC 11 是查询-响应模式,不轮询就无法感知运行中变化)
+		if m.themeMode == "auto" {
+			cmds = append(cmds, func() tea.Msg { return tea.RequestBackgroundColor() })
+		}
+		cmds = append(cmds, m.bgProbeTick())
+		return m, tea.Batch(cmds...)
 
 	// ------------------------------------------------------------------
 	// 鼠标 — 滚轮滚动页面;左键按下/拖动在输入框内触发文本选中
@@ -1290,8 +1300,7 @@ func (m *model) handleKeyPress(msg tea.KeyPressMsg) (bool, tea.Cmd) {
 		return true, nil
 
 	case key.Matches(msg, m.keys.ToggleTheme):
-		m.toggleTheme()
-		return true, nil
+		return true, m.toggleTheme()
 
 	case key.Matches(msg, m.keys.Help):
 		// 仅当输入框为空时，? 才触发帮助 overlay；否则将 ? 传递给输入框
@@ -3725,6 +3734,7 @@ func (r *tuiUserResponder) AskUser(ctx context.Context, toolName string, input j
 			args:       argsSummary,
 			reason:     reasonMsg,
 			reasonKind: result.Reason,
+			diffs:      buildPermDiffs(toolName, string(input)),
 			reply:      replyCh,
 		})
 	}
@@ -3806,8 +3816,17 @@ func (r *tuiUserResponder) ApprovePlan(ctx context.Context, plan string) (permis
 // 主题管理
 // ---------------------------------------------------------------------------
 
+// bgProbeMsg 周期触发终端背景色查询(auto 主题跟随终端配色切换;
+// OSC 11 是查询-响应模式,不轮询就无法感知运行中变化)。
+type bgProbeMsg struct{}
+
+// bgProbeTick 返回下一个背景色轮询命令(5s 周期;仅 auto 模式发查询)。
+func (m *model) bgProbeTick() tea.Cmd {
+	return tea.Tick(5*time.Second, func(time.Time) tea.Msg { return bgProbeMsg{} })
+}
+
 // autoIsDark 返回 auto 模式下当前是否应使用深色主题。
-// 优先使用 Bubble Tea BackgroundColorMsg 的检测结果（更可靠），// 未收到时回退到 lipgloss.HasDarkBackground 的初始检测结果。
+// 优先使用 Bubble Tea BackgroundColorMsg 的检测结果(更可靠),// 未收到时回退到 lipgloss.HasDarkBackground 的初始检测结果。
 func (m *model) autoIsDark() bool {
 	if m.hasTeaBackground {
 		return m.autoDarkFromTea
@@ -3858,7 +3877,9 @@ func (m *model) initTheme() {
 }
 
 // toggleTheme 循环切换主题: dark → light → darkcolorblind → lightcolorblind → auto → dark ...
-func (m *model) toggleTheme() {
+// 切到 auto 时返回立即重新查询终端背景色的命令(不等 5s 轮询收敛)。
+func (m *model) toggleTheme() tea.Cmd {
+	toAuto := false
 	switch m.themeMode {
 	case "dark":
 		m.themeMode = "light"
@@ -3874,6 +3895,7 @@ func (m *model) toggleTheme() {
 		m.palette = lightColorBlindPalette
 	case "lightcolorblind":
 		m.themeMode = "auto"
+		toAuto = true
 		if m.autoIsDark() {
 			applyTheme(darkPalette)
 			m.palette = darkPalette
@@ -3892,6 +3914,10 @@ func (m *model) toggleTheme() {
 			slog.Warn("failed to save theme", "err", err)
 		}
 	}
+	if toAuto {
+		return func() tea.Msg { return tea.RequestBackgroundColor() }
+	}
+	return nil
 }
 
 // syncThemeComponents 同步 spinner、glamour 等组件的样式。

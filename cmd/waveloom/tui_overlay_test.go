@@ -9,6 +9,7 @@ import (
 
 	"github.com/Menfre01/waveloom/pkg/permission"
 	"github.com/Menfre01/waveloom/pkg/slashcommand"
+	"github.com/Menfre01/waveloom/pkg/tool"
 )
 
 // ---------------------------------------------------------------------------
@@ -1374,4 +1375,171 @@ func containsAny(s string, subs ...string) bool {
 		}
 	}
 	return false
+}
+
+// ---------------------------------------------------------------------------
+// 审批框改动预览(buildPermDiffs + renderPermOverlay)
+// ---------------------------------------------------------------------------
+
+func TestBuildPermDiffs_Edit(t *testing.T) {
+	args := `{"file_path":"/proj/main.go","hunk":"@@ -1,2 +1,2 @@\n old1\n-old2\n+new2\n"}`
+	diffs := buildPermDiffs("edit", args)
+	if len(diffs) != 1 {
+		t.Fatalf("diffs = %d, want 1", len(diffs))
+	}
+	if diffs[0].FilePath != "/proj/main.go" {
+		t.Errorf("FilePath = %q, want /proj/main.go", diffs[0].FilePath)
+	}
+	if len(diffs[0].Lines) != 3 {
+		t.Fatalf("lines = %d, want 3", len(diffs[0].Lines))
+	}
+	if string(diffs[0].Lines[1].Kind) != "-" || string(diffs[0].Lines[2].Kind) != "+" {
+		t.Errorf("kinds = %q/%q, want -/+", diffs[0].Lines[1].Kind, diffs[0].Lines[2].Kind)
+	}
+}
+
+func TestBuildPermDiffs_Write(t *testing.T) {
+	args := `{"file_path":"/proj/new.go","content":"line1\nline2\n"}`
+	diffs := buildPermDiffs("write", args)
+	if len(diffs) != 1 {
+		t.Fatalf("diffs = %d, want 1", len(diffs))
+	}
+	h := diffs[0]
+	if h.FilePath != "/proj/new.go" {
+		t.Errorf("FilePath = %q, want /proj/new.go", h.FilePath)
+	}
+	if h.NewStart != 1 || h.NewCount != 2 || len(h.Lines) != 2 {
+		t.Errorf("hunk = start:%d count:%d lines:%d, want 1/2/2", h.NewStart, h.NewCount, len(h.Lines))
+	}
+	for i, l := range h.Lines {
+		if string(l.Kind) != "+" || l.NewNum != i+1 {
+			t.Errorf("line %d = kind:%q num:%d, want +/%d", i, l.Kind, l.NewNum, i+1)
+		}
+	}
+}
+
+func TestBuildPermDiffs_UnsupportedTool(t *testing.T) {
+	if diffs := buildPermDiffs("bash", `{"command":"ls"}`); diffs != nil {
+		t.Errorf("bash diffs = %v, want nil", diffs)
+	}
+}
+
+func TestBuildPermDiffs_BadArgs(t *testing.T) {
+	if diffs := buildPermDiffs("edit", `{"file_path":"/proj/main.go"}`); diffs != nil {
+		t.Errorf("missing hunk diffs = %v, want nil", diffs)
+	}
+	if diffs := buildPermDiffs("edit", `not-json`); diffs != nil {
+		t.Errorf("bad json diffs = %v, want nil", diffs)
+	}
+}
+
+func TestBuildPermDiffs_WriteEmptyContentMarked(t *testing.T) {
+	// 空 content 的 write 会清空文件(破坏性),必须返回标记行而非 nil
+	diffs := buildPermDiffs("write", `{"file_path":"/proj/new.go","content":""}`)
+	if len(diffs) != 1 || len(diffs[0].Lines) != 1 {
+		t.Fatalf("empty write diffs = %+v, want 1 hunk with 1 line", diffs)
+	}
+	if diffs[0].Lines[0].Content != permEmptyWriteMarker {
+		t.Errorf("marker = %q, want %q", diffs[0].Lines[0].Content, permEmptyWriteMarker)
+	}
+}
+
+func TestBuildPermDiffs_StripsANSI(t *testing.T) {
+	// hunk/内容行携带 ANSI 转义时,预览必须剥离(审批框是阻断式交互面)
+	args := "{\"file_path\":\"/proj/main.go\",\"hunk\":\"@@ -1 +1 @@\\n-old\\u001b[31m\\u001b[0m\\n+new\\n\"}"
+	diffs := buildPermDiffs("edit", args)
+	if len(diffs) != 1 || len(diffs[0].Lines) != 2 {
+		t.Fatalf("diffs = %+v, want 1 hunk with 2 lines", diffs)
+	}
+	if got := diffs[0].Lines[0].Content; got != "old" {
+		t.Errorf("del content = %q, want %q (ANSI stripped)", got, "old")
+	}
+}
+
+func TestRenderPermOverlay_WithDiffPreview(t *testing.T) {
+	m := newTestModelForPerm()
+	m.permReq.toolName = "edit"
+	m.permReq.args = "/proj/main.go  1 hunk(s)"
+	m.permReq.diffs = []tool.DiffHunk{{
+		FilePath: "/proj/main.go",
+		Lines: []tool.DiffLine{
+			{Kind: tool.DiffDel, Content: "oldLine", OldNum: 1},
+			{Kind: tool.DiffAdd, Content: "newLine", NewNum: 1},
+		},
+	}}
+	content := m.renderPermOverlay(70)
+	if !strings.Contains(content, "-oldLine") {
+		t.Error("expected deleted line preview")
+	}
+	if !strings.Contains(content, "+newLine") {
+		t.Error("expected added line preview")
+	}
+	// 选项列表仍在预览之后
+	if !strings.Contains(content, "Allow") {
+		t.Error("expected Allow option")
+	}
+}
+
+func TestRenderPermOverlay_NoDiffNoPreview(t *testing.T) {
+	m := newTestModelForPerm()
+	m.permReq.toolName = "bash"
+	m.permReq.diffs = nil
+	content := m.renderPermOverlay(70)
+	if strings.Contains(content, "│ +") || strings.Contains(content, "│ -") {
+		t.Error("no diff preview should be rendered when diffs is nil")
+	}
+}
+
+func TestRenderPermOverlay_EmptyWriteShowsWarning(t *testing.T) {
+	m := newTestModelForPerm()
+	m.permReq.toolName = "write"
+	m.permReq.args = "/proj/new.go"
+	m.permReq.diffs = []tool.DiffHunk{{
+		FilePath: "/proj/new.go",
+		Lines:    []tool.DiffLine{{Kind: tool.DiffDel, Content: permEmptyWriteMarker}},
+	}}
+	content := m.renderPermOverlay(70)
+	if !strings.Contains(content, enUS.PermEmptyWrite) {
+		t.Errorf("expected empty-write warning %q in overlay", enUS.PermEmptyWrite)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// toggleTheme — 切到 auto 时立即重新查询终端背景色
+// ---------------------------------------------------------------------------
+
+func TestToggleTheme_ToAutoReturnsProbeCmd(t *testing.T) {
+	m := newTestModelForQuestion()
+	m.themeMode = "lightcolorblind"
+	cmd := m.toggleTheme()
+	if m.themeMode != "auto" {
+		t.Errorf("themeMode = %q, want auto", m.themeMode)
+	}
+	if cmd == nil {
+		t.Error("expected non-nil cmd when switching to auto")
+	}
+}
+
+func TestToggleTheme_NonAutoNoCmd(t *testing.T) {
+	m := newTestModelForQuestion()
+	m.themeMode = "dark"
+	cmd := m.toggleTheme()
+	if m.themeMode != "light" {
+		t.Errorf("themeMode = %q, want light", m.themeMode)
+	}
+	if cmd != nil {
+		t.Error("expected nil cmd for non-auto switch")
+	}
+}
+
+func TestToggleTheme_AutoCycleToDark(t *testing.T) {
+	m := newTestModelForQuestion()
+	m.themeMode = "auto"
+	cmd := m.toggleTheme()
+	if m.themeMode != "dark" {
+		t.Errorf("themeMode = %q, want dark", m.themeMode)
+	}
+	if cmd != nil {
+		t.Error("expected nil cmd when leaving auto")
+	}
 }

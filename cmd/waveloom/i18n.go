@@ -77,6 +77,7 @@ type Messages struct {
 	PermAllow    string
 	PermAllowAll string
 	PermDeny     string
+	PermEmptyWrite string // write content 为空的审批提示(文件将被清空)
 
 	// ── Question overlay ─────────────────────────────────
 	QuestionOtherOption string
@@ -324,8 +325,9 @@ var zhCN = Messages{
 	PermRequired: "▲ Permission Required",
 	PermReason:   "Reason: ",
 	PermAllow:    "Allow (本次放行)",
-	PermAllowAll: "Always Allow (记住，不再询问)",
+	PermAllowAll: "Always Allow (记住,不再询问)",
 	PermDeny:     "Deny (本次拒绝)",
+	PermEmptyWrite: "(content 为空 — 文件将被清空)",
 
 	// Question
 	QuestionOtherOption: "Other...",
@@ -640,6 +642,7 @@ var enUS = Messages{
 	PermAllow:    "Allow (this time)",
 	PermAllowAll: "Always Allow (remember)",
 	PermDeny:     "Deny (this time)",
+	PermEmptyWrite: "(content is empty — file will be truncated)",
 
 	// Question
 	QuestionOtherOption: "Other...",

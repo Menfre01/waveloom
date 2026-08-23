@@ -1,6 +1,8 @@
 package main
 
 import (
+	"encoding/json"
+	"path/filepath"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
@@ -10,6 +12,7 @@ import (
 	"charm.land/lipgloss/v2"
 
 	"github.com/Menfre01/waveloom/pkg/permission"
+	"github.com/Menfre01/waveloom/pkg/tool"
 )
 
 // ---------------------------------------------------------------------------
@@ -22,6 +25,7 @@ type permissionReqMsg struct {
 	args       string
 	reason     string
 	reasonKind permission.DecisionReason
+	diffs      []tool.DiffHunk // 待审批改动预览(edit/write 工具;其他工具为空)
 	reply      chan<- permission.UserChoice
 }
 
@@ -423,5 +427,99 @@ func (m *model) closeQuestionOverlay() {
 	m.otherInputLastValue = ""
 	m.otherInput.Blur()
 	m.input.Focus()
+}
+
+// ---------------------------------------------------------------------------
+// 审批框改动预览(edit/write 工具参数 → DiffHunk)
+// ---------------------------------------------------------------------------
+
+// permEmptyWriteMarker 标记 write content 为空的预览行,渲染层替换为
+// locale 文案(避免解析函数持有可能过期的 locale 快照)。
+const permEmptyWriteMarker = "\u0000perm-empty-write"
+
+// buildPermDiffs 从工具参数构建审批框改动预览。
+// edit → 解析 hunk 文本为结构化 diff(与执行路径共用解析逻辑);
+// write → 全新增行预览。参数缺失/解析失败/非文件工具返回 nil(不显示预览)。
+func buildPermDiffs(toolName, argsJSON string) []tool.DiffHunk {
+	switch toolName {
+	case "edit":
+		var p tool.EditFileParams
+		if err := json.Unmarshal([]byte(argsJSON), &p); err != nil || p.Hunk == "" {
+			return nil
+		}
+		return stripANSIFromDiffs(tool.ParseEditPreview(p.FilePath, p.Hunk))
+	case "write":
+		var p tool.WriteFileParams
+		if err := json.Unmarshal([]byte(argsJSON), &p); err != nil {
+			return nil
+		}
+		fp := p.FilePath
+		if p.WorkingDir != "" && !filepath.IsAbs(fp) {
+			fp = filepath.Join(p.WorkingDir, fp)
+		}
+		if p.Content == "" {
+			// 空 content 的 write 会清空文件(破坏性),审批时必须显式提示
+			return []tool.DiffHunk{{
+				FilePath: fp,
+				Lines:    []tool.DiffLine{{Kind: tool.DiffDel, Content: permEmptyWriteMarker}},
+			}}
+		}
+		if h := writePreviewHunk(fp, p.Content); h != nil {
+			return stripANSIFromDiffs([]tool.DiffHunk{*h})
+		}
+	}
+	return nil
+}
+
+// writePreviewHunk 将 write 内容构建为全新增 DiffHunk(审批预览用)。
+// 内容为空或仅空白时返回 nil。
+func writePreviewHunk(filePath, content string) *tool.DiffHunk {
+	content = strings.ReplaceAll(content, "\r\n", "\n")
+	lines := strings.Split(content, "\n")
+	for len(lines) > 0 && lines[len(lines)-1] == "" {
+		lines = lines[:len(lines)-1]
+	}
+	if len(lines) == 0 {
+		return nil
+	}
+	dl := make([]tool.DiffLine, len(lines))
+	for i, l := range lines {
+		dl[i] = tool.DiffLine{Kind: tool.DiffAdd, Content: l, NewNum: i + 1}
+	}
+	return &tool.DiffHunk{
+		FilePath: filePath,
+		NewStart: 1,
+		NewCount: len(lines),
+		Lines:    dl,
+	}
+}
+
+// stripANSIFromDiffs 剥离 diff 预览行内容中的 ANSI 转义序列。
+// REGRESSION: 审批框是阻断式交互面,LLM 提供的 hunk/内容行若携带恶意
+// 转义(光标移动、OSC 终端标题等)会直接注入终端;内容在渲染层会重新
+// 套用 diff 样式,剥离不影响显示。
+func stripANSIFromDiffs(diffs []tool.DiffHunk) []tool.DiffHunk {
+	for i := range diffs {
+		lines := diffs[i].Lines
+		for j := range lines {
+			lines[j].Content = stripANSIFromContent(lines[j].Content)
+		}
+	}
+	return diffs
+}
+
+// stripANSIFromContent 移除字符串中的 ANSI 转义序列(CSI/OSC/DCS/单字符 ESC)。
+func stripANSIFromContent(s string) string {
+	runes := []rune(s)
+	var b strings.Builder
+	for i := 0; i < len(runes); {
+		if skipLen := skipAnsiSequence(runes[i:]); skipLen > 0 {
+			i += skipLen
+			continue
+		}
+		b.WriteRune(runes[i])
+		i++
+	}
+	return b.String()
 }
 
