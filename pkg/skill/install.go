@@ -236,6 +236,9 @@ func cloneRepo(ctx context.Context, url, ref, dst string) (string, error) {
 				return false
 			}
 		case <-ctx.Done():
+			// 跨平台:先杀主进程(Windows 无进程组语义,TerminateProcess 即可);
+			// Unix 再补组杀,覆盖继承管道 fd 的子进程(git-remote-https)。
+			_ = cmd.Process.Kill()
 			killProcessGroupSkill(cmd.Process.Pid)
 			<-done
 			err = fmt.Errorf("git %s interrupted: %w", step, ctx.Err())

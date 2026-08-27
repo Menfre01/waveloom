@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -360,11 +361,7 @@ func TestRegression_ManualSkillDirNotOverwritten(t *testing.T) {
 // 用阻塞的假 git + 500ms 超时 ctx 模拟中断路径。
 func TestRegression_InterruptedInstallCleansTempDir(t *testing.T) {
 	fakeBin := t.TempDir()
-	fakeGit := filepath.Join(fakeBin, "git")
-	// 所有 git 命令阻塞 30s,让 ctx 超时触发中断路径。
-	if err := os.WriteFile(fakeGit, []byte("#!/bin/sh\nsleep 30\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	writeFakeGit(t, fakeBin)
 	t.Setenv("PATH", fakeBin+string(os.PathListSeparator)+os.Getenv("PATH"))
 
 	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
@@ -390,6 +387,26 @@ func TestRegression_InterruptedInstallCleansTempDir(t *testing.T) {
 		if strings.HasPrefix(e.Name(), "waveloom-skill-install-") {
 			t.Errorf("temp clone dir leaked after interrupt: %s", e.Name())
 		}
+	}
+}
+
+// writeFakeGit 写入阻塞 30s 的假 git(所有 git 命令走此脚本,让 ctx 超时触发
+// 中断路径)。平台差异:Windows 的 exec.LookPath 按 PATHEXT 查找,无扩展名的
+// sh 脚本不被识别为可执行,必须用 .bat。
+func writeFakeGit(t *testing.T, dir string) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		// ping -n 30 127.0.0.1 ≈ 30 秒阻塞(Windows 无 sleep 命令);
+		// >nul 避免输出干扰 git 输出收集。
+		if err := os.WriteFile(filepath.Join(dir, "git.bat"),
+			[]byte("@echo off\r\nping -n 30 127.0.0.1 > nul\r\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		return
+	}
+	if err := os.WriteFile(filepath.Join(dir, "git"),
+		[]byte("#!/bin/sh\nsleep 30\n"), 0o755); err != nil {
+		t.Fatal(err)
 	}
 }
 
