@@ -202,11 +202,7 @@ Options:
 	// 解析 session 目录
 	acpSessionDir := *sessionDir
 	if acpSessionDir == "" {
-		if homeDir != "" {
-			acpSessionDir = filepath.Join(homeDir, ".waveloom", "acp-sessions")
-		} else {
-			acpSessionDir = filepath.Join(cwd, ".waveloom", "acp-sessions")
-		}
+		acpSessionDir = defaultACPSessionDir(homeDir)
 	}
 
 	// 沙箱状态启动日志:沙箱永不静默失效(规格书不变量 #1)
@@ -245,6 +241,15 @@ Options:
 		slog.Error("acp: server error", "err", err)
 		os.Exit(1)
 	}
+}
+
+// defaultACPSessionDir returns a user-level location without creating files in
+// the project when the home directory cannot be determined.
+func defaultACPSessionDir(homeDir string) string {
+	if homeDir != "" {
+		return filepath.Join(homeDir, ".waveloom", "acp-sessions")
+	}
+	return filepath.Join(os.TempDir(), "waveloom", "acp-sessions")
 }
 
 // resolveContextLimit 解析上下文窗口容量(整数形式):
