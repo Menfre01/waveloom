@@ -1,3 +1,15 @@
+## [v0.8.0] — 2026-08-27
+
+### Added
+- **GLM Coding Plan provider**: a fourth LLM backend (Zhipu coding plan) over the OpenAI-compatible protocol. Full integration in the setup wizard, `/provider` hot-switching and effort levels (low/medium/high); in-plan models bill at zero (included in the subscription) while `glm-4.6v` is metered (CNY/USD tables), with complete cache-hit accounting
+- **`waveloom skill` — remote skill install with version locking**: install community skills from any git repo (`add <url>[@ref] [--path] [--name] [--global]`), shallow-clone and pin to an exact commit (`skill.lock.json`); `list` shows the source (remote@commit / local), `update` pulls the latest commit for the recorded ref, `remove` cleans up (refuses to delete manually created skills). Failed or interrupted installs roll back without leaving partial files
+
+### Fixed
+- **ACP session dir fell back into the project**: when the home directory could not be determined, ACP sessions were written under the project; they now fall back to the system temp dir. Thanks [@nandanadileep](https://github.com/nandanadileep) ([#8](https://github.com/Menfre01/waveloom/pull/8))
+- **Frozen textarea input**: upgraded bubbles to v2.2.1
+
+---
+
 ## [v0.7.8] — 2026-08-23
 
 ### Added

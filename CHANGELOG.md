@@ -1,3 +1,17 @@
+## [v0.8.0] — 2026-08-27
+
+### 新增功能
+- **GLM Coding Plan provider 支持**:第四个 LLM 后端(智谱编码套餐),OpenAI 兼容协议。setup 向导新增 GLM 选项、`/provider` 热切换、effort 档位(low/medium/high)全接入;套餐内模型计费为 0(订阅已含),`glm-4.6v` 按量计费(CNY/USD 双表),缓存命中统计完整解析
+- **`waveloom skill` 远程 Skill 安装与版本锁定**:从任意 git 仓库安装社区 skill(`add <url>[@ref] [--path] [--name] [--global]`),浅克隆后解析并锁定到具体 commit(`skill.lock.json`);`list` 标注来源(远程@commit / 本地)、`update` 拉取该 ref 最新 commit、`remove` 清理(拒删手写 skill)。安装失败或中断自动回滚,不留半成品
+
+### 修复
+- **ACP session 目录写入项目目录**:无法确定 home 目录时 ACP 会话目录曾落到项目内,现回退到系统临时目录。感谢 [@nandanadileep](https://github.com/nandanadileep)([#8](https://github.com/Menfre01/waveloom/pull/8))
+- **textarea 输入框冻结**:升级 bubbles 至 v2.2.1
+
+---
+
+📝 [Changelog (English)](https://github.com/Menfre01/waveloom/blob/dev/CHANGELOG.en.md)
+
 ## [v0.7.8] — 2026-08-23
 
 ### 新增功能
