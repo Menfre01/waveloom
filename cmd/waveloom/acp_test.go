@@ -151,6 +151,16 @@ func TestResolveContextLimit(t *testing.T) {
 	}
 }
 
+// TestRegression_ACPSessionFallbackNotProjectLocal prevents the fallback
+// session directory from creating a .waveloom directory in the project.
+func TestRegression_ACPSessionFallbackNotProjectLocal(t *testing.T) {
+	got := defaultACPSessionDir("")
+	want := filepath.Join(os.TempDir(), "waveloom", "acp-sessions")
+	if got != want {
+		t.Errorf("default ACP session dir = %q, want %q", got, want)
+	}
+}
+
 func TestACPCommandRunner(t *testing.T) {
 	dir := t.TempDir()
 	settingsPath := filepath.Join(dir, "settings.json")
