@@ -3647,6 +3647,9 @@ func (m *model) renderCacheRate() string {
 // model 为空时回退到当前 hudModel(子 agent 继承主模型场景)。
 // addCost 根据模型、币种和 token 增量计算费用并累加到 hudCost。
 // model 为空时回退到当前 hudModel(子 agent 继承主模型场景)。
+// REGRESSION: GLM Coding Plan 套餐内模型价目为 0("glm/" 通配),hudCost 恒为 0,
+// renderCost 显示 "--" 属订阅已含费用的正确语义,非统计故障。无法单测:
+// renderCost 依赖 lipgloss 渲染与 model 私有字段。
 func (m *model) addCost(model string, prompt, cacheHit, cacheMiss, completion int) {
 	if model == "" {
 		model = m.hudModel
@@ -3659,13 +3662,14 @@ func (m *model) addCost(model string, prompt, cacheHit, cacheMiss, completion in
 func (m *model) renderCost() string {
 	symbol := pricing.CurrencySymbol(m.hudCurrency)
 	label := styleFooterLabel.Render(symbol)
+	sep := " "
 	if m.hudCost == 0 {
-		return label + styleFooterValueMuted.Render("--")
+		return label + sep + styleFooterValueMuted.Render("--")
 	}
 	if m.hudCost < 0.01 {
-		return label + styleFooterValueMuted.Render("<0.01")
+		return label + sep + styleFooterValueMuted.Render("<0.01")
 	}
-	return label + styleFooterValue.Render(fmt.Sprintf("%.2f", m.hudCost))
+	return label + sep + styleFooterValue.Render(fmt.Sprintf("%.2f", m.hudCost))
 }
 
 // renderLatency 渲染最近一次 loop 耗时(运行中实时计时,结束后显示最终值)。

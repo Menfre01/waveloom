@@ -276,6 +276,7 @@ const (
 	ProviderOpenAI   ProviderType = "openai"    // 标准 OpenAI 协议,也是默认兜底
 	ProviderDeepSeek ProviderType = "deepseek"
 	ProviderKimi     ProviderType = "kimi"
+	ProviderGLM      ProviderType = "glm"       // GLM Coding Plan(智谱编码套餐,OpenAI 兼容协议)
 	// 后续扩展:
 	// ProviderAnthropic ProviderType = "anthropic"
 	// ProviderOllama    ProviderType = "ollama"

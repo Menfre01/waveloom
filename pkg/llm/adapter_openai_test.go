@@ -287,6 +287,62 @@ func TestOpenAIParseResponseUsage(t *testing.T) {
 	}
 }
 
+// TestRegression_OpenAIUsageMissingCachedTokens GLM/OpenAI 兼容端点在 usage.prompt_tokens_details
+// 中返回 cached_tokens。回归根因:openAIUsage 未声明该字段导致 cache 恒为 0,
+// TUI footer 显示 "cache --"。
+func TestRegression_OpenAIUsageMissingCachedTokens(t *testing.T) {
+	adapter := newOpenAIAdapter(ClientConfig{})
+	respJSON := `{
+		"choices": [{"finish_reason": "stop", "message": {"role": "assistant", "content": "hi"}}],
+		"usage": {
+			"prompt_tokens": 1000,
+			"completion_tokens": 200,
+			"total_tokens": 1200,
+			"prompt_tokens_details": {"cached_tokens": 800}
+		}
+	}`
+
+	resp, err := adapter.ParseResponse([]byte(respJSON))
+	if err != nil {
+		t.Fatalf("ParseResponse: %v", err)
+	}
+	if resp.Usage.CacheHitTokens != 800 {
+		t.Errorf("CacheHitTokens = %d, want 800", resp.Usage.CacheHitTokens)
+	}
+	if resp.Usage.CacheMissTokens != 200 {
+		t.Errorf("CacheMissTokens = %d, want 200 (prompt - cached)", resp.Usage.CacheMissTokens)
+	}
+}
+
+// TestRegression_OpenAIStreamUsageFrameDropped 流式最后一帧 usage 同样携带
+// prompt_tokens_details.cached_tokens,必须解析。
+// 根因二:choices 为空时提前 return 丢弃了 include_usage 生效后的末帧 usage。
+func TestRegression_OpenAIStreamUsageFrameDropped(t *testing.T) {
+	adapter := newOpenAIAdapter(ClientConfig{})
+	chunk := `{
+		"choices": [],
+		"usage": {
+			"prompt_tokens": 500,
+			"completion_tokens": 100,
+			"total_tokens": 600,
+			"prompt_tokens_details": {"cached_tokens": 450}
+		}
+	}`
+	ev, err := adapter.ParseStreamEvent([]byte(chunk))
+	if err != nil {
+		t.Fatalf("ParseStreamEvent: %v", err)
+	}
+	if ev.Usage == nil {
+		t.Fatal("Usage = nil, want parsed usage frame")
+	}
+	if ev.Usage.CacheHitTokens != 450 {
+		t.Errorf("CacheHitTokens = %d, want 450", ev.Usage.CacheHitTokens)
+	}
+	if ev.Usage.CacheMissTokens != 50 {
+		t.Errorf("CacheMissTokens = %d, want 50 (prompt - cached)", ev.Usage.CacheMissTokens)
+	}
+}
+
 func TestOpenAIAuthHeader(t *testing.T) {
 	adapter := newOpenAIAdapter(ClientConfig{
 		APIKey: "sk-test123",

@@ -120,14 +120,7 @@ func (a *openAIAdapter) ParseResponse(body []byte) (*Response, error) {
 		})
 	}
 
-	// 提取 usage
-	if resp.Usage != nil {
-		result.Usage = &UsageInfo{
-			PromptTokens:     resp.Usage.PromptTokens,
-			CompletionTokens: resp.Usage.CompletionTokens,
-			TotalTokens:      resp.Usage.TotalTokens,
-		}
-	}
+	result.Usage = usageInfoFromOpenAIUsage(resp.Usage)
 
 	return result, nil
 }
@@ -201,7 +194,9 @@ func (a *openAIAdapter) ParseStreamEvent(data []byte) (StreamingEvent, error) {
 	}
 
 	if len(chunk.Choices) == 0 {
-		return StreamingEvent{}, nil
+		// stream_options.include_usage 生效时,最后一帧仅含 usage
+		// (choices 为空数组),不得提前丢弃。
+		return StreamingEvent{Usage: usageInfoFromOpenAIUsage(chunk.Usage)}, nil
 	}
 
 	choice := chunk.Choices[0]
@@ -221,14 +216,7 @@ func (a *openAIAdapter) ParseStreamEvent(data []byte) (StreamingEvent, error) {
 		})
 	}
 
-	// 提取 usage（仅在最后一帧携带）
-	if chunk.Usage != nil {
-		ev.Usage = &UsageInfo{
-			PromptTokens:     chunk.Usage.PromptTokens,
-			CompletionTokens: chunk.Usage.CompletionTokens,
-			TotalTokens:      chunk.Usage.TotalTokens,
-		}
-	}
+	ev.Usage = usageInfoFromOpenAIUsage(chunk.Usage)
 
 	return ev, nil
 }
@@ -293,9 +281,37 @@ type openAIUsage struct {
 	PromptTokens     int `json:"prompt_tokens"`
 	CompletionTokens int `json:"completion_tokens"`
 	TotalTokens      int `json:"total_tokens"`
+	PromptTokensDetails *openAIPromptTokensDetails `json:"prompt_tokens_details,omitempty"`
 }
 
-// GetBalance OpenAI 不支持余额查询接口，返回 nil, nil。
+// openAIPromptTokensDetails 对应 OpenAI 兼容协议 usage.prompt_tokens_details。
+// cached_tokens 为前缀缓存命中 token 数(GLM/OpenAI 等返回;缺省时为 0)。
+type openAIPromptTokensDetails struct {
+	CachedTokens int `json:"cached_tokens"`
+}
+
+// usageInfoFromOpenAIUsage 将 OpenAI 兼容 usage 转换为统一的 UsageInfo。
+// 缓存仅返回单一 cached_tokens 字段(无 hit/miss 区分),与 Kimi adapter 同策略:
+// 用 prompt_tokens - cached_tokens 估算 cache miss,使 TUI 命中率显示合理。
+// usage 为 nil 时返回 nil(响应未携带 usage)。
+func usageInfoFromOpenAIUsage(u *openAIUsage) *UsageInfo {
+	if u == nil {
+		return nil
+	}
+	cacheHit := 0
+	if u.PromptTokensDetails != nil {
+		cacheHit = u.PromptTokensDetails.CachedTokens
+	}
+	return &UsageInfo{
+		PromptTokens:     u.PromptTokens,
+		CompletionTokens: u.CompletionTokens,
+		TotalTokens:      u.TotalTokens,
+		CacheHitTokens:   cacheHit,
+		CacheMissTokens:  max(0, u.PromptTokens-cacheHit),
+	}
+}
+
+// GetBalance OpenAI 不支持余额查询接口,返回 nil, nil。
 func (a *openAIAdapter) GetBalance(ctx context.Context, httpClient *http.Client) (*BalanceInfo, error) {
 	return nil, nil
 }

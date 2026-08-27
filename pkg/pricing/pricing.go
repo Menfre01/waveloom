@@ -40,6 +40,10 @@ var cnyTable = map[string]Price{
 	"kimi/kimi-k3": {CacheHit: 2.0, CacheMiss: 20.0, Prompt: 20.0, Output: 100.0},
 	"kimi/":        {CacheHit: 2.0, CacheMiss: 20.0, Prompt: 20.0, Output: 100.0},
 
+	// GLM Coding Plan(智谱编码套餐,订阅已包含套餐内模型费用;glm-4.6v 按量计费)
+	"glm/glm-4.6v": {Prompt: 2.1, Output: 6.3}, // 官方 $0.30/$0.90 × 7 汇率
+	"glm/":         {Prompt: 0, Output: 0},
+
 	// OpenAI
 	"openai/gpt-4o":  {Prompt: 17.5, Output: 70.0},
 	"openai/gpt-4.1": {Prompt: 14.0, Output: 56.0},
@@ -66,6 +70,10 @@ var usdTable = map[string]Price{
 	// Kimi (Moonshot)
 	"kimi/kimi-k3": {CacheHit: 0.30, CacheMiss: 3.0, Prompt: 3.0, Output: 15.0},
 	"kimi/":        {CacheHit: 0.30, CacheMiss: 3.0, Prompt: 3.0, Output: 15.0},
+
+	// GLM Coding Plan(智谱编码套餐,订阅已包含套餐内模型费用;glm-4.6v 按量计费)
+	"glm/glm-4.6v": {Prompt: 0.30, Output: 0.90},
+	"glm/":         {Prompt: 0, Output: 0},
 
 	// OpenAI
 	"openai/gpt-4o":  {Prompt: 2.50, Output: 10.00},
@@ -156,6 +164,8 @@ func InferProvider(model string) string {
 		return "deepseek"
 	case strings.HasPrefix(model, "kimi"):
 		return "kimi"
+	case strings.HasPrefix(model, "glm"):
+		return "glm"
 	case strings.HasPrefix(model, "gpt"),
 		strings.HasPrefix(model, "o1"),
 		strings.HasPrefix(model, "o3"),

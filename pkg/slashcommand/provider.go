@@ -156,7 +156,7 @@ func (c *ProviderCommand) executeWithArgs(name string) (*Result, error) {
 
 // isKnownProvider 判断是否为 Waveloom 内置支持的 provider 类型。
 func isKnownProvider(name string) bool {
-	for _, pt := range []llm.ProviderType{llm.ProviderDeepSeek, llm.ProviderOpenAI, llm.ProviderKimi} {
+	for _, pt := range []llm.ProviderType{llm.ProviderDeepSeek, llm.ProviderOpenAI, llm.ProviderKimi, llm.ProviderGLM} {
 		if string(pt) == name {
 			return true
 		}

@@ -250,6 +250,10 @@ func (m *setupModel) handleStepComplete() {
 			m.state.model = "kimi-k3"
 			m.state.subModel = "kimi-k2.7-code-highspeed"
 			m.state.baseURL = "https://api.kimi.com/coding/v1"
+		case "glm":
+			m.state.model = "glm-5.3"
+			m.state.subModel = "glm-5.3-flash"
+			m.state.baseURL = "https://open.bigmodel.cn/api/coding/paas/v4"
 		}
 		m.step++
 	case 3:
@@ -346,6 +350,7 @@ func (m *setupModel) buildForm() {
 			Options(
 				huh.NewOption("DeepSeek  (Recommended)", "deepseek"),
 				huh.NewOption("Kimi", "kimi"),
+				huh.NewOption("GLM Coding Plan", "glm"),
 				huh.NewOption("OpenAI", "openai"),
 			).
 			Value(&provVal)
@@ -354,7 +359,7 @@ func (m *setupModel) buildForm() {
 
 	case 3:
 		apiKeyVal := m.state.apiKey
-		apiDesc := fmt.Sprintf("https://platform.%s.com/api_keys", m.state.prov)
+		apiDesc := apiKeyPageURL(m.state.prov)
 		if m.state.apiKeyError != "" {
 			apiDesc = lipgloss.NewStyle().Foreground(colorErr).Render(m.state.apiKeyError) + "\n" + apiDesc
 		}
@@ -388,6 +393,9 @@ func (m *setupModel) buildForm() {
 		case "kimi":
 			desc = "kimi-k3 (Recommended) / kimi-k2.7-code-highspeed"
 			subDesc = fmt.Sprintf(lc.SetupSubModelDesc, "kimi-k2.7-code-highspeed")
+		case "glm":
+			desc = "glm-5.3 (Recommended) / glm-5.2 / glm-5.3-flash"
+			subDesc = fmt.Sprintf(lc.SetupSubModelDesc, "glm-5.3-flash")
 		}
 		modelInp := huh.NewInput().
 			Key("model").
@@ -692,4 +700,16 @@ func validateAPIKey(provider, apiKey, baseURL string) error {
 		return fmt.Errorf("cannot connect to API: %w", err)
 	}
 	return nil
+}
+
+// apiKeyPageURL 返回 provider 的 API Key 申请/管理页面地址。
+// 多数 provider 遵循 platform.<name>.com 模式,GLM Coding Plan 例外
+// (智谱开放平台,订阅后需在套餐概览页新建 Key)。
+func apiKeyPageURL(provider string) string {
+	switch provider {
+	case "glm":
+		return "https://open.bigmodel.cn/"
+	default:
+		return fmt.Sprintf("https://platform.%s.com/api_keys", provider)
+	}
 }

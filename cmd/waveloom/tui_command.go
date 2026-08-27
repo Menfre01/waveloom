@@ -814,7 +814,7 @@ func effortChoicesForProvider(provider string, lc *Messages) []effortChoice {
 	case string(llm.ProviderKimi):
 		// Kimi K3 始终启用思考,当前仅支持 max。
 		return []effortChoice{all[3]}
-	case string(llm.ProviderOpenAI):
+	case string(llm.ProviderOpenAI), string(llm.ProviderGLM):
 		// OpenAI 兼容协议无 max 档位。
 		return all[:3]
 	default: // deepseek 及其余:off/low/high/max

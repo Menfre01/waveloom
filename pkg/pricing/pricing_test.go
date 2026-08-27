@@ -41,6 +41,31 @@ func TestLookup_Kimi(t *testing.T) {
 	}
 }
 
+func TestLookup_GLMSubscriptionIncluded(t *testing.T) {
+	// 套餐内模型:订阅已包含,不额外计费
+	p := Lookup("glm", "glm-5.3")
+	if p.Prompt != 0 || p.Output != 0 {
+		t.Errorf("glm-5.3: got %+v, want zero price", p)
+	}
+	// provider 通配同样 0 价(套餐内模型集合)
+	p = Lookup("glm", "glm-5.2")
+	if p.Prompt != 0 || p.Output != 0 {
+		t.Errorf("glm-5.2 (wildcard): got %+v, want zero price", p)
+	}
+}
+
+func TestLookup_GLM46VMetered(t *testing.T) {
+	// glm-4.6v 视觉模型按量计费
+	p := Lookup("glm", "glm-4.6v")
+	if p.Prompt != 2.1 || p.Output != 6.3 {
+		t.Errorf("glm-4.6v CNY: got %+v", p)
+	}
+	p = LookupCurrency("glm", "glm-4.6v", USD)
+	if p.Prompt != 0.30 || p.Output != 0.90 {
+		t.Errorf("glm-4.6v USD: got %+v", p)
+	}
+}
+
 func TestLookupCurrency_CNY(t *testing.T) {
 	p := LookupCurrencyAt("deepseek", "deepseek-v4-pro", CNY, beijingTime(10, 0))
 	if p.CacheHit != 0.30 || p.CacheMiss != 9.0 || p.Output != 27.0 {
@@ -262,6 +287,8 @@ func TestInferProvider(t *testing.T) {
 		{"deepseek-chat", "deepseek"},
 		{"kimi-k3", "kimi"},
 		{"kimi-k2.7", "kimi"},
+		{"glm-5.3", "glm"},
+		{"glm-4.6v", "glm"},
 		{"gpt-4o", "openai"},
 		{"gpt-4.1", "openai"},
 		{"o1-mini", "openai"},

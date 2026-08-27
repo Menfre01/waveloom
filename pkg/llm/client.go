@@ -65,6 +65,8 @@ func NewClient(cfg ClientConfig) (Client, error) {
 		adapter = newDeepSeekAdapter(cfg)
 	case ProviderKimi:
 		adapter = newKimiAdapter(cfg)
+	case ProviderGLM:
+		adapter = newGLMAdapter(cfg)
 	case ProviderOpenAI:
 		adapter = newOpenAIAdapter(cfg)
 	case "":
