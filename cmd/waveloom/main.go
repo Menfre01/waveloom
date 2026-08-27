@@ -83,13 +83,19 @@ func main() {
 		return
 	}
 
-	// 3.5 ls — 列出最近 sessions（无需 LLM client）
+	// 3.5 ls — 列出最近 sessions(无需 LLM client)
 	if cfg.ListSessions {
 		listSessions(projectPath, globalPath, loc)
 		return
 	}
 
-	// 4. 加载 LLM Client（合并全局和项目配置，项目字段优先；--model 覆盖配置文件）
+	// 3.6 skill — 远程 skill 安装/管理(无需 LLM client)
+	if cfg.SkillArgs != nil {
+		runSkill(cfg.SkillArgs, homeDir, loc)
+		return
+	}
+
+	// 4. 加载 LLM Client(合并全局和项目配置,项目字段优先;--model 覆盖配置文件)
 	llmClient, llmClientCfg, llmSettings, err := createLLMClient(globalPath, projectPath, cfg.Model, cfg.Provider, loc)
 	if err != nil {
 		if needsSetup() {

@@ -66,6 +66,21 @@ waveloom --resume <session-id>  # 恢复指定会话
 waveloom --name <name>          # 为新会话命名
 ```
 
+## Skill 安装与管理
+
+从任意 git 仓库安装社区 Skill,自动锁定到具体 commit(`skill.lock.json`):
+
+```sh
+waveloom skill add https://github.com/user/skills.git@v1.2 --path packages/skills/review
+waveloom skill list              # 列出全部 skill 及来源(远程@commit 或本地)
+waveloom skill update review     # 拉取该 ref 当前最新 commit
+waveloom skill remove review     # 移除(仅限本工具安装的 skill)
+```
+
+- `@ref` 支持 branch / tag / commit SHA;缺省 `main`
+- 默认安装到项目级 `.waveloom/skills/`,`--global` 安装到用户级 `~/.waveloom/skills/`
+- 手动创建的 skill 不受 `skill.lock.json` 管理,`remove` 会拒绝误删
+
 ## @ 文件引用
 
 在输入框里打 `@`，会弹出文件选择器，支持模糊过滤（前缀 > 子串匹配），`Tab` 进入子目录。选中的文件内容会自动注入到消息上下文。

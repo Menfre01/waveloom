@@ -66,6 +66,21 @@ waveloom --resume <session-id>  # Resume a specific session
 waveloom --name <name>          # Name a new session
 ```
 
+## Skill Installation & Management
+
+Install community skills from any git repository, pinned to an exact commit (`skill.lock.json`):
+
+```sh
+waveloom skill add https://github.com/user/skills.git@v1.2 --path packages/skills/review
+waveloom skill list              # List all skills with their source (remote@commit or local)
+waveloom skill update review     # Pull the latest commit on the recorded ref
+waveloom skill remove review     # Remove (only skills installed via this command)
+```
+
+- `@ref` accepts branch / tag / commit SHA; defaults to `main`
+- Installs to project-level `.waveloom/skills/` by default; pass `--global` for user-level `~/.waveloom/skills/`
+- Manually created skills are not tracked by `skill.lock.json`; `remove` refuses to delete them
+
 ## @ File References
 
 Type `@` in the input to open a fuzzy file picker (prefix > substring matching). `Tab` enters subdirectories. Selected file contents are automatically injected into the message context.

@@ -30,6 +30,7 @@ type CLIConfig struct {
 	SessionName     string // 为 session 命名(--name,展示用,ls 显示)
 	ListSessions    bool   // 列出最近 sessions
 	CompletionShell string // shell 补全脚本名称(bash/zsh/fish),空 = 不输出
+	SkillArgs       []string // skill 子命令参数("skill" 后的剩余部分,含子命令名)
 	BypassPerm      bool
 	SandboxNetwork  string // --sandbox-network,覆盖 settings.json 的 sandbox.network.mode(off/on)
 	NoSandbox       bool   // --no-sandbox,显式关闭沙箱(one-shot/ACP 默认激活;Docker 等已隔离环境使用)
@@ -108,7 +109,7 @@ loop:
 		}
 		positional = append(positional, rest[0])
 		switch rest[0] {
-		case "setup", "ls", "completion", "mcp", "acp":
+		case "setup", "ls", "completion", "mcp", "acp", "skill":
 			positional = append(positional, rest[1:]...)
 			break loop
 		}
@@ -168,6 +169,8 @@ loop:
 		case "acp":
 			runACP(args[1:])
 			os.Exit(0)
+		case "skill":
+			cfg.SkillArgs = args[1:]
 		default:
 			cfg.OneShot = args[0]
 		}

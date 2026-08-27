@@ -210,6 +210,25 @@ type Messages struct {
 	ProviderConfigSaveFailed  string // 含 %v
 	ProviderModelNotice       string // 含 %s
 
+	// ── waveloom skill CLI ────────────────────────────────
+	SkillCmdUsage       string // 子命令总览(多行)
+	SkillCmdNeedURL     string
+	SkillCmdNeedName    string
+	SkillCmdUnknownSub  string
+	SkillCmdAdded       string
+	SkillCmdSource      string
+	SkillCmdLocation    string
+	SkillCmdListName    string
+	SkillCmdListSource  string
+	SkillCmdLocal       string
+	SkillCmdUpToDate    string // 含 %s
+	SkillCmdUpdated     string
+	SkillCmdRemoved     string
+	SkillCmdNotTracked  string
+	SkillCmdErrRef      string
+	SkillCmdErrNoSKILLmd string
+	SkillCmdErrExists   string
+
 	// ── CLI help ──────────────────────────────────────────
 	HelpUsageText string
 
@@ -479,6 +498,31 @@ var zhCN = Messages{
 	ProviderConfigReadFailed:  "读取配置失败: %v",
 	ProviderConfigSaveFailed:  "保存配置失败: %v",
 	ProviderModelNotice:       "当前模型: %s。如有需要请执行 /model 切换。",
+
+	// ── waveloom skill CLI ──
+	SkillCmdUsage: `管理 Skill(远程安装 / 列表 / 更新 / 移除)
+
+子命令:
+  waveloom skill add    <url>[@ref] [--path <dir>] [--name <name>] [--global]
+  waveloom skill list
+  waveloom skill update <name>
+  waveloom skill remove <name>`,
+	SkillCmdNeedURL:      "用法: waveloom skill add <url>[@ref] [--path <dir>]",
+	SkillCmdNeedName:     "用法: waveloom skill update|remove <name>",
+	SkillCmdUnknownSub:   "未知子命令",
+	SkillCmdAdded:        "✓ Skill 安装成功",
+	SkillCmdSource:       "来源:",
+	SkillCmdLocation:     "位置:",
+	SkillCmdListName:     "名称",
+	SkillCmdListSource:   "来源",
+	SkillCmdLocal:        "(本地)",
+	SkillCmdUpToDate:     "已是最新(%s)",
+	SkillCmdUpdated:      "✓ 已更新",
+	SkillCmdRemoved:      "✓ 已移除",
+	SkillCmdNotTracked:   "✗ skill.lock.json 中没有该 skill 的安装记录(手动安装的 skill 不由本命令移除)",
+	SkillCmdErrRef:       "✗ 仓库中未找到指定 ref",
+	SkillCmdErrNoSKILLmd: "✗ 目标路径下未找到 SKILL.md",
+	SkillCmdErrExists:    "✗ 名称冲突,请先移除已装的同名 skill 或改用 --name",
 
 	// CLI help
 	HelpUsageText: `Waveloom — Code Agent CLI
@@ -794,6 +838,31 @@ var enUS = Messages{
 	ProviderConfigSaveFailed:  "Failed to save config: %v",
 	ProviderModelNotice:       "Current model: %s. Use /model to switch if needed.",
 
+	// ── waveloom skill CLI ──
+	SkillCmdUsage: `Manage skills (install from git, list, update, remove)
+
+Subcommands:
+  waveloom skill add    <url>[@ref] [--path <dir>] [--name <name>] [--global]
+  waveloom skill list
+  waveloom skill update <name>
+  waveloom skill remove <name>`,
+	SkillCmdNeedURL:      "usage: waveloom skill add <url>[@ref] [--path <dir>]",
+	SkillCmdNeedName:     "usage: waveloom skill update|remove <name>",
+	SkillCmdUnknownSub:   "unknown subcommand",
+	SkillCmdAdded:        "✓ skill installed",
+	SkillCmdSource:       "source:",
+	SkillCmdLocation:     "location:",
+	SkillCmdListName:     "NAME",
+	SkillCmdListSource:   "SOURCE",
+	SkillCmdLocal:        "(local)",
+	SkillCmdUpToDate:     "already up to date (%s)",
+	SkillCmdUpdated:      "✓ updated",
+	SkillCmdRemoved:      "✓ removed",
+	SkillCmdNotTracked:   "✗ no install record for this skill in skill.lock.json (manual installs are not removed by this command)",
+	SkillCmdErrRef:       "✗ ref not found in repository",
+	SkillCmdErrNoSKILLmd: "✗ SKILL.md not found at the target path",
+	SkillCmdErrExists:    "✗ name conflict; remove the installed one first or use --name",
+
 	// CLI help
 	HelpUsageText: `Waveloom — Code Agent CLI
 
@@ -900,6 +969,15 @@ Environment variables:
 // ---------------------------------------------------------------------------
 // Locale 查询
 // ---------------------------------------------------------------------------
+
+// localizedMsg 返回 Messages 中指定字段的非空值;为空时回退 fallback。
+// 用于 CLI 子命令(skill 等)在 Message 键尚未定义时的兜底渲染。
+func localizedMsg(msg, fallback string) string {
+	if msg != "" {
+		return msg
+	}
+	return fallback
+}
 
 // messagesFor 返回指定 locale 对应的 Messages 实例。
 // 不支持的语言回退到 en-US。
