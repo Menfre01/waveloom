@@ -321,6 +321,46 @@ func TestInstall_DiffURLConflict(t *testing.T) {
 	}
 }
 
+// TestRegression_InterruptedInstallCleansTempDir 回归根因:Ctrl+C/SIGTERM
+// 直接终止进程时 defer 清理不执行(临时克隆目录残留),以及 CommandContext
+// 取消时仅杀 git 主进程、git-remote-https 子进程继承管道 fd 导致进程卡死。
+// 修复:Install 内 signal.NotifyContext 接管信号 + cloneRepo 进程组 kill。
+// 用阻塞的假 git + 500ms 超时 ctx 模拟中断路径。
+func TestRegression_InterruptedInstallCleansTempDir(t *testing.T) {
+	fakeBin := t.TempDir()
+	fakeGit := filepath.Join(fakeBin, "git")
+	// 所有 git 命令阻塞 30s,让 ctx 超时触发中断路径。
+	if err := os.WriteFile(fakeGit, []byte("#!/bin/sh\nsleep 30\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", fakeBin+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+	_, err := Install(ctx, InstallOptions{
+		URL:     "https://example.com/slow.git",
+		Ref:     "main",
+		Name:    "slow-skill",
+		DestDir: t.TempDir(),
+	})
+	if err == nil {
+		t.Fatal("Install = nil error, want interruption error")
+	}
+	if !strings.Contains(err.Error(), "interrupted") && !strings.Contains(err.Error(), "context") {
+		t.Errorf("err = %v, want interrupted/context error", err)
+	}
+
+	entries, readErr := os.ReadDir(os.TempDir())
+	if readErr != nil {
+		t.Skipf("cannot read tmp dir: %v", readErr)
+	}
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), "waveloom-skill-install-") {
+			t.Errorf("temp clone dir leaked after interrupt: %s", e.Name())
+		}
+	}
+}
+
 // createGitRepoNamed 创建指定目录名的独立仓库(用于冲突场景)。
 func createGitRepoNamed(t *testing.T, name string) gitFixture {
 	t.Helper()

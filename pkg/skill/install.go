@@ -9,6 +9,7 @@ package skill
 //   - lock 原子写(tmp + rename),防中断损坏
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -17,8 +18,10 @@ import (
 	"io/fs"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -76,6 +79,11 @@ func Install(ctx context.Context, opts InstallOptions) (LockEntry, error) {
 		return LockEntry{}, fmt.Errorf("git executable not found in PATH: %w", err)
 	}
 
+	// REGRESSION: Ctrl+C/SIGTERM 直接终止进程时 defer 清理不执行,临时克隆
+	// 目录残留。绑定信号 → ctx 取消 → git 子进程被杀 → 走正常错误路径,
+	// defer os.RemoveAll(tmpDir) 得以执行。
+	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
+	defer stop()
 	ctx, cancel := context.WithTimeout(ctx, installTimeout)
 	defer cancel()
 
@@ -192,15 +200,36 @@ func cloneRepo(ctx context.Context, url, ref, dst string) (string, error) {
 		}
 	}
 
-	var cmdOut []byte
 	var execErr error
 	var err error
 	run := func(step string, args ...string) bool {
-		cmd := exec.CommandContext(ctx, "git", args...)
+		// REGRESSION: CommandContext 取消时仅杀 git 主进程,git-remote-https
+		// 等子进程继承管道 fd 导致 CombinedOutput 读阻塞、进程卡死。改用
+		// 进程组(Setpgid)+ ctx 监听,取消时 kill 整个进程组。
+		cmd := exec.Command("git", args...)
 		cmd.Dir = dst
-		cmdOut, execErr = cmd.CombinedOutput()
-		if execErr != nil {
-			err = gitErr(cmdOut, execErr, step)
+		setSysProcAttrSkill(cmd)
+		var outBuf bytes.Buffer
+		cmd.Stdout = &outBuf
+		cmd.Stderr = &outBuf
+		if execErr = cmd.Start(); execErr != nil {
+			err = fmt.Errorf("git %s start failed: %w", step, execErr)
+			return false
+		}
+		done := make(chan error, 1)
+		go func() {
+			done <- cmd.Wait()
+		}()
+		select {
+		case execErr = <-done:
+			if execErr != nil {
+				err = gitErr(outBuf.Bytes(), execErr, step)
+				return false
+			}
+		case <-ctx.Done():
+			killProcessGroupSkill(cmd.Process.Pid)
+			<-done
+			err = fmt.Errorf("git %s interrupted: %w", step, ctx.Err())
 			return false
 		}
 		return true
