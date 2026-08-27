@@ -108,6 +108,15 @@ func Install(ctx context.Context, opts InstallOptions) (LockEntry, error) {
 			"%w: %q already installed from %s (remove it first or choose another name)",
 			ErrSkillExists, name, prev.URL)
 	}
+	_, installed := lock[name]
+	// REGRESSION: 目标目录已存在但 lock 无记录 = 手写/外部安装的 skill。
+	// 直接 RemoveAll 覆盖会静默销毁用户文件,与 remove 拒绝手写 skill 的
+	// 保护语义矛盾。拒绝并提示(与文档"手写 skill 不受管理"对齐)。
+	if target := filepath.Join(destSkillsDir, name); dirExists(target) && !installed {
+		return LockEntry{}, fmt.Errorf(
+			"%w: %q exists in %s but has no skill.lock.json record (it was created manually — remove it first or choose another name)",
+			ErrSkillExists, name, destSkillsDir)
+	}
 
 	tmpDir, err := os.MkdirTemp("", tmpClonePrefix+"*")
 	if err != nil {
@@ -324,6 +333,12 @@ func copyFile(src, dst string, mode fs.FileMode) error {
 	defer out.Close() //nolint:errcheck
 	_, err = io.Copy(out, in)
 	return err
+}
+
+// dirExists 判断路径是否为存在的目录(与 fileExists 对称,供安装前冲突检查用)。
+func dirExists(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.IsDir()
 }
 
 // ---------------------------------------------------------------------------

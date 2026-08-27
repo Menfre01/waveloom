@@ -77,9 +77,24 @@ waveloom skill update review     # Pull the latest commit on the recorded ref
 waveloom skill remove review     # Remove (only skills installed via this command)
 ```
 
-- `@ref` accepts branch / tag / commit SHA; defaults to `main`
+- `@ref` accepts branch / tag / full 40-char commit SHA (short SHAs are not supported); defaults to `main`
 - Installs to project-level `.waveloom/skills/` by default; pass `--global` for user-level `~/.waveloom/skills/`
+- Install records are written to `.waveloom/skill.lock.json` (next to the skills dir; `~/.waveloom/skill.lock.json` for global installs)
 - Manually created skills are not tracked by `skill.lock.json`; `remove` refuses to delete them
+
+### Install rules
+
+- **Format check**: a `SKILL.md` (standard YAML frontmatter + Markdown body) must exist at the target path, otherwise the install fails and rolls back without leaving partial files
+- **Naming**: the installed name is derived from `--name` > last segment of `--path` > repository name (without `.git`)
+- **Name conflicts**: installing a name that already exists from a *different* source is rejected — `remove` it first or use `--name`; reinstalling the same repository with a different `@ref` is treated as an update and overwrites the old version
+- **Idempotency**: reinstalling the same commit does not recopy files
+- **Immediate effect**: once written into the skills directory, the skill is instantly discoverable by the TUI `/` command palette and the LLM — no restart needed
+
+### FAQ
+
+- **`list` output**: the first column is the skill name, the second is the source (`https://...@<commit>` for remote or `(local)` for manual). If a skill's frontmatter `name` differs from its directory name (install name), `list` and the `/` palette show the frontmatter `name`, while `update`/`remove` expect the install name (directory name)
+- **`update` with no record**: the skill was not installed via `skill add` — `update` reports no install record and leaves the manual directory untouched
+- **Manual dir with the same name**: if a same-named skill dir already exists without a lock record, `add` refuses to install (prevents overwrite) — remove it manually or use `--name`
 
 ## @ File References
 

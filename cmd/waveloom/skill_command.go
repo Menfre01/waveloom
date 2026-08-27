@@ -137,8 +137,12 @@ func partitionFlagArgs(args []string, valueFlags map[string]bool) (flags, positi
 
 // parseURLRef 拆分 <url>[@ref];ref 缺省为空(Install 内回退 main)。
 func parseURLRef(arg string) (url, ref string) {
-	// scp-like 语法(git@host:path)不含 @ref 组合场景,仅处理常规 URL。
-	if i := strings.LastIndex(arg, "@"); i > 0 && !strings.HasPrefix(arg, "git@") {
+	// 仅常规 URL 切分 <url>@<ref>:scp-like(git@host:path)与带凭据的
+	// https://user:token@host/repo.git 均含 @ 但不是 ref 分隔符,须排除。
+	// 判定:最后 @ 之前不含 "://"(排除 https://token@host),且不以 "git@" 开头。
+	if i := strings.LastIndex(arg, "@"); i > 0 &&
+		!strings.Contains(arg[:i], "://") &&
+		!strings.HasPrefix(arg, "git@") {
 		return arg[:i], arg[i+1:]
 	}
 	return arg, ""
@@ -181,9 +185,6 @@ func skillList(cwd, homeDir string, m *Messages) {
 
 	// lock 对账标注远程来源;读失败降级为全部显示 local(不中断)。
 	lockByDir := map[string][]skill.LockEntry{} // skills 目录 → entries
-	for _, target := range []struct{ dir string }{} {
-		_ = target
-	}
 	for _, dir := range allSkillsDirs(cwd, homeDir) {
 		if lock, lockErr := skill.ReadLock(filepath.Join(filepath.Dir(dir), "skill.lock.json")); lockErr == nil {
 			for _, e := range lock {
@@ -199,8 +200,10 @@ func skillList(cwd, homeDir string, m *Messages) {
 		src := localizedMsg(m.SkillCmdLocal, "(local)")
 		// Source 形如 <skills>/<name>/SKILL.md,上跳两级才是 skills 目录(lock 所在同级)。
 		dir := filepath.Dir(filepath.Dir(info.Source))
+		// 安装名 = 目录名(frontmatter name 可能不同,update/remove 均按目录名)。
+		dirName := filepath.Base(filepath.Dir(info.Source))
 		for _, e := range lockByDir[dir] {
-			if e.Name == info.Name {
+			if e.Name == dirName {
 				src = e.URL + "@" + shortCommit(e.ResolvedCommit)
 				break
 			}
@@ -319,7 +322,8 @@ func renderInstallErr(err error, m *Messages) string {
 		return localizedMsg(m.SkillCmdErrNoSKILLmd,
 			"✗ SKILL.md not found at the target path") + " — " + err.Error()
 	case errors.Is(err, skill.ErrSkillExists):
-		return localizedMsg(m.SkillCmdErrExists, "✗ name conflict") + " — " + err.Error()
+		// 文案已包含完整指引(移除或改名),不再拼接英文 err 详情避免中英重复。
+		return localizedMsg(m.SkillCmdErrExists, "✗ name conflict; remove the installed one first or use --name")
 	default:
 		return humanizeSkillErr(err)
 	}

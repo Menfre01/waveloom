@@ -321,6 +321,38 @@ func TestInstall_DiffURLConflict(t *testing.T) {
 	}
 }
 
+// TestRegression_ManualSkillDirNotOverwritten 回归根因:目标目录已存在但
+// lock 无记录(手写/外部安装的 skill)时,Install 曾静默 RemoveAll 覆盖,
+// 销毁用户文件。修复:此类冲突拒绝安装。
+func TestRegression_ManualSkillDirNotOverwritten(t *testing.T) {
+	f := createGitRepo(t)
+	dest := t.TempDir()
+	// 手写一个同名 skill(无 lock 记录)
+	manual := filepath.Join(dest, "test-skill", "SKILL.md")
+	writeFixtureFile(t, manual, "---\nname: test-skill\ndescription: handwritten\n---\n\n# Manual\n")
+
+	_, err := Install(context.Background(), installOpts(f, dest))
+	if !errors.Is(err, ErrSkillExists) {
+		t.Fatalf("err = %v, want ErrSkillExists (manual dir must not be overwritten)", err)
+	}
+	// 手写内容必须原封不动
+	got, readErr := os.ReadFile(manual)
+	if readErr != nil {
+		t.Fatalf("manual SKILL.md missing after rejected install: %v", readErr)
+	}
+	if !strings.Contains(string(got), "handwritten") {
+		t.Errorf("manual SKILL.md was modified: %q", got)
+	}
+	// lock 未写入新条目
+	lock, lockErr := ReadLock(lockPathFor(dest))
+	if lockErr != nil {
+		t.Fatal(lockErr)
+	}
+	if _, ok := lock["test-skill"]; ok {
+		t.Error("lock written for rejected install")
+	}
+}
+
 // TestRegression_InterruptedInstallCleansTempDir 回归根因:Ctrl+C/SIGTERM
 // 直接终止进程时 defer 清理不执行(临时克隆目录残留),以及 CommandContext
 // 取消时仅杀 git 主进程、git-remote-https 子进程继承管道 fd 导致进程卡死。

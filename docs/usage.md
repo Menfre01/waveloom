@@ -77,9 +77,24 @@ waveloom skill update review     # 拉取该 ref 当前最新 commit
 waveloom skill remove review     # 移除(仅限本工具安装的 skill)
 ```
 
-- `@ref` 支持 branch / tag / commit SHA;缺省 `main`
+- `@ref` 支持 branch / tag / 40 位完整 commit SHA(短 SHA 不支持);缺省 `main`
 - 默认安装到项目级 `.waveloom/skills/`,`--global` 安装到用户级 `~/.waveloom/skills/`
+- 安装记录写入 `.waveloom/skill.lock.json`(与 skills 目录同级;全局安装则在 `~/.waveloom/skill.lock.json`)
 - 手动创建的 skill 不受 `skill.lock.json` 管理,`remove` 会拒绝误删
+
+### 添加规则
+
+- **格式校验**:目标路径下必须存在 `SKILL.md`(标准 YAML frontmatter + Markdown body),否则安装失败并回滚,不留半成品
+- **命名**:安装名按 `--name` > `--path` 尾段 > 仓库名(去 `.git`)推导
+- **同名冲突**:已装有同名 skill 且来源不同 → 拒绝安装,需先 `remove` 或改用 `--name`;同仓库换 `@ref` 重装则视为更新,覆盖旧版本
+- **幂等**:重复安装同一 commit 不重复拷贝
+- **安装即生效**:写入 skills 目录后立即被 TUI `/` 命令面板与 LLM 发现,无需重启
+
+### 常见问题
+
+- **`list` 输出**:第一列为 skill 名,第二列为来源(`https://...@<commit>` 远程或 `(local)` 手写);已装 skill 的 frontmatter `name` 与目录名(安装名)不一致时,`list` 与 `/` 面板按 frontmatter `name` 显示,而 `update`/`remove` 需用安装名(目录名)
+- **`update` 无记录**:该 skill 不是通过 `skill add` 安装的,`update` 会提示无安装记录,不会操作手写目录
+- **同名手写目录**:目标目录已存在同名 skill 且无 lock 记录时,`add` 会拒绝安装(防覆盖),需手动移除或改用 `--name`
 
 ## @ 文件引用
 

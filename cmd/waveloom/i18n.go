@@ -507,7 +507,7 @@ var zhCN = Messages{
   waveloom skill list
   waveloom skill update <name>
   waveloom skill remove <name>`,
-	SkillCmdNeedURL:      "用法: waveloom skill add <url>[@ref] [--path <dir>]",
+	SkillCmdNeedURL:      "用法: waveloom skill add <url>[@ref] [--path <dir>] [--name <name>] [--global]",
 	SkillCmdNeedName:     "用法: waveloom skill update|remove <name>",
 	SkillCmdUnknownSub:   "未知子命令",
 	SkillCmdAdded:        "✓ Skill 安装成功",
@@ -533,6 +533,7 @@ var zhCN = Messages{
   waveloom mcp                 MCP Server 管理
   waveloom acp                 以 ACP Agent 模式运行 (JSON-RPC over stdio)
   waveloom setup               首次设置向导
+  waveloom skill               远程 Skill 安装与管理 (add/list/update/remove)
   waveloom completion <shell>  输出 shell 补全脚本 (bash/zsh/fish)
   waveloom --help              显示帮助
   waveloom --version           显示版本号
@@ -846,7 +847,7 @@ Subcommands:
   waveloom skill list
   waveloom skill update <name>
   waveloom skill remove <name>`,
-	SkillCmdNeedURL:      "usage: waveloom skill add <url>[@ref] [--path <dir>]",
+	SkillCmdNeedURL:      "usage: waveloom skill add <url>[@ref] [--path <dir>] [--name <name>] [--global]",
 	SkillCmdNeedName:     "usage: waveloom skill update|remove <name>",
 	SkillCmdUnknownSub:   "unknown subcommand",
 	SkillCmdAdded:        "✓ skill installed",
@@ -872,6 +873,7 @@ Usage:
   waveloom mcp                 Manage MCP servers
   waveloom acp                 Run as ACP agent (JSON-RPC over stdio)
   waveloom setup               First-time setup wizard
+  waveloom skill               Install & manage skills from git (add/list/update/remove)
   waveloom completion <shell>  Output shell completion script (bash/zsh/fish)
   waveloom --help              Show help
   waveloom --version           Show version
