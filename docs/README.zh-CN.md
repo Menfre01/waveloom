@@ -64,7 +64,7 @@ waveloom
 ```
 
 > [!IMPORTANT]
-> API Key 直连 DeepSeek / Kimi / OpenAI，代码不经过第三方。写文件和执行命令前需要你确认。
+> API Key 直连 DeepSeek / Kimi / GLM / OpenAI,代码不经过第三方。写文件和执行命令前需要你确认。
 
 ---
 
@@ -83,7 +83,7 @@ waveloom
 | Hook | PreToolUse / PostToolUse / Notification / Stop,permission_mode 字段,默认 fail-open(exit 2 显式拦截) | 原生 hooks:PreToolUse, PostToolUse 等 | — |
 | TUI 打磨 | 流式推理、rich diff、权限对话框、`@` 模糊选择器、`/` 面板、i18n、主题切换 — 专业级 | 原生 TUI(Ink/React),标杆水平 | 功能完备的 TUI,不同 UX 范式 |
 
-**选 Waveloom 如果**：追求专业终端体验，需要多 Provider 支持（DeepSeek / Kimi / OpenAI），想要 `.claude/skills/` + `.claude/plugins/` 开箱即用，不想白烧缓存未命中费用。
+**选 Waveloom 如果**:追求专业终端体验,需要多 Provider 支持(DeepSeek / Kimi / GLM / OpenAI),想要 `.claude/skills/` + `.claude/plugins/` 开箱即用,不想白烧缓存未命中费用。
 
 **选 Claude Code 如果**：用 Anthropic API、需要 coordinator 模式、重度依赖 Claude 生态。
 
@@ -124,7 +124,7 @@ waveloom
 输入 `/provider` 弹出交互式 Provider 选择器(↑↓ 选择 / Enter 确认 / Esc 取消),或 `/provider kimi` 直接切换。Profile 配置在 `settings.json` 的 `llm.profiles` 中。
 
 **Q: API Key 安全吗？**
-Key 存储在本地 `~/.waveloom/`，直连 DeepSeek / Kimi / OpenAI，不经过任何第三方服务器。
+Key 存储在本地 `~/.waveloom/`,直连 DeepSeek / Kimi / GLM / OpenAI,不经过任何第三方服务器。
 
 **Q: 怎么切换语言？**
 输入 `/locale` 切换中英文界面，或 `waveloom --locale en-US`。设置自动保存到 `settings.json`。

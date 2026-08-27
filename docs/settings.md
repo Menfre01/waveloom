@@ -23,14 +23,14 @@ Waveloom 首次运行在 `.waveloom/settings.json` 生成默认配置。配置�
 | 字段 | 说明 | 默认值 |
 |------|------|--------|
 | `api_key` | DeepSeek API Key，为空时回退 `LLM_API_KEY` 环境变量 | — |
-| `provider` | `deepseek`、`kimi` 或 `openai` | `deepseek` |
+| `provider` | `deepseek`、`kimi`、`glm` 或 `openai` | `deepseek` |
 | `model` | 模型名 | `deepseek-v4-pro` |
 | `base_url` | API 地址 | `https://api.deepseek.com` |
 | `timeout` | 请求超时 | `600s` |
 | `extra_params` | 额外参数（thinking、reasoning_effort 等） | 思考模式默认开启 |
 | `retry` | 重试策略 `{"max_retries":3, "initial_backoff":"1s", "max_backoff":"30s", "multiplier":2.0}` | 默认重试策略 |
-| `sub_model` | 子代理默认模型(exporer 子代理使用此模型执行代码搜索和发现,约 2 倍便宜) | 自动配对(pro → flash) |
-| `profiles` | 多 Provider 配置,以 provider 名为键(如 `"kimi"`、`"openai"`)。每个 profile 可包含 `api_key`、`model`、`sub_model`、`base_url`、`extra_params`。配合 `--provider` CLI 参数切换。Provider 无关字段(`timeout`、`retry`、`headers`)从顶层继承 | — |
+| `sub_model` | 子代理默认模型(explore 子代理使用此模型执行代码搜索和发现,约 2 倍便宜) | 自动配对(pro → flash) |
+| `profiles` | 多 Provider 配置,以 provider 名为键(如 `"kimi"`、`"glm"`、`"openai"`)。每个 profile 可包含 `api_key`、`model`、`sub_model`、`base_url`、`extra_params`。配合 `--provider` CLI 参数切换。Provider 无关字段(`timeout`、`retry`、`headers`)从顶层继承 | — |
 
 ```json
 {
@@ -46,6 +46,12 @@ Waveloom 首次运行在 `.waveloom/settings.json` 生成默认配置。配置�
         "api_key": "sk-your-openai-key",
         "model": "gpt-5",
         "base_url": "https://api.openai.com/v1"
+      },
+      "glm": {
+        "api_key": "your-glm-key",
+        "model": "glm-5.3",
+        "sub_model": "glm-5.3-flash",
+        "base_url": "https://open.bigmodel.cn/api/coding/paas/v4"
       }
     }
   }

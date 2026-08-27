@@ -87,7 +87,7 @@ Type `/` in the input to open the command palette with fuzzy search.
 | `/rename` | — | Rename the current session |
 | `/theme` | — | Select theme (auto / dark / light / darkcolorblind / lightcolorblind) |
 | `/locale` | `/lang` | Switch language (zh-CN / en-US) |
-| `/provider` | — | View or switch LLM provider (DeepSeek / Kimi / OpenAI) |
+| `/provider` | — | View or switch LLM provider (DeepSeek / Kimi / GLM / OpenAI) |
 | `/rewind` | — | Rewind to a previous message (restores file state) |
 | `/help` | — | Show all available commands |
 Skills with `user-invocable: true` in `.claude/skills/` are automatically registered as `/` commands using the skill name. Additionally, skills/commands from installed Claude Code plugins are auto-discovered (via `~/.claude/plugins/installed_plugins.json` + `enabledPlugins` config).

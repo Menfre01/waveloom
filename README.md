@@ -66,7 +66,7 @@ waveloom
 ```
 
 > [!IMPORTANT]
-> API key connects directly to DeepSeek / Kimi / OpenAI — your code never passes through a third-party server. Every file write and command execution requires your confirmation.
+> API key connects directly to DeepSeek / Kimi / GLM / OpenAI — your code never passes through a third-party server. Every file write and command execution requires your confirmation.
 
 ---
 
@@ -85,7 +85,7 @@ waveloom
 | Hook | PreToolUse / PostToolUse / Notification / Stop, permission_mode field, fail-open by default (exit code 2 explicitly blocks) | Native hooks: PreToolUse, PostToolUse, etc. | — |
 | TUI polish | Streaming reasoning, rich diff, permission dialogs, `@` fuzzy picker, `/` palette, i18n, theme toggle — premium terminal UX | Native TUI (Ink/React), gold standard | Functional TUI, different UX paradigm |
 
-**Choose Waveloom if**: you want premium terminal UX with multi-provider support (DeepSeek / Kimi / OpenAI), `.claude/skills/` + `.claude/plugins/` drop-in, without the cache miss cost.
+**Choose Waveloom if**: you want premium terminal UX with multi-provider support (DeepSeek / Kimi / GLM / OpenAI), `.claude/skills/` + `.claude/plugins/` drop-in, without the cache miss cost.
 **Choose Claude Code if**: you use Anthropic, need coordinator mode, deep in the Claude ecosystem.
 **Choose Reasonix if**: you want a desktop GUI, QQ Bot integration, or a larger community ecosystem.
 
@@ -125,7 +125,7 @@ Yes — with `deepseek-v4-flash`, Waveloom automatically switches to the DeepSee
 Type `/provider` to open the interactive provider picker (overlay with ↑↓ select / Enter confirm / Esc cancel), or `/provider kimi` to switch directly. Profiles are configured in `settings.json` under `llm.profiles`.
 
 **Q: Is my API key safe?**
-Stored locally at `~/.waveloom/`. Keys connect directly to DeepSeek / Kimi / OpenAI — no third-party relay.
+Stored locally at `~/.waveloom/`. Keys connect directly to DeepSeek / Kimi / GLM / OpenAI — no third-party relay.
 
 **Q: How do I switch languages?**
 Type `/locale` to toggle between Chinese and English, or `waveloom --locale zh-CN`. The setting persists automatically in `settings.json`.
