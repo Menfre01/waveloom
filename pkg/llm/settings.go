@@ -132,21 +132,27 @@ func (s *LLMSettings) SetModel(name string) {
 	}
 }
 
-// SetCurrModelForProvider 持久化当前模型选择到指定 provider 的 profile。
-// profile 不存在时自动创建(omitempty 序列化仅落盘 curr_model 字段,不污染
-// 其他配置)。各 provider 的选择互相隔离:切换 provider 后 ResolveProfile
-// 自动恢复该 provider 的选择。顶层 CurrModel 仅供手工配置作兜底。
-func (s *LLMSettings) SetCurrModelForProvider(provider, name string) {
+// EnsureProfile 返回指定 provider 的 profile,不存在时自动创建骨架并注册。
+// 骨架 profile 通过 omitempty 序列化仅落盘实际赋值的字段,不污染其他配置。
+// 供 /model、/effort 等切换持久化复用(单一骨架创建来源)。
+func (s *LLMSettings) EnsureProfile(provider string) *LLMSettings {
 	if s.Profiles == nil {
 		s.Profiles = map[string]*LLMSettings{}
 	}
 	p := s.Profiles[provider]
 	if p == nil {
-		// 与新 setup 格式一致:profile 只含实际配置字段,不冗余 provider
-		// (provider 身份由 profiles map key 决定;omitempty 保证仅 curr_model 落盘)
 		p = &LLMSettings{}
 		s.Profiles[provider] = p
 	}
+	return p
+}
+
+// SetCurrModelForProvider 持久化当前模型选择到指定 provider 的 profile。
+// profile 不存在时自动创建(omitempty 序列化仅落盘 curr_model 字段,不污染
+// 其他配置)。各 provider 的选择互相隔离:切换 provider 后 ResolveProfile
+// 自动恢复该 provider 的选择。顶层 CurrModel 仅供手工配置作兜底。
+func (s *LLMSettings) SetCurrModelForProvider(provider, name string) {
+	p := s.EnsureProfile(provider)
 	p.CurrModel = name
 }
 
@@ -293,7 +299,64 @@ func MergeLLMSettings(base, override *LLMSettings) *LLMSettings {
 			merged.Profiles[k] = copyProfile(v)
 		}
 		for k, v := range override.Profiles {
-			merged.Profiles[k] = copyProfile(v)
+			if baseProfile, ok := merged.Profiles[k]; ok && baseProfile != nil {
+				// 同名 profile 字段级合并:override 非空字段覆盖 base,空字段
+				// 保留 base(与顶层标量字段合并语义一致)。
+				// REGRESSION: 原实现整对象替换——项目 /model 切换生成的骨架
+				// profile(仅 curr_model,见 tui_command.persistModelChoice)覆盖
+				// 全局同名 profile,丢失 api_key/model/base_url/extra_params;
+				// home 纯 profile 形态配置(顶层无字段)下启动直接 api_key 缺失。
+				merged.Profiles[k] = mergeProfileFields(baseProfile, v)
+			} else {
+				merged.Profiles[k] = copyProfile(v)
+			}
+		}
+	}
+	return merged
+}
+
+// mergeProfileFields 字段级合并两个 profile:override 非空标量字段覆盖 base,
+// 空字段保留 base;Headers/ExtraParams 做 map 合并(base + override 覆盖)。
+func mergeProfileFields(base, override *LLMSettings) *LLMSettings {
+	merged := copyProfile(base)
+	if override.APIKey != "" {
+		merged.APIKey = override.APIKey
+	}
+	if override.Provider != "" {
+		merged.Provider = override.Provider
+	}
+	if override.Model != "" {
+		merged.Model = override.Model
+	}
+	if override.SubModel != "" {
+		merged.SubModel = override.SubModel
+	}
+	if override.CurrModel != "" {
+		merged.CurrModel = override.CurrModel
+	}
+	if override.BaseURL != "" {
+		merged.BaseURL = override.BaseURL
+	}
+	if override.Timeout != "" {
+		merged.Timeout = override.Timeout
+	}
+	if override.Retry != nil {
+		merged.Retry = override.Retry
+	}
+	if override.Headers != nil {
+		if merged.Headers == nil {
+			merged.Headers = make(map[string]string)
+		}
+		for k, v := range override.Headers {
+			merged.Headers[k] = v
+		}
+	}
+	if override.ExtraParams != nil {
+		if merged.ExtraParams == nil {
+			merged.ExtraParams = make(map[string]any)
+		}
+		for k, v := range override.ExtraParams {
+			merged.ExtraParams[k] = v
 		}
 	}
 	return merged

@@ -1435,6 +1435,55 @@ func TestMergeCurrModel(t *testing.T) {
 	})
 }
 
+// TestEnsureProfile 验证骨架 profile 的获取/创建语义:
+// 已存在 → 返回原对象;不存在 → 创建仅含赋值字段的骨架(不污染其他配置)。
+func TestEnsureProfile(t *testing.T) {
+	t.Run("returns existing profile", func(t *testing.T) {
+		s := &LLMSettings{
+			Profiles: map[string]*LLMSettings{
+				"deepseek": {Model: "deepseek-v4-pro"},
+			},
+		}
+		p := s.EnsureProfile("deepseek")
+		if p.Model != "deepseek-v4-pro" {
+			t.Errorf("got %+v, want existing profile", p)
+		}
+		if len(s.Profiles) != 1 {
+			t.Errorf("Profiles size = %d, want 1 (no new entry)", len(s.Profiles))
+		}
+	})
+
+	t.Run("creates skeleton when missing", func(t *testing.T) {
+		s := &LLMSettings{}
+		p := s.EnsureProfile("glm")
+		if p == nil {
+			t.Fatal("EnsureProfile returned nil")
+		}
+		if s.Profiles["glm"] != p {
+			t.Error("skeleton not registered in Profiles map")
+		}
+		if p.APIKey != "" || p.Model != "" || p.CurrModel != "" || p.BaseURL != "" {
+			t.Errorf("skeleton must be empty, got %+v", p)
+		}
+	})
+
+	t.Run("serialized skeleton only carries assigned fields", func(t *testing.T) {
+		s := &LLMSettings{}
+		p := s.EnsureProfile("glm")
+		p.CurrModel = "glm-4.6"
+		data, err := json.Marshal(s)
+		if err != nil {
+			t.Fatalf("marshal: %v", err)
+		}
+		if strings.Contains(string(data), `"model"`) || strings.Contains(string(data), `"api_key"`) {
+			t.Errorf("skeleton serialized with unexpected fields: %s", data)
+		}
+		if !strings.Contains(string(data), `"curr_model":"glm-4.6"`) {
+			t.Errorf("skeleton missing curr_model in serialization: %s", data)
+		}
+	})
+}
+
 // TestRegression_ProfileSubModelSurvivesMerge 回归:profile 内的 sub_model 在
 // 全局+项目配置合并(/model 持久化路径)后必须保留。
 // 曾因 copyProfile 未复制 SubModel,导致 /model 写回时项目文件的
