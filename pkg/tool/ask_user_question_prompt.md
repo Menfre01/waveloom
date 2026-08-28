@@ -7,6 +7,10 @@ Use this tool when you need to:
 3. Get decisions on implementation choices as you work
 4. Offer choices to the user about what direction to take
 
+Usage discipline (keep questions rare and high-value):
+- Only ask when you cannot reasonably infer the answer from context, files, or web search — each interruption costs flow.
+- For multi-choice questions, always mark the option you recommend with "(Recommended)".
+
 Usage notes:
 - Users will always be able to select "Other" to provide custom text input
 - Use multiSelect: true to allow multiple answers for a question
