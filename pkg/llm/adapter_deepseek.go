@@ -49,6 +49,7 @@ func (a *deepSeekAdapter) BuildRequest(ctx context.Context, messages []Message, 
 		body := a.buildResponsesRequestBody(ctx, messages, tools, false)
 		return newJSONRequest(http.MethodPost, a.baseURL+"/v1/responses", body)
 	}
+	a.warnIfChatFallback(ctx)
 	body := a.buildChatRequestBody(ctx, messages, tools, false)
 	return newJSONRequest(http.MethodPost, a.baseURL+"/v1/chat/completions", body)
 }
@@ -58,20 +59,58 @@ func (a *deepSeekAdapter) BuildStreamRequest(ctx context.Context, messages []Mes
 		body := a.buildResponsesRequestBody(ctx, messages, tools, true)
 		return newJSONRequest(http.MethodPost, a.baseURL+"/v1/responses", body)
 	}
+	a.warnIfChatFallback(ctx)
 	body := a.buildChatRequestBody(ctx, messages, tools, true)
 	return newJSONRequest(http.MethodPost, a.baseURL+"/v1/chat/completions", body)
+}
+
+// isDeepSeekOfficialEndpoint 判断 baseURL 是否为 DeepSeek 官方端点。
+// 仅官方端点支持 Responses API 与服务端 web_search;第三方代理端点
+// (one-api 等)走 chat + 本地工具是正确行为,不应告警。
+func isDeepSeekOfficialEndpoint(baseURL string) bool {
+	return strings.Contains(baseURL, "api.deepseek.com")
+}
+
+// shouldWarnChatFallback 判定是否需要降级告警:官方端点 + 模型名疑似
+// deepseek(含 "deepseek" 子串)但未命中 Responses 匹配——提示模型名
+// 拼写/前缀问题导致静默降级(服务端 web_search 不可用)。第三方端点或
+// 非 deepseek 名不告警(chat + 本地工具是正确行为);精确命中 Responses
+// 的模型名不告警(实际也不会走到 chat 分支)。
+func shouldWarnChatFallback(baseURL, model string) bool {
+	if !isDeepSeekOfficialEndpoint(baseURL) {
+		return false
+	}
+	if isDeepSeekResponsesModel(model) {
+		return false
+	}
+	return strings.Contains(model, "deepseek")
+}
+
+// warnIfChatFallback 在 shouldWarnChatFallback 成立时输出降级告警日志。
+func (a *deepSeekAdapter) warnIfChatFallback(ctx context.Context) {
+	m := a.effectiveModel(ctx)
+	if shouldWarnChatFallback(a.baseURL, m) {
+		slog.Warn("deepseek model name not matched for Responses API — falling back to chat completions (server-side web_search unavailable)",
+			"model", m, "base_url", a.baseURL)
+	}
 }
 
 // isDeepSeekResponsesModel 判断模型是否使用 Responses API(/v1/responses)。
 // 官方文档:Responses API 的 model 可选值为 deepseek-v4-flash / deepseek-v4-pro /
 // deepseek-v4-flash-vision-exp(视觉模型同样支持 Responses API,图片以
 // input_image 内容块承载,见 guides/vision#responses-api;旧模型名
-// deepseek-chat / deepseek-reasoner 已废弃)。其余模型名(自定义 baseURL 或
-// 第三方 OpenAI 兼容端点)走 Chat Completions。精确匹配配置/override 传入的
-// 模型名,带 provider 前缀(如 "deepseek/deepseek-v4-pro")的形式不会命中,
-// 此时走 Chat Completions(前缀名仅对接受该命名的第三方端点有效,官方端点
-// 会返回 model not found);视觉模型经此前缀形式走 chat 时仍携带图片
-// (IsVisionModel 容忍前缀)。
+// deepseek-chat / deepseek-reasoner 已废弃)。
+//
+// 匹配规则:对 effectiveModel(settings.llm.model 或 --model 参数的**原样值**,
+// 系统不自动拼接 "provider/" 前缀)做精确字符串比较;带 "deepseek/" 前缀的
+// 手工配置(如 "deepseek/deepseek-v4-pro")不会命中 → 走 Chat Completions。
+// 该前缀仅对接受此命名的第三方 OpenAI 兼容端点有效,官方端点会返回
+// model not found——对第三方端点走 chat 是正确降级,不应剥离前缀强行走
+// Responses(第三方端点不支持服务端搜索)。
+//
+// 注意:IsVisionModel(types.go)对 "provider/model" 前缀做了剥离匹配,而此处
+// 未剥离——同一前缀视觉模型名在两处判定分叉(走 chat 时仍识别为视觉模型
+// 携带图片,但不走 Responses API)。
 func isDeepSeekResponsesModel(model string) bool {
 	return model == ModelDeepSeekV4Flash ||
 		model == ModelDeepSeekV4Pro ||

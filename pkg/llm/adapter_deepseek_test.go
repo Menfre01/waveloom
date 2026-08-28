@@ -1572,6 +1572,57 @@ func TestResponsesBuildRequest_WebSearchTool(t *testing.T) {
 	}
 }
 
+// TestDeepSeekOfficialEndpoint 验证官方端点判定:仅 api.deepseek.com 命中。
+func TestDeepSeekOfficialEndpoint(t *testing.T) {
+	cases := []struct {
+		baseURL string
+		want    bool
+	}{
+		{"https://api.deepseek.com", true},
+		{"https://api.deepseek.com/v1", true},
+		{"https://api.deepseek.com/", true},
+		{"https://proxy.example.com", false},
+		{"https://api.openai.com", false},
+		{"", false},
+	}
+	for _, c := range cases {
+		if got := isDeepSeekOfficialEndpoint(c.baseURL); got != c.want {
+			t.Errorf("isDeepSeekOfficialEndpoint(%q) = %v, want %v", c.baseURL, got, c.want)
+		}
+	}
+}
+
+// TestShouldWarnChatFallback 验证降级告警条件:仅官方端点 + 模型名含
+// deepseek 但未命中 Responses 匹配时告警;第三方端点与非 deepseek 名不告警
+// (chat + 本地工具对第三方端点是正确行为)。
+func TestShouldWarnChatFallback(t *testing.T) {
+	cases := []struct {
+		name    string
+		baseURL string
+		model   string
+		want    bool
+	}{
+		{"official endpoint with prefix model warns",
+			"https://api.deepseek.com", "deepseek/deepseek-v4-flash", true},
+		{"official endpoint with misspelled model warns",
+			"https://api.deepseek.com", "deepseek-v4-flash-20260820", true},
+		{"official endpoint with exact model skips",
+			"https://api.deepseek.com", "deepseek-v4-flash", false},
+		{"proxy endpoint with prefix model skips",
+			"https://proxy.example.com", "deepseek/deepseek-v4-flash", false},
+		{"official endpoint with non-deepseek model skips",
+			"https://api.deepseek.com", "custom-model", false},
+		{"empty base url skips", "", "deepseek/deepseek-v4-flash", false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := shouldWarnChatFallback(c.baseURL, c.model); got != c.want {
+				t.Errorf("shouldWarnChatFallback(%q, %q) = %v, want %v", c.baseURL, c.model, got, c.want)
+			}
+		})
+	}
+}
+
 // TestResponsesBuildRequest_ParamsMapping 验证参数映射:
 // max_tokens → max_output_tokens;reasoning_effort → reasoning.effort(原始值);
 // response_format → text.format。
