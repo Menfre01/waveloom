@@ -608,11 +608,17 @@ func newTUIModel(llmClient llm.Client, registry tool.Registry, guard permission.
 	cp := progress.New(
 		progress.WithFillCharacters('█', '░'),
 		progress.WithColorFunc(func(total, current float64) color.Color {
-			if total < 0.5 {
+			// 颜色分档对齐压缩水位线(45/65/85):
+			// <45% Tier0 无压缩(绿)/ 45-65% Tier1 Snip(金)/
+			// 65-85% Tier2 Prune(橙)/ ≥85% Tier3 摘要+硬限(红)
+			if total < 0.45 {
 				return colorOK
 			}
-			if total < 0.8 {
+			if total < 0.65 {
 				return colorAccentGold
+			}
+			if total < 0.85 {
+				return colorWarnOrange
 			}
 			return colorErr
 		}),
@@ -3591,11 +3597,13 @@ func (m *model) renderCtxBarCompact() string {
 
 	var tokenStyle lipgloss.Style
 	switch {
-	case pct < 50:
+	case pct < 45: // Tier0:无压缩
 		tokenStyle = styleCtxBarGreenFg
-	case pct < 80:
+	case pct < 65: // Tier1:Snip 预防性维护
 		tokenStyle = styleCtxBarGoldFg
-	default:
+	case pct < 85: // Tier2:Prune 危险线
+		tokenStyle = styleCtxBarOrangeFg
+	default: // Tier3:摘要 + 硬限
 		tokenStyle = styleCtxBarRedFg
 	}
 

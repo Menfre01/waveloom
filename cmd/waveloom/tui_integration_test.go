@@ -1,12 +1,14 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"charm.land/bubbles/v2/textarea"
+	"charm.land/lipgloss/v2"
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/Menfre01/waveloom/pkg/llm"
@@ -158,6 +160,39 @@ func TestRenderModelPickerOverlay_ContainsModels(t *testing.T) {
 	}
 	if !strings.Contains(content, "model-b") {
 		t.Error("model picker should contain 'model-b'")
+	}
+}
+
+// TestRenderCtxBarCompact_ColorTiers 验证 ctx 进度条颜色分档与压缩水位线
+// (45/65/85)对齐:绿 Tier0 / 金 Tier1 / 橙 Tier2 / 红 Tier3。
+func TestRenderCtxBarCompact_ColorTiers(t *testing.T) {
+	applyTheme(darkPalette)
+	m := newTestModelForModelPicker()
+	m.contextLimit = 1_000_000
+
+	cases := []struct {
+		name string
+		pct  float64
+		want lipgloss.Style
+	}{
+		{"tier0 green", 0.40, styleCtxBarGreenFg},
+		{"tier1 gold", 0.50, styleCtxBarGoldFg},
+		{"tier2 orange", 0.70, styleCtxBarOrangeFg},
+		{"tier3 red", 0.90, styleCtxBarRedFg},
+		{"boundary 45 gold", 0.45, styleCtxBarGoldFg},
+		{"boundary 65 orange", 0.65, styleCtxBarOrangeFg},
+		{"boundary 85 red", 0.85, styleCtxBarRedFg},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			m.lastPromptTokens = int(c.pct * float64(m.contextLimit))
+			out := m.renderCtxBarCompact()
+			want := c.want.Render(fmt.Sprintf("%s/%s",
+				formatTokens(m.lastPromptTokens), formatTokens(m.contextLimit)))
+			if !strings.Contains(out, want) {
+				t.Errorf("ctx bar color tier mismatch:\n got: %q\nwant token segment: %q", out, want)
+			}
+		})
 	}
 }
 

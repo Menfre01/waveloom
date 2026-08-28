@@ -32,8 +32,9 @@ type palette struct {
 	HeaderFg     color.Color
 	HeaderAccent color.Color
 	FooterFg     color.Color
-	FooterValue  color.Color // HUD 数值色（比 HeaderFg 对比度更高）
+	FooterValue  color.Color // HUD 数值色(比 HeaderFg 对比度更高)
 
+	WarnOrange color.Color // 上下文压力中档(对齐压缩 Tier 2 65-85%)
 	// 强调色（系统提示、中间态警示共用）
 	AccentGold color.Color
 
@@ -68,6 +69,7 @@ var darkPalette = palette{
 	FooterValue:  lipgloss.Color("#f2f2f2"),
 
 	AccentGold: lipgloss.Color("#d7af5f"),
+	WarnOrange: lipgloss.Color("#d78700"),
 
 	ToolCode:   lipgloss.Color("#d7875f"),
 	ToolCodeBg: lipgloss.Color("#3a3a3a"),
@@ -104,6 +106,7 @@ var lightPalette = palette{
 	FooterValue:  lipgloss.Color("#0d0d0d"),
 
 	AccentGold: lipgloss.Color("#b8860b"),
+	WarnOrange: lipgloss.Color("#b25000"),
 
 	ToolCode:   lipgloss.Color("#a0522d"),
 	ToolCodeBg: lipgloss.Color("#e8e8e8"),
@@ -141,6 +144,7 @@ var darkColorBlindPalette = palette{
 	FooterValue:  lipgloss.Color("#f2f2f2"),
 
 	AccentGold: lipgloss.Color("#ffb347"), // 暖橙金
+	WarnOrange: lipgloss.Color("#ff8c00"), // 深橙(与暖橙金 AccentGold 区分,色盲友好)
 
 	ToolCode:   lipgloss.Color("#d7af5f"),
 	ToolCodeBg: lipgloss.Color("#3a3a3a"),
@@ -177,7 +181,8 @@ var lightColorBlindPalette = palette{
 	FooterFg:     lipgloss.Color("#555555"),
 	FooterValue:  lipgloss.Color("#1a1a1a"),
 
-	AccentGold: lipgloss.Color("#b8730b"), // 暖橙金（深色底用亮色、浅色底用深色）
+	AccentGold: lipgloss.Color("#b8730b"), // 暖橙金(深色底用亮色、浅色底用深色)
+	WarnOrange: lipgloss.Color("#ea580c"), // 橙红(浅色底,与金棕 AccentGold 区分)
 
 	ToolCode:   lipgloss.Color("#8b4513"),
 	ToolCodeBg: lipgloss.Color("#e8e8e8"),
@@ -216,6 +221,7 @@ var (
 	colorFooterValue  color.Color
 
 	colorAccentGold color.Color
+	colorWarnOrange color.Color
 
 	colorToolCode   color.Color
 	colorToolCodeBg color.Color
@@ -261,6 +267,7 @@ var (
 	styleFooterLatRed      lipgloss.Style
 	styleCtxBarGreenFg     lipgloss.Style
 	styleCtxBarGoldFg      lipgloss.Style
+	styleCtxBarOrangeFg    lipgloss.Style
 	styleCtxBarRedFg       lipgloss.Style
 	styleCacheGreen        lipgloss.Style
 	styleCacheGold         lipgloss.Style
@@ -317,6 +324,7 @@ func applyTheme(p palette) {
 	colorFooterFg = p.FooterFg
 	colorFooterValue = p.FooterValue
 	colorAccentGold = p.AccentGold
+	colorWarnOrange = p.WarnOrange
 	colorToolCode = p.ToolCode
 	colorToolCodeBg = p.ToolCodeBg
 
@@ -374,6 +382,7 @@ func applyTheme(p palette) {
 	// 上下文进度条百分比文字（仅前景色，无背景）
 	styleCtxBarGreenFg = lipgloss.NewStyle().Foreground(colorOK)
 	styleCtxBarGoldFg = lipgloss.NewStyle().Foreground(colorAccentGold)
+	styleCtxBarOrangeFg = lipgloss.NewStyle().Foreground(colorWarnOrange)
 	styleCtxBarRedFg = lipgloss.NewStyle().Foreground(colorErr)
 
 	// 缓存着色
