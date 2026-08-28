@@ -4,10 +4,10 @@
 // 同时最大化 DeepSeek 前缀缓存命中率。
 //
 // 四级水位线：
-//   - Tier 0 (< 60%): 什么都不做
-//   - Tier 1 (60-80%): Snip — 工具结果差分截断（纯本地，零 API 调用）
-//   - Tier 2 (80-95%): Prune — reasoning 清除 + 占位符替换 + 用户代码块压缩（纯本地）
-//   - Tier 3 (≥ 95%): Summarize — LLM 增量摘要（需 API 调用）
+//   - Tier 0 (< 45%): 什么都不做
+//   - Tier 1 (45-65%): Snip — 工具结果差分截断(纯本地,零 API 调用)
+//   - Tier 2 (65-85%): Prune — reasoning 清除 + 占位符替换 + 用户代码块压缩(纯本地)
+//   - Tier 3 (≥ 85%): Summarize — LLM 增量摘要(需 API 调用)
 //   - 硬临界值 (≥ 98%): 阻止后续 LLM 调用
 //
 // 单调边界保证：一旦对某条消息做出压缩决策，该决策在本次 session 的所有后续轮次中永远不变。
@@ -31,10 +31,16 @@ import (
 // ---------------------------------------------------------------------------
 
 const (
-	// 水位线阈值（通过 CompactionConfig 可覆盖）
-	DefaultTier1Threshold = 0.60 // 60% — 预防性维护甜点
-	DefaultTier2Threshold = 0.80 // 80% — 危险线
-	DefaultTier3Threshold = 0.95 // 95% — 最后防线，触发 LLM 增量摘要
+	// 水位线阈值(通过 CompactionConfig 可覆盖)
+	// 2026-08 按历史 session 校准:1M 窗口下原 60/80/95 对应的绝对阈值
+	// (600K/800K/950K)在真实使用中几乎不可达(148 个 session 水位峰值最高
+	// 64.8%,其中 ≥60% 仅 2 个、≥80% 的为 0)——Tier 1 仅在 2 个 session
+	// 触发过、Tier 2/3 从未在工作会话中触发。下调为 45/65/85:本地压缩
+	// (Tier 1/2 零 API 成本)在 450K-650K 真实区间工作,Tier 3 摘要(每次
+	// 触发一次缓存失效 + API 费用)保留 850K 安全边际。
+	DefaultTier1Threshold = 0.45 // 45% — 预防性维护甜点(1M 窗口 = 450K)
+	DefaultTier2Threshold = 0.65 // 65% — 危险线(1M 窗口 = 650K)
+	DefaultTier3Threshold = 0.85 // 85% — 最后防线,触发 LLM 增量摘要(1M 窗口 = 850K)
 
 	// 保护区大小
 	DefaultProtectionZoneTokens = 8000 // 最近 8000 token 不参与压缩
@@ -237,11 +243,17 @@ type truncationStrategy struct {
 }
 
 // toolTruncationStrategies 定义所有已知工具的 Tier 1 截断策略。
+// 阈值依据历史 session 扫描(2026-08)校准:原 bash 60 行/12K 字符门槛下
+// 84% 的 bash 结果不触发(输出中位数仅 ~570 字符)、read 84% 不触发,
+// Tier 1 实际近乎空转。放宽后实际触发行数(取 max(head+tail+10, maxLines)):
+// bash 41 行、read 121 行、web_fetch 151 行,触发率从 ~16% 提升至 ~35-40%。
+// 注意:行数截断的实际门槛是 max(head+tail+10, maxLines)——
+// head/tail 参数决定保留的信息量,需与 maxLines 联动调整。
 var toolTruncationStrategies = map[string]truncationStrategy{
-	"read_file":      {200, 150, 10, 4000, 30000},
-	"read":           {200, 150, 10, 4000, 30000},
-	"bash":           {60, 20, 30, 2000, 12000},
-	"web_fetch":      {200, 150, 10, 4000, 30000},
+	"read_file":      {120, 90, 10, 3000, 15000},
+	"read":           {120, 90, 10, 3000, 15000},
+	"bash":           {35, 15, 15, 1500, 8000},
+	"web_fetch":      {150, 110, 10, 3000, 20000},
 }
 
 // truncatableTools Tier 2 中可替换为占位符的工具集合。
@@ -459,12 +471,15 @@ func truncateByStrategy(content string, s truncationStrategy) (string, bool) {
 		return content, true
 	}
 
-	// 3. 单行字符截断 — 处理超长单行（如 minified JSON、base64 blob）
+	// 3. 单行字符截断 — 处理超长单行(如 minified JSON、base64 blob)
 	didTruncate := false
 	if s.maxLineChars > 0 {
 		for i, line := range lines {
 			if len(line) > s.maxLineChars {
-				lines[i] = line[:s.maxLineChars] + fmt.Sprintf(
+				// 沿 rune 边界截断,避免切坏多字节字符(与 shell
+				// truncateOutput 的 utf8 处理对齐;字节切分会产出
+				// 无效 UTF-8,LLM 收到 U+FFFD 乱码)。
+				lines[i] = truncateRunes(line, s.maxLineChars) + fmt.Sprintf(
 					"... [line truncated: %d → %d chars]", len(line), s.maxLineChars,
 				)
 				didTruncate = true
@@ -594,7 +609,27 @@ func formatToolPlaceholder(toolName, originalContent string) string {
 		toolName, lines, chars, tokens)
 }
 
-// compressUserCodeBlocks 压缩 user 消息中 >50 行的 code fence 内容，
+// truncateRunes 将 s 截断到最多 maxBytes 字节,沿 rune 边界切断
+// (与 shell truncateOutput 的 utf8 处理对齐,避免切坏多字节字符)。
+func truncateRunes(s string, maxBytes int) string {
+	if len(s) <= maxBytes {
+		return s
+	}
+	cut := 0
+	for _, r := range s {
+		next := cut + utf8.RuneLen(r)
+		if next > maxBytes {
+			break
+		}
+		cut = next
+	}
+	if cut == 0 {
+		cut = maxBytes
+	}
+	return s[:cut]
+}
+
+// compressUserCodeBlocks 压缩 user 消息中 >50 行的 code fence 内容,
 // 以及 code fence 中单行超过 maxCodeLineChars 的超长行。
 // 返回压缩后的内容和是否实际发生了压缩。
 func compressUserCodeBlocks(content string) (string, bool) {

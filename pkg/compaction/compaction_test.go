@@ -3,6 +3,7 @@ package compaction
 import (
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/Menfre01/waveloom/pkg/llm"
 )
@@ -112,6 +113,76 @@ func TestTruncateByStrategy_ShortContent(t *testing.T) {
 	}
 	if result != content {
 		t.Fatalf("content changed: %q", result)
+	}
+}
+
+// TestToolTruncationStrategies_BashThreshold 验证放宽后的 bash 策略触发边界:
+// 41 行起截(原 61 行),40 行不截。阈值依据历史 session 数据校准
+// (原 60 行门槛下 84% 的 bash 结果不触发,Tier 1 近乎空转)。
+func TestToolTruncationStrategies_BashThreshold(t *testing.T) {
+	strategy := toolTruncationStrategies["bash"]
+	if strategy.maxLines == 0 {
+		t.Fatal("bash strategy missing")
+	}
+	mk := func(n int) string {
+		lines := make([]string, n)
+		for i := range lines {
+			lines[i] = "line"
+		}
+		return strings.Join(lines, "\n")
+	}
+
+	// 40 行(≤ max(head+tail+10, maxLines)=40)→ 不截
+	if _, did := truncateByStrategy(mk(40), strategy); did {
+		t.Error("40 lines should not truncate")
+	}
+	// 41 行 → 截
+	if _, did := truncateByStrategy(mk(41), strategy); !did {
+		t.Error("41 lines should truncate (relaxed threshold)")
+	}
+	// 字符门槛:8001 字符触发总字符截断(单行内容)
+	long := strings.Repeat("x", 8001)
+	if _, did := truncateByStrategy(long, strategy); !did {
+		t.Error("8001 chars should truncate via maxTotalChars")
+	}
+}
+
+// TestDefaultWatermarkThresholds 验证默认水位线阈值按历史 session 校准:
+// 45/65/85(原 60/80/95 在 1M 窗口下几乎不可达——148 个 session 水位峰值
+// 最高 64.8%,≥80% 为 0,Tier 2/3 从未在实际工作中触发)。
+func TestDefaultWatermarkThresholds(t *testing.T) {
+	if DefaultTier1Threshold != 0.45 {
+		t.Errorf("DefaultTier1Threshold = %v, want 0.45 (1M 窗口 = 450K)", DefaultTier1Threshold)
+	}
+	if DefaultTier2Threshold != 0.65 {
+		t.Errorf("DefaultTier2Threshold = %v, want 0.65 (1M 窗口 = 650K)", DefaultTier2Threshold)
+	}
+	if DefaultTier3Threshold != 0.85 {
+		t.Errorf("DefaultTier3Threshold = %v, want 0.85 (1M 窗口 = 850K)", DefaultTier3Threshold)
+	}
+	// 单调性:Tier1 < Tier2 < Tier3
+	if !(DefaultTier1Threshold < DefaultTier2Threshold && DefaultTier2Threshold < DefaultTier3Threshold) {
+		t.Error("thresholds must be strictly increasing")
+	}
+}
+
+// TestTruncateRunes_UTF8Boundary 验证单行截断沿 rune 边界,
+// 不切坏多字节字符(与 shell truncateOutput 对齐)。
+func TestTruncateRunes_UTF8Boundary(t *testing.T) {
+	// 中文 "你" = 3 字节;截到 4 字节应保留 1 个完整中文字符(3 字节)
+	s := "你好世界"
+	got := truncateRunes(s, 4)
+	if got != "你" {
+		t.Errorf("truncateRunes(%q, 4) = %q, want 你 (完整 rune)", s, got)
+	}
+	if !utf8.ValidString(got) {
+		t.Errorf("truncated string must be valid UTF-8, got %q", got)
+	}
+	// 长内容完整截断不超限
+	long := strings.Repeat("a", 100) + "好" + strings.Repeat("b", 100)
+	got = truncateRunes(long, 150)
+	if len(got) > 150 || !utf8.ValidString(got) {
+		t.Errorf("truncateRunes len=%d (limit 150) or invalid UTF-8", len(got))
 	}
 }
 
