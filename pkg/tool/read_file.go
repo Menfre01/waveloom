@@ -31,6 +31,14 @@ type ReadFileParams struct {
 	Outline      bool   `json:"outline"`       // 返回符号大纲而非文件内容
 }
 
+// largeReadHintBytes 大文件软提示门限:超过该字节数且未使用定向参数
+// (pattern/limit)时,read 输出头部提示定向读取,避免全量内容膨胀上下文。
+const largeReadHintBytes = 100 * 1024 // 100KB
+
+// repeatedReadHintBytes 重复 read 提示门限:大文件内容未变时提示定向读取;
+// 小文件重复 read 成本低(缓存命中率高),不提示避免噪音。
+const repeatedReadHintBytes = 50 * 1024 // 50KB
+
 type ReadFile struct{}
 
 func (t *ReadFile) Name() string { return "read" }
@@ -182,8 +190,17 @@ func (t *ReadFile) Execute(ctx context.Context, p ReadFileParams) (*ToolResult, 
 			fmt.Sprintf("failed to read file: %v", err), err), nil
 	}
 
-	// ── Step 6: 记录读取状态供 edit 冲突检测 ──
+	// ── Step 6: 记录读取状态供 edit 冲突检测 + 重复 read 提示 ──
+	// 大文件(>50KB)内容与上次 read 相同时提示定向读取——历史扫描发现
+	// 34 次"5 事件内重读同文件"的浪费模式。小文件重复 read 成本低不提示,
+	// 避免噪音(99% 缓存命中下 read 本身廉价)。
+	// 已使用定向参数(pattern/limit)的读取不提示,避免自相矛盾的噪音。
+	var repeatHint string
 	if rs := ReadStateFromContext(ctx); rs != nil {
+		if prev := rs.Get(path); prev != nil && prev.Content == fullContent &&
+			info.Size() > repeatedReadHintBytes && p.Pattern == "" && p.Limit == 0 {
+			repeatHint = "<system-reminder>File unchanged since your last read. If you need a specific section, use pattern or offset/limit instead of re-reading the whole file.</system-reminder>\n\n"
+		}
 		rs.Record(path, fullContent)
 	}
 
@@ -253,8 +270,18 @@ func (t *ReadFile) Execute(ctx context.Context, p ReadFileParams) (*ToolResult, 
 		}
 	}
 
+	// ── Step 7.5: 大文件软提示 ──
+	// 全量读取大文件会膨胀上下文(历史扫描:250KB 文件被全量 read 多次)。
+	// 文件 >100KB 且未使用定向参数时,输出头部提示 pattern/offset。
+	// 不阻断:edit 场景仍需完整 read state 供冲突检测与 hunk 构造。
+	var sizeHint string
+	if info.Size() > largeReadHintBytes && p.Pattern == "" && p.Limit == 0 && !p.Outline {
+		sizeHint = fmt.Sprintf("<system-reminder>File is large (%s). If you only need part of it, use pattern or offset/limit for targeted reads.</system-reminder>\n\n",
+			formatSize(info.Size()))
+	}
+
 	// ── Step 8: 格式化输出 ──
-	content := formatReadOutput(path, fullContent, p.Offset, p.Limit)
+	content := sizeHint + repeatHint + formatReadOutput(path, fullContent, p.Offset, p.Limit)
 	content += "\n<system-reminder>Line numbers are 1-based current positions. Empty lines appear as `N:` (no content after colon). Trailing whitespace is preserved in read output — the edit engine matches with progressive tolerance (exact → trailing whitespace ignored → leading+trailing ignored → unicode normalize), so minor whitespace drift won't cause failures. When constructing edit hunks, use `@@` headers with `-` for removal, `+` for addition, and space prefix for context lines. Brace-only lines like `}` are real content with line numbers — include them when they belong inside a hunk.</system-reminder>"
 	if totalLines > 0 {
 		displayedLines := totalLines

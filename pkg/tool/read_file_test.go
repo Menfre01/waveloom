@@ -1149,3 +1149,131 @@ func TestReadFile_Outline_YAMLEmptySymbols(t *testing.T) {
 		t.Errorf("expected 'No symbols found' for YAML, got: %s", result.Content)
 	}
 }
+
+// TestReadFile_LargeFileHint 验证 >100KB 且未用定向参数时输出头部提示;
+// 带 limit 或 pattern 时不提示。
+func TestReadFile_LargeFileHint(t *testing.T) {
+	dir := t.TempDir()
+	filePath := filepath.Join(dir, "big.txt")
+	// 120KB,超过 largeReadHintBytes(100KB)
+	big := strings.Repeat("line of padding content\n", 6000)
+	if len(big) < largeReadHintBytes {
+		t.Fatalf("test file too small: %d bytes", len(big))
+	}
+	if err := os.WriteFile(filePath, []byte(big), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	tool := &ReadFile{}
+
+	t.Run("full read gets hint", func(t *testing.T) {
+		result, err := tool.Execute(context.Background(), ReadFileParams{FilePath: filePath})
+		if err != nil {
+			t.Fatalf("Execute() error = %v", err)
+		}
+		if result.Error != nil {
+			t.Fatalf("unexpected error: %s", result.Error.Message)
+		}
+		if !strings.Contains(result.Content, "File is large") {
+			t.Error("expected large-file hint in output")
+		}
+	})
+
+	t.Run("limited read skips hint", func(t *testing.T) {
+		result, err := tool.Execute(context.Background(), ReadFileParams{
+			FilePath: filePath,
+			Limit:    10,
+		})
+		if err != nil {
+			t.Fatalf("Execute() error = %v", err)
+		}
+		if result.Error != nil {
+			t.Fatalf("unexpected error: %s", result.Error.Message)
+		}
+		if strings.Contains(result.Content, "File is large") {
+			t.Error("limited read should not get large-file hint")
+		}
+	})
+}
+
+// TestReadFile_RepeatReadHint 验证大文件(>50KB)内容未变时重复 read 提示;
+// 内容变化后不提示;小文件不提示。
+func TestReadFile_RepeatReadHint(t *testing.T) {
+	dir := t.TempDir()
+	filePath := filepath.Join(dir, "medium.txt")
+	// 60KB,超过 repeatedReadHintBytes(50KB)但低于 largeReadHintBytes(100KB)
+	content := strings.Repeat("stable content line\n", 3000)
+	if len(content) < repeatedReadHintBytes || len(content) > largeReadHintBytes {
+		t.Fatalf("test file size %d outside expected band", len(content))
+	}
+	if err := os.WriteFile(filePath, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	tool := &ReadFile{}
+	store := NewReadStateStore()
+	ctx := WithReadState(context.Background(), store)
+
+	t.Run("second read of unchanged file hints", func(t *testing.T) {
+		r1, err := tool.Execute(ctx, ReadFileParams{FilePath: filePath})
+		if err != nil || r1.Error != nil {
+			t.Fatalf("first read failed: %v %v", err, r1.Error)
+		}
+		if strings.Contains(r1.Content, "File unchanged") {
+			t.Error("first read must not hint")
+		}
+
+		r2, err := tool.Execute(ctx, ReadFileParams{FilePath: filePath})
+		if err != nil || r2.Error != nil {
+			t.Fatalf("second read failed: %v %v", err, r2.Error)
+		}
+		if !strings.Contains(r2.Content, "File unchanged") {
+			t.Error("second read of unchanged file should hint")
+		}
+	})
+
+	t.Run("modified file skips hint", func(t *testing.T) {
+		// 第三次 read 前修改文件内容
+		if err := os.WriteFile(filePath, []byte(content+"extra line\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		r3, err := tool.Execute(ctx, ReadFileParams{FilePath: filePath})
+		if err != nil || r3.Error != nil {
+			t.Fatalf("third read failed: %v %v", err, r3.Error)
+		}
+		if strings.Contains(r3.Content, "File unchanged") {
+			t.Error("modified file must not hint")
+		}
+	})
+
+	t.Run("targeted read skips hint", func(t *testing.T) {
+		// 已用定向参数(pattern)读取未变文件 → 不应提示(自相矛盾噪音)
+		r, err := tool.Execute(ctx, ReadFileParams{
+			FilePath: filePath,
+			Pattern:  "stable",
+			Limit:    5,
+		})
+		if err != nil || r.Error != nil {
+			t.Fatalf("targeted read failed: %v %v", err, r.Error)
+		}
+		if strings.Contains(r.Content, "File unchanged") {
+			t.Error("targeted read must not get repeat-read hint")
+		}
+	})
+
+	t.Run("small file never hints", func(t *testing.T) {
+		smallPath := filepath.Join(dir, "small.txt")
+		if err := os.WriteFile(smallPath, []byte("tiny\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		for i := 0; i < 2; i++ {
+			r, err := tool.Execute(ctx, ReadFileParams{FilePath: smallPath})
+			if err != nil || r.Error != nil {
+				t.Fatalf("small read failed: %v %v", err, r.Error)
+			}
+			if strings.Contains(r.Content, "File unchanged") {
+				t.Error("small file must not hint")
+			}
+		}
+	})
+}
