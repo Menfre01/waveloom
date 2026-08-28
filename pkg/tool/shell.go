@@ -15,7 +15,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -42,6 +44,10 @@ type ShellParams struct {
 type Shell struct {
 	AllowBg     bool // true for "bash" (main agent), false for "bash_subagent"
 	lastCommand string
+	// lastWorkingDirIgnored 标记最近一次命令的 working_dir 被沙箱忽略
+	// (setupCommand 设置,formatResult 读取后清除)——模型传了 working_dir
+	// 但沙箱 chdir 钉在 workspace,若不让模型感知会在错误目录执行命令。
+	lastWorkingDirIgnored bool
 
 	// SandboxMgr 沙箱管理器(可选)。注入后,按 context 中 per-command
 	// SandboxStatus 决定是否用 bwrap 包装命令;nil 或不可用 → 原样执行。
@@ -148,7 +154,7 @@ func (t *Shell) Execute(ctx context.Context, p ShellParams) (*ToolResult, error)
 	}
 
 	// ── 后台命令检测与预处理 ──
-	bgLogFile, isBackground := prepareBackgroundCommand(&p)
+	bgLogFile, isBackground := prepareBackgroundCommand(&p, t.AllowBg)
 	if isBackground && !t.AllowBg {
 		return &ToolResult{
 			Error: &ToolError{
@@ -179,7 +185,9 @@ func (t *Shell) Execute(ctx context.Context, p ShellParams) (*ToolResult, error)
 		if useFileFD {
 			_ = os.Remove(outputPath)
 		}
-		return formatShellError("Command start failed", -1, 0, timeout, err.Error(), true), nil
+		res := formatShellError("Command start failed", -1, 0, timeout, err.Error(), true)
+		res.Content = t.appendWorkingDirHint(res.Content)
+		return res, nil
 	}
 
 	// ── 后台路径：run_in_background 或单行 & 命令 ──
@@ -247,6 +255,7 @@ func (t *Shell) Execute(ctx context.Context, p ShellParams) (*ToolResult, error)
 		if bgLogFile != "" {
 			content += fmt.Sprintf("\n[background] log: %s", bgLogFile)
 		}
+		content = t.appendWorkingDirHint(content)
 		return &ToolResult{
 			Content: content,
 			Meta: ToolMeta{
@@ -304,7 +313,7 @@ func (t *Shell) ExecuteStreaming(ctx context.Context, p ShellParams, chunkCb fun
 	}
 
 	// ── 后台命令检测与预处理 ──
-	bgLogFile, isBackground := prepareBackgroundCommand(&p)
+	bgLogFile, isBackground := prepareBackgroundCommand(&p, t.AllowBg)
 	if isBackground && !t.AllowBg {
 		return &ToolResult{
 			Error: &ToolError{
@@ -409,6 +418,7 @@ func (t *Shell) ExecuteStreaming(ctx context.Context, p ShellParams, chunkCb fun
 		if bgLogFile != "" {
 			content += fmt.Sprintf("\n[background] log: %s", bgLogFile)
 		}
+		content = t.appendWorkingDirHint(content)
 		return &ToolResult{
 			Content: content,
 			Meta: ToolMeta{
@@ -608,6 +618,7 @@ func (t *Shell) setupCommand(ctx context.Context, p *ShellParams) (*exec.Cmd, co
 		} else {
 			// 沙箱内工作目录固定为 workspace(bwrap --chdir),working_dir 参数被忽略
 			if p.WorkingDir != "" {
+				t.lastWorkingDirIgnored = true
 				slog.Warn("sandbox: working_dir ignored inside sandbox (chdir pinned to workspace)", "working_dir", p.WorkingDir)
 			}
 			shellBin = wrapped[0]
@@ -746,6 +757,17 @@ func (t *Shell) formatResult(execErr error, cmdCtx context.Context, output []byt
 		},
 		Error: toolErr,
 	}, nil
+}
+
+// appendWorkingDirHint 在标志置位时向 content 追加沙箱 working_dir 忽略
+// 提示并清除标志。覆盖所有返回路径(前台 formatResult / 后台立即返回 /
+// 命令启动失败)——避免标志残留导致下一条命令收到陈旧提示。
+func (t *Shell) appendWorkingDirHint(content string) string {
+	if !t.lastWorkingDirIgnored {
+		return content
+	}
+	t.lastWorkingDirIgnored = false
+	return content + "\n<system-reminder>working_dir ignored inside sandbox — commands run pinned to the sandbox workspace root. Use absolute paths or cd within the command.</system-reminder>"
 }
 
 // killProcessGroup 向 cmd 及其所有子进程发送 SIGKILL。
@@ -948,7 +970,46 @@ func formatDuration(d time.Duration) string {
 
 // ── 后台命令处理 ──
 
+// longSleepBackgroundThreshold 含 sleep N(N≥此值)的单行命令自动转后台执行,
+// 避免模型同步阻塞等待(历史扫描:等 rate-limit 重置的 sleep 150-180 等
+// 累计 8 分钟纯等待)。阈值 30s:服务器就绪探测等短等待(sleep 5-10)保持
+// 前台同步,避免额外一轮往返。
+const longSleepBackgroundThreshold = 30 // 秒
+
+// sleepCmdRe 匹配"sleep 后跟后续命令"的独立 sleep(行首或 ; & | 分隔符后,
+// 且 sleep 后带 && / ; / | 分隔符),带可选单位(s/m/h)。
+// 要求有后续命令:纯 `sleep N`(无后续动作)保持前台同步——模型显式等待,
+// 转后台无收益且破坏中断语义;`sleep N && 动作`(等待后必须执行,如
+// rate-limit 重置后 curl)转后台可在等待期间并行其他步骤。
+// 行首/分隔符约束避免误匹配字符串字面量(如 echo "sleep 30")与环境变量
+// 前缀(VAR=x sleep 30)。
+var sleepCmdRe = regexp.MustCompile(`(^|[;&|]\s*)sleep\s+(\d+)([smh]?)(\s*&&|\s*;|\s*\|)`)
+
+// longSleepSeconds 提取命令中最大的 sleep 时长(秒)。无 sleep 命令返回 ok=false。
+func longSleepSeconds(cmd string) (int, bool) {
+	matches := sleepCmdRe.FindAllStringSubmatch(cmd, -1)
+	maxSecs := 0
+	for _, m := range matches {
+		n, _ := strconv.Atoi(m[2])
+		switch m[3] {
+		case "m":
+			n *= 60
+		case "h":
+			n *= 3600
+		}
+		if n > maxSecs {
+			maxSecs = n
+		}
+	}
+	if maxSecs == 0 {
+		return 0, false
+	}
+	return maxSecs, true
+}
+
 // prepareBackgroundCommand 检测后台命令并决定执行模式。
+// allowBg=false(bash_subagent)时不做 sleep 自动转后台——子代理无后台
+// 能力,强制转后台会硬失败("background execution is not supported")。
 //
 // 文件 fd 输出消除了 SIGPIPE 风险，因此不再需要对命令进行 subshell 重定向改写。
 // 取代策略：
@@ -956,8 +1017,8 @@ func formatDuration(d time.Duration) string {
 // - 单行命令以 & 结尾 → 剥离 & 后后台执行（返回 isBackground=true）
 // - 多行命令含 & → 前台执行（bash 等待前景部分），仅标记 log 提示
 //
-// 返回值：bgLogFile（多行时的提示日志路径），isBackground（是否走后台路径）。
-func prepareBackgroundCommand(p *ShellParams) (bgLogFile string, isBackground bool) {
+// 返回值:bgLogFile(多行时的提示日志路径),isBackground(是否走后台路径)。
+func prepareBackgroundCommand(p *ShellParams, allowBg bool) (bgLogFile string, isBackground bool) {
 	trimmed := strings.TrimSpace(p.Command)
 
 	// 显式参数优先
@@ -971,7 +1032,16 @@ func prepareBackgroundCommand(p *ShellParams) (bgLogFile string, isBackground bo
 		return "", true
 	}
 
-	// 多行命令含 & → 前景执行，但标记 log 文件路径供 agent 参考
+	// 单行命令含长 sleep(≥30s)→ 自动转后台,避免同步阻塞等待。
+	// 后台路径返回 taskID + 完成通知,模型可并行执行其他步骤。
+	if allowBg {
+		if secs, ok := longSleepSeconds(p.Command); ok && secs >= longSleepBackgroundThreshold && !strings.Contains(p.Command, "\n") {
+			p.RunInBackground = true
+			return "", true
+		}
+	}
+
+	// 多行命令含 & → 前景执行,但标记 log 文件路径供 agent 参考
 	if shellutil.IsBackgroundCommand(p.Command) {
 		logFile := filepath.Join(pathutil.TempDir(), fmt.Sprintf("waveloom-bg-%d.log", time.Now().UnixNano()))
 		// 文件 fd 输出已消除 SIGPIPE，不需要 subshell 重定向改写

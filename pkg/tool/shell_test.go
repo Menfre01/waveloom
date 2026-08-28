@@ -781,7 +781,7 @@ func TestIsBackgroundCommand(t *testing.T) {
 
 func TestPrepareBackgroundCommand_Rewrites(t *testing.T) {
 	p := &ShellParams{Command: "npx wrangler dev --port 8794 2>&1 &"}
-	bgLogFile, isBackground := prepareBackgroundCommand(p)
+	bgLogFile, isBackground := prepareBackgroundCommand(p, true)
 
 	if !isBackground {
 		t.Fatal("expected isBackground=true for single-line & command")
@@ -801,7 +801,7 @@ func TestPrepareBackgroundCommand_Rewrites(t *testing.T) {
 
 func TestPrepareBackgroundCommand_NonBackground(t *testing.T) {
 	p := &ShellParams{Command: "echo hello"}
-	bgLogFile, isBackground := prepareBackgroundCommand(p)
+	bgLogFile, isBackground := prepareBackgroundCommand(p, true)
 
 	if isBackground {
 		t.Errorf("non-background command should not be flagged as background")
@@ -814,11 +814,59 @@ func TestPrepareBackgroundCommand_NonBackground(t *testing.T) {
 	}
 }
 
+// TestPrepareBackgroundCommand_LongSleep 验证含长 sleep(≥30s)的单行命令
+// 自动转后台(避免同步阻塞等待);短 sleep 保持前台;字符串字面量不误判。
+func TestPrepareBackgroundCommand_LongSleep(t *testing.T) {
+	tests := []struct {
+		name    string
+		cmd     string
+		wantBg  bool
+		wantMod bool // 命令是否被改写(设置 RunInBackground)
+	}{
+		{"long sleep with curl", "sleep 180 && curl -s http://localhost:8080", true, true},
+		{"sleep exactly threshold", "sleep 30 && curl -s http://localhost:8080", true, true},
+		{"short sleep stays foreground", "sleep 5 && curl -s http://localhost:8080", false, false},
+		{"minute unit", "sleep 2m && echo done", true, true},
+		{"hour unit", "sleep 1h && echo done", true, true},
+		{"bare sleep stays foreground", "sleep 100", false, false},
+		{"bare sleep with newline stays foreground", "sleep 45\necho done", false, false},
+		{"string literal not matched", `echo "sleep 30"`, false, false},
+		{"env var prefix not matched", "VAR=1 sleep 45", false, false},
+		{"no sleep", "curl -s http://localhost:8080", false, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := &ShellParams{Command: tt.cmd}
+			_, isBackground := prepareBackgroundCommand(p, true)
+			if isBackground != tt.wantBg {
+				t.Errorf("isBackground = %v, want %v", isBackground, tt.wantBg)
+			}
+			if p.RunInBackground != tt.wantMod {
+				t.Errorf("RunInBackground = %v, want %v", p.RunInBackground, tt.wantMod)
+			}
+		})
+	}
+}
+
+// TestPrepareBackgroundCommand_NoBackgroundForSubagent 回归:bash_subagent
+// (allowBg=false)不触发 sleep 自动转后台——子代理无后台能力,强制转后台
+// 会在 Execute 中硬失败("background execution is not supported")。
+func TestPrepareBackgroundCommand_NoBackgroundForSubagent(t *testing.T) {
+	p := &ShellParams{Command: "sleep 180 && curl -s http://localhost:8080"}
+	_, isBackground := prepareBackgroundCommand(p, false)
+	if isBackground {
+		t.Error("allowBg=false must not auto-background long sleep commands")
+	}
+	if p.RunInBackground {
+		t.Error("RunInBackground must stay false for subagent")
+	}
+}
+
 func TestPrepareBackgroundCommand_MultiLineRewrite(t *testing.T) {
 	// REGRESSION: 多行命令中某一行以 & 结尾时，文件 fd 输出已消除 SIGPIPE，
 	// 不再需要 subshell 重定向改写。命令保持原样，仅返回日志提示路径。
 	p := &ShellParams{Command: "npx wrangler dev --port 8787 2>&1 &\nsleep 12 && curl -s localhost:8787"}
-	bgLogFile, isBackground := prepareBackgroundCommand(p)
+	bgLogFile, isBackground := prepareBackgroundCommand(p, true)
 
 	if isBackground {
 		t.Fatal("multi-line & command should NOT be flagged as background (foreground parts exist)")
