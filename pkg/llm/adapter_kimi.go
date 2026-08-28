@@ -83,9 +83,9 @@ func (a *kimiAdapter) buildRequestBody(ctx context.Context, messages []Message, 
 		body["tools"] = buildToolsJSON(tools)
 	}
 
-	// Kimi K3 使用顶层 reasoning_effort；始终启用思考，当前唯一支持 "max"。
-	// 如果用户通过 ExtraParams 显式传入 reasoning_effort，保留用户值；
-	// 否则注入默认 "max"。
+	// Kimi K3 使用顶层 reasoning_effort;始终启用思考,官方支持 low/high/max
+	// (platform.kimi.com 文档),默认 "max"。如果用户通过 ExtraParams 显式传入
+	// reasoning_effort,保留用户值;否则注入默认 "max"。
 	body["reasoning_effort"] = "max"
 
 	// 合并 ExtraParams（用户传入的 reasoning_effort 可覆盖上述默认值）

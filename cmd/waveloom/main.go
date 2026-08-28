@@ -514,7 +514,19 @@ func resolveModelChoice(cliModel string, s *llm.LLMSettings) (string, string, st
 	if choice == llm.ModelChoiceProPlan {
 		if planModel == "" || subModel == "" ||
 			planModel == llm.ModelChoiceProPlan || subModel == llm.ModelChoiceProPlan {
-			return "", "", "", fmt.Errorf("proplan 需要非空的 model 与 sub_model 锚点(锚点不能为 proplan 自身)")
+			if cliModel != "" {
+				// CLI 显式指定:保持报错,用户需要明确反馈
+				return "", "", "", fmt.Errorf("proplan 需要非空的 model 与 sub_model 锚点(锚点不能为 proplan 自身)")
+			}
+			// 配置残留(curr_model 来源):回退到 model,与 TUI 内 /provider 切换
+			// 的防御一致(tui.go reconfigureLLMClient),避免启动直接退出。
+			// REGRESSION: 项目文件顶层残留 curr_model=proplan(旧版 /model 写入)
+			// 且锚点缺失时,启动曾直接 os.Exit(1)。
+			slog.Warn("proplan anchors missing, falling back to model", "model", s.Model)
+			choice = s.Model
+			if choice == llm.ModelChoiceProPlan {
+				choice = "" // 畸形锚点(自指):回退空,用 client 默认,防 "proplan" 泄漏
+			}
 		}
 	}
 	return choice, planModel, subModel, nil

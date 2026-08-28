@@ -761,6 +761,47 @@ func resolveThinkingEffort(settings *llm.LLMSettings) string {
 }
 
 // commitModelSwitch 确认模型切换：写 settings + 热替换。
+// persistModelChoice 将模型选择写入 settings 的 profiles.<provider>.curr_model:
+// profile 不存在时自动创建骨架(omitempty 序列化仅落盘 curr_model,不写顶层)。
+// Provider 为空时按 deepseek 默认处理(与 MergeLLMSettings 空 Provider 对齐)。
+func persistModelChoice(settings *llm.LLMSettings, modelID string) {
+	provider := settings.Provider
+	if provider == "" {
+		provider = string(llm.ProviderDeepSeek)
+	}
+	settings.SetCurrModelForProvider(provider, modelID)
+}
+
+// persistEffortSwitch 将思考档位写入 settings 的 profiles.<provider>.extra_params:
+// profile 不存在时自动创建骨架(EnsureProfile,omitempty 仅落盘 extra_params)。
+// Provider 为空时按 deepseek 默认处理。
+// REGRESSION: 原实现 profile 缺失时写顶层 extra_params(旧格式),与 curr_model
+// 顶层残留同源——项目文件被污染、切换 provider 后档位残留;字段级 profile
+// 合并(mergeProfileFields)后骨架不再覆盖全局,统一走 profile 形态。
+func persistEffortSwitch(settings *llm.LLMSettings, effort string) {
+	provider := settings.Provider
+	if provider == "" {
+		provider = string(llm.ProviderDeepSeek)
+	}
+	target := settings.EnsureProfile(provider)
+	if target.ExtraParams == nil {
+		target.ExtraParams = map[string]any{}
+	}
+	if effort == "off" {
+		// 关闭思考:thinking.type=disabled,并移除 reasoning_effort 防残留生效
+		// (resolveThinkingEffort 对 disabled 返回空,HUD 不显示档位)。
+		target.ExtraParams["thinking"] = map[string]any{"type": "disabled"}
+		delete(target.ExtraParams, "reasoning_effort")
+	} else {
+		// 对齐 setup 落盘形态:reasoning_effort 单独存在;thinking 未配置或此前
+		// 为 disabled(off 后再开启)时补 enabled。
+		if thinking, ok := target.ExtraParams["thinking"].(map[string]any); !ok || thinking["type"] != "enabled" {
+			target.ExtraParams["thinking"] = map[string]any{"type": "enabled"}
+		}
+		target.ExtraParams["reasoning_effort"] = effort
+	}
+}
+
 func (m *model) commitModelSwitch(modelID string) {
 	// 写入目标 = 项目文件自身(不合并全局),防全局配置复制进项目文件;
 	// 语义与 /model 命令一致:写 curr_model(model 锚点不被修改)。
@@ -772,11 +813,13 @@ func (m *model) commitModelSwitch(modelID string) {
 		settings = &llm.LLMSettings{}
 	}
 
-	if p := settings.Profiles[settings.Provider]; p != nil {
-		p.CurrModel = modelID
-	} else {
-		settings.CurrModel = modelID
-	}
+	// 写入位置:始终写 profiles.<provider>.curr_model(profile 不存在时自动
+	// 创建骨架,omitempty 仅落盘 curr_model 字段,不污染其他配置)。
+	// REGRESSION: 原实现 profile 缺失时降级写顶层 curr_model,导致项目文件
+	// 残留顶层模型选择(如 "proplan")——每次启动强制覆盖全局配置、切换
+	// provider 后仍生效,且锚点悬空时启动报错。SetCurrModelForProvider
+	// 的自动建 profile 语义见 pkg/llm/settings.go。
+	persistModelChoice(settings, modelID)
 	if err := m.settingsStore.SaveLLM(settings); err != nil {
 		slog.Warn("failed to save LLM settings", "err", err)
 	}
@@ -798,11 +841,14 @@ func (m *model) commitModelSwitch(modelID string) {
 	m.flushTranscript()
 }
 
-// effortChoicesForProvider 返回当前 provider 支持的 thinking 档位。
-// DeepSeek: off/low/high/max(官方 2026-08-13 起思考强度三档 low/high/max,
-// off 关闭思考;adapter 映射 medium→high、xhigh→max,故不暴露这两个兼容值);
-// OpenAI 兼容: low/medium/high(无 thinking 参数,不提供 off);
-// Kimi: 仅 max(adapter 强制思考,无法关闭)。
+// effortChoicesForProvider 返回当前 provider 支持的 thinking 档位(对照官方文档):
+// DeepSeek: off/low/high/max(官方 api-docs.deepseek.com/guides/thinking_mode:
+// effort 值域 none/low/high/max,none 关闭思考;medium→high、xhigh→max 由服务端
+// 映射,故不暴露这两个兼容值);
+// OpenAI: low/medium/high(官方 reasoning_effort 值域,无 max 档位,无思考开关);
+// GLM: low/high/max(官方 docs.bigmodel.cn GLM-5.3:始终思考,仅三档,默认 max;
+// thinking.type=disabled 会报错 → 不提供 off;5.2 兼容 High/Max);
+// Kimi: low/high/max(官方 platform.kimi.com K3:始终推理,三档,默认 max,无 off)。
 func effortChoicesForProvider(provider string, lc *Messages) []effortChoice {
 	all := []effortChoice{
 		{ID: "low", Description: lc.EffortDescLow},
@@ -812,10 +858,13 @@ func effortChoicesForProvider(provider string, lc *Messages) []effortChoice {
 	}
 	switch provider {
 	case string(llm.ProviderKimi):
-		// Kimi K3 始终启用思考,当前仅支持 max。
-		return []effortChoice{all[3]}
-	case string(llm.ProviderOpenAI), string(llm.ProviderGLM):
-		// OpenAI 兼容协议无 max 档位。
+		// Kimi K3 始终推理,官方仅 low/high/max,无法关闭思考。
+		return []effortChoice{all[0], all[2], all[3]}
+	case string(llm.ProviderGLM):
+		// GLM-5.3 始终思考,仅 low/high/max;GLM-5.2 兼容 High/Max。
+		return []effortChoice{all[0], all[2], all[3]}
+	case string(llm.ProviderOpenAI):
+		// OpenAI reasoning_effort 官方值域 low/medium/high,无 max 档位。
 		return all[:3]
 	default: // deepseek 及其余:off/low/high/max
 		return []effortChoice{
@@ -889,29 +938,7 @@ func (m *model) commitEffortSwitch(effort string) {
 	if settings == nil {
 		settings = &llm.LLMSettings{}
 	}
-	// 写入位置与 curr_model 一致:项目已有该 provider 的 profile → 写 profile 的
-	// extra_params(profile 形态配置,ResolveProfile 后生效);无 → 写顶层
-	// extra_params(旧格式,避免创建空 profile 覆盖全局)。
-	target := settings
-	if p := settings.Profiles[settings.Provider]; p != nil {
-		target = p
-	}
-	if target.ExtraParams == nil {
-		target.ExtraParams = map[string]any{}
-	}
-	if effort == "off" {
-		// 关闭思考:thinking.type=disabled,并移除 reasoning_effort 防残留生效
-		// (resolveThinkingEffort 对 disabled 返回空,HUD 不显示档位)。
-		target.ExtraParams["thinking"] = map[string]any{"type": "disabled"}
-		delete(target.ExtraParams, "reasoning_effort")
-	} else {
-		// 对齐 setup 落盘形态:reasoning_effort 单独存在;thinking 未配置或此前
-		// 为 disabled(off 后再开启)时补 enabled。
-		if thinking, ok := target.ExtraParams["thinking"].(map[string]any); !ok || thinking["type"] != "enabled" {
-			target.ExtraParams["thinking"] = map[string]any{"type": "enabled"}
-		}
-		target.ExtraParams["reasoning_effort"] = effort
-	}
+	persistEffortSwitch(settings, effort)
 	if err := m.settingsStore.SaveLLM(settings); err != nil {
 		slog.Warn("failed to save LLM settings", "err", err)
 	}

@@ -239,7 +239,8 @@ func TestHandleModelPickerKey_EffortEscReturns(t *testing.T) {
 }
 
 // TestHandleModelPickerKey_EffortEnterCommits 验证 effort 面板按 enter 提交:
-// 档位写入项目 settings.json 的 extra_params.reasoning_effort,HUD 档位同步更新。
+// 档位写入 profiles.<provider>.extra_params(统一 profile 形态,与 curr_model
+// 一致),HUD 档位同步更新。
 func TestHandleModelPickerKey_EffortEnterCommits(t *testing.T) {
 	m, store := newTestModelForEffortPicker(t)
 	m.effortPickerMode = true
@@ -265,13 +266,21 @@ func TestHandleModelPickerKey_EffortEnterCommits(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadProjectLLM: %v", err)
 	}
-	if got := saved.ExtraParams["reasoning_effort"]; got != "max" {
-		t.Errorf("saved reasoning_effort = %v, want max", got)
+	prof := saved.Profiles["deepseek"]
+	if prof == nil {
+		t.Fatal("profile deepseek should be created (skeleton)")
+	}
+	if got := prof.ExtraParams["reasoning_effort"]; got != "max" {
+		t.Errorf("profile reasoning_effort = %v, want max", got)
+	}
+	if got := saved.ExtraParams["reasoning_effort"]; got != nil {
+		t.Errorf("top-level reasoning_effort should stay nil, got %v", got)
 	}
 }
 
-// TestHandleModelPickerKey_EffortKimiOnlyMax 验证 Kimi 仅提供 max 档位。
-func TestHandleModelPickerKey_EffortKimiOnlyMax(t *testing.T) {
+// TestHandleModelPickerKey_EffortKimiChoices 验证 Kimi 提供 low/high/max
+// 三档(官方 platform.kimi.com 文档,无 off——K3 始终推理)。
+func TestHandleModelPickerKey_EffortKimiChoices(t *testing.T) {
 	dir := t.TempDir()
 	projectPath := filepath.Join(dir, "settings.json")
 	if err := os.WriteFile(projectPath, []byte(`{"llm":{"api_key":"sk-test","provider":"kimi","model":"kimi-k3"}}`), 0o644); err != nil {
@@ -288,8 +297,46 @@ func TestHandleModelPickerKey_EffortKimiOnlyMax(t *testing.T) {
 	if !m.effortPickerMode {
 		t.Fatal("effortPickerMode should be true")
 	}
-	if len(m.effortPickerEfforts) != 1 || m.effortPickerEfforts[0].ID != "max" {
-		t.Errorf("kimi efforts = %+v, want [max]", m.effortPickerEfforts)
+	want := []string{"low", "high", "max"}
+	got := make([]string, len(m.effortPickerEfforts))
+	for i, e := range m.effortPickerEfforts {
+		got[i] = e.ID
+	}
+	if len(got) != 3 || got[0] != want[0] || got[1] != want[1] || got[2] != want[2] {
+		t.Errorf("kimi efforts = %v, want %v", got, want)
+	}
+}
+
+// TestEffortChoicesForProvider 验证各 provider 档位与官方文档一致:
+// deepseek off/low/high/max;openai low/medium/high;glm low/high/max(5.3 值域,
+// medium 会报错故不提供);kimi low/high/max(无 off)。
+func TestEffortChoicesForProvider(t *testing.T) {
+	lc := messagesFor(LocaleZhCN)
+	cases := []struct {
+		provider string
+		want     []string
+	}{
+		{string(llm.ProviderDeepSeek), []string{"off", "low", "high", "max"}},
+		{string(llm.ProviderOpenAI), []string{"low", "medium", "high"}},
+		{string(llm.ProviderGLM), []string{"low", "high", "max"}},
+		{string(llm.ProviderKimi), []string{"low", "high", "max"}},
+	}
+	for _, c := range cases {
+		got := effortChoicesForProvider(c.provider, lc)
+		ids := make([]string, len(got))
+		for i, e := range got {
+			ids[i] = e.ID
+		}
+		if len(ids) != len(c.want) {
+			t.Errorf("%s efforts = %v, want %v", c.provider, ids, c.want)
+			continue
+		}
+		for i := range ids {
+			if ids[i] != c.want[i] {
+				t.Errorf("%s efforts = %v, want %v", c.provider, ids, c.want)
+				break
+			}
+		}
 	}
 }
 
@@ -330,7 +377,8 @@ func TestHandleModelPickerKey_EffortCommitWritesProfile(t *testing.T) {
 }
 
 // TestHandleModelPickerKey_EffortOffDisablesThinking 验证选择 off 后:
-// thinking.type=disabled 落盘、reasoning_effort 被移除、HUD 档位清空(不显示)。
+// profiles.<provider>.extra_params 的 thinking.type=disabled 落盘、
+// reasoning_effort 被移除、HUD 档位清空(不显示)。
 func TestHandleModelPickerKey_EffortOffDisablesThinking(t *testing.T) {
 	m, store := newTestModelForEffortPicker(t)
 	m.effortPickerMode = true
@@ -348,12 +396,19 @@ func TestHandleModelPickerKey_EffortOffDisablesThinking(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadProjectLLM: %v", err)
 	}
-	thinking, ok := saved.ExtraParams["thinking"].(map[string]any)
-	if !ok || thinking["type"] != "disabled" {
-		t.Errorf("thinking = %#v, want {type: disabled}", saved.ExtraParams["thinking"])
+	prof := saved.Profiles["deepseek"]
+	if prof == nil {
+		t.Fatal("profile deepseek should be created (skeleton)")
 	}
-	if _, ok := saved.ExtraParams["reasoning_effort"]; ok {
+	thinking, ok := prof.ExtraParams["thinking"].(map[string]any)
+	if !ok || thinking["type"] != "disabled" {
+		t.Errorf("thinking = %#v, want {type: disabled}", prof.ExtraParams["thinking"])
+	}
+	if _, ok := prof.ExtraParams["reasoning_effort"]; ok {
 		t.Error("reasoning_effort should be removed when off")
+	}
+	if got := saved.ExtraParams["reasoning_effort"]; got != nil {
+		t.Errorf("top-level reasoning_effort should stay nil, got %v", got)
 	}
 }
 

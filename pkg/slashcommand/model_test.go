@@ -112,9 +112,10 @@ func TestModelCommandKnownWritesProfileCurrModel(t *testing.T) {
 	}
 }
 
-// TestModelCommandNoProviderWritesTopLevel 验证 provider 为空(未配置)时
-// 写顶层 curr_model 兜底,不 panic、不创建 profiles[""]。
-func TestModelCommandNoProviderWritesTopLevel(t *testing.T) {
+// TestModelCommandNoProviderDefaultsToDeepseekProfile 验证 provider 为空
+// (未配置)时按 deepseek 默认写入 profiles.deepseek.curr_model,
+// 不 panic、不创建 profiles[""]、不写顶层。
+func TestModelCommandNoProviderDefaultsToDeepseekProfile(t *testing.T) {
 	store := &mockSettingsStore{settings: &llm.LLMSettings{}}
 	lister := &mockModelLister{models: []llm.ModelInfo{{ID: "some-model"}}}
 	cmd := NewModelCommand(store, lister, "", testMessagesZhCN())
@@ -123,16 +124,20 @@ func TestModelCommandNoProviderWritesTopLevel(t *testing.T) {
 		t.Fatalf("Execute: %v", err)
 	}
 	saved := store.savedSettings
-	if saved.CurrModel != "some-model" {
-		t.Errorf("top-level curr_model = %q, want some-model", saved.CurrModel)
+	if saved.CurrModel != "" {
+		t.Errorf("top-level curr_model = %q, want empty (must not leak to top level)", saved.CurrModel)
+	}
+	if saved.Profiles["deepseek"] == nil || saved.Profiles["deepseek"].CurrModel != "some-model" {
+		t.Errorf("profiles.deepseek.curr_model = %+v, want some-model (empty provider defaults to deepseek)", saved.Profiles)
 	}
 	if _, ok := saved.Profiles[""]; ok {
 		t.Error("must not create profile with empty provider key")
 	}
 }
 
-// TestModelCommandAutoCreatesProfile 验证纯顶层用户(无 profiles 结构)
-// /model 后自动创建 profile 对象(仅含 curr_model)。
+// TestModelCommandAutoCreatesProfile 验证项目文件已有 provider 但无 profile
+// 时,/model 自动创建骨架 profile(仅含 curr_model)。字段级 profile 合并
+// (mergeProfileFields)下骨架不再覆盖全局配置,写顶层已无必要。
 func TestModelCommandAutoCreatesProfile(t *testing.T) {
 	store := &mockSettingsStore{
 		settings:        &llm.LLMSettings{Provider: "deepseek", Model: "deepseek-v4-pro"},
@@ -145,13 +150,15 @@ func TestModelCommandAutoCreatesProfile(t *testing.T) {
 		t.Fatalf("Execute: %v", err)
 	}
 	saved := store.savedSettings
-	// 项目文件无该 provider 的 profile → 写顶层 curr_model,
-	// 不创建空 profile(防合并时覆盖全局完整配置)。
-	if saved.CurrModel != "deepseek-v4-flash" {
-		t.Errorf("top-level curr_model = %q, want deepseek-v4-flash", saved.CurrModel)
+	if saved.CurrModel != "" {
+		t.Errorf("top-level curr_model = %q, want empty (must not leak to top level)", saved.CurrModel)
 	}
-	if len(saved.Profiles) != 0 {
-		t.Errorf("must not create empty profile (would override global config), got %v", saved.Profiles)
+	prof := saved.Profiles["deepseek"]
+	if prof == nil || prof.CurrModel != "deepseek-v4-flash" {
+		t.Errorf("profiles.deepseek.curr_model = %+v, want deepseek-v4-flash (skeleton)", prof)
+	}
+	if prof.Model != "" || prof.APIKey != "" {
+		t.Errorf("skeleton profile must only carry curr_model, got %+v", prof)
 	}
 	// 顶层锚点保留
 	if saved.Model != "deepseek-v4-pro" {
@@ -291,10 +298,11 @@ func TestRegression_ModelSwitchNoGlobalLeak(t *testing.T) {
 	}
 }
 
-// TestRegression_ProPlanTopLevelWhenProjectNoProfile 回归:项目文件无该
-// provider 的 profile 时,/model proplan 写顶层 curr_model——不创建空 profile
-// (空 profile 会在 Merge 时整体替换全局完整 profile,导致 api_key 等丢失)。
-func TestRegression_ProPlanTopLevelWhenProjectNoProfile(t *testing.T) {
+// TestRegression_ProPlanSkeletonWhenProjectNoProfile 回归:项目文件无该
+// provider 的 profile 时,/model proplan 创建骨架 profile(profiles.<provider>.
+// curr_model)——不再写顶层(顶层残留曾强制覆盖全局 provider 切换)。字段级
+// profile 合并(mergeProfileFields)下骨架不会覆盖全局完整 profile。
+func TestRegression_ProPlanSkeletonWhenProjectNoProfile(t *testing.T) {
 	// 合并结果:deepseek profile 来自全局
 	store := &mockSettingsStore{
 		settings: &llm.LLMSettings{
@@ -313,10 +321,14 @@ func TestRegression_ProPlanTopLevelWhenProjectNoProfile(t *testing.T) {
 		t.Fatalf("Execute: %v", err)
 	}
 	saved := store.savedSettings
-	if saved.CurrModel != llm.ModelChoiceProPlan {
-		t.Errorf("top-level curr_model = %q, want %q", saved.CurrModel, llm.ModelChoiceProPlan)
+	if saved.CurrModel != "" {
+		t.Errorf("top-level curr_model = %q, want empty (must not leak to top level)", saved.CurrModel)
 	}
-	if len(saved.Profiles) != 0 {
-		t.Errorf("must not create empty profile (would override global full config), got %v", saved.Profiles)
+	prof := saved.Profiles["deepseek"]
+	if prof == nil || prof.CurrModel != llm.ModelChoiceProPlan {
+		t.Errorf("profiles.deepseek.curr_model = %+v, want %q (skeleton)", prof, llm.ModelChoiceProPlan)
+	}
+	if prof.APIKey != "" || prof.Model != "" {
+		t.Errorf("skeleton profile must only carry curr_model, got %+v", prof)
 	}
 }

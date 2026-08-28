@@ -116,14 +116,17 @@ func (c *ModelCommand) executeWithArgs(ctx context.Context, name string) (*Resul
 	if project == nil {
 		project = &llm.LLMSettings{}
 	}
-	// 项目文件已有该 provider 的 profile → 写 profile.curr_model;
-	// 无 → 写顶层 curr_model(合并时全局完整 profile 保留,顶层作 fallback,
-	// 避免创建空 profile 覆盖全局)。
-	if p := project.Profiles[settings.Provider]; p != nil {
-		p.CurrModel = name
-	} else {
-		project.CurrModel = name
+	// 写入位置:始终写 profiles.<provider>.curr_model(profile 不存在时自动
+	// 创建骨架,omitempty 仅落盘 curr_model 字段)。
+	// REGRESSION: 原实现 profile 缺失时降级写顶层 curr_model,与 TUI
+	// commitModelSwitch 同源缺陷——项目文件残留顶层模型选择,每次启动强制
+	// 覆盖全局配置;字段级 profile 合并(mergeProfileFields)后骨架不再覆盖
+	// 全局,统一走 profile 形态。
+	provider := project.Provider
+	if provider == "" {
+		provider = string(llm.ProviderDeepSeek)
 	}
+	project.SetCurrModelForProvider(provider, name)
 	if err := c.store.SaveLLM(project); err != nil {
 		return &Result{
 			Text: fmt.Sprintf(c.messages.ModelConfigSaveFailed, err),
