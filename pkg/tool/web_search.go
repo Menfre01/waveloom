@@ -19,7 +19,6 @@ import (
 //go:embed web_search_prompt.md
 var webSearchPrompt string
 
-
 // ---------------------------------------------------------------------------
 // WebSearch — 搜索引擎查询
 // ---------------------------------------------------------------------------
@@ -206,6 +205,20 @@ func (t *WebSearch) Execute(ctx context.Context, p WebSearchParams) (*ToolResult
 
 const ddgSearchURL = "https://html.duckduckgo.com/html/"
 
+// webSearchRetryBackoff 搜索限流退避的默认等待时间。
+const webSearchRetryBackoff = 1 * time.Second
+
+// isDDGRateLimited 判断 DuckDuckGo 状态码是否可退避重试:
+// 202(DDG 反爬/异步结果未就绪,历史失败主因)、429、503。
+// 403 不重试(封禁语义,重试无意义)。
+func isDDGRateLimited(status int) bool {
+	switch status {
+	case 202, http.StatusTooManyRequests, http.StatusServiceUnavailable:
+		return true
+	}
+	return false
+}
+
 func (t *WebSearch) searchDDG(ctx context.Context, query string, maxResults int) ([]SearchResult, error) {
 	baseURL := t.ddgBaseURL
 	if baseURL == "" {
@@ -213,29 +226,43 @@ func (t *WebSearch) searchDDG(ctx context.Context, query string, maxResults int)
 	}
 	reqURL := baseURL + "?q=" + url.QueryEscape(query)
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
-	if err != nil {
-		return nil, fmt.Errorf("create request: %w", err)
-	}
-	req.Header.Set("User-Agent", "Waveloom/0.1.0")
-	req.Header.Set("Accept", "text/html")
+	for attempt := 0; attempt < 2; attempt++ {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
+		if err != nil {
+			return nil, fmt.Errorf("create request: %w", err)
+		}
+		req.Header.Set("User-Agent", "Waveloom/0.1.0")
+		req.Header.Set("Accept", "text/html")
 
-	resp, err := t.client().Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("request failed: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
+		resp, err := t.client().Do(req)
+		if err != nil {
+			return nil, fmt.Errorf("request failed: %w", err)
+		}
 
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("HTTP %d", resp.StatusCode)
-	}
+		// 限流类状态码(202/429/503)→ 退避重试一次
+		if attempt == 0 && isDDGRateLimited(resp.StatusCode) {
+			_ = resp.Body.Close()
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(webSearchRetryBackoff):
+			}
+			continue
+		}
+		defer func() { _ = resp.Body.Close() }()
 
-	bodyBytes, err := readHTTPBodyWithContext(ctx, io.LimitReader(resp.Body, 1<<20))
-	if err != nil && len(bodyBytes) == 0 {
-		return nil, fmt.Errorf("read response: %w", err)
-	}
+		if resp.StatusCode != http.StatusOK {
+			return nil, fmt.Errorf("HTTP %d", resp.StatusCode)
+		}
 
-	return parseDDGResults(bytes.NewReader(bodyBytes), maxResults)
+		bodyBytes, err := readHTTPBodyWithContext(ctx, io.LimitReader(resp.Body, 1<<20))
+		if err != nil && len(bodyBytes) == 0 {
+			return nil, fmt.Errorf("read response: %w", err)
+		}
+
+		return parseDDGResults(bytes.NewReader(bodyBytes), maxResults)
+	}
+	return nil, fmt.Errorf("HTTP %d", 202) // 不可达:循环最多 2 次
 }
 
 // parseDDGResults 从 DuckDuckGo HTML 响应中提取搜索结果。

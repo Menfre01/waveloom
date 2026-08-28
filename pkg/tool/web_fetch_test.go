@@ -506,3 +506,150 @@ func TestWebFetchBodyReadTimeout(t *testing.T) {
 		t.Errorf("expected timeout truncated marker in output, got %q", result.Content)
 	}
 }
+
+// TestWebFetchRetryOn429 验证 429 限流自动退避重试一次后成功。
+func TestWebFetchRetryOn429(t *testing.T) {
+	var requests int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		if requests == 1 {
+			w.Header().Set("Retry-After", "0")
+			w.WriteHeader(http.StatusTooManyRequests)
+			return
+		}
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		_, _ = w.Write([]byte("second attempt ok"))
+	}))
+	defer server.Close()
+
+	tool := &WebFetch{skipHostCheck: true}
+	result, err := tool.Execute(context.Background(), WebFetchParams{URL: server.URL + "/limited"})
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if result.Error != nil {
+		t.Fatalf("Execute() result.Error = %v", result.Error)
+	}
+	if requests != 2 {
+		t.Errorf("requests = %d, want 2 (initial + retry)", requests)
+	}
+	if !strings.Contains(result.Content, "second attempt ok") {
+		t.Errorf("expected retried content, got %q", result.Content)
+	}
+}
+
+// TestWebFetchNoRetryOn404 验证 404 不重试(URL 失效,重试无意义)。
+func TestWebFetchNoRetryOn404(t *testing.T) {
+	var requests int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	tool := &WebFetch{skipHostCheck: true}
+	result, err := tool.Execute(context.Background(), WebFetchParams{URL: server.URL + "/missing"})
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if result.Error == nil {
+		t.Fatal("expected error for 404")
+	}
+	if requests != 1 {
+		t.Errorf("requests = %d, want 1 (404 must not retry)", requests)
+	}
+}
+
+// TestWebFetchRetryOn403WithRetryAfter 验证 403+Retry-After(网关限流)重试,
+// 403 无 Retry-After(权限拒绝)不重试。
+func TestWebFetchRetryOn403WithRetryAfter(t *testing.T) {
+	t.Run("with retry-after retries", func(t *testing.T) {
+		var requests int
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			requests++
+			if requests == 1 {
+				w.Header().Set("Retry-After", "0")
+				w.WriteHeader(http.StatusForbidden)
+				return
+			}
+			w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+			_, _ = w.Write([]byte("ok after 403"))
+		}))
+		defer server.Close()
+
+		tool := &WebFetch{skipHostCheck: true}
+		result, err := tool.Execute(context.Background(), WebFetchParams{URL: server.URL + "/limited"})
+		if err != nil {
+			t.Fatalf("Execute() error = %v", err)
+		}
+		if result.Error != nil {
+			t.Fatalf("Execute() result.Error = %v", result.Error)
+		}
+		if requests != 2 {
+			t.Errorf("requests = %d, want 2", requests)
+		}
+	})
+
+	t.Run("without retry-after no retry", func(t *testing.T) {
+		var requests int
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			requests++
+			w.WriteHeader(http.StatusForbidden)
+		}))
+		defer server.Close()
+
+		tool := &WebFetch{skipHostCheck: true}
+		result, err := tool.Execute(context.Background(), WebFetchParams{URL: server.URL + "/forbidden"})
+		if err != nil {
+			t.Fatalf("Execute() error = %v", err)
+		}
+		if result.Error == nil {
+			t.Fatal("expected error for 403")
+		}
+		if requests != 1 {
+			t.Errorf("requests = %d, want 1 (403 without Retry-After must not retry)", requests)
+		}
+	})
+}
+
+// TestWebFetchRetryErrorMentioned 验证重试后仍失败时错误消息标注 retried。
+func TestWebFetchRetryErrorMentioned(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Retry-After", "0")
+		w.WriteHeader(http.StatusTooManyRequests)
+	}))
+	defer server.Close()
+
+	tool := &WebFetch{skipHostCheck: true}
+	result, err := tool.Execute(context.Background(), WebFetchParams{URL: server.URL + "/always-limited"})
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if result.Error == nil {
+		t.Fatal("expected error for persistent 429")
+	}
+	if !strings.Contains(result.Error.Message, "retried once") {
+		t.Errorf("error message should mention retry, got %q", result.Error.Message)
+	}
+}
+
+// TestRetryAfterDurationClamped 验证超大 Retry-After 秒数被钳制到上限
+// (避免 time.Duration 溢出为负导致立即重试)。
+func TestRetryAfterDurationClamped(t *testing.T) {
+	h := make(http.Header)
+	h.Set("Retry-After", "99999999999") // 超出 Duration 秒数范围
+	got := retryAfterDuration(h, 2*time.Second)
+	if got != maxRateLimitWait {
+		t.Errorf("retryAfterDuration(huge) = %v, want clamped to %v", got, maxRateLimitWait)
+	}
+
+	h.Set("Retry-After", "0")
+	if got := retryAfterDuration(h, 2*time.Second); got != 0 {
+		t.Errorf("retryAfterDuration(0) = %v, want 0 (immediate retry)", got)
+	}
+
+	h.Set("Retry-After", "abc")
+	if got := retryAfterDuration(h, 2*time.Second); got != 2*time.Second {
+		t.Errorf("retryAfterDuration(invalid) = %v, want fallback 2s", got)
+	}
+}

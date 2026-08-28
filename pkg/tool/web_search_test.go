@@ -85,6 +85,73 @@ func TestWebSearch_DDG_EndToEnd(t *testing.T) {
 	}
 }
 
+// TestWebSearch_DDG_RetryOn202 验证 DuckDuckGo HTTP 202(反爬/异步结果)
+// 自动退避重试一次后成功——历史失败主因。
+func TestWebSearch_DDG_RetryOn202(t *testing.T) {
+	mockHTML := `<!DOCTYPE html>
+<html><body>
+<div class="result">
+  <a class="result__a" href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fgo.dev%2Fdoc%2Fgo1.25">Go 1.25 Release Notes</a>
+  <a class="result__snippet">The latest Go release, version 1.25.</a>
+</div>
+</body></html>`
+
+	var requests int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		if requests == 1 {
+			w.WriteHeader(http.StatusAccepted)
+			return
+		}
+		w.Header().Set("Content-Type", "text/html; charset=UTF-8")
+		_, _ = w.Write([]byte(mockHTML))
+	}))
+	defer server.Close()
+
+	tool := &WebSearch{ddgBaseURL: server.URL + "/html/?"}
+	result, err := tool.Execute(context.Background(), WebSearchParams{
+		Query:      "Go release",
+		MaxResults: 5,
+	})
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if result.Error != nil {
+		t.Fatalf("Execute() result.Error = %v", result.Error)
+	}
+	if requests != 2 {
+		t.Errorf("requests = %d, want 2 (initial 202 + retry)", requests)
+	}
+	if !strings.Contains(result.Content, "Go 1.25 Release Notes") {
+		t.Errorf("expected retried content, got %q", result.Content)
+	}
+}
+
+// TestWebSearch_DDG_NoRetryOn403 验证 403(封禁语义)不重试。
+func TestWebSearch_DDG_NoRetryOn403(t *testing.T) {
+	var requests int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		w.WriteHeader(http.StatusForbidden)
+	}))
+	defer server.Close()
+
+	tool := &WebSearch{ddgBaseURL: server.URL + "/html/?"}
+	result, err := tool.Execute(context.Background(), WebSearchParams{
+		Query:      "test",
+		MaxResults: 5,
+	})
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if result.Error == nil {
+		t.Fatal("expected error for 403")
+	}
+	if requests != 1 {
+		t.Errorf("requests = %d, want 1 (403 must not retry)", requests)
+	}
+}
+
 func TestWebSearch_DDG_HTTPError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)

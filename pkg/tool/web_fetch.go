@@ -11,12 +11,12 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 )
 //go:embed web_fetch_prompt.md
 var webFetchPrompt string
-
 
 // ---------------------------------------------------------------------------
 // WebFetch — 获取 Web 内容
@@ -28,6 +28,54 @@ const (
 	DefaultWebFetchTimeoutMs = 30000   // 30s
 	MaxWebFetchTimeoutMs    = 120000   // 120s
 )
+
+// webFetchRetryBackoff 限流退避的默认等待时间(无 Retry-After 头时)。
+const webFetchRetryBackoff = 2 * time.Second
+
+// maxRateLimitWait 限流等待上限,避免长时间阻塞工具调用。
+const maxRateLimitWait = 10 * time.Second
+
+// isRateLimitedStatus 判断状态码是否属于可退避重试的限流类:
+// 429 Too Many Requests / 503 Service Unavailable 恒真;
+// 403 Forbidden 仅当携带 Retry-After 头(常见于网关限流,如 Cloudflare);
+// 其余(404/405/500 等)不重试——404 是 URL 失效,重试无意义。
+func isRateLimitedStatus(status int, header http.Header) bool {
+	switch status {
+	case http.StatusTooManyRequests, http.StatusServiceUnavailable:
+		return true
+	case http.StatusForbidden:
+		return header.Get("Retry-After") != ""
+	}
+	return false
+}
+
+// retryAfterDuration 解析 Retry-After 头(秒或 HTTP-date),无效时返回 fallback。
+func retryAfterDuration(header http.Header, fallback time.Duration) time.Duration {
+	ra := header.Get("Retry-After")
+	if ra == "" {
+		return fallback
+	}
+	if secs, err := strconv.Atoi(strings.TrimSpace(ra)); err == nil && secs >= 0 {
+		// 先钳制再转 Duration:超大秒数(>9.2e9)直接乘会溢出为负,
+		// time.After(负值)立即返回导致"立即重试"而非等待回退。
+		if secs > int(maxRateLimitWait.Seconds()) {
+			return maxRateLimitWait
+		}
+		d := time.Duration(secs) * time.Second
+		if d > maxRateLimitWait {
+			return maxRateLimitWait
+		}
+		return d
+	}
+	// HTTP-date 格式(极少见),解析失败回退
+	if t, err := http.ParseTime(ra); err == nil {
+		d := time.Until(t)
+		if d > 0 && d < maxRateLimitWait {
+			return d
+		}
+	}
+	return fallback
+}
 
 type WebFetchParams struct {
 	URL       string `json:"url"`
@@ -145,26 +193,83 @@ func (t *WebFetch) Execute(ctx context.Context, p WebFetchParams) (*ToolResult, 
 	req.Header.Set("User-Agent", "Waveloom/0.1.0")
 	req.Header.Set("Accept", "text/*, application/json, application/xml, application/javascript")
 
-	// ── Step 5: 发起请求 ──
+	// ── Step 5: 发起请求(限流类状态码自动退避重试一次)──
 	start := time.Now()
-	resp, err := t.client().Do(req)
-	if err != nil {
-		duration := time.Since(start)
-		if reqCtx.Err() == context.DeadlineExceeded {
-			return &ToolResult{
-				Content: fmt.Sprintf("Request timed out after %s.\nURL: %s", formatDuration(timeout), p.URL),
-				Meta:    ToolMeta{Duration: duration},
-				Error: &ToolError{
-					Class:   ErrorClassRecoverable,
-					Kind:    ErrKindTimeout,
-					Message: fmt.Sprintf("request timed out after %s. Increase timeout_ms or try a lighter URL", formatDuration(timeout)),
-				},
-			}, nil
+	var (
+		resp             *http.Response
+		bodyBytes        []byte
+		truncated        bool
+		timeoutTruncated bool
+		retried          bool
+		readErr          error
+	)
+	for attempt := 0; ; attempt++ {
+		req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, p.URL, nil)
+		if err != nil {
+			return toolError(ErrorClassRecoverable, ErrKindInvalidArgs,
+				fmt.Sprintf("cannot create request: %v", err), err), nil
 		}
-		return toolError(ErrorClassRecoverable, ErrKindCommandFailed,
-			fmt.Sprintf("request failed: %v. Check the URL and your network, or try web_search to find the resource", err), err), nil
+		req.Header.Set("User-Agent", "Waveloom/0.1.0")
+		req.Header.Set("Accept", "text/*, application/json, application/xml, application/javascript")
+
+		resp, err = t.client().Do(req)
+		if err != nil {
+			duration := time.Since(start)
+			if reqCtx.Err() == context.DeadlineExceeded {
+				return &ToolResult{
+					Content: fmt.Sprintf("Request timed out after %s.\nURL: %s", formatDuration(timeout), p.URL),
+					Meta:    ToolMeta{Duration: duration},
+					Error: &ToolError{
+						Class:   ErrorClassRecoverable,
+						Kind:    ErrKindTimeout,
+						Message: fmt.Sprintf("request timed out after %s. Increase timeout_ms or try a lighter URL", formatDuration(timeout)),
+					},
+				}, nil
+			}
+			return toolError(ErrorClassRecoverable, ErrKindCommandFailed,
+				fmt.Sprintf("request failed: %v. Check the URL and your network, or try web_search to find the resource", err), err), nil
+		}
+
+		// 读取响应体(受大小限制,分块检查 context 取消)。限流判定在
+		// Content-Type 检查前:限流响应可能非 text content-type,先判定
+		// 重试可避免误入 binary 分支。
+		limitedReader := io.LimitReader(resp.Body, int64(maxSize)+1)
+		bodyBytes, readErr = readHTTPBodyWithContext(reqCtx, limitedReader)
+		_ = resp.Body.Close()
+
+		// 大小截断
+		truncated = len(bodyBytes) > maxSize
+		if truncated {
+			bodyBytes = bodyBytes[:maxSize]
+		}
+
+		// 超时截断:保留已读取的部分内容
+		timeoutTruncated = false
+		if readErr != nil {
+			if len(bodyBytes) == 0 || reqCtx.Err() != context.DeadlineExceeded {
+				if reqCtx.Err() != nil {
+					return nil, reqCtx.Err()
+				}
+				return toolError(ErrorClassRecoverable, ErrKindCommandFailed,
+					fmt.Sprintf("error reading response: %v", readErr), readErr), nil
+			}
+			timeoutTruncated = true
+		}
+
+		// 限流类状态码(429/503,403+Retry-After)→ 退避重试一次
+		if attempt == 0 && isRateLimitedStatus(resp.StatusCode, resp.Header) {
+			wait := retryAfterDuration(resp.Header, webFetchRetryBackoff)
+			retried = true
+			select {
+			case <-reqCtx.Done():
+				return nil, reqCtx.Err()
+			case <-time.After(wait):
+			}
+			continue
+		}
+		break
 	}
-	defer func() { _ = resp.Body.Close() }()
+	duration := time.Since(start)
 
 	// ── Step 6: 检查 Content-Type ──
 	contentType := resp.Header.Get("Content-Type")
@@ -174,34 +279,13 @@ func (t *WebFetch) Execute(ctx context.Context, p WebFetchParams) (*ToolResult, 
 				contentType), nil), nil
 	}
 
-	// ── Step 7: 读取响应体（受大小限制，分块检查 context 取消）──
-	limitedReader := io.LimitReader(resp.Body, int64(maxSize)+1)
-	bodyBytes, readErr := readHTTPBodyWithContext(reqCtx, limitedReader)
-
-	// 大小截断
-	truncated := len(bodyBytes) > maxSize
-	if truncated {
-		bodyBytes = bodyBytes[:maxSize]
-	}
-
-	// 超时截断：保留已读取的部分内容
-	timeoutTruncated := false
-	if readErr != nil {
-		if len(bodyBytes) == 0 || reqCtx.Err() != context.DeadlineExceeded {
-			if reqCtx.Err() != nil {
-				return nil, reqCtx.Err()
-			}
-			return toolError(ErrorClassRecoverable, ErrKindCommandFailed,
-				fmt.Sprintf("error reading response: %v", readErr), readErr), nil
-		}
-		timeoutTruncated = true
-	}
-
-	duration := time.Since(start)
-
 	// ── Step 8: HTTP 状态码检查 ──
 	if resp.StatusCode >= 400 {
 		preview := formatBodyPreview(bodyBytes, 500)
+		msg := fmt.Sprintf("HTTP %d %s. Use web_search to find an alternative URL if the page is unavailable", resp.StatusCode, resp.Status)
+		if retried {
+			msg = fmt.Sprintf("HTTP %d %s (retried once after rate limit, still failing). Wait a moment before retrying, or use web_search to find an alternative URL", resp.StatusCode, resp.Status)
+		}
 		return &ToolResult{
 			Content: fmt.Sprintf("HTTP %d %s\nURL: %s\n\n%s",
 				resp.StatusCode, resp.Status, p.URL, preview),
@@ -212,7 +296,7 @@ func (t *WebFetch) Execute(ctx context.Context, p WebFetchParams) (*ToolResult, 
 			Error: &ToolError{
 				Class:   ErrorClassRecoverable,
 				Kind:    ErrKindCommandFailed,
-				Message: fmt.Sprintf("HTTP %d %s. Use web_search to find an alternative URL if the page is unavailable", resp.StatusCode, resp.Status),
+				Message: msg,
 			},
 		}, nil
 
