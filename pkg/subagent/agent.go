@@ -87,7 +87,7 @@ func (a *AgentTool) newCompactor() compaction.Compactor {
 }
 
 // saveSubagentTranscript 将 subagent 事件持久化为 JSONL 文件和 metadata。
-func (a *AgentTool) saveSubagentTranscript(agentID, agentType, description, model string, totalSteps, promptTok, complTok int, events []SubagentEvent) {
+func (a *AgentTool) saveSubagentTranscript(agentID, agentType, description, model string, totalSteps, promptTok, complTok, cacheHitTok, cacheMissTok int, events []SubagentEvent) {
 	if a.sessionsDir == "" || a.sessionID == "" {
 		return
 	}
@@ -99,6 +99,8 @@ func (a *AgentTool) saveSubagentTranscript(agentID, agentType, description, mode
 		TotalSteps:       totalSteps,
 		PromptTokens:     promptTok,
 		CompletionTokens: complTok,
+		CacheHitTokens:   cacheHitTok,
+		CacheMissTokens:  cacheMissTok,
 	})
 
 	// 转换 SubagentEvent → TranscriptEntry(CC 兼容格式,isSidechain:true)
@@ -377,8 +379,8 @@ func (a *AgentTool) executeFork(ctx context.Context, p AgentParams) (*tool.ToolR
 	// 模型安全兜底:空/"pro"→主模型,"flash"→子模型,其他→主模型
 	model := a.resolveModel(p.Model)
 
-	// 从 context 获取父消息历史;buildForkMessages 会保留最后一条 assistant
-	// 并注入占位 tool_result 以保证缓存友好的 fork 构造。
+	// 从 context 获取父消息历史。buildForkMessages 做"前缀零改写 + 尾部闭合
+	// 截断",截断后剩余恰好 = 父上一请求负载 P_k(已发送、已缓存)。
 	parentRaw := agentloop.ParentMessagesFromContext(ctx)
 	messages := buildForkMessages(parentRaw, p.Description, p.Prompt)
 	a.mu.RLock()
@@ -386,6 +388,44 @@ func (a *AgentTool) executeFork(ctx context.Context, p AgentParams) (*tool.ToolR
 	a.mu.RUnlock()
 
 	registry := a.buildForkRegistry()
+	// fork 首请求携带与父完全一致的 tools 数组(DeepSeek 前缀缓存包含 tools
+	// schema,不一致则继承前缀在请求头部即分叉,命中归零)。
+	parentTools := agentloop.ParentToolsFromContext(ctx)
+	var reqTools []llm.ToolSpec
+	if len(parentTools) > 0 {
+		reqTools = append([]llm.ToolSpec(nil), parentTools...)
+		// 请求侧 tools 被整体替换为父 schema 后,父独占工具(bash/agent/todo/
+		// MCP 等)对 fork 模型可见但未注册 → loop 会静默剥离其调用,模型无
+		// 反馈空转。补齐注册表:bash 别名到 fork 的沙箱 shell(执行语义一致),
+		// 其余注册显式报错 stub。
+		alignForkRegistry(registry, parentTools)
+	} else {
+		// 无父 tools 注入(单测/兼容路径)→ 退化为子代理自身 schema
+		for _, s := range registry.List() {
+			reqTools = append(reqTools, llm.ToolSpec{
+				Name:        s.Name,
+				Description: s.Description,
+				Parameters:  s.Parameters,
+			})
+		}
+	}
+	// 预算兜底:继承前缀 + 指令 ≤ 窗口 90%(另扣 tools schema 与输出余量),
+	// 超限沿完整轮次边界从尾部截断;截到保底仍超(或预算被 tools 占满)则
+	// 拒绝发起必败请求(实测 fork 请求 1.44M > 模型上限 1,048,565 → HTTP 400)。
+	compactor := a.newCompactor()
+	window := compaction.DefaultContextLimit
+	if tc, ok := compactor.(interface{ ContextLimit() int }); ok {
+		window = tc.ContextLimit()
+	}
+	budget := int(float64(window)*forkContextBudgetRatio) - estimateToolSpecsTokens(reqTools) - 4096
+	if budget <= 0 {
+		return forkContextExceededResult()
+	}
+	if trimmed, ok := trimForkContextToBudget(messages, budget, forkMinKeepMessages); !ok {
+		return forkContextExceededResult()
+	} else {
+		messages = trimmed
+	}
 
 	subCtx, subCancel := context.WithCancel(ctx)
 	defer subCancel()
@@ -399,7 +439,8 @@ func (a *AgentTool) executeFork(ctx context.Context, p AgentParams) (*tool.ToolR
 		ToolTimeout:   agentloop.DefaultToolTimeout,
 		Model:         model,
 		TodoState:     nil,
-		Compactor:     a.newCompactor(),
+		Compactor:     compactor,
+		ToolsOverride: reqTools,
 	})
 
 	startTime := time.Now()
@@ -429,7 +470,7 @@ func (a *AgentTool) executeFork(ctx context.Context, p AgentParams) (*tool.ToolR
 		cb(SubagentEnd{ToolCallID: toolCallID, Model: model, TotalSteps: totalSteps, PromptTokens: promptTok, CompletionTokens: complTok, CacheHitTokens: cacheHitTok, CacheMissTokens: cacheMissTok, DurationMs: time.Since(startTime).Milliseconds()})
 	}
 	// 持久化 subagent JSONL
-	a.saveSubagentTranscript(toolCallID, agentType, p.Description, model, totalSteps, promptTok, complTok, events)
+	a.saveSubagentTranscript(toolCallID, agentType, p.Description, model, totalSteps, promptTok, complTok, cacheHitTok, cacheMissTok, events)
 
 	return &tool.ToolResult{
 		Content: fmt.Sprintf("(fork subagent completed, %d steps, %d+%d tokens)\n\n%s%s", totalSteps, promptTok, complTok, lastStepText, formatFindings(classified)),
@@ -527,7 +568,7 @@ func (a *AgentTool) executeCold(ctx context.Context, p AgentParams) (*tool.ToolR
 		cb(SubagentEnd{ToolCallID: toolCallID, Model: model, TotalSteps: totalSteps, PromptTokens: promptTok, CompletionTokens: complTok, CacheHitTokens: cacheHitTok, CacheMissTokens: cacheMissTok, DurationMs: time.Since(startTime).Milliseconds()})
 	}
 	// 持久化 subagent JSONL
-	a.saveSubagentTranscript(toolCallID, p.SubagentType, p.Description, model, totalSteps, promptTok, complTok, events)
+	a.saveSubagentTranscript(toolCallID, p.SubagentType, p.Description, model, totalSteps, promptTok, complTok, cacheHitTok, cacheMissTok, events)
 
 	return &tool.ToolResult{
 		Content: fmt.Sprintf("(subagent [%s] completed, %d steps, %d+%d tokens)\n\n%s%s", p.SubagentType, totalSteps, promptTok, complTok, lastStepText, formatFindings(classified)),
@@ -581,6 +622,104 @@ func (a *AgentTool) buildColdRegistry(extraDisallowed map[string]bool) tool.Regi
 		r.Register(t)
 	}
 	return r
+}
+
+// alignForkRegistry 补齐 fork 注册表与父 tools(ToolsOverride 广告集)的差集:
+// fork 首请求的 tools 数组被整体替换为父 schema(前缀缓存对齐),父独占工具
+// 因此对 fork 模型可见但未注册——loop 对未注册工具的调用是静默剥离,模型
+// 得不到任何反馈,任务空转。补齐后:
+//   - "bash":父请求广告的是主循环 AllowBg=true 实例,fork 只有同 schema 的
+//     "bash_subagent"(AllowBg=false、沙箱)。fork 模型看不见 bash_subagent
+//     (请求 tools 被整体替换),调用 bash 会被剥离 → 别名注册到 fork 沙箱
+//     shell 实例,名字不同但执行语义一致。
+//   - 其余父独占工具(agent / todo_* / ask_user_question / plan mode /
+//     kill_background_task / MCP 工具…):注册 unavailable stub,调用返回
+//     明确的可恢复错误并给出替代指引。
+func alignForkRegistry(reg tool.Registry, parentTools []llm.ToolSpec) {
+	shell, _ := reg.Get("bash_subagent")
+	for _, s := range parentTools {
+		if _, ok := reg.Get(s.Name); ok {
+			continue
+		}
+		if s.Name == "bash" && shell != nil {
+			reg.Register(&forkToolAlias{name: "bash", inner: shell})
+			continue
+		}
+		reg.Register(&forkUnavailableTool{spec: s})
+	}
+}
+
+// forkToolAlias 以指定名字委托底层工具执行(fork 中 "bash" → 沙箱 shell)。
+type forkToolAlias struct {
+	name  string
+	inner tool.Tool
+}
+
+func (t *forkToolAlias) Name() string {
+	return t.name
+}
+func (t *forkToolAlias) Description() string {
+	return t.inner.Description()
+}
+func (t *forkToolAlias) Schema() json.RawMessage {
+	return t.inner.Schema()
+}
+func (t *forkToolAlias) ConcurrentSafe() bool {
+	return t.inner.ConcurrentSafe()
+}
+func (t *forkToolAlias) Execute(ctx context.Context, raw json.RawMessage) (*tool.ToolResult, error) {
+	return t.inner.Execute(ctx, raw)
+}
+func (t *forkToolAlias) SupportsStreaming() bool {
+	if s, ok := t.inner.(tool.StreamableTool); ok {
+		return s.SupportsStreaming()
+	}
+	return false
+}
+func (t *forkToolAlias) ExecuteStreaming(ctx context.Context, raw json.RawMessage, chunkCb func(string)) (*tool.ToolResult, error) {
+	if s, ok := t.inner.(tool.StreamableTool); ok {
+		return s.ExecuteStreaming(ctx, raw, chunkCb)
+	}
+	return t.inner.Execute(ctx, raw)
+}
+
+// forkUnavailableTool 是父独占工具在 fork 注册表中的占位:调用返回明确的
+// 可恢复错误与替代指引,替代 loop 层对未注册工具的静默剥离。
+type forkUnavailableTool struct {
+	spec llm.ToolSpec
+}
+
+func (t *forkUnavailableTool) Name() string {
+	return t.spec.Name
+}
+func (t *forkUnavailableTool) Description() string {
+	return t.spec.Description
+}
+func (t *forkUnavailableTool) Schema() json.RawMessage {
+	switch p := t.spec.Parameters.(type) {
+	case json.RawMessage:
+		return p
+	case string:
+		return json.RawMessage(p)
+	default:
+		if b, err := json.Marshal(p); err == nil {
+			return b
+		}
+		return nil
+	}
+}
+func (t *forkUnavailableTool) ConcurrentSafe() bool {
+	return false
+}
+func (t *forkUnavailableTool) Execute(ctx context.Context, raw json.RawMessage) (*tool.ToolResult, error) {
+	return &tool.ToolResult{
+		Content: fmt.Sprintf("Error: 工具 %q 仅存在于父会话,fork 子代理不可调用。请改用可用工具(read / edit / write / web_fetch / web_search / bash / bash_subagent)。", t.spec.Name),
+		Error: &tool.ToolError{
+			Class:   tool.ErrorClassRecoverable,
+			Kind:    "tool_unavailable_in_fork",
+			Message: fmt.Sprintf("tool %q is only available in the parent session", t.spec.Name),
+		},
+	}, nil
 }
 
 func (a *AgentTool) allTools() []tool.Tool {
@@ -936,12 +1075,17 @@ func fmtBytes(n int) string {
 // buildForkMessages 从父消息构建 fork 子 agent 的消息历史。
 //
 // 策略:
-//  1. 从父消息中过滤掉所有 tool 角色消息(父级工具执行产物,fork 不需要),
-//     同时移除最后一条 assistant(它包含触发 fork 的 agent tool_call)。
-//     两步共同防止 LLM 看到 agent 占位文本后输出 boilerplate。
-//  2. 追加一条 user 消息,包含 <fork-boilerplate> 身份注入 + 任务指令
+//  1. 前缀零改写:保留父消息原样(含 tool 结果),不做中段删除/改写——
+//     前缀缓存要求请求 token 序列与父已缓存请求从头连续一致,任何中段
+//     "打洞"(删除 tool 消息、剥离 tool_calls)都会使打洞点之后的命中全部丢失。
+//  2. 尾部闭合截断:从最后一条含 tool_calls 的 assistant 处整体丢弃(它正是
+//     触发 fork 的那条,含 agent tool_call;其后的兄弟工具结果一并截掉)。
+//     fork 在工具执行阶段快照父消息,state.Messages = 父上一请求负载 P_k
+//     (已发送、已缓存)+ 该 assistant,截断后剩余恰好 == P_k → 首请求
+//     前缀与父缓存线一致,命中 ≈ P_k 全长。
+//  3. 追加一条 user 消息,包含 <fork-boilerplate> 身份注入 + 任务指令
 //
-// 结果:[...parent clean history, user(<fork-boilerplate> + task directive)]
+// 结果:[...P_k 原样, user(<fork-boilerplate> + task directive)]
 //
 // 若父消息不存在则创建新的干净消息(兜底)。
 func buildForkMessages(parentRaw interface{}, description, prompt string) []llm.Message {
@@ -958,47 +1102,190 @@ func buildForkMessages(parentRaw interface{}, description, prompt string) []llm.
 			{Role: llm.RoleUser, Content: buildForkDirective(description, prompt)},
 		}
 	}
-	// 1. 过滤:移除所有 tool 消息(父级工具执行产物),fork 只需要 system/user/assistant
-	// 2. 截断到最后一个 user 消息(排除包含 agent tool_call 的最后 assistant)
-	var filtered []llm.Message
-	lastUserFilteredIdx := -1
-	for _, m := range msgs {
-		if m.Role == llm.RoleTool {
-			continue
-		}
-		filtered = append(filtered, m)
-		if m.Role == llm.RoleUser {
-			lastUserFilteredIdx = len(filtered) - 1
+	// 1. 尾部闭合截断:从最后一条含 tool_calls 的 assistant 处整体丢弃。
+	//    fork 由该 assistant 发起(agent tool_call),截断后前缀 == 父上一请求
+	//    负载 P_k。若父历史已被压缩改写(无 assistant 含 tool_calls),则原样保留。
+	filtered := msgs
+	for i := len(msgs) - 1; i >= 0; i-- {
+		if msgs[i].Role == llm.RoleAssistant && len(msgs[i].ToolCalls) > 0 {
+			filtered = msgs[:i]
+			break
 		}
 	}
 
-	// 截断到最后一个 user(排除其后可能存在的 assistant)
-	if lastUserFilteredIdx >= 0 {
-		filtered = filtered[:lastUserFilteredIdx+1]
-	}
-
-	// 3. 清理 orphaned tool_calls:剥离 filter 后残留在 assistant 消息中的 ToolCalls
-	//    (这些 tool_calls 引用的 tool 消息已在步骤 1 中被移除,不剥离会导致 API 400 错误)
-	cleanFiltered := filtered[:0]
-	for _, m := range filtered {
+	// 2. 防御层(627e50c 回归保护):异常历史(如压缩摘要拼接/外部注入)可能残留
+	//    两类协议孤儿——① 孤儿轮次:assistant 声明了 tool_calls 但其结果已不在
+	//    历史中;② 悬空 tool 段:tool 结果没有前导 assistant 声明。配对轮次
+	//    (后继连续 tool 段完整覆盖全部声明)原样保留,保证前缀零改写;仅异常
+	//    单元被清理:有文本的孤儿 assistant 保留文本但剥离 ToolCalls(其 tool
+	//    段跳过,否则引用已剥离声明、协议违规);纯 tool_calls 孤儿 assistant
+	//    连同其 tool 段整轮删除;悬空 tool 段整段删除。
+	cleaned := make([]llm.Message, 0, len(filtered))
+	for i := 0; i < len(filtered); i++ {
+		m := filtered[i]
 		if m.Role == llm.RoleAssistant && len(m.ToolCalls) > 0 {
-			if m.Content == "" {
-				// 纯 tool_calls assistant(无文本内容)→ 整条删除
+			// 收集后继连续 tool 消息段,核对声明是否全部有结果返回
+			ids := make(map[string]struct{}, len(m.ToolCalls))
+			for _, tc := range m.ToolCalls {
+				ids[tc.ID] = struct{}{}
+			}
+			j := i + 1
+			for ; j < len(filtered) && filtered[j].Role == llm.RoleTool; j++ {
+				if _, ok := ids[filtered[j].ToolCallID]; ok {
+					delete(ids, filtered[j].ToolCallID)
+				}
+			}
+			if len(ids) > 0 {
+				// 孤儿轮次(结果被压缩/拼接丢弃):清理并跳过其 tool 段
+				if m.Content != "" {
+					m.ToolCalls = nil
+					cleaned = append(cleaned, m)
+				}
+				i = j - 1
 				continue
 			}
-			// 有文本内容 → 保留消息但清除 ToolCalls
-			m.ToolCalls = nil
+			// 配对轮次:原样保留(零改写),其 tool 段随后逐条正常通过
+		} else if m.Role == llm.RoleTool && (i == 0 || filtered[i-1].Role != llm.RoleTool) {
+			// 连续 tool 段的段首:前一条必须是有 tool_calls 声明的 assistant
+			// (配对轮次的结果)。前导缺失(无消息 / user / system / 纯文本
+			// assistant)→ 悬空 tool 段,整段跳过。
+			if i == 0 || filtered[i-1].Role != llm.RoleAssistant || len(filtered[i-1].ToolCalls) == 0 {
+				j := i + 1
+				for ; j < len(filtered) && filtered[j].Role == llm.RoleTool; j++ {
+				}
+				i = j - 1
+				continue
+			}
 		}
-		cleanFiltered = append(cleanFiltered, m)
+		cleaned = append(cleaned, m)
 	}
-	filtered = cleanFiltered
+	// 输出写入独立 backing,不复用输入切片:原地过滤会篡改父消息历史
+	// (state.Messages 共享 backing),破坏父循环后续请求的协议合法性。
+	filtered = cleaned
 
-	// 追加 fork 身份注入 + 任务指令
+	if len(filtered) == 0 {
+		// 异常历史(如首条即含 tool_calls 的 assistant)截断/清理后为空:
+		// 回退到干净消息,避免产生无 system 引导的孤儿 directive 请求。
+		return []llm.Message{
+			{Role: llm.RoleSystem, Content: "You are a coding agent. Complete the task using the tools available to you."},
+			{Role: llm.RoleUser, Content: buildForkDirective(description, prompt)},
+		}
+	}
+
+	// 3. 追加 fork 身份注入 + 任务指令
 	filtered = append(filtered, llm.Message{
 		Role:    llm.RoleUser,
 		Content: buildForkDirective(description, prompt),
 	})
 	return filtered
+}
+
+// forkContextBudgetRatio 是继承前缀占子代理模型窗口的比例上限(0.9 = 90%)。
+// 超限部分由 trimForkContextToBudget 沿完整轮次边界从尾部截断,防止 fork
+// 首请求超出模型上下文窗口被 provider 400 拒绝(实测:请求 1.44M > 1,048,565)。
+const forkContextBudgetRatio = 0.9
+
+// forkMinKeepMessages 是预算截断后允许保留的最少消息数(不足则判定为
+// "上下文过大,不适合 fork",由调用方引导改用 cold/explore)。
+const forkMinKeepMessages = 3
+
+// forkContextExceededResult 构造 fork 上下文超窗的拒绝结果(可恢复:模型可
+// 先压缩主上下文再重试,或改走 explore 冷启动)。
+func forkContextExceededResult() (*tool.ToolResult, error) {
+	return &tool.ToolResult{
+		Content: "Error: fork 继承上下文超出模型窗口预算,已放弃发起请求。任务需要完整历史时请改用 explore(冷启动轻量搜索);需要大上下文执行时请先在主循环压缩上下文再 fork,或分小步委派。",
+		Error: &tool.ToolError{
+			Class:   tool.ErrorClassRecoverable,
+			Kind:    "context_window_exceeded",
+			Message: "fork inherited context exceeds model window budget",
+		},
+	}, nil
+}
+
+// estimateMessagesTokens 粗估消息列表的 token 数(护栏用途,宁可高估不低估:
+// 低估会让超窗请求漏网,高估只会让截断略早发生)。
+func estimateMessagesTokens(msgs []llm.Message) int {
+	total := 0
+	for _, m := range msgs {
+		total += 4 // role/头部开销
+		total += len(m.Content)/2 + len(m.ReasoningContent)/2
+		for _, tc := range m.ToolCalls {
+			total += len(tc.Name)/2 + len(tc.Arguments)/2 + 2
+		}
+	}
+	return total
+}
+
+// estimateToolSpecsTokens 粗估工具 schema 列表的 token 数(请求头部)。
+func estimateToolSpecsTokens(specs []llm.ToolSpec) int {
+	total := 0
+	for _, s := range specs {
+		total += len(s.Name)/2 + len(s.Description)/3 + 24
+		switch p := s.Parameters.(type) {
+		case json.RawMessage:
+			total += len(p) / 3
+		case string:
+			total += len(p) / 3
+		default:
+			if b, err := json.Marshal(s.Parameters); err == nil {
+				total += len(b) / 3
+			}
+		}
+	}
+	return total
+}
+
+// forkRoundStart 返回 msgs[:idx] 中最后一个完整轮次的起点索引。
+// 轮次 = user 单条 / 纯文本 assistant / assistant(tool_calls) + 其 tool 结果组。
+// 起点满足:截断到该点后,前缀消息序列保持合法(不存在孤儿 tool_calls)。
+func forkRoundStart(msgs []llm.Message, idx int) int {
+	i := idx - 1
+	if i < 0 {
+		return 0
+	}
+	switch msgs[i].Role {
+	case llm.RoleTool:
+		// 回溯到该批 tool 结果所属 assistant(tool_calls)的起点;
+		// 找不到配对(异常历史)→ 保守从首个 tool 消息处截。
+		j := i
+		for j > 0 && msgs[j].Role == llm.RoleTool {
+			j--
+		}
+		if msgs[j].Role == llm.RoleAssistant && len(msgs[j].ToolCalls) > 0 {
+			return j
+		}
+		return j + 1
+	default:
+		// user / assistant(含纯文本)/ system
+		return i
+	}
+}
+
+// trimForkContextToBudget 从尾部按完整轮次截断,使继承前缀 ≤ budgetTokens。
+// 截断只沿轮次边界进行,不拆分配对、不改动前缀头部 → 截断后的前缀仍是某次
+// 父请求负载,缓存友好。若截到 minKeep 仍超预算,返回 false 表示不适合 fork。
+func trimForkContextToBudget(msgs []llm.Message, budgetTokens, minKeep int) ([]llm.Message, bool) {
+	if estimateMessagesTokens(msgs) <= budgetTokens {
+		return msgs, true
+	}
+	if len(msgs) <= minKeep {
+		// 已到保底条数仍超预算 → 不适合 fork(原先短路在估算前,少数巨型
+		// 消息可绕过护栏,超窗请求直接发送 → provider 400)。
+		return msgs, false
+	}
+	idx := len(msgs)
+	for idx > minKeep {
+		start := forkRoundStart(msgs, idx)
+		if start >= idx {
+			// 无法继续整轮截断(防御,理论不可达)
+			break
+		}
+		if estimateMessagesTokens(msgs[:start]) <= budgetTokens {
+			return msgs[:start], true
+		}
+		idx = start
+	}
+	return msgs[:minKeep], false
 }
 
 // findLastAssistant 返回消息列表中最后一条 assistant 消息的指针,nil 表示不存在。
@@ -1021,10 +1308,11 @@ Rules:
 1. Your final message MUST contain a non-empty summary of what you did. Never end with a silent/empty response — even if all work was done via tool calls, summarize the outcome.
 2. Output is expensive — keep responses concise. Aim for under 300 words unless findings genuinely demand more detail.
 3. Do NOT call the agent tool (you ARE the fork — execute directly)
-4. You have unrestricted tool access (no permission prompts). No need to ask for confirmation before writes.
-5. No conversation, no questions, no commentary. Use tools silently, report once at the end.
-6. Stay within the task scope. Related observations outside scope deserve at most one sentence.
-7. Preferred format (English labels; adapt as needed):
+4. Tool availability: the advertised tool schemas mirror the parent session (prefix-cache alignment), but only read / edit / write / web_fetch / web_search / bash / bash_subagent are executable here. Parent-only tools (agent, todo_create, todo_update, ask_user_question, enter_plan_mode, exit_plan_mode, kill_background_task, MCP tools, ...) return an explicit error if called — never call them.
+5. You have unrestricted tool access (no permission prompts). No need to ask for confirmation before writes.
+6. No conversation, no questions, no commentary. Use tools silently, report once at the end.
+7. Stay within the task scope. Related observations outside scope deserve at most one sentence.
+8. Preferred format (English labels; adapt as needed):
 
 Scope: <one sentence echoing the task>
 Result: <findings or work done — details when they matter>

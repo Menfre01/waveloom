@@ -406,6 +406,10 @@ type AgentMetadata struct {
 	TotalSteps       int    `json:"totalTurns,omitempty"` // 字段名对齐 step 语义;json tag 保留 totalTurns 兼容旧 meta
 	PromptTokens     int    `json:"promptTokens,omitempty"`
 	CompletionTokens int    `json:"completionTokens,omitempty"`
+	// CacheHitTokens / CacheMissTokens 子代理累计缓存命中/未命中 token。
+	// SubagentEnd 事件已携带这两项,落盘用于量化 fork 首请求的缓存重建成本。
+	CacheHitTokens  int `json:"cacheHitTokens,omitempty"`
+	CacheMissTokens int `json:"cacheMissTokens,omitempty"`
 }
 
 func SaveAgentMetadata(path string, meta AgentMetadata) error {

@@ -90,6 +90,12 @@ type Config struct {
 	SubModel  string
 	PlanModel string
 
+	// ToolsOverride 请求侧工具 schema 覆盖。非空时,每次 LLM 请求携带此列表
+	// 而非 registry.List() 派生列表;工具执行/分发仍走 toolRegistry。
+	// 用途:fork 子代理携带与父完全一致的 tools 数组,使首请求命中父缓存前缀
+	// (DeepSeek 前缀缓存包含 tools schema,不一致则从头分叉)。
+	ToolsOverride []llm.ToolSpec
+
 	// LSPManager LSP diagnostic manager
 	LSPManager *lsp.Manager
 }
@@ -407,7 +413,7 @@ func (l *Loop) Run(ctx context.Context, messages []llm.Message) <-chan StepEvent
 			if model != "" {
 				sendCtx = llm.WithModelOverride(ctx, model)
 			}
-			streamCh, err := l.llmClient.SendMessageStream(sendCtx, messagesForStep, toLLMToolSpecs(l.toolRegistry.List()))
+			streamCh, err := l.llmClient.SendMessageStream(sendCtx, messagesForStep, l.requestTools())
 			if err != nil {
 				l.verbose("  ← ERROR: %v\n", err)
 				ch <- TurnDone{
@@ -444,7 +450,7 @@ func (l *Loop) Run(ctx context.Context, messages []llm.Message) <-chan StepEvent
 
 					// 回退到非流式调用（自带重试）
 					l.verbose("  ← falling back to non-streaming\n")
-					resp, fallbackErr := l.llmClient.SendMessage(sendCtx, messagesForStep, toLLMToolSpecs(l.toolRegistry.List()))
+					resp, fallbackErr := l.llmClient.SendMessage(sendCtx, messagesForStep, l.requestTools())
 					if fallbackErr != nil {
 						l.verbose("  ← FALLBACK ERROR: %v\n", fallbackErr)
 
@@ -910,6 +916,16 @@ func toLLMToolSpecs(specs []tool.ToolSpec) []llm.ToolSpec {
 		}
 	}
 	return result
+}
+
+// requestTools 返回本 loop 请求侧的工具 schema:
+// ToolsOverride 非空(如 fork 子代理对齐父 tools)→ 使用覆盖列表;
+// 否则由注册表派生。执行/分发始终走 toolRegistry,不受 override 影响。
+func (l *Loop) requestTools() []llm.ToolSpec {
+	if len(l.config.ToolsOverride) > 0 {
+		return l.config.ToolsOverride
+	}
+	return toLLMToolSpecs(l.toolRegistry.List())
 }
 
 // webSearchVirtualEvent 将服务端 web_search 状态转为虚拟 ToolCall 事件。

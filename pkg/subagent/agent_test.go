@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -682,36 +683,28 @@ func TestAgentTool_ExecuteFork_WorksWithoutParentMessages(t *testing.T) {
 }
 
 func TestBuildForkMessages(t *testing.T) {
-	// fork 仅继承到最后一个 user 消息(不含 assistant),然后追加 fork directive
+	// 尾部是纯文本 assistant(无 tool_calls):前缀零改写,原样保留 + directive。
+	// 缓存要求:不改写中段任何消息;纯文本 assistant 保留不影响消息序列合法性。
 	msgs := []llm.Message{
 		{Role: llm.RoleSystem, Content: "sys"},
 		{Role: llm.RoleUser, Content: "hello"},
 		{Role: llm.RoleAssistant, Content: "hi there"},
 	}
 	result := buildForkMessages(msgs, "test", "do it")
-	// sys + user + fork directive = 3(assistant 被排除)
-	if len(result) != 3 {
-		t.Fatalf("expected 3 messages (assistant excluded), got %d", len(result))
+	if len(result) != 4 {
+		t.Fatalf("expected 4 messages (prefix preserved + directive), got %d", len(result))
 	}
-	if result[0].Role != llm.RoleSystem || result[0].Content != "sys" {
-		t.Error("system message should be preserved")
+	if !reflect.DeepEqual(result[:3], msgs) {
+		t.Errorf("prefix must be preserved byte-for-byte, got %+v", result[:3])
 	}
-	if result[1].Role != llm.RoleUser || result[1].Content != "hello" {
-		t.Error("user message should be preserved")
-	}
-	if result[2].Role != llm.RoleUser || !strings.Contains(result[2].Content, forkBoilerplateTag) {
-		t.Errorf("fork directive should be last user message with boilerplate: %+v", result[2])
-	}
-	// assistant 不应出现
-	for _, m := range result {
-		if m.Role == llm.RoleAssistant {
-			t.Error("assistant message should be excluded from fork context")
-		}
+	if result[3].Role != llm.RoleUser || !strings.Contains(result[3].Content, forkBoilerplateTag) {
+		t.Errorf("fork directive should be last user message with boilerplate: %+v", result[3])
 	}
 }
 
-func TestBuildForkMessages_NoAssistantInContext(t *testing.T) {
-	// 最后一条 assistant 含 tool_calls → fork 不应看到(避免 agent 占位符混淆)
+func TestBuildForkMessages_OpenToolCallRoundTruncated(t *testing.T) {
+	// 尾部 assistant 含 tool_calls 且无结果(发起 fork 的开放轮次)→ 整体截断,
+	// 不残留孤儿 tool_calls(627e50c 回归保护);前缀 = sys+user 原样。
 	msgs := []llm.Message{
 		{Role: llm.RoleSystem, Content: "sys"},
 		{Role: llm.RoleUser, Content: "hello"},
@@ -721,39 +714,332 @@ func TestBuildForkMessages_NoAssistantInContext(t *testing.T) {
 		}},
 	}
 	result := buildForkMessages(msgs, "fork-desc", "do something")
-	// sys + user + fork directive = 3(assistant + tool_calls 全部排除)
 	if len(result) != 3 {
-		t.Fatalf("expected 3 messages, got %d", len(result))
+		t.Fatalf("expected 3 messages (open round truncated), got %d", len(result))
+	}
+	if !reflect.DeepEqual(result[:2], msgs[:2]) {
+		t.Errorf("prefix must be preserved byte-for-byte, got %+v", result[:2])
 	}
 	if result[2].Role != llm.RoleUser || !strings.Contains(result[2].Content, forkBoilerplateTag) {
 		t.Error("last message should be fork directive")
 	}
-	// 不应有任何 tool 角色消息和 assistant 消息
-	for _, m := range result {
-		if m.Role == llm.RoleTool || m.Role == llm.RoleAssistant {
-			t.Errorf("unexpected %s message in fork context", m.Role)
+	// 无孤儿 tool_calls:任何保留的 assistant 不得携带 ToolCalls
+	for i, m := range result {
+		if m.Role == llm.RoleAssistant && len(m.ToolCalls) > 0 {
+			t.Errorf("message %d has orphaned tool_calls", i)
 		}
 	}
 }
-func TestBuildForkMessages_AgentToolCallPreserved(t *testing.T) {
+
+func TestBuildForkMessages_PrefixPreservedWithToolMessages(t *testing.T) {
+	// 核心缓存断言:中段 tool 消息与 assistant tool_calls 原样保留(tool 角色
+	// 不再被删除),仅截断到发起 fork 的最后一条 assistant 之前 →
+	// 剩余前缀 == 父上一请求负载 P_k,可与父缓存线逐字节对齐。
 	msgs := []llm.Message{
 		{Role: llm.RoleSystem, Content: "sys"},
-		{Role: llm.RoleUser, Content: "hello"},
-		{Role: llm.RoleAssistant, Content: "let me check", ToolCalls: []llm.ToolCall{
-			{ID: "call_1", Name: "agent", Arguments: `{"description":"x","prompt":"y"}`},
-			{ID: "call_2", Name: "bash", Arguments: `{"command":"ls"}`},
+		{Role: llm.RoleUser, Content: "inspect repo"},
+		{Role: llm.RoleAssistant, Content: "let me look", ToolCalls: []llm.ToolCall{
+			{ID: "c1", Name: "bash", Arguments: `{"command":"ls"}`},
 		}},
-		{Role: llm.RoleTool, Content: "agent result", ToolCallID: "call_1"},
-		{Role: llm.RoleTool, Content: "file list", ToolCallID: "call_2"},
+		{Role: llm.RoleTool, Content: "main.go", ToolCallID: "c1"},
+		{Role: llm.RoleUser, Content: "summarize findings"},
+		{Role: llm.RoleAssistant, Content: "found it", ToolCalls: []llm.ToolCall{
+			{ID: "c2", Name: "agent", Arguments: `{"description":"x","prompt":"y"}`},
+			{ID: "c3", Name: "read", Arguments: `{"file_path":"main.go"}`},
+		}},
 	}
 	result := buildForkMessages(msgs, "fork-desc", "do something")
-	// sys + user + user(fork directive) = 3(assistant + tool_calls 全部排除)
-	if len(result) != 3 {
-		t.Fatalf("expected 3 messages, got %d", len(result))
+	// 配对轮次 assistant(索引 2,其后 tool 结果完整)必须原样保留 ToolCalls,
+	// 防御层只清理孤儿轮次——误剥会让首请求与父缓存线从首个已完成轮次分叉。
+	if len(result[2].ToolCalls) != 1 {
+		t.Fatalf("paired round assistant tool_calls must be preserved, got %+v", result[2])
 	}
-	// fork directive 作为最后一条 user 消息
-	if result[2].Role != llm.RoleUser || !strings.Contains(result[2].Content, forkBoilerplateTag) {
+	// 父消息历史不得被就地篡改(buildForkMessages 曾复用输入 backing 过滤,
+	// 把 state.Messages 中配对 assistant 的 ToolCalls 原地置 nil)。
+	if len(msgs[2].ToolCalls) != 1 {
+		t.Fatalf("parent history mutated: msgs[2].ToolCalls = %+v", msgs[2].ToolCalls)
+	}
+	// 截断到最后一条含 tool_calls 的 assistant 之前(其兄弟工具结果 c3 未
+	// 出现在历史中——fork 在工具执行阶段快照,结果尚未 append)。
+	wantPrefix := msgs[:5]
+	if len(result) != len(wantPrefix)+1 {
+		t.Fatalf("expected %d messages, got %d", len(wantPrefix)+1, len(result))
+	}
+	if !reflect.DeepEqual(result[:len(wantPrefix)], wantPrefix) {
+		t.Errorf("prefix must be preserved byte-for-byte (incl. tool role + tool_calls), got:\n%+v", result[:len(wantPrefix)])
+	}
+	if result[len(wantPrefix)].Role != llm.RoleUser || !strings.Contains(result[len(wantPrefix)].Content, forkBoilerplateTag) {
 		t.Error("last message should be fork directive")
+	}
+}
+
+func TestBuildForkMessages_CompactedHistoryNoToolCalls(t *testing.T) {
+	// 父历史被压缩改写(无 assistant 含 tool_calls)→ 无截断点,前缀全保留。
+	// 该历史本身合法(压缩摘要),追加 directive 后序列有效。
+	msgs := []llm.Message{
+		{Role: llm.RoleSystem, Content: "sys"},
+		{Role: llm.RoleUser, Content: "earlier work"},
+		{Role: llm.RoleAssistant, Content: "done, see summary"},
+		{Role: llm.RoleUser, Content: "[summary] 完成了初步调研"},
+	}
+	result := buildForkMessages(msgs, "fork-desc", "do something")
+	if len(result) != 5 {
+		t.Fatalf("expected 5 messages (all preserved + directive), got %d", len(result))
+	}
+	if !reflect.DeepEqual(result[:4], msgs) {
+		t.Errorf("prefix must be preserved byte-for-byte, got %+v", result[:4])
+	}
+}
+
+func TestBuildForkMessages_NilParentFallback(t *testing.T) {
+	r := buildForkMessages(nil, "desc", "prompt")
+	if len(r) != 2 || r[0].Role != llm.RoleSystem || r[1].Role != llm.RoleUser {
+		t.Fatalf("nil parent must fall back to clean messages, got %+v", r)
+	}
+	r2 := buildForkMessages([]llm.Message{}, "desc", "prompt")
+	if len(r2) != 2 {
+		t.Fatalf("empty parent must fall back to clean messages, got %+v", r2)
+	}
+}
+
+// TestRegression_OrphanRoundsStrippedFromForkPrefix 覆盖 627e50c 回归保护在新
+// 前缀零改写策略下的正确形态:防御层只清理孤儿轮次(assistant 声明了 tool_calls
+// 但结果不在历史中,如压缩摘要拼接),配对的已完成轮次必须原样保留——无条件
+// 剥离曾导致:① 前缀从首个已完成轮次起与父缓存线分叉,命中归零;② 原地过滤
+// 篡改父 state.Messages(共享 backing);③ tool 消息失去前导声明,协议违规。
+func TestRegression_OrphanRoundsStrippedFromForkPrefix(t *testing.T) {
+	// 中段半配对孤儿:assistant 声明 c1+c2,历史中只有 c1 的结果(压缩损伤),
+	// 其后还有完整配对轮次 → 截断保留孤儿在前缀内 → 保留文本、剥离 ToolCalls、
+	// 跳过其 tool 段(t1 引用已剥离声明,不得残留)。
+	msgs := []llm.Message{
+		{Role: llm.RoleSystem, Content: "sys"},
+		{Role: llm.RoleUser, Content: "task 1"},
+		{Role: llm.RoleAssistant, Content: "half", ToolCalls: []llm.ToolCall{
+			{ID: "c1", Name: "bash", Arguments: `{"command":"ls"}`},
+			{ID: "c2", Name: "read", Arguments: `{"file_path":"a.go"}`},
+		}},
+		{Role: llm.RoleTool, Content: "out", ToolCallID: "c1"},
+		{Role: llm.RoleUser, Content: "task 2"},
+		{Role: llm.RoleAssistant, Content: "final", ToolCalls: []llm.ToolCall{
+			{ID: "c3", Name: "bash", Arguments: `{"command":"git status"}`},
+		}},
+		{Role: llm.RoleTool, Content: "fresh", ToolCallID: "c3"},
+	}
+	result := buildForkMessages(msgs, "fork-desc", "do something")
+	if len(result) != 5 {
+		t.Fatalf("expected 4 messages (orphan calls stripped, tool seg skipped), got %d: %+v", len(result), result)
+	}
+	if result[1].Content != "task 1" || result[2].Content != "half" || result[3].Content != "task 2" {
+		t.Fatalf("expected [task1, half, task2] in sequence, got %+v", result)
+	}
+	if result[2].Role != llm.RoleAssistant || len(result[2].ToolCalls) != 0 {
+		t.Errorf("orphan assistant must keep text without ToolCalls, got %+v", result[2])
+	}
+	if len(msgs[2].ToolCalls) != 2 {
+		t.Errorf("parent history mutated: msgs[2].ToolCalls = %+v", msgs[2].ToolCalls)
+	}
+
+	// 纯 tool_calls 孤儿(无文本,结果完全缺失)→ 整条删除;不阻塞其后
+	// 配对轮次的保留。
+	msgs2 := []llm.Message{
+		{Role: llm.RoleSystem, Content: "sys"},
+		{Role: llm.RoleUser, Content: "task 1"},
+		{Role: llm.RoleAssistant, Content: "", ToolCalls: []llm.ToolCall{
+			{ID: "c1", Name: "bash", Arguments: `{"command":"ls"}`},
+		}},
+		{Role: llm.RoleUser, Content: "task 2"},
+		{Role: llm.RoleAssistant, Content: "paired", ToolCalls: []llm.ToolCall{
+			{ID: "c2", Name: "read", Arguments: `{"file_path":"a.go"}`},
+		}},
+		{Role: llm.RoleTool, Content: "fresh", ToolCallID: "c2"},
+	}
+	result2 := buildForkMessages(msgs2, "fork-desc", "do something")
+	if len(result2) != 4 {
+		t.Fatalf("expected 4 messages (pure orphan round dropped), got %d: %+v", len(result2), result2)
+	}
+	if result2[1].Content != "task 1" || result2[2].Content != "task 2" {
+		t.Errorf("orphan round must be dropped whole, got %+v", result2)
+	}
+	if len(msgs2[4].ToolCalls) != 1 {
+		t.Errorf("parent history mutated: msgs2[4].ToolCalls = %+v", msgs2[4].ToolCalls)
+	}
+
+	// 悬空 tool 段(user 后无前导声明的 tool 结果,拼接残留)→ 整段删除;
+	// 其后配对轮次不受影响。
+	msgs3 := []llm.Message{
+		{Role: llm.RoleSystem, Content: "sys"},
+		{Role: llm.RoleUser, Content: "task 1"},
+		{Role: llm.RoleTool, Content: "dangling", ToolCallID: "ghost1"},
+		{Role: llm.RoleTool, Content: "dangling2", ToolCallID: "ghost2"},
+		{Role: llm.RoleUser, Content: "task 2"},
+		{Role: llm.RoleAssistant, Content: "paired", ToolCalls: []llm.ToolCall{
+			{ID: "c2", Name: "read", Arguments: `{"file_path":"a.go"}`},
+		}},
+		{Role: llm.RoleTool, Content: "fresh", ToolCallID: "c2"},
+	}
+	result3 := buildForkMessages(msgs3, "fork-desc", "do something")
+	if len(result3) != 4 {
+		t.Fatalf("expected 4 messages (dangling tool segment dropped), got %d: %+v", len(result3), result3)
+	}
+	if result3[1].Content != "task 1" || result3[2].Content != "task 2" {
+		t.Errorf("dangling segment must be dropped whole, got %+v", result3)
+	}
+	for i, m := range result3 {
+		if m.Role == llm.RoleTool {
+			t.Errorf("result %d must not retain dangling tool message: %+v", i, m)
+		}
+	}
+}
+
+// TestAlignForkRegistry_ParentToolsCovered 验证 ToolsOverride(父 tools)中 fork
+// 未注册的工具在 align 后均可分发:bash 别名到沙箱 shell(可真实执行),其余
+// 注册显式报错 stub——替代 loop 层静默剥离,模型能收到反馈自纠。
+func TestAlignForkRegistry_ParentToolsCovered(t *testing.T) {
+	a := &AgentTool{}
+	reg := a.buildForkRegistry()
+	parent := []llm.ToolSpec{
+		{Name: "read", Description: "read files"}, // 已注册 → 不动
+		{Name: "bash", Description: "run commands"},
+		{Name: "agent", Description: "spawn subagent"},
+		{Name: "todo_create", Description: "create todo"},
+		{Name: "mcp__github__list_issues", Description: "mcp tool"},
+	}
+	alignForkRegistry(reg, parent)
+
+	// 差集工具全部可分发(不再被 loop 静默剥离)
+	for _, name := range []string{"bash", "agent", "todo_create", "mcp__github__list_issues"} {
+		if _, ok := reg.Get(name); !ok {
+			t.Fatalf("parent tool %q must be registered after align", name)
+		}
+	}
+	// bash 别名真实执行(委托 fork 沙箱 shell),而非报不可用
+	res, err := reg.Execute(context.Background(), "bash", json.RawMessage(`{"command":"echo hi"}`))
+	if err != nil {
+		t.Fatalf("bash alias execute error: %v", err)
+	}
+	if res.Error != nil || !strings.Contains(res.Content, "hi") {
+		t.Fatalf("bash alias must execute through sandbox shell, got error=%+v content=%q", res.Error, res.Content)
+	}
+	// 父独占工具 → 显式不可用错误(可恢复),内容含替代指引
+	res, err = reg.Execute(context.Background(), "agent", json.RawMessage(`{}`))
+	if err != nil {
+		t.Fatalf("stub Execute must not return Go error: %v", err)
+	}
+	if res.Error == nil || res.Error.Kind != "tool_unavailable_in_fork" {
+		t.Fatalf("agent stub must return unavailable error, got %+v", res)
+	}
+	if !strings.Contains(res.Content, "不可调用") {
+		t.Errorf("stub content should guide model to available tools, got %q", res.Content)
+	}
+	// 已注册工具不受影响:read 仍是原实现(分发成功即不被 stub 遮蔽)
+	if res, err := reg.Execute(context.Background(), "read", json.RawMessage(`{"file_path":"nonexistent-file-xyz"}`)); err == nil && res.Error == nil {
+		t.Errorf("read must dispatch to the real tool (expect file-not-found error)")
+	}
+}
+
+// forkBudgetFixture 构造多轮工具型历史(每轮 = assistant(tool_calls) + tool 结果)。
+func forkBudgetFixture() []llm.Message {
+	big := strings.Repeat("x", 400)
+	return []llm.Message{
+		{Role: llm.RoleSystem, Content: "sys"},
+		{Role: llm.RoleUser, Content: "task 1"},
+		{Role: llm.RoleAssistant, Content: "running", ToolCalls: []llm.ToolCall{
+			{ID: "c1", Name: "bash", Arguments: `{"command":"ls"}`},
+		}},
+		{Role: llm.RoleTool, Content: big, ToolCallID: "c1"},
+		{Role: llm.RoleUser, Content: "task 2"},
+		{Role: llm.RoleAssistant, Content: "running again", ToolCalls: []llm.ToolCall{
+			{ID: "c2", Name: "read", Arguments: `{"file_path":"a.go"}`},
+		}},
+		{Role: llm.RoleTool, Content: big, ToolCallID: "c2"},
+		{Role: llm.RoleUser, Content: "task 3"},
+	}
+}
+
+func hasOrphanToolCalls(msgs []llm.Message) bool {
+	for _, m := range msgs {
+		if m.Role == llm.RoleAssistant && len(m.ToolCalls) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+func TestTrimForkContextToBudget_UnderBudgetUnchanged(t *testing.T) {
+	msgs := forkBudgetFixture()
+	out, ok := trimForkContextToBudget(msgs, estimateMessagesTokens(msgs), forkMinKeepMessages)
+	if !ok {
+		t.Fatal("budget equal to full estimate must succeed")
+	}
+	if !reflect.DeepEqual(out, msgs) {
+		t.Error("messages must be unchanged when within budget")
+	}
+}
+
+func TestTrimForkContextToBudget_TailRoundTruncation(t *testing.T) {
+	// 预算只够保留到 task 2 的 user:尾部 round(u3 / a2+t2)必须整轮丢弃,
+	// 绝不拆开 assistant(tool_calls) 与其 tool 结果;剩余前缀逐字节不变。
+	msgs := forkBudgetFixture()
+	budget := estimateMessagesTokens(msgs[:5]) // sys..u2(含 round1 完整)
+	out, ok := trimForkContextToBudget(msgs, budget, forkMinKeepMessages)
+	if !ok {
+		t.Fatal("expected successful trim")
+	}
+	if len(out) != 5 {
+		t.Fatalf("expected prefix len 5 (u3+a2+t2 dropped whole), got %d", len(out))
+	}
+	if !reflect.DeepEqual(out, msgs[:5]) {
+		t.Errorf("prefix must be preserved byte-for-byte: %+v", out)
+	}
+}
+
+func TestTrimForkContextToBudget_NeverSplitsToolPair(t *testing.T) {
+	// 预算卡在 round1 的 assistant 与 tool 结果之间:允许的截断点要么在
+	// 整轮之前(丢弃 a1+t1),要么在整轮之后;绝不产出孤儿 tool_calls。
+	msgs := forkBudgetFixture()
+	midRoundBudget := estimateMessagesTokens(msgs[:3]) // sys..a1(不含 t1)
+	for _, budget := range []int{midRoundBudget, midRoundBudget - 1} {
+		out, ok := trimForkContextToBudget(msgs, budget, forkMinKeepMessages)
+		if !ok {
+			t.Fatal("expected successful trim")
+		}
+		if hasOrphanToolCalls(out) {
+			t.Fatalf("trim must never split tool pair, got orphan tool_calls in %+v", out)
+		}
+		if len(out) != 2 {
+			t.Fatalf("budget below round1+t1 must cut to sys+u1 (len 2), got len %d", len(out))
+		}
+		if !reflect.DeepEqual(out, msgs[:2]) {
+			t.Errorf("prefix must be preserved byte-for-byte: %+v", out)
+		}
+	}
+}
+
+func TestTrimForkContextToBudget_TooSmallBudget(t *testing.T) {
+	msgs := forkBudgetFixture()
+	out, ok := trimForkContextToBudget(msgs, 1, forkMinKeepMessages)
+	if ok {
+		t.Fatal("budget 1 must fail (cannot fit minKeep)")
+	}
+	if len(out) != forkMinKeepMessages {
+		t.Errorf("failed trim must return msgs[:minKeep], got len %d", len(out))
+	}
+}
+
+func TestForkRoundStart(t *testing.T) {
+	msgs := forkBudgetFixture()
+	// 尾部 user → 起点即它自己
+	if got := forkRoundStart(msgs, len(msgs)); got != 7 {
+		t.Errorf("tail user round start = %d, want 7", got)
+	}
+	// 尾部 tool 结果批 → 回溯到其 assistant(tool_calls) 起点(索引 5)
+	trunc := msgs[:7]
+	if got := forkRoundStart(trunc, len(trunc)); got != 5 {
+		t.Errorf("tool batch round start = %d, want 5", got)
+	}
+	// 尾部 assistant(tool_calls) → 起点即它自己(整轮 = 它 + 后续结果,一并丢弃)
+	if got := forkRoundStart(msgs[:6], 6); got != 5 {
+		t.Errorf("open tool round start = %d, want 5", got)
 	}
 }
 

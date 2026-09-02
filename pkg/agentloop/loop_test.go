@@ -4426,3 +4426,92 @@ func TestRegression_PreviewQuoteSuffixNoInject(t *testing.T) {
 	}
 }
 
+// toolsCaptureClient 记录每次请求携带的 tools 数组(验证 ToolsOverride)。
+type toolsCaptureClient struct {
+	mu    sync.Mutex
+	tools [][]llm.ToolSpec
+}
+
+func (m *toolsCaptureClient) SendMessage(ctx context.Context, messages []llm.Message, tools []llm.ToolSpec) (*llm.Response, error) {
+	m.mu.Lock()
+	m.tools = append(m.tools, append([]llm.ToolSpec(nil), tools...))
+	m.mu.Unlock()
+	return &llm.Response{Content: "done"}, nil
+}
+
+func (m *toolsCaptureClient) SendMessageStream(ctx context.Context, messages []llm.Message, tools []llm.ToolSpec) (<-chan llm.StreamingEvent, error) {
+	m.mu.Lock()
+	m.tools = append(m.tools, append([]llm.ToolSpec(nil), tools...))
+	m.mu.Unlock()
+	ch := make(chan llm.StreamingEvent, 4)
+	go func() {
+		defer close(ch)
+		ch <- llm.StreamingEvent{Delta: "done"}
+		ch <- llm.StreamingEvent{Done: true, FinishReason: "stop"}
+	}()
+	return ch, nil
+}
+
+func (m *toolsCaptureClient) GetBalance(ctx context.Context) (*llm.BalanceInfo, error) { return nil, nil }
+func (m *toolsCaptureClient) SupportsBalance() bool                                   { return false }
+func (m *toolsCaptureClient) ListModels(ctx context.Context) ([]llm.ModelInfo, error) { return nil, nil }
+
+// TestRunToolsOverride_RequestUsesOverrideDispatchByRegistry 验证 ToolsOverride
+// 只替换请求侧 tools 数组(缓存对齐),工具分发仍走 registry:
+// registry 工具不得泄漏进请求,override 中未注册的工具名也不会被执行。
+func TestRunToolsOverride_RequestUsesOverrideDispatchByRegistry(t *testing.T) {
+	client := &toolsCaptureClient{}
+	registry := newTestRegistry(newSuccessTool("real_tool", true, "ok"))
+	cfg := DefaultConfig()
+	cfg.ToolsOverride = []llm.ToolSpec{
+		{Name: "ghost_tool", Description: "parent-only", Parameters: json.RawMessage(`{}`)},
+	}
+	loop := New(client, registry, cfg)
+
+	finalEv := drainEvents(loop.Run(context.Background(), []llm.Message{
+		{Role: llm.RoleUser, Content: "go"}}))
+	if finalEv.Err != nil {
+		t.Fatalf("unexpected error: %v", finalEv.Err)
+	}
+	if finalEv.Reason != ReasonCompleted {
+		t.Fatalf("expected ReasonCompleted, got %s", finalEv.Reason)
+	}
+
+	client.mu.Lock()
+	defer client.mu.Unlock()
+	if len(client.tools) == 0 {
+		t.Fatal("no request captured")
+	}
+	got := client.tools[0]
+	if len(got) != 1 || got[0].Name != "ghost_tool" {
+		t.Fatalf("request tools = %+v, want override [ghost_tool]", got)
+	}
+	for _, s := range got {
+		if s.Name == "real_tool" {
+			t.Error("registry tools must NOT leak into requests when ToolsOverride set")
+		}
+	}
+}
+
+// TestRunToolsOverride_ToolCallDispatchedByRegistry 验证 LLM 调用 override 之外、
+// 但 registry 注册的工具时,执行/分发不受 override 影响(不报 unknown tool)。
+func TestRunToolsOverride_ToolCallDispatchedByRegistry(t *testing.T) {
+	client := &mockLLMClient{responses: []*llm.Response{
+		makeToolCallResponse("", makeToolCall("tc1", "real_tool", `{}`)),
+		makeTextResponse("done"),
+	}}
+	registry := newTestRegistry(newSuccessTool("real_tool", true, "ok"))
+	cfg := DefaultConfig()
+	cfg.ToolsOverride = []llm.ToolSpec{{Name: "ghost_tool", Description: "parent-only"}}
+	loop := New(client, registry, cfg)
+
+	finalEv := drainEvents(loop.Run(context.Background(), []llm.Message{
+		{Role: llm.RoleUser, Content: "go"}}))
+	if finalEv.Err != nil {
+		t.Fatalf("unexpected error: %v", finalEv.Err)
+	}
+	if finalEv.Reason != ReasonCompleted {
+		t.Errorf("expected ReasonCompleted, got %s", finalEv.Reason)
+	}
+}
+

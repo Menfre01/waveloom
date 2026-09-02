@@ -59,6 +59,12 @@ func (l *Loop) executeToolCalls(ctx context.Context, calls []llm.ToolCall, state
 		ctx = WithEventCallback(ctx, l.config.EventCallback)
 	}
 	ctx = WithParentMessages(ctx, state.Messages)
+	// Inject parent request-side tools for fork cache alignment: DeepSeek prefix
+	// cache includes the tools schema (实测:同 messages 换 tools → 零命中),
+	// fork 首请求必须携带与父完全一致的 tools 数组才能命中父缓存前缀。
+	// 注入本 loop 实际请求侧 tools(override 优先):嵌套 loop(如 fork 子代理)
+	// 自身也配置 ToolsOverride 时,必须注入其真实发送的列表而非 registry 派生。
+	ctx = WithParentTools(ctx, l.requestTools())
 	// Inject system prompt for subagents. Prefer Config; fall back to extracting
 	// from messages[0] (ContextManager-managed sessions use empty Config.SystemPrompt).
 	systemPrompt := l.config.SystemPrompt

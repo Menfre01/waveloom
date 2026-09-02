@@ -2,6 +2,8 @@ package agentloop
 
 import (
 	"context"
+
+	"github.com/Menfre01/waveloom/pkg/llm"
 )
 
 // Context keys for injecting loop state into tool execution context.
@@ -9,6 +11,7 @@ import (
 type (
 	eventCallbackKey       struct{}
 	parentMessagesKey      struct{}
+	parentToolsKey         struct{}
 	parentSystemPromptKey  struct{}
 	agentsMDKey            struct{}
 	toolCallIDKey          struct{}
@@ -37,6 +40,20 @@ func WithParentMessages(ctx context.Context, msgs interface{}) context.Context {
 // Consumers must type-assert to []llm.Message.
 func ParentMessagesFromContext(ctx context.Context) interface{} {
 	return ctx.Value(parentMessagesKey{})
+}
+
+// WithParentTools injects the parent loop's request-side tool schemas into ctx.
+// fork 子代理首请求需要携带与父完全一致的 tools 数组:DeepSeek 前缀缓存包含
+// tools schema(实测:同 messages 换 tools → 零命中),tools 不一致时继承前缀
+// 在请求头部即分叉,消息构造得再完整也吃不到父缓存。
+func WithParentTools(ctx context.Context, specs []llm.ToolSpec) context.Context {
+	return context.WithValue(ctx, parentToolsKey{}, specs)
+}
+
+// ParentToolsFromContext extracts the parent tools slice from ctx.
+func ParentToolsFromContext(ctx context.Context) []llm.ToolSpec {
+	specs, _ := ctx.Value(parentToolsKey{}).([]llm.ToolSpec)
+	return specs
 }
 
 // ParentSystemPromptFromContext extracts the parent system prompt from ctx.
