@@ -9,6 +9,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -615,13 +616,21 @@ func parseSKILLmd(filePath string, isFlatFile bool) (fm frontmatter, body string
 }
 
 // scanSupportingFiles 扫描 dirPath 下所有非 SKILL.md 的常规文件。
+// REGRESSION: 曾继续下钻 .git 等隐藏目录且不过滤隐藏文件,仓库根安装的 skill
+// 目录自带 .git 时其内部文件全部进入清单;现忽略所有 "." 开头条目(根目录自身除外)。
 func scanSupportingFiles(dirPath string) []string {
 	var files []string
 	_ = filepath.WalkDir(dirPath, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
 			return nil
 		}
-		if d.IsDir() && path != dirPath {
+		if path != dirPath && strings.HasPrefix(d.Name(), ".") {
+			if d.IsDir() {
+				return fs.SkipDir // 不进入 .git 等隐藏目录
+			}
+			return nil // 跳过隐藏文件
+		}
+		if d.IsDir() {
 			// 进入子目录
 			return nil
 		}

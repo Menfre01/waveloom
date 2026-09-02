@@ -1233,6 +1233,42 @@ Body only
 	}
 }
 
+// TestRegression_ScanSupportingFilesIgnoresDotEntries 验证附属文件扫描忽略
+// .git 等隐藏目录及其内部文件、普通目录下的隐藏文件。
+// 根因:WalkDir 对子目录返回 nil(继续下钻)且无隐藏条目过滤,仓库根安装的
+// skill 目录含 .git 时,其内部文件全部进入 Supporting files 清单。
+func TestRegression_ScanSupportingFilesIgnoresDotEntries(t *testing.T) {
+	dir := tmpDir(t)
+	writeFile(t, filepath.Join(dir, "SKILL.md"), "# skill\n")
+	writeFile(t, filepath.Join(dir, "reference.md"), "# reference\n")
+	writeFile(t, filepath.Join(dir, "examples", "sample.md"), "# sample\n")
+	writeFile(t, filepath.Join(dir, ".git", "HEAD"), "ref: refs/heads/main\n")
+	writeFile(t, filepath.Join(dir, ".git", "objects", "ab", "cafef00d"), "x\n")
+	writeFile(t, filepath.Join(dir, ".hidden.md"), "hidden\n")
+	writeFile(t, filepath.Join(dir, "assets", ".thumb.jpg"), "j\n")
+
+	got := scanSupportingFiles(dir)
+	gotMap := make(map[string]bool, len(got))
+	for _, f := range got {
+		gotMap[f] = true
+	}
+	for _, want := range []string{"reference.md", filepath.Join("examples", "sample.md")} {
+		if !gotMap[want] {
+			t.Errorf("missing supporting file %q; got: %v", want, got)
+		}
+	}
+	for _, bad := range []string{
+		".hidden.md",
+		filepath.Join("assets", ".thumb.jpg"),
+		filepath.Join(".git", "HEAD"),
+		filepath.Join(".git", "objects", "ab", "cafef00d"),
+	} {
+		if gotMap[bad] {
+			t.Errorf("dot entry %q must not be listed; got: %v", bad, got)
+		}
+	}
+}
+
 // ---------------------------------------------------------------------------
 // 扁平 command 文件测试
 // ---------------------------------------------------------------------------

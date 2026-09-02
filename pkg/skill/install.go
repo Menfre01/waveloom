@@ -295,6 +295,10 @@ func isCommitRef(ref string) bool {
 // ---------------------------------------------------------------------------
 
 // copyDir 递归拷贝 src → dst(dst 自动创建;不跟随 symlink 之外的特殊对象)。
+// REGRESSION: 仓库根安装(SKILL.md 位于根)时曾把克隆产物的 .git 目录与仓库内
+// 隐藏文件整体拷入安装目录,导致 Loader 的 scanSupportingFiles 将 .git 内部文件
+// 全部列进 Supporting files 清单。此处跳过所有 "." 开头条目(根目录自身除外),
+// 安装产物只保留 skill 内容。
 func copyDir(src, dst string) error {
 	return filepath.WalkDir(src, func(path string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
@@ -303,6 +307,12 @@ func copyDir(src, dst string) error {
 		rel, relErr := filepath.Rel(src, path)
 		if relErr != nil {
 			return relErr
+		}
+		if rel != "." && strings.HasPrefix(d.Name(), ".") {
+			if d.IsDir() {
+				return fs.SkipDir // 跳过 .git 等隐藏目录及其全部内容
+			}
+			return nil // 跳过隐藏文件(.gitignore/.DS_Store 等)
 		}
 		target := filepath.Join(dst, rel)
 		info, infoErr := d.Info()

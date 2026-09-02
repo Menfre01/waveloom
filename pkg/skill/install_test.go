@@ -3,6 +3,7 @@ package skill
 import (
 	"context"
 	"errors"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -527,5 +528,47 @@ func TestRegression_SkillAddVisibleToLoader(t *testing.T) {
 			names = append(names, i.Name)
 		}
 		t.Errorf("installed skill not discovered by Loader; found: %v", names)
+	}
+}
+
+// TestRegression_InstallSkipsDotEntries 验证仓库根安装(SKILL.md 位于根)时
+// copyDir 不把 .git 与仓库中跟踪的隐藏文件拷入安装目录。
+// 根因:copyDir 的 WalkDir 无过滤,把克隆产物(.git 等)整体拷贝,Loader 扫描时
+// .git 内部文件随之全部进入 Supporting files 清单。
+func TestRegression_InstallSkipsDotEntries(t *testing.T) {
+	f := createGitRepo(t)
+	// 仓库根再跟踪一个隐藏文件:同样不应进入安装产物
+	writeFixtureFile(t, filepath.Join(f.RepoPath, ".gitattributes"), "*.md text\n")
+	runGit(t, f.RepoPath, "add", ".")
+	runGit(t, f.RepoPath, "-c", "user.email=test@test.com", "-c", "user.name=test", "commit", "-m", "add hidden file")
+
+	dest := t.TempDir()
+	if _, err := Install(context.Background(), installOpts(f, dest)); err != nil {
+		t.Fatalf("Install: %v", err)
+	}
+	instDir := filepath.Join(dest, "test-skill")
+	if !fileExists(filepath.Join(instDir, "SKILL.md")) {
+		t.Fatal("SKILL.md missing from install dir")
+	}
+
+	var dot []string
+	_ = filepath.WalkDir(instDir, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if path != instDir && strings.HasPrefix(d.Name(), ".") {
+			rel, relErr := filepath.Rel(instDir, path)
+			if relErr != nil {
+				return relErr
+			}
+			dot = append(dot, rel)
+			if d.IsDir() {
+				return fs.SkipDir
+			}
+		}
+		return nil
+	})
+	if len(dot) > 0 {
+		t.Errorf("install dir must not contain dot entries, got: %v", dot)
 	}
 }
