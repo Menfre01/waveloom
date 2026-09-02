@@ -1,3 +1,19 @@
+## [v0.8.1] — 2026-09-02
+
+### Added
+- **Context gauge pressure colors**: four color bands now align with the compaction waterlines — green (<45% no compaction), gold (45-65% Tier1 Snip), orange (65-85% Tier2 Prune) and red (≥85% Tier3 + hard limit); the gauge fill and the token counter come from the same source, so the pressure color always matches the actual compaction behavior
+- **Soft hints for large or repeated read**: reading a >100KB file in full, or re-reading an unchanged >50KB file, now emits a hint suggesting targeted reads (pattern/offset/limit) to keep context growth in check; the hint never blocks — full reads still work where edit needs the complete read state
+- **Long sleep commands auto-background**: single-line commands with `sleep N≥30s` followed by further actions (`&&`/`;`/`|`) are automatically moved to the background so other steps can proceed in parallel while waiting; when the sandbox ignores `working_dir`, a system-reminder is injected to make the model aware
+
+### Fixed
+- **Project-level `/model` and `/effort` switches clobbered global LLM settings**: the skeleton profile written by a switch (curr_model only) overwrote the whole same-named global profile, dropping api_key/model/base_url/extra_params — with a home config in pure-profile form the next startup failed with a missing api_key. Profiles are now merged field-wise (non-empty override fields win, empty ones keep the base), switches always write into the `profiles.<provider>` skeleton and no longer leave a top-level model choice behind. Effort levels were also aligned with the official docs (GLM-5.3 and Kimi K3 accept only low/high/max)
+- **Cancelling a skill install deadlocked on Windows**: the interrupt path killed only the process group, which is a no-op on Windows (no process-group semantics), so the git child never terminated and Wait blocked forever; it now kills the process first and then the group
+- **Compaction waterlines recalibrated to 45/65/85**: the old 60/80/95 thresholds meant 600K/800K/950K tokens on a 1M window, while real sessions peaked at 64.8% — zero-cost local compaction (Tier 1/2) barely ever ran. The lower thresholds bring Tier1 Snip/Tier2 Prune into the real 450K-650K range, keeping an 850K safety margin for the LLM summarizer. Tier1 truncation limits were loosened (bash 60→35 lines) and overlong single lines are now cut on rune boundaries so multibyte characters are never split
+- **Rate-limit retries for web_fetch/web_search**: 429/503 always retry once, 403 only when a Retry-After header is present (gateway throttling vs. permission denial), with backoff honoring Retry-After (clamped to avoid Duration overflow turning into an instant retry)
+- **Silent DeepSeek chat fallback now warns**: on the official endpoint, a model name containing "deepseek" that does not match a Responses API model logs a Warn (model name + base_url) instead of silently degrading to chat, making missing server-side web_search diagnosable
+
+---
+
 ## [v0.8.0] — 2026-08-27
 
 ### Added

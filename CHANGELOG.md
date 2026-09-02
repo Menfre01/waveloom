@@ -1,3 +1,21 @@
+## [v0.8.1] — 2026-09-02
+
+### 新增功能
+- **上下文进度条压力颜色**:四档颜色对齐压缩水位线——绿(<45% 无压缩)、金(45-65% Tier1 Snip)、橙(65-85% Tier2 Prune)、红(≥85% Tier3+硬限),进度条填充与 token 数字同源同档,压力颜色与真实压缩行为一致
+- **read 大文件软提示**:全量读取 >100KB 文件或重复读取未变化的 >50KB 文件时提示定向读取(pattern/offset/limit),引导控制上下文膨胀;提示不阻断,edit 场景仍保留完整读取状态
+- **长 sleep 命令自动后台化**:`sleep N≥30s` 且后接动作(&&/;/|)的单行命令自动转后台执行,等待期间可并行推进其他步骤;沙箱内 working_dir 被忽略时注入 system-reminder 提示
+
+### 修复
+- **项目内 /model 与 /effort 切换覆盖全局 LLM 配置**:切换生成的骨架 profile(仅 curr_model)整对象覆盖全局同名 profile,丢失 api_key/model/base_url/extra_params,纯 profile 形态配置下重启直接 api_key 缺失;现改为字段级合并,切换统一写入 profiles 骨架,不再残留顶层模型选择。effort 档位同步对齐官方文档(GLM-5.3 与 Kimi K3 仅 low/high/max)
+- **Windows 上取消 skill 安装死锁**:中断远程安装时仅杀进程组,而 Windows 无进程组语义,git 子进程永不终止导致永久阻塞;现先 Process.Kill 再补组杀
+- **上下文压缩水位线校准 45/65/85**:原 60/80/95 阈值在 1M token 窗口下对应 600K/800K/950K,真实会话水位峰值最高仅 64.8%,零成本的本地压缩(Tier 1/2)近乎空转;下调后在 450K-650K 真实区间生效。Tier1 截断门槛同步放宽(bash 60→35 行起截),超长单行截断沿 rune 边界,不再切坏多字节字符
+- **web_fetch/web_search 限流自动重试**:429/503 恒重试、403 仅带 Retry-After 时重试(区分网关限流与权限拒绝),退避等待一次;Retry-After 超大秒数钳制,防止 Duration 溢出为负导致立即重试
+- **DeepSeek 静默降级告警**:官方端点 + 模型名疑似 deepseek 但未命中 Responses API 模型表时输出 Warn 日志(含模型名/base_url),不再静默降级 chat,服务端 web_search 缺失可诊断
+
+---
+
+📝 [Changelog (English)](https://github.com/Menfre01/waveloom/blob/dev/CHANGELOG.en.md)
+
 ## [v0.8.0] — 2026-08-27
 
 ### 新增功能
