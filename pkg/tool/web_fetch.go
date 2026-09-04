@@ -181,18 +181,6 @@ func (t *WebFetch) Execute(ctx context.Context, p WebFetchParams) (*ToolResult, 
 	}
 	timeout := time.Duration(timeoutMs) * time.Millisecond
 
-	reqCtx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-
-	// ── Step 4: 构造请求 ──
-	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, p.URL, nil)
-	if err != nil {
-		return toolError(ErrorClassRecoverable, ErrKindInvalidArgs,
-			fmt.Sprintf("cannot create request: %v", err), err), nil
-	}
-	req.Header.Set("User-Agent", "Waveloom/0.1.0")
-	req.Header.Set("Accept", "text/*, application/json, application/xml, application/javascript")
-
 	// ── Step 5: 发起请求(限流类状态码自动退避重试一次)──
 	start := time.Now()
 	var (
@@ -203,8 +191,30 @@ func (t *WebFetch) Execute(ctx context.Context, p WebFetchParams) (*ToolResult, 
 		retried          bool
 		readErr          error
 	)
+	// 会话级限流检查:退避/封锁期内直接短路,不发网络请求。
+	throttle := ThrottleStoreFromContext(ctx)
+	host := parsedURL.Host
+	if allowed, retryAt, state, consec := throttle.Reserve(host, time.Now()); !allowed {
+		kind := ErrKindRateLimited
+		stateName := "限流退避中"
+		if state == ThrottleBlocked {
+			kind = ErrKindBlocked
+			stateName = "策略封锁冷却中"
+		}
+		return toolError(ErrorClassRecoverable, kind,
+			fmt.Sprintf("%s %s(连续失败 %d 次),最早可重试 %s(UTC)。到点前重试同一 URL 大概率仍失败——先处理其他任务或换源",
+				host, stateName, consec, retryAt.UTC().Format(time.RFC3339)), nil), nil
+	}
+	// throttleUntil/throttleConsec 由限流响应登记,供最终错误文案携带调度信息。
+	var throttleUntil time.Time
+	var throttleConsec int
 	for attempt := 0; ; attempt++ {
-		req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, p.URL, nil)
+		// 每次尝试使用独立超时预算:退避等待(select 于父 ctx)不消耗请求
+		// 超时——原实现共享一个 reqCtx,Retry-After 等待会吃光预算导致
+		// 重试必然误报 timeout。尝试至多 2 次,defer 在函数返回时统一释放。
+		attemptCtx, attemptCancel := context.WithTimeout(ctx, timeout)
+		defer attemptCancel()
+		req, err := http.NewRequestWithContext(attemptCtx, http.MethodGet, p.URL, nil)
 		if err != nil {
 			return toolError(ErrorClassRecoverable, ErrKindInvalidArgs,
 				fmt.Sprintf("cannot create request: %v", err), err), nil
@@ -215,7 +225,7 @@ func (t *WebFetch) Execute(ctx context.Context, p WebFetchParams) (*ToolResult, 
 		resp, err = t.client().Do(req)
 		if err != nil {
 			duration := time.Since(start)
-			if reqCtx.Err() == context.DeadlineExceeded {
+			if attemptCtx.Err() == context.DeadlineExceeded {
 				return &ToolResult{
 					Content: fmt.Sprintf("Request timed out after %s.\nURL: %s", formatDuration(timeout), p.URL),
 					Meta:    ToolMeta{Duration: duration},
@@ -234,7 +244,7 @@ func (t *WebFetch) Execute(ctx context.Context, p WebFetchParams) (*ToolResult, 
 		// Content-Type 检查前:限流响应可能非 text content-type,先判定
 		// 重试可避免误入 binary 分支。
 		limitedReader := io.LimitReader(resp.Body, int64(maxSize)+1)
-		bodyBytes, readErr = readHTTPBodyWithContext(reqCtx, limitedReader)
+		bodyBytes, readErr = readHTTPBodyWithContext(attemptCtx, limitedReader)
 		_ = resp.Body.Close()
 
 		// 大小截断
@@ -246,9 +256,9 @@ func (t *WebFetch) Execute(ctx context.Context, p WebFetchParams) (*ToolResult, 
 		// 超时截断:保留已读取的部分内容
 		timeoutTruncated = false
 		if readErr != nil {
-			if len(bodyBytes) == 0 || reqCtx.Err() != context.DeadlineExceeded {
-				if reqCtx.Err() != nil {
-					return nil, reqCtx.Err()
+			if len(bodyBytes) == 0 || attemptCtx.Err() != context.DeadlineExceeded {
+				if attemptCtx.Err() != nil {
+					return nil, attemptCtx.Err()
 				}
 				return toolError(ErrorClassRecoverable, ErrKindCommandFailed,
 					fmt.Sprintf("error reading response: %v", readErr), readErr), nil
@@ -256,13 +266,24 @@ func (t *WebFetch) Execute(ctx context.Context, p WebFetchParams) (*ToolResult, 
 			timeoutTruncated = true
 		}
 
-		// 限流类状态码(429/503,403+Retry-After)→ 退避重试一次
+		// 限流类状态码(429/503,403+Retry-After)→ 向会话级 store 登记调度
+		// (Retry-After 未钳制,供后续调用短路);工具内仅当等待 ≤10s 时退避
+		// 重试一次——服务端要求更长等待时直接交给模型决策,不空耗 turn。
 		if attempt == 0 && isRateLimitedStatus(resp.StatusCode, resp.Header) {
 			wait := retryAfterDuration(resp.Header, webFetchRetryBackoff)
+			raw := rawRetryAfterDelay(resp.Header)
+			var ext time.Time
+			if raw > 0 {
+				ext = time.Now().Add(raw)
+			}
+			throttleUntil, throttleConsec = throttle.ReportRateLimited(host, ext, time.Now())
+			if raw > throttleMaxInToolWait {
+				break
+			}
 			retried = true
 			select {
-			case <-reqCtx.Done():
-				return nil, reqCtx.Err()
+			case <-ctx.Done():
+				return nil, ctx.Err()
 			case <-time.After(wait):
 			}
 			continue
@@ -282,10 +303,48 @@ func (t *WebFetch) Execute(ctx context.Context, p WebFetchParams) (*ToolResult, 
 	// ── Step 8: HTTP 状态码检查 ──
 	if resp.StatusCode >= 400 {
 		preview := formatBodyPreview(bodyBytes, 500)
-		msg := fmt.Sprintf("HTTP %d %s. Use web_search to find an alternative URL if the page is unavailable", resp.StatusCode, resp.Status)
-		if retried {
-			msg = fmt.Sprintf("HTTP %d %s (retried once after rate limit, still failing). Wait a moment before retrying, or use web_search to find an alternative URL", resp.StatusCode, resp.Status)
+		// 403 无 Retry-After → 策略封锁(非限流):登记有界冷却并明示重试无意义
+		if resp.StatusCode == http.StatusForbidden && resp.Header.Get("Retry-After") == "" {
+			until, consec := throttle.ReportBlocked(host, time.Now())
+			msg := fmt.Sprintf("HTTP 403 %s — 目标站策略封锁(非限流头)。连续失败 %d 次,冷却至 %s(UTC)。重试同一 URL 无意义——换源、换抓取方式,或冷却结束后再试",
+				resp.Status, consec, until.UTC().Format(time.RFC3339))
+			return &ToolResult{
+				Content: fmt.Sprintf("HTTP %d %s\nURL: %s\n\n%s",
+					resp.StatusCode, resp.Status, p.URL, preview),
+				Meta: ToolMeta{
+					Duration:  duration,
+					ByteCount: len(bodyBytes),
+				},
+				Error: &ToolError{
+					Class:   ErrorClassRecoverable,
+					Kind:    ErrKindBlocked,
+					Message: msg,
+				},
+			}, nil
 		}
+		// 限流类(429/503/403+RA):错误携带会话级连续次数与最早可重试时间
+		if isRateLimitedStatus(resp.StatusCode, resp.Header) {
+			verb := ""
+			if retried {
+				verb = "重试一次仍"
+			}
+			msg := fmt.Sprintf("HTTP %d %s (%s限流)。连续失败 %d 次,最早可重试 %s(UTC)。到点前重试同一 URL 大概率仍失败——先处理其他任务或换源",
+				resp.StatusCode, resp.Status, verb, throttleConsec, throttleUntil.UTC().Format(time.RFC3339))
+			return &ToolResult{
+				Content: fmt.Sprintf("HTTP %d %s\nURL: %s\n\n%s",
+					resp.StatusCode, resp.Status, p.URL, preview),
+				Meta: ToolMeta{
+					Duration:  duration,
+					ByteCount: len(bodyBytes),
+				},
+				Error: &ToolError{
+					Class:   ErrorClassRecoverable,
+					Kind:    ErrKindRateLimited,
+					Message: msg,
+				},
+			}, nil
+		}
+		msg := fmt.Sprintf("HTTP %d %s. Use web_search to find an alternative URL if the page is unavailable", resp.StatusCode, resp.Status)
 		return &ToolResult{
 			Content: fmt.Sprintf("HTTP %d %s\nURL: %s\n\n%s",
 				resp.StatusCode, resp.Status, p.URL, preview),
@@ -301,6 +360,8 @@ func (t *WebFetch) Execute(ctx context.Context, p WebFetchParams) (*ToolResult, 
 		}, nil
 
 	}
+	// 成功响应:清零会话级限流状态(连续失败计数/退避/封锁)。
+	throttle.ReportSuccess(host)
 	// ── Step 9: 文本提取 ──
 	bodyText := string(bodyBytes)
 	if isHTMLContentType(contentType) {

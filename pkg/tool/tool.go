@@ -309,6 +309,11 @@ const (
 	ErrKindMultipleMatch         = "multiple_matches"
 	ErrKindNoMatch               = "no_match"
 	ErrKindLargeFile             = "large_file"
+	// 限流/封锁类(web_fetch/web_search):与 command_failed 区分,避免 loop
+	// 退避计数把不同 host 的 429 混为同一错误升级 fatal;且让 backoff 文案
+	// 能按语义特化("等待至 T 或换源"而非"换工具")。
+	ErrKindRateLimited = "rate_limited"
+	ErrKindBlocked     = "blocked"
 )
 
 // Fatal — 不可恢复

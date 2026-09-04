@@ -289,6 +289,12 @@ func applyFileHunks(ctx context.Context, filePath string, hunks []patchHunk, rea
 	}
 
 	// Write file
+	if !anyApplied(results) {
+		// REGRESSION: 全部 hunk 失败时不得重写文件——normalizeFileContent 会剥
+		// 行尾空白并折叠连续空行,一次"失败"的 edit 会静默破坏用户内容
+		// (如 Markdown 双空格硬换行),readState 也不得被误更新。
+		return results
+	}
 	newContent := normalizeFileContent(strings.Join(fileLines, "\n"))
 	if err := os.WriteFile(filePath, []byte(newContent), 0o644); err != nil {
 		// Mark remaining results as failed
@@ -304,6 +310,16 @@ func applyFileHunks(ctx context.Context, filePath string, hunks []patchHunk, rea
 	}
 
 	return results
+}
+
+// anyApplied 判断结果中是否至少有一个 hunk 应用成功。
+func anyApplied(results []HunkResult) bool {
+	for i := range results {
+		if results[i].Error == "" {
+			return true
+		}
+	}
+	return false
 }
 
 // ---------------------------------------------------------------------------
@@ -427,6 +443,19 @@ func diagnoseMatchLayer(fileLines, pattern []string, pos int) string {
 	case unicodeOk:
 		return "  (matches after Unicode normalization — check for invisible/double-width characters)\n"
 	default:
+		// 输出净化(NFKC 折叠等)后两侧一致 → 模型看到的字符与文件实际字节
+		// 不一致(如圈号数字 ① vs "1"),任何匹配层都不可达;明确提示改写,
+		// 避免模型在"看起来一模一样"的诊断上无限重试。
+		sanitizeEq := true
+		for j, p := range pattern {
+			if SanitizeToolOutput(fileLines[pos+j]) != SanitizeToolOutput(p) {
+				sanitizeEq = false
+				break
+			}
+		}
+		if sanitizeEq {
+			return "  (pattern 与文件行经输出净化后一致——你看到的字符(圈号/兼容字符)与文件实际字节不同,edit 无法可靠匹配;建议用 write 重写该段)\n"
+		}
 		// Compute per-layer distance to find the closest
 		exactDist, rstripDist, trimDist, unicodeDist := 0, 0, 0, 0
 		for j, p := range pattern {
@@ -597,7 +626,26 @@ func seekUnicode(lines, pattern []string, start int) int {
 	}
 	return -1
 }
+// circledNumbers 折叠输出净化管线(NFKC)会转换的圈号/括号数字:
+// ①→1、⑩→10、⑴→(1)。模型从 read 输出抄下的是 NFKC 折叠后的字符
+// (如 "1"),而文件里是原字符 ①——matcher 不与其对称折叠则全层失配,
+// 且失败诊断同样过净化,old/new 显示无差异(2026-08 会话三连败根因,
+// 复现实验逐字吻合)。全角数字 ０-９ 刻意不折叠(CJK 语义,与既有策略一致)。
+var circledNumbers = strings.NewReplacer(
+	"\u2460", "1", "\u2461", "2", "\u2462", "3", "\u2463", "4",
+	"\u2464", "5", "\u2465", "6", "\u2466", "7", "\u2467", "8",
+	"\u2468", "9", "\u2469", "10", "\u246A", "11", "\u246B", "12",
+	"\u246C", "13", "\u246D", "14", "\u246E", "15", "\u246F", "16",
+	"\u2470", "17", "\u2471", "18", "\u2472", "19", "\u2473", "20",
+	"\u2474", "(1)", "\u2475", "(2)", "\u2476", "(3)", "\u2477", "(4)",
+	"\u2478", "(5)", "\u2479", "(6)", "\u247A", "(7)", "\u247B", "(8)",
+	"\u247C", "(9)", "\u247D", "(10)", "\u247E", "(11)", "\u247F", "(12)",
+	"\u2480", "(13)", "\u2481", "(14)", "\u2482", "(15)", "\u2483", "(16)",
+	"\u2484", "(17)", "\u2485", "(18)", "\u2486", "(19)", "\u2487", "(20)",
+)
+
 func normalizeUnicode2(s string) string {
+	s = circledNumbers.Replace(s)
 	return strings.Map(func(r rune) rune {
 		switch r {
 		// Invisible characters — drop them (return -1).

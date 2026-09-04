@@ -628,8 +628,11 @@ func TestWebFetchRetryErrorMentioned(t *testing.T) {
 	if result.Error == nil {
 		t.Fatal("expected error for persistent 429")
 	}
-	if !strings.Contains(result.Error.Message, "retried once") {
-		t.Errorf("error message should mention retry, got %q", result.Error.Message)
+	if result.Error.Kind != ErrKindRateLimited {
+		t.Errorf("expected ErrKindRateLimited, got %s", result.Error.Kind)
+	}
+	if !strings.Contains(result.Error.Message, "重试一次仍限流") {
+		t.Errorf("error message should mention the in-tool retry attempt, got %q", result.Error.Message)
 	}
 }
 

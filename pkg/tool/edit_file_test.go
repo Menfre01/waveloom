@@ -160,6 +160,51 @@ func TestEditFile_AllHunksFailed(t *testing.T) {
 	}
 }
 
+func TestRegression_AllHunksFailedDoesNotNormalizeFile(t *testing.T) {
+	// REGRESSION: 全部 hunk 失败时不得重写文件——normalizeFileContent 会剥行尾
+	// 空白并折叠连续空行,一次"失败"的 edit 会静默破坏用户内容
+	// (实测破坏 Markdown 双空格硬换行),readState 也不得被误更新。
+	dir := t.TempDir()
+	filePath := filepath.Join(dir, "doc.md")
+	// 行尾双空格(硬换行) + 连续空行:normalize 一旦执行必然改写文件
+	content := "line1  \n\n\n\nline2  \n"
+	if err := os.WriteFile(filePath, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	rs := NewReadStateStore()
+	rs.Record(filePath, content)
+	ctx := WithReadState(context.Background(), rs)
+
+	tool := &EditFile{}
+	result, err := tool.Execute(ctx, EditFileParams{
+		FilePath: filePath,
+		Hunk: `@@
+ nonexistent
+-this line does not exist
++replacement
+`,
+	})
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if result.Error == nil {
+		t.Fatal("expected result.Error for failed hunk, got nil")
+	}
+	// Message(模型第一眼位置)必须含恢复指引,而不是只有 "all 1 hunks failed"
+	if !strings.Contains(result.Error.Message, "read") {
+		t.Errorf("Error.Message should carry re-read guidance, got: %q", result.Error.Message)
+	}
+
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != content {
+		t.Errorf("file bytes must be byte-identical after all-hunks-failed (normalize would have rewritten them), got: %q", string(data))
+	}
+}
+
 // ---------------------------------------------------------------------------
 // EditFile — hunk 为空字符串
 // ---------------------------------------------------------------------------

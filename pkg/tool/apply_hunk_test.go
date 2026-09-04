@@ -651,7 +651,23 @@ func TestNormalizeUnicode2(t *testing.T) {
 	}
 }
 
-// TestRegression_FullwidthColonHunkMatch 回归:全角冒号(：)在半角 hunk 中无法匹配。
+func TestRegression_CircledDigitsFoldToASCII(t *testing.T) {
+	// REGRESSION: 文件含圈号数字 ①(输出净化 NFKC 显示为 "1")时,hunk 用
+	// ASCII "1" 必须命中——matcher 与净化管线不对称曾导致全层失配,且
+	// 失败诊断同样过净化,old/new 显示完全一致(2026-08 会话三连败根因)。
+	lines := strings.Split("\u2460 \u6D4B\u8BD5\n", "\n") // "① 测试"
+	if got := seekHunk(lines, []string{"1 \u6D4B\u8BD5"}, 0); got != 0 {
+		t.Fatalf("seekHunk(circled digit vs ASCII pattern) = %d, want 0", got)
+	}
+	if got := normalizeUnicode2("\u2469"); got != "10" { // ⑩ → 10
+		t.Errorf("normalizeUnicode2(⑩) = %q, want 10", got)
+	}
+	if got := normalizeUnicode2("\u2474"); got != "(1)" { // ⑴ → (1)
+		t.Errorf("normalizeUnicode2(⑴) = %q, want (1)", got)
+	}
+}
+
+// TestRegression_FullwidthColonHunkMatch 回归:全角冒号(:)在半角 hunk 中无法匹配。
 // 根因：normalizeUnicode2 未涵盖 U+FF1A 全角冒号，而中文文本中全角标点极为常见。
 func TestRegression_FullwidthColonHunkMatch(t *testing.T) {
 	// 文件使用全角冒号 (U+FF1A)

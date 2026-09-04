@@ -83,6 +83,7 @@ func (t *EditFile) Execute(ctx context.Context, p EditFileParams) (*ToolResult, 
 	// 匹配位置无关——TUI diff view 的行号列会显示错误。
 	var lastFile string
 	var offset int
+	var hintedNotReadFile string // 已提示过"未 read"的文件(多 hunk 只提示一次)
 
 	for _, r := range results {
 		if r.Error != "" {
@@ -90,8 +91,9 @@ func (t *EditFile) Execute(ctx context.Context, p EditFileParams) (*ToolResult, 
 			fmt.Fprintf(&buf, "✗ %s: @@ %s — %s\n", r.File, r.Header, r.Error)
 			// REGRESSION: not-been-read 的高发根因是 hunk header 路径被错误
 			// 解析(双重嵌套,已容错)或根本没 read。给出可操作的恢复指引。
-			if strings.Contains(r.Error, "file has not been read yet") {
-				buf.WriteString("  hint: 目标文件尚未 read——edit 前必须 read(部分读取亦可);若已 read 仍失败,检查 hunk 是否带了 `*** Update File:` 头(单文件编辑请省略)\n")
+			if strings.Contains(r.Error, "file has not been read yet") && r.File != hintedNotReadFile {
+				hintedNotReadFile = r.File
+				buf.WriteString("  hint: 目标文件尚未 read——edit 前必须 read(部分读取亦可);若已 read 仍失败,检查 hunk 是否带了 `*** Update File:` 头(单文件编辑请省略)。若该文件是本进程重启前创建/修改的(read 记录不跨进程),read 一次即可消除本提示\n")
 			}
 			if len(r.OldLines) > 0 {
 				buf.WriteString("  pattern:\n")
@@ -139,7 +141,10 @@ func (t *EditFile) Execute(ctx context.Context, p EditFileParams) (*ToolResult, 
 			Error: &ToolError{
 				Class:   ErrorClassRecoverable,
 				Kind:    ErrKindInvalidArgs,
-				Message: fmt.Sprintf("all %d hunks failed", failed),
+				// Message 渲染在 Content 之前(模型第一眼位置):直接给恢复指引,
+				// 避免模型在长诊断输出里找不到"先 read"的提示而盲目重试
+				// (实测同文件三连败:指引埋在详情尾部被忽略)。
+				Message: fmt.Sprintf("all %d hunks failed — 先 read 目标文件再重试,勿盲目重试(连续失败请停止并 read)", failed),
 			},
 		}, nil
 	}

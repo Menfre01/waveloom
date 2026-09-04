@@ -141,17 +141,87 @@ func (t *WebSearch) Execute(ctx context.Context, p WebSearchParams) (*ToolResult
 	var source string
 	var execErr error
 
-	if braveKey := os.Getenv("BRAVE_API_KEY"); braveKey != "" {
+	// 后端选择 + 会话级限流短路(退避/封锁期内不发请求)
+	key := ddgSearchHost
+	source = "DuckDuckGo"
+	braveKey := os.Getenv("BRAVE_API_KEY")
+	if braveKey != "" {
+		key = braveSearchHost
 		source = "Brave Search"
+	}
+	throttle := ThrottleStoreFromContext(ctx)
+	if allowed, retryAt, state, consec := throttle.Reserve(key, time.Now()); !allowed {
+		kind := ErrKindRateLimited
+		stateName := "限流退避中"
+		if state == ThrottleBlocked {
+			kind = ErrKindBlocked
+			stateName = "策略封锁冷却中"
+		}
+		return &ToolResult{
+			Content: fmt.Sprintf("Search blocked (%s)\nQuery: %s", stateName, p.Query),
+			Meta:    ToolMeta{Duration: 0},
+			Error: &ToolError{
+				Class:   ErrorClassRecoverable,
+				Kind:    kind,
+				Message: fmt.Sprintf("search backend %s %s(连续失败 %d 次),最早可重试 %s(UTC)。到点前重试大概率仍失败——稍后再搜、换查询,或配置 BRAVE_API_KEY 切换后端",
+					key, stateName, consec, retryAt.UTC().Format(time.RFC3339)),
+			},
+		}, nil
+	}
+
+	if braveKey != "" {
 		results, execErr = t.searchBrave(reqCtx, p.Query, maxResults, braveKey)
 	} else {
-		source = "DuckDuckGo"
 		results, execErr = t.searchDDG(reqCtx, p.Query, maxResults)
 	}
 
 	duration := time.Since(start)
 
 	if execErr != nil {
+		// 限流/封锁分类:登记会话级 ThrottleStore 并产出可执行语义文案。
+		if hs, ok := execErr.(*searchStatusError); ok &&
+			(hs.status == 202 || hs.status == http.StatusTooManyRequests ||
+				hs.status == http.StatusServiceUnavailable || hs.status == http.StatusForbidden) {
+			now := time.Now()
+			if hs.status == http.StatusForbidden {
+				until, consec := throttle.ReportBlocked(key, now)
+				msg := fmt.Sprintf("search backend %s blocked (HTTP 403)。连续失败 %d 次,冷却至 %s(UTC)。重试同一查询大概率仍失败——换查询、稍后再搜,或配置 BRAVE_API_KEY 切换后端", source, consec, until.UTC().Format(time.RFC3339))
+				if hs.detail != "" {
+					msg += " server response: " + hs.detail
+				}
+				return &ToolResult{
+					Content: fmt.Sprintf("Search failed (%s): HTTP %d 策略封锁\nQuery: %s", source, hs.status, p.Query),
+					Meta:    ToolMeta{Duration: duration},
+					Error: &ToolError{
+						Class:   ErrorClassRecoverable,
+						Kind:    ErrKindBlocked,
+						Message: msg,
+					},
+				}, nil
+			}
+			var ext time.Time
+			if hs.retryAfter > 0 {
+				ext = now.Add(hs.retryAfter)
+			}
+			retryAt, consec := throttle.ReportRateLimited(key, ext, now)
+			verb := "限流"
+			if hs.status == 202 {
+				verb = "反爬/结果未就绪"
+			}
+			msg := fmt.Sprintf("search backend %s %s (HTTP %d)。连续失败 %d 次,最早可重试 %s(UTC)。稍后重试、换查询,或配置 BRAVE_API_KEY 切换后端", source, verb, hs.status, consec, retryAt.UTC().Format(time.RFC3339))
+			if hs.detail != "" {
+				msg += " server response: " + hs.detail
+			}
+			return &ToolResult{
+				Content: fmt.Sprintf("Search failed (%s): HTTP %d\nQuery: %s", source, hs.status, p.Query),
+				Meta:    ToolMeta{Duration: duration},
+				Error: &ToolError{
+					Class:   ErrorClassRecoverable,
+					Kind:    ErrKindRateLimited,
+					Message: msg,
+				},
+			}, nil
+		}
 		// 检测 context 超时
 		if reqCtx.Err() == context.DeadlineExceeded {
 			return &ToolResult{
@@ -175,6 +245,9 @@ func (t *WebSearch) Execute(ctx context.Context, p WebSearchParams) (*ToolResult
 			},
 		}, nil
 	}
+
+	// 成功:清零会话级限流状态
+	throttle.ReportSuccess(key)
 
 	// 格式化输出
 	var buf bytes.Buffer
@@ -204,6 +277,28 @@ func (t *WebSearch) Execute(ctx context.Context, p WebSearchParams) (*ToolResult
 // ---------------------------------------------------------------------------
 
 const ddgSearchURL = "https://html.duckduckgo.com/html/"
+
+// 后端限流状态 key(与请求 host 解耦:测试 server 与生产 host 共用同一 key,
+// 节流状态按后端而非瞬时域名统计)。
+const (
+	ddgSearchHost   = "html.duckduckgo.com"
+	braveSearchHost = "api.search.brave.com"
+)
+
+// searchStatusError 由后端返回的 HTTP 状态错误;Execute 据此分类
+// 限流(202/429/503)与封锁(403),登记会话级 ThrottleStore 并产出语义文案。
+type searchStatusError struct {
+	status     int
+	retryAfter time.Duration // Retry-After 原始时长(未钳制);0 表示无
+	detail     string        // 后端响应体摘要(诊断用;限流/封锁路径不展示原文)
+}
+
+func (e *searchStatusError) Error() string {
+	if e.detail != "" {
+		return fmt.Sprintf("HTTP %d: %s", e.status, e.detail)
+	}
+	return fmt.Sprintf("HTTP %d", e.status)
+}
 
 // webSearchRetryBackoff 搜索限流退避的默认等待时间。
 const webSearchRetryBackoff = 1 * time.Second
@@ -239,20 +334,31 @@ func (t *WebSearch) searchDDG(ctx context.Context, query string, maxResults int)
 			return nil, fmt.Errorf("request failed: %w", err)
 		}
 
-		// 限流类状态码(202/429/503)→ 退避重试一次
+		// 限流类状态码(202/429/503)→ 退避重试一次(解析 Retry-After,
+		// 服务端要求等待超工具上限时不再重试,直接交给 Execute 分类)
 		if attempt == 0 && isDDGRateLimited(resp.StatusCode) {
 			_ = resp.Body.Close()
+			wait := webSearchRetryBackoff
+			if raw := rawRetryAfterDelay(resp.Header); raw > 0 {
+				if raw > throttleMaxInToolWait {
+					return nil, &searchStatusError{status: resp.StatusCode, retryAfter: raw}
+				}
+				wait = raw
+			}
 			select {
 			case <-ctx.Done():
 				return nil, ctx.Err()
-			case <-time.After(webSearchRetryBackoff):
+			case <-time.After(wait):
 			}
 			continue
 		}
 		defer func() { _ = resp.Body.Close() }()
 
 		if resp.StatusCode != http.StatusOK {
-			return nil, fmt.Errorf("HTTP %d", resp.StatusCode)
+			return nil, &searchStatusError{
+				status:     resp.StatusCode,
+				retryAfter: rawRetryAfterDelay(resp.Header),
+			}
 		}
 
 		bodyBytes, err := readHTTPBodyWithContext(ctx, io.LimitReader(resp.Body, 1<<20))
@@ -262,7 +368,7 @@ func (t *WebSearch) searchDDG(ctx context.Context, query string, maxResults int)
 
 		return parseDDGResults(bytes.NewReader(bodyBytes), maxResults)
 	}
-	return nil, fmt.Errorf("HTTP %d", 202) // 不可达:循环最多 2 次
+	return nil, &searchStatusError{status: http.StatusTooManyRequests} // 不可达:循环最多 2 次
 }
 
 // parseDDGResults 从 DuckDuckGo HTML 响应中提取搜索结果。
@@ -447,10 +553,21 @@ func (t *WebSearch) searchBrave(ctx context.Context, query string, maxResults in
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	if resp.StatusCode != http.StatusOK {
-		body, _ := readHTTPBodyWithContext(ctx, io.LimitReader(resp.Body, 4096))
-		return nil, fmt.Errorf("brave API HTTP %d: %s", resp.StatusCode, string(body))
-	}
+    	if resp.StatusCode != http.StatusOK {
+    		body, _ := readHTTPBodyWithContext(ctx, io.LimitReader(resp.Body, 4096))
+    		detail := ""
+    		if len(body) > 0 {
+    			if len(body) > 300 {
+    				body = body[:300]
+    			}
+    			detail = string(body)
+    		}
+    		return nil, &searchStatusError{
+    			status:     resp.StatusCode,
+    			retryAfter: rawRetryAfterDelay(resp.Header),
+    			detail:     detail,
+    		}
+    	}
 
 	bodyBytes, err := readHTTPBodyWithContext(ctx, io.LimitReader(resp.Body, 1<<20))
 	if err != nil {
