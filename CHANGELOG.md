@@ -1,3 +1,20 @@
+## [v0.8.2] — 2026-09-04
+
+### 新增功能
+- **fork 子代理前缀缓存对齐**:fork 首请求与父会话已缓存负载逐字节对齐(消息截断点恰好 = 父上一请求载荷、tools 数组与父一致),DeepSeek 前缀缓存命中不再归零;父独占工具(agent / todo / ask_user_question / Plan Mode / MCP 等)在子代理中注册为显式报错 stub 并附替代指引,修复工具集差异导致的静默剥离空转(如 bash 别名缺失);窗口预算兜底——继承前缀 + 指令超窗口 90% 时沿完整轮次从尾部截断(不拆 tool 调用配对、不产生孤儿),仍超限则拒绝发起(实测 1.44M 超上限此前直接 HTTP 400);fork 指令补充工具可用性说明,缓存命中/未命中 token 落盘 JSONL,收益可量化
+- **Web 限流缓解模型(ThrottleStore)**:web_fetch/web_search 会话级 per-host 限流状态——连续失败指数退避(2s 起、封顶 60s)、Retry-After 调度、403 无 Retry-After 时 10 分钟有界封锁冷却、失败后同域最小请求间隔;退避期内直接短路、零网络请求;错误文案携带"连续失败 N 次 / 最早可重试时间"并区分限流与封锁语义,模型不再盲目重试(此前无状态错误下换 UA 原地硬刚、整批重跑放大限流);重试使用独立超时预算;fork/cold 子代理透传父会话限流状态,避免子代理覆盖 ctx 后对刚被限流的 host 继续轰炸
+- **后台任务完成即时通知**:每个工具 step 后检查后台任务完成并注入完成通知(与 PrepareRun 共享游标、天然去重),模型不再自建 sleep watcher 轮询;todo 状态仅在变化时注入(重复快照实测占全部 cache-miss token 约 26%),周期可见性由 reminder 兜底,reminder 改为条件式文案(状态未变不必为确认而调用 todo_update);限流类错误不再升级为 fatal
+- **系统事件落盘与失败统计**:model_error / tool_timeout / turn_duration / compaction / background_task 以 type=event 结构化行持久化(缓冲上限防膨胀、溢出补记、写失败自动重新入队),message_count 死字段落盘回填;tool_errors / model_errors 聚合进会话 stats;恢复/回放只读消息行,不被事件挤占;TUI / runner / ACP 三端统计同口径
+
+### 修复
+- **DeepSeek base_url 尾部 /v1 重复导致 404**:官方文档写法(https://api.deepseek.com/v1)或 OpenAI 兼容网关地址(如 http://localhost:11434/v1)此前会拼出 /v1/v1/chat/completions;现构造期仅剥路径末段冗余 /v1(自定义前缀如 /proxy/v1 不受影响),setup 提示按 provider 区分
+- **失败的 edit 不再静默改写文件**:全部 hunk 匹配失败时跳过 normalize + 写盘(此前会剥行尾空白、折叠连续空行,一次失败的 edit 会破坏 Markdown 双空格硬换行等内容);输出净化造成的字符不一致(如圈号数字 ① vs 1)增加 NFKC 折叠匹配,诊断明示净化后改写建议,不再对着看似相同的文本无限重试(2026-08 会话三连败根因);失败指引置顶、按文件去重提示
+- **skill 安装不再带入 .git 等隐藏条目**:仓库根安装(SKILL.md 位于根)时 copyDir 曾把克隆产物的 .git 整体拷入安装目录,附属文件扫描随之将 .git 内部文件列入 Supporting files 清单;两处统一跳过 "." 开头条目(目录 SkipDir),各附回归防护
+
+---
+
+📝 [Changelog (English)](https://github.com/Menfre01/waveloom/blob/dev/CHANGELOG.en.md)
+
 ## [v0.8.1] — 2026-09-02
 
 ### 新增功能
