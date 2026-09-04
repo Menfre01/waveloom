@@ -62,6 +62,8 @@ type sessionStats struct {
 	TotalDurationMs       int64   `json:"total_duration_ms"`
 	MessageCount          int     `json:"message_count"`
 	TotalCost             float64 `json:"total_cost"`
+	ToolErrors            map[string]int `json:"tool_errors,omitempty"`
+	ModelErrors           int     `json:"model_errors,omitempty"`
 }
 
 // SaveSessionToFile 将消息历史、统计信息、plan mode 和文件历史序列化写入指定文件。
@@ -96,6 +98,10 @@ func SaveSessionToFile(path string, name string, messages []llm.Message, stats S
 
 	sf.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
 	sf.Messages = messages
+	// REGRESSION: 调用方(Save/saveToPath)拷贝 cm.stats 原始字段,
+	// 其 MessageCount 从未被赋值而恒为 0;落盘前以实际消息数为准统一回填,
+	// 与 Stats() 访问器的语义(len(cm.messages))保持一致。
+	stats.MessageCount = len(messages)
 	sf.Stats = sessionStats{
 		TotalTurns:            stats.TotalTurns,
 		TotalPromptTokens:     stats.TotalPromptTokens,
@@ -106,6 +112,8 @@ func SaveSessionToFile(path string, name string, messages []llm.Message, stats S
 		TotalDurationMs:       stats.TotalDurationMs,
 		MessageCount:          stats.MessageCount,
 		TotalCost:             stats.TotalCost,
+		ToolErrors:            stats.ToolErrors,
+		ModelErrors:           stats.ModelErrors,
 	}
 
 	if compData != nil {
@@ -196,6 +204,8 @@ func LoadSessionFromFile(path string) ([]llm.Message, Stats, *compaction.Compact
 		TotalDurationMs:       sf.Stats.TotalDurationMs,
 		MessageCount:          sf.Stats.MessageCount,
 		TotalCost:             sf.Stats.TotalCost,
+		ToolErrors:            sf.Stats.ToolErrors,
+		ModelErrors:           sf.Stats.ModelErrors,
 	}
 
 	var compData *compaction.CompactionData

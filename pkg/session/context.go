@@ -34,6 +34,11 @@ type Stats struct {
 	TotalReasoningTokens  int     // 累计思考链 token
 	TotalDurationMs       int64   // 累计耗时(毫秒)
 	TotalCost             float64 // 累计费用(TUI 层同步写入,非 CompleteRun 计算)
+	// ToolErrors 工具失败计数(按 ErrorKind,如 rate_limited/invalid_args)。
+	// 复盘直接读会话 stats 聚合即可,无需扫 jsonl(事件通道之外的总账)。
+	ToolErrors map[string]int
+	// ModelErrors 模型调用失败次数(重试耗尽后以 ReasonModelError 终止的 turn)。
+	ModelErrors int
 }
 // ContextManager 跨 Agent Loop 调用累积消息历史。
 // 所有公开方法受 RWMutex 保护，并发安全。
@@ -44,10 +49,15 @@ type ContextManager struct {
 	sessionPath string // session 落盘路径(空表示不落盘)
 	sessionName string // 展示用 session 名称(--name 设置,仅展示不参与恢复)
 
-	// jsonlMessageCount 记录已写入 JSONL 的消息数，	// 用于增量追加（避免重复写入已持久化的消息）。
+	// jsonlMessageCount 记录已写入 JSONL 的消息数,	// 用于增量追加(避免重复写入已持久化的消息)。
 	jsonlMessageCount int
 
-	// 四级水位线上下文压缩（委托给 Compactor）
+	// pendingEvents 待落盘的系统事件(RecordSystemEvent 入队,下次 Save 冲刷);
+	// droppedEvents 记录因缓冲上限被丢弃的事件数(随下次冲刷补记汇总行)。
+	pendingEvents []TranscriptEntry
+	droppedEvents int
+
+	// 四级水位线上下文压缩(委托给 Compactor)
 	compactor compaction.Compactor
 
 	// AGENTS.md 注入标记（防止重复注入）
@@ -66,6 +76,9 @@ type ContextManager struct {
 	// FileHistory 状态（用于 resume 恢复）
 	fhData *filehistory.SnapshotData
 }
+
+// maxPendingEvents 系统事件缓冲上限;超出后丢弃并计数(防单轮事件风暴撑爆内存)。
+const maxPendingEvents = 128
 
 // compactorState 是 compactor 内部使用的扩展接口，// 提供 Snapshot/Restore/Reset 等持久化方法。
 // TieredCompactor 同时满足 Compactor 和此接口。
@@ -195,16 +208,26 @@ func (cm *ContextManager) checkBackgroundTasksLocked() string {
 
 	for _, t := range completed {
 		status := "completed"
+		statusKey := "completed"
+		level := "info"
 		switch t.Status {
 		case task.TaskFailed:
 			status = fmt.Sprintf("failed (exit code %d)", t.ExitCode)
+			statusKey, level = "failed", "warn"
 		case task.TaskInterrupted:
 			status = "interrupted (session was closed while this task was running)"
+			statusKey, level = "interrupted", "warn"
 		}
 		parts = append(parts, fmt.Sprintf(
 			`<background-task id="%s" command="%s" exit_code="%d" log="%s">%s</background-task>`,
 			t.ID, t.Command, t.ExitCode, t.LogPath, status,
 		))
+		// 事件落盘:仅结构化字段(task_id/status/exit_code),不含 command 文本
+		if data, err := json.Marshal(map[string]any{
+			"task_id": t.ID, "status": statusKey, "exit_code": t.ExitCode,
+		}); err == nil {
+			cm.appendSystemEventLocked(EventBackgroundTask, level, data)
+		}
 	}
 
 	for _, t := range running {
@@ -219,7 +242,45 @@ func (cm *ContextManager) checkBackgroundTasksLocked() string {
 		strings.Join(parts, "\n"))
 }
 
-// CompleteResult 由 CompleteRun 返回，供上层（TUI/runner）获取本轮状态。
+// PollBackgroundCompletions 检查自上次检查(PrepareRun 或上次轮询)以来完成的
+// 后台任务,返回应注入的通知 XML——供 agentloop 在 turn 内每 step 调用,
+// 让"任务已完成"的信号在 turn 中送达模型,消灭模型自建 sleep watcher
+// 轮询的动机(完成信号此前只在下一轮 PrepareRun 注入)。
+// 与 checkBackgroundTasksLocked 共享 lastBackgroundCheck 游标:谁先消费谁
+// 报告,turn 内已送达的完成不会在下一轮 PrepareRun 重复注入。
+// 仅含 completed/failed;interrupted 由 kill_background_task 的结果直接可见,
+// 不在此重复注入。无新完成时返回空串。
+func (cm *ContextManager) PollBackgroundCompletions() string {
+	cm.mu.Lock()
+	defer cm.mu.Unlock()
+
+	completed := task.DefaultRegistry.CompletedSince(cm.lastBackgroundCheck)
+	cm.lastBackgroundCheck = time.Now()
+	if len(completed) == 0 {
+		return ""
+	}
+	var parts []string
+	for _, t := range completed {
+		if t.Status == task.TaskInterrupted {
+			continue // kill 路径模型已可见,避免重复噪音
+		}
+		status := "completed"
+		if t.Status == task.TaskFailed {
+			status = fmt.Sprintf("failed (exit code %d)", t.ExitCode)
+		}
+		parts = append(parts, fmt.Sprintf(
+			`<background-task id="%s" command="%s" exit_code="%d" log="%s">%s</background-task>`,
+			t.ID, t.Command, t.ExitCode, t.LogPath, status,
+		))
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return fmt.Sprintf("<background-notifications>\n%s\n</background-notifications>",
+		strings.Join(parts, "\n"))
+}
+
+// CompleteResult 由 CompleteRun 返回,供上层(TUI/runner)获取本轮状态。
 type CompleteResult struct {
 	MessageCount     int              // 当前消息总数
 	Compaction       compaction.CompactionResult // 本轮压缩结果
@@ -318,7 +379,7 @@ func (cm *ContextManager) SessionID() string {
 // Save 手动将当前状态落盘到已设置的 sessionPath。
 // 如果未设置路径则静默返回。
 func (cm *ContextManager) Save() {
-	cm.mu.RLock()
+	cm.mu.Lock()
 	path := cm.sessionPath
 	name := cm.sessionName
 	messages := make([]llm.Message, len(cm.messages))
@@ -332,7 +393,9 @@ func (cm *ContextManager) Save() {
 	planActive := cm.planModeActive
 	planFile := cm.planModeFile
 	fhData := cm.fhData
-	cm.mu.RUnlock()
+	// 快照阶段一并 drain 事件缓冲(写锁内),并发 Save 不会重复写入事件。
+	pending := cm.drainPendingEventsLocked()
+	cm.mu.Unlock()
 
 	// 防御：过滤空 role 消息
 	forceRewrite := false
@@ -354,37 +417,26 @@ func (cm *ContextManager) Save() {
 	n := len(messages)
 	sid := strings.TrimSuffix(filepath.Base(path), ".json")
 	jlPath := TranscriptPath(filepath.Dir(path), sid)
-	sessionVersion := version()
 	cwd, _ := os.Getwd()
-	if forceRewrite || n < jsonlWritten {
-		entries := MessagesToTranscriptEntries(messages, nil, sid, sessionVersion, cwd, "")
-		if err := WriteTranscriptEntries(jlPath, entries); err != nil {
-			slog.Warn("jsonl rewrite failed", "err", err)
-		} else {
-			cm.mu.Lock()
-			cm.jsonlMessageCount = n
-			cm.mu.Unlock()
-		}
-	} else if n > jsonlWritten {
-		var parentUUID *string
-		if jsonlWritten > 0 {
-			parentUUID = &messages[jsonlWritten-1].ID
-		}
-		entries := MessagesToTranscriptEntries(messages[jsonlWritten:], parentUUID, sid, sessionVersion, cwd, "")
-		if err := AppendTranscriptEntries(jlPath, entries); err != nil {
-			slog.Warn("jsonl append failed", "err", err)
-		} else {
-			cm.mu.Lock()
-			cm.jsonlMessageCount = n
-			cm.mu.Unlock()
-		}
+	eventsOK, messagesOK := syncJSONLToFile(jlPath, sid, cwd, messages, jsonlWritten, forceRewrite, pending)
+	if !eventsOK && len(pending) > 0 {
+		// 事件未写入(rewrite/append 失败):重新入队,避免事件静默丢失。
+		// 重写失败时旧文件原子保留,文件内旧事件不受影响,无需重放。
+		cm.mu.Lock()
+		cm.pendingEvents = append(pending, cm.pendingEvents...)
+		cm.mu.Unlock()
+	}
+	if messagesOK {
+		cm.mu.Lock()
+		cm.jsonlMessageCount = n
+		cm.mu.Unlock()
 	}
 }
 
 // saveToPath 内部方法：用当前状态覆盖写入指定 JSON 文件，// 并将新增消息追加写入 JSONL 文件。
 // 若消息列表因 compaction/ValidateMessages 缩短或过滤了无效消息，则全量重写 JSONL。
 func (cm *ContextManager) saveToPath(path string) {
-	cm.mu.RLock()
+	cm.mu.Lock()
 	name := cm.sessionName
 	messages := make([]llm.Message, len(cm.messages))
 	copy(messages, cm.messages)
@@ -397,7 +449,9 @@ func (cm *ContextManager) saveToPath(path string) {
 	planActive := cm.planModeActive
 	planFile := cm.planModeFile
 	fhData := cm.fhData
-	cm.mu.RUnlock()
+	// 快照阶段一并 drain 事件缓冲(写锁内),并发 Save 不会重复写入事件。
+	pending := cm.drainPendingEventsLocked()
+	cm.mu.Unlock()
 
 	// 防御：过滤空 role 消息（避免非法数据落盘）
 	forceRewrite := false
@@ -419,31 +473,61 @@ func (cm *ContextManager) saveToPath(path string) {
 	n := len(messages)
 	sid := strings.TrimSuffix(filepath.Base(path), ".json")
 	jlPath := TranscriptPath(filepath.Dir(path), sid)
-	sessionVersion := version()
 	cwd, _ := os.Getwd()
-	if forceRewrite || n < jsonlWritten {
-		entries := MessagesToTranscriptEntries(messages, nil, sid, sessionVersion, cwd, "")
+	eventsOK, messagesOK := syncJSONLToFile(jlPath, sid, cwd, messages, jsonlWritten, forceRewrite, pending)
+	if !eventsOK && len(pending) > 0 {
+		// 事件未写入(rewrite/append 失败):重新入队,避免事件静默丢失。
+		// 重写失败时旧文件原子保留,文件内旧事件不受影响,无需重放。
+		cm.mu.Lock()
+		cm.pendingEvents = append(pending, cm.pendingEvents...)
+		cm.mu.Unlock()
+	}
+	if messagesOK {
+		cm.mu.Lock()
+		cm.jsonlMessageCount = n
+		cm.mu.Unlock()
+	}
+}
+
+// syncJSONLToFile 将事件缓冲与消息增量同步到 transcript JSONL(锁外调用)。
+// forceRewrite(压缩/无效消息过滤等导致消息列表缩短)时全量重写,并保留
+// 文件中已落盘的历史事件行;正常路径先 append 事件、再 append 新消息,
+// 文件序 = 事件在前、消息在后(事件发生在这些消息落盘之前)。
+// 返回值区分两类失败:eventsOK=false 表示事件未写入(调用方应重新入队,
+// 避免事件静默丢失);messagesOK=false 表示消息行未写入(游标不前进,
+// 消息留在内存由下次 Save 重试——与历史行为一致)。重写失败时旧文件
+// 原子保留,文件内旧事件不受影响,只需重试 pending。
+func syncJSONLToFile(jlPath, sid, cwd string, messages []llm.Message, jsonlWritten int, forceRewrite bool, pending []TranscriptEntry) (eventsOK, messagesOK bool) {
+	eventsOK = true
+	if forceRewrite || len(messages) < jsonlWritten {
+		entries := make([]TranscriptEntry, 0, len(pending)+len(messages)+4)
+		entries = append(entries, loadExistingEventRows(jlPath)...)
+		entries = append(entries, pending...)
+		entries = append(entries, MessagesToTranscriptEntries(messages, nil, sid, version(), cwd, "")...)
 		if err := WriteTranscriptEntries(jlPath, entries); err != nil {
 			slog.Warn("jsonl rewrite failed", "err", err)
-		} else {
-			cm.mu.Lock()
-			cm.jsonlMessageCount = n
-			cm.mu.Unlock()
+			return false, false
 		}
-	} else if n > jsonlWritten {
+		return true, true
+	}
+	if len(pending) > 0 {
+		if err := AppendTranscriptEntries(jlPath, pending); err != nil {
+			slog.Warn("jsonl event append failed", "err", err)
+			eventsOK = false
+		}
+	}
+	if len(messages) > jsonlWritten {
 		var parentUUID *string
 		if jsonlWritten > 0 {
 			parentUUID = &messages[jsonlWritten-1].ID
 		}
-		entries := MessagesToTranscriptEntries(messages[jsonlWritten:], parentUUID, sid, sessionVersion, cwd, "")
+		entries := MessagesToTranscriptEntries(messages[jsonlWritten:], parentUUID, sid, version(), cwd, "")
 		if err := AppendTranscriptEntries(jlPath, entries); err != nil {
 			slog.Warn("jsonl append failed", "err", err)
-		} else {
-			cm.mu.Lock()
-			cm.jsonlMessageCount = n
-			cm.mu.Unlock()
+			return eventsOK, false
 		}
 	}
+	return eventsOK, true
 }
 
 // stateful 返回内部 Compactor 的持久化扩展接口。
@@ -517,12 +601,14 @@ func (cm *ContextManager) LoadFromFile(path string) bool {
 		}
 		messages = cleaned
 
-		// 立即回写清理后的数据，避免下次启动重复报 repair
+		// 立即回写清理后的数据,避免下次启动重复报 repair
 		cwd, _ := os.Getwd()
 		sid := strings.TrimSuffix(filepath.Base(path), ".json")
 		jlPath := TranscriptPath(filepath.Dir(path), sid)
-		entries := MessagesToTranscriptEntries(messages, nil, sid, version(), cwd, "")
-		_ = WriteTranscriptEntries(jlPath, entries)
+		// 全量重写保留已落盘的事件行,避免修复清空事件历史
+		old := loadExistingEventRows(jlPath)
+		all := append(old, MessagesToTranscriptEntries(messages, nil, sid, version(), cwd, "")...)
+		_ = WriteTranscriptEntries(jlPath, all)
 		// 同时更新 JSON 文件中的 messages 字段
 		if sf, loadErr := loadSessionFile(path); loadErr == nil && sf != nil {
 			sf.Messages = messages
@@ -541,11 +627,12 @@ func (cm *ContextManager) LoadFromFile(path string) bool {
 	cm.stats = stats
 	cm.sessionPath = path
 	cm.sessionName = name
-	// jsonlMessageCount 标记"已写入 JSONL 的消息数",用于增量追加。
+	// jsonlMessageCount 标记"已写入 JSONL 的消息行数",用于增量追加。
 	// messages 来自 json(压缩后权威上下文),条数可能因压缩(Tier3 摘要)与 jsonl 实际行数不同;
-	// 必须按 jsonl 实际行数恢复,否则下次 Save 的追加位置错位,导致 jsonl 与 json 消息序列错乱。
+	// 必须按 jsonl 消息行数恢复(事件行 type=event 不计),否则下次 Save 的追加位置错位,
+	// 导致 jsonl 与 json 消息序列错乱、或事件行触发永久全量重写。
 	if entries, jlErr := LoadTranscriptEntries(TranscriptPath(filepath.Dir(path), strings.TrimSuffix(filepath.Base(path), ".json"))); jlErr == nil {
-		cm.jsonlMessageCount = len(entries)
+		cm.jsonlMessageCount = countMessageRows(entries)
 	} else {
 		cm.jsonlMessageCount = len(messages)
 	}
@@ -575,16 +662,111 @@ func (cm *ContextManager) RemoveSession() {
 	}
 }
 
+// RecordSystemEvent 记录一条系统事件(模型错误/工具超时/压缩/后台任务等)。
+// 事件进入待落盘缓冲,随下次 Save 写入 transcript JSONL(type="event"):
+// 不进入消息历史,resume 后不注入 LLM 上下文;jsonlMessageCount 游标不受影响。
+// payload 仅应包含结构化字段,禁止携带原始命令/路径/密钥文本。
+// 未设置 sessionPath 时静默忽略(无落盘目标)。
+func (cm *ContextManager) RecordSystemEvent(subtype, level string, payload any) {
+	var raw json.RawMessage
+	if payload != nil {
+		data, err := json.Marshal(payload)
+		if err != nil {
+			slog.Warn("record system event: marshal payload", "subtype", subtype, "err", err)
+		} else {
+			raw = data
+		}
+	}
+	cm.mu.Lock()
+	defer cm.mu.Unlock()
+	cm.appendSystemEventLocked(subtype, level, raw)
+}
+
+// appendSystemEventLocked 内部入队;未设置 sessionPath 时静默忽略。
+// 调用方需持有写锁(如 checkBackgroundTasksLocked)。
+func (cm *ContextManager) appendSystemEventLocked(subtype, level string, payload json.RawMessage) {
+	if cm.sessionPath == "" {
+		return
+	}
+	if len(cm.pendingEvents) >= maxPendingEvents {
+		cm.droppedEvents++
+		return
+	}
+	cm.pendingEvents = append(cm.pendingEvents, cm.newEventEntryLocked(subtype, level, payload))
+}
+
+// drainPendingEventsLocked 取出并清空事件缓冲;若期间有溢出丢弃,
+// 追加一条 events_dropped 汇总事件补记(调用方需持有写锁)。
+func (cm *ContextManager) drainPendingEventsLocked() []TranscriptEntry {
+	evs := cm.pendingEvents
+	cm.pendingEvents = nil
+	if cm.droppedEvents > 0 {
+		sum := cm.newEventEntryLocked(EventDropped, "warn",
+			json.RawMessage(fmt.Sprintf(`{"count":%d}`, cm.droppedEvents)))
+		evs = append(evs, sum)
+		cm.droppedEvents = 0
+	}
+	return evs
+}
+
+// newEventEntryLocked 构造事件行条目(调用方需持有锁)。
+// 时间戳取记录时刻而非 flush 时刻,批量冲刷时保持真实时序。
+func (cm *ContextManager) newEventEntryLocked(subtype, level string, payload json.RawMessage) TranscriptEntry {
+	sid := strings.TrimSuffix(filepath.Base(cm.sessionPath), ".json")
+	cwd, _ := os.Getwd()
+	return TranscriptEntry{
+		UUID:      llm.NewMessageID(),
+		SessionID: sid,
+		Version:   version(),
+		Cwd:       cwd,
+		Timestamp: time.Now().UTC().Format(time.RFC3339),
+		Type:      TranscriptEventType,
+		Subtype:   subtype,
+		Level:     level,
+		Payload:   payload,
+	}
+}
+
 // Stats 返回当前累计统计的快照。
 func (cm *ContextManager) Stats() Stats {
 	cm.mu.RLock()
 	defer cm.mu.RUnlock()
 	s := cm.stats
 	s.MessageCount = len(cm.messages)
+	// map 深拷贝:快照被外部修改不得污染内部统计
+	if s.ToolErrors != nil {
+		cp := make(map[string]int, len(s.ToolErrors))
+		for k, v := range s.ToolErrors {
+			cp[k] = v
+		}
+		s.ToolErrors = cp
+	}
 	return s
 }
 
-// Reset 清空历史并归零统计，但保留 system prompt（messages[0]）。
+// AddToolError 累加一次工具失败计数(按 ErrorKind;空 kind 忽略)。
+// 由事件流接线(TUI/runner 消费 ToolCallResult.ErrorKind),跨 turn 累计,
+// 随会话 stats 落盘(.json stats.tool_errors)。
+func (cm *ContextManager) AddToolError(kind string) {
+	if kind == "" {
+		return
+	}
+	cm.mu.Lock()
+	defer cm.mu.Unlock()
+	if cm.stats.ToolErrors == nil {
+		cm.stats.ToolErrors = make(map[string]int)
+	}
+	cm.stats.ToolErrors[kind]++
+}
+
+// AddModelError 累加一次模型调用失败计数(重试耗尽、turn 以模型错误终止)。
+func (cm *ContextManager) AddModelError() {
+	cm.mu.Lock()
+	defer cm.mu.Unlock()
+	cm.stats.ModelErrors++
+}
+
+// Reset 清空历史并归零统计,但保留 system prompt(messages[0])。
 // 同时重置压缩状态。
 // 如果内部没有 system 消息则清空全部。
 func (cm *ContextManager) Reset() {
@@ -596,6 +778,9 @@ func (cm *ContextManager) Reset() {
 	cm.sessionName = "" // 新 session 身份独立,不继承旧 name(/new 场景)
 	cm.stateful().Reset()
 	cm.jsonlMessageCount = 0
+	// 事件缓冲属于旧会话身份,随 /new 一并清空
+	cm.pendingEvents = nil
+	cm.droppedEvents = 0
 
 	if len(cm.messages) > 0 && cm.messages[0].Role == llm.RoleSystem {
 		cm.messages = cm.messages[:1]
@@ -624,6 +809,8 @@ func (cm *ContextManager) RewindConversationTo(messageIndex int, sessionDir stri
 
 	// 重置状态
 	cm.jsonlMessageCount = 0
+	cm.pendingEvents = nil
+	cm.droppedEvents = 0
 	cm.instructionsInjected = len(cm.messages) > 1 && cm.messages[1].Role == llm.RoleUser && cm.messages[1].Content != ""
 	cm.stateful().Reset()
 

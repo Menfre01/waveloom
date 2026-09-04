@@ -65,6 +65,33 @@ func TestSaveAndLoad_RoundTrip(t *testing.T) {
 	}
 }
 
+func TestRegression_SavePersistsMessageCount(t *testing.T) {
+	// REGRESSION: Save/saveToPath 传入的 stats 来自 cm.stats 原始字段,
+	// MessageCount 从未被赋值,落盘 message_count 恒为 0(实测 16/16 会话);
+	// SaveSessionToFile 必须以实际落盘消息数为准回填。
+	dir := t.TempDir()
+	path := filepath.Join(dir, "session.json")
+
+	messages := []llm.Message{
+		{Role: llm.RoleSystem, Content: "You are helpful."},
+		{Role: llm.RoleUser, Content: "hello"},
+		{Role: llm.RoleAssistant, Content: "Hi there!"},
+	}
+	stats := Stats{TotalTurns: 3} // MessageCount 故意不设,复现调用方真实形态
+
+	if err := SaveSessionToFile(path, "", messages, stats, nil, nil, nil, nil, time.Time{}); err != nil {
+		t.Fatalf("SaveSessionToFile: %v", err)
+	}
+
+	_, loadedStats, _, _, _, _, _, _, _, _, err := LoadSessionFromFile(path)
+	if err != nil {
+		t.Fatalf("LoadSessionFromFile: %v", err)
+	}
+	if loadedStats.MessageCount != len(messages) {
+		t.Errorf("persisted MessageCount = %d, want %d", loadedStats.MessageCount, len(messages))
+	}
+}
+
 // TestSaveAndLoad_Name 验证 session name 写入/读取/覆盖语义。
 func TestSaveAndLoad_Name(t *testing.T) {
 	dir := t.TempDir()

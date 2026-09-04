@@ -22,7 +22,22 @@ import (
 const maxTranscriptEntries = 500
 
 // TranscriptEntry 是统一 JSONL 文件中一行的结构，。
-// 同时替代旧的 TranscriptLine（TUI viewport）和裸 llm.Message（resume）。
+// 同时替代旧的 TranscriptLine(TUI viewport)和裸 llm.Message(resume)。
+// 事件行(type=TranscriptEventType)是消息镜像之外的独立轨迹(模型错误、
+// 工具超时、压缩、后台任务等系统通知),携带 Subtype/Level/Payload,
+// 不参与 resume 与消息游标,供事后分析过滤。
+const TranscriptEventType = "event"
+
+// 系统事件子类型(与 cmd/waveloom 通知发射点一一对应)。
+const (
+	EventModelError     = "model_error"
+	EventToolTimeout    = "tool_timeout"
+	EventTurnDuration   = "turn_duration"
+	EventCompaction     = "compaction"
+	EventBackgroundTask = "background_task"
+	EventDropped        = "events_dropped" // 缓冲溢出丢弃的补记汇总
+)
+
 type TranscriptEntry struct {
 	ParentUUID     *string         `json:"parentUuid,omitempty"`
 	UUID           string          `json:"uuid"`
@@ -31,10 +46,15 @@ type TranscriptEntry struct {
 	Cwd            string          `json:"cwd"`
 	GitBranch      string          `json:"gitBranch,omitempty"`
 	Timestamp      string          `json:"timestamp"`
-	Type           string          `json:"type"` // "user" | "assistant" | "system" | "permission-mode" | "progress" | "file-history-snapshot"
+	Type           string          `json:"type"` // 消息行: "user" | "assistant" | "system"(含 tool_result,按 user 落盘);
+	// 事件行: TranscriptEventType("event");其余历史类型(permission-mode/progress
+	// 等)仅注释遗留、当前无写入者。新增任何行类型必须同步 isMessageRow 判定,
+	// 否则静默破坏 jsonlMessageCount 游标(2026-09 CRITICAL 级回归:永久全量重写)。
 	IsSidechain    bool            `json:"isSidechain"`
 	PermissionMode string          `json:"permissionMode,omitempty"`
-	Subtype        string          `json:"subtype,omitempty"` // system 子类型: "turn_duration", "local_command"
+	Subtype        string          `json:"subtype,omitempty"` // 事件子类型(model_error 等);消息行不使用
+	Level          string          `json:"level,omitempty"`   // 事件级别: "info" | "warn" | "error"
+	Payload        json.RawMessage `json:"payload,omitempty"` // 事件结构化数据(仅结构化字段,禁原文/密钥)
 	Message        json.RawMessage `json:"message"`
 }
 
@@ -245,6 +265,29 @@ func entryTypeToRole(t string) llm.Role {
 	}
 }
 
+// isMessageRow 判断条目是否为消息镜像行。tool_result 消息以 role "user"
+// 落盘,system prompt 行为 type "system";事件行(type=event)不是消息,
+// 不参与 jsonlMessageCount 游标与 resume。
+func isMessageRow(e TranscriptEntry) bool {
+	switch e.Type {
+	case "user", "assistant", "system":
+		return true
+	default:
+		return false
+	}
+}
+
+// countMessageRows 统计条目中的消息行数(jsonlMessageCount 的恢复语义)。
+func countMessageRows(entries []TranscriptEntry) int {
+	n := 0
+	for i := range entries {
+		if isMessageRow(entries[i]) {
+			n++
+		}
+	}
+	return n
+}
+
 // MessagesToTranscriptEntries 将 []llm.Message 批量转换为 []TranscriptEntry。
 // 每条消息通过 parentUUID 建立父子链接。
 // startingParentUUID 为第一条消息的父 UUID（nil 表示第一条消息无父节点）。
@@ -368,17 +411,41 @@ func LoadTranscriptEntries(path string) ([]TranscriptEntry, error) {
 	return entries, nil
 }
 
-// LoadTranscriptEntriesTail 读取 transcript 文件的最后 maxEntries 行。
+// LoadTranscriptEntriesTail 读取 transcript 文件最后 maxEntries 条消息行。
+// 事件行(type=event)不计入配额且不返回——它们不是消息镜像,TUI 回放
+// 渲染会产生空段落,且会挤占历史窗口(TUI replayTranscript 是唯一调用方)。
 // 文件不存在返回空切片。
 func LoadTranscriptEntriesTail(path string) ([]TranscriptEntry, error) {
 	all, err := LoadTranscriptEntries(path)
 	if err != nil {
 		return nil, err
 	}
-	if len(all) > maxTranscriptEntries {
-		all = all[len(all)-maxTranscriptEntries:]
+	msgs := make([]TranscriptEntry, 0, len(all))
+	for i := range all {
+		if isMessageRow(all[i]) {
+			msgs = append(msgs, all[i])
+		}
 	}
-	return all, nil
+	if len(msgs) > maxTranscriptEntries {
+		msgs = msgs[len(msgs)-maxTranscriptEntries:]
+	}
+	return msgs, nil
+}
+
+// loadExistingEventRows 读取 JSONL 中已落盘的事件行。
+// 全量重写(压缩/修复等)时用于保留历史事件,避免事件随消息重写蒸发。
+func loadExistingEventRows(path string) []TranscriptEntry {
+	entries, err := LoadTranscriptEntries(path)
+	if err != nil || len(entries) == 0 {
+		return nil
+	}
+	evs := make([]TranscriptEntry, 0, 4)
+	for i := range entries {
+		if entries[i].Type == TranscriptEventType {
+			evs = append(evs, entries[i])
+		}
+	}
+	return evs
 }
 
 // ---------------------------------------------------------------------------
