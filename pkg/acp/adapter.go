@@ -31,6 +31,10 @@ type adapter struct {
 	cacheMissTokens  int
 	reasoningTokens  int
 	messageCount     int
+
+	// toolErrorKinds 本轮工具失败计数(按 ErrorKind;handler 提交
+	// CompleteRun 前灌入会话 stats,与 TUI/runner 口径一致)。
+	toolErrorKinds map[string]int
 }
 
 func newAdapter(sessionID string, sendFn func(msg any) error) *adapter {
@@ -70,6 +74,11 @@ func (a *adapter) Stats() adapterStats {
 		ReasoningTokens:  a.reasoningTokens,
 		MessageCount:     a.messageCount,
 	}
+}
+
+// ToolErrorKinds 返回本轮工具失败计数(按 ErrorKind;事件循环结束后读取)。
+func (a *adapter) ToolErrorKinds() map[string]int {
+	return a.toolErrorKinds
 }
 
 func (a *adapter) consumeEvents(ctx context.Context, ch <-chan agentloop.StepEvent) (agentloop.TurnDone, bool) {
@@ -368,6 +377,13 @@ func (a *adapter) handleToolCallStream(e agentloop.ToolCallStream) {
 }
 
 func (a *adapter) handleToolCallResult(e agentloop.ToolCallResult) {
+	// 工具失败计数:与 TUI/runner 同口径(ErrorKind 非空即计,denied 不计)
+	if e.ErrorKind != "" {
+		if a.toolErrorKinds == nil {
+			a.toolErrorKinds = make(map[string]int)
+		}
+		a.toolErrorKinds[e.ErrorKind]++
+	}
 	status := "completed"
 	if e.IsError() {
 		status = "failed"

@@ -38,6 +38,8 @@ func runOneShot(cfg CLIConfig, llmClient llm.Client, registry tool.Registry, gua
 		SubModel:     subModel,  // proplan 语义:日常锚点
 		LSPManager:   lspManager,
 		Compactor:    cm.Compactor(), // 与 TUI 一致:长管道任务同样启用上下文压缩
+		// 后台任务完成信号 turn 内送达(与 PrepareRun 共享游标,天然去重)
+		BackgroundCompletions: func() string { return cm.PollBackgroundCompletions() },
 	}
 
 	// oneshot 无交互(UserResponder=nil):注入 autoAllow 二元决策
@@ -115,6 +117,10 @@ func runOneShot(cfg CLIConfig, llmClient llm.Client, registry tool.Registry, gua
 			if e.PromptTokens > 0 {
 				lastStepPrompt = e.PromptTokens
 			}
+		case agentloop.ToolCallResult:
+			if e.ErrorKind != "" {
+				cm.AddToolError(e.ErrorKind)
+			}
 		case agentloop.TurnDone:
 			finalEv = e
 		}
@@ -126,8 +132,11 @@ func runOneShot(cfg CLIConfig, llmClient llm.Client, registry tool.Registry, gua
 		fmt.Fprintf(os.Stderr, lc.OneShotError, humanizeError(finalEv.Err))
 		os.Exit(1)
 	}
+	if finalEv.Reason == agentloop.ReasonModelError {
+		cm.AddModelError()
+	}
 
-	// 提交完整消息历史到 Context Manager（单次模式无 duration 统计，传 0）
+	// 提交完整消息历史到 Context Manager(单次模式无 duration 统计,传 0)
 	_ = cm.CompleteRun(finalEv.Messages, runPromptTokens, lastStepPrompt, runComplTokens, runCacheHit, runCacheMiss, runReasoningTokens, cfg.Model, 0, string(finalEv.Reason))
 
 	// 输出最后一条 assistant 消息

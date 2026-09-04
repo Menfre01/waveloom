@@ -148,6 +148,8 @@ func (s *Server) handleSessionNew(req JSONRPCRequest) {
 		Model:        s.modelChoice, // proplan 语义:主 Loop 模型选择
 		PlanModel:    s.planModel,   // plan mode 锚点(ACP 无 plan 工具,恒走 SubModel)
 		SubModel:     s.subModel,    // 日常锚点
+		// 后台任务完成信号 turn 内送达(与 PrepareRun 共享游标,天然去重)
+		BackgroundCompletions: func() string { return cm.PollBackgroundCompletions() },
 	})
 
 	state := &SessionState{
@@ -567,6 +569,15 @@ func (s *Server) executePrompt(ctx context.Context, id any, state *SessionState,
 	// 上下文(数据损坏)。此时跳过提交:PrepareRun 追加的 user 消息保留
 	// 在 CM 中,上下文不丢失。
 	if gotReal {
+		// 工具/模型失败计数灌入会话 stats(与 TUI/runner 口径一致)
+		for kind, n := range ad.ToolErrorKinds() {
+			for i := 0; i < n; i++ {
+				state.CM.AddToolError(kind)
+			}
+		}
+		if loopDone.Reason == agentloop.ReasonModelError {
+			state.CM.AddModelError()
+		}
 		// 完成 run:使用 LoopDone.Messages 保留完整会话历史,
 		// token 统计用 adapter 累积的真实值(原实现传全零)。
 		_ = state.CM.CompleteRun(
@@ -648,6 +659,8 @@ func (s *Server) loadSessionFromDisk(sessionID string) (*SessionState, error) {
 		Model:        s.modelChoice,
 		PlanModel:    s.planModel,
 		SubModel:     s.subModel,
+		// 后台任务完成信号 turn 内送达(与 PrepareRun 共享游标,天然去重)
+		BackgroundCompletions: func() string { return cm.PollBackgroundCompletions() },
 	})
 
 	return &SessionState{

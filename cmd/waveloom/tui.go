@@ -724,6 +724,8 @@ func (m *model) wireLoop() {
 		SubModel:    m.subModel,
 		PlanModel:   m.planModel,
 		LSPManager:  m.lspManager,
+		// 后台任务完成信号 turn 内送达(与 PrepareRun 共享游标,天然去重)
+		BackgroundCompletions: func() string { return m.cm.PollBackgroundCompletions() },
 	})
 	m.loop.SetHookRunner(m.hookRunner)
 	// 重建(如 /model、/provider 切换)时恢复 plan 状态,避免静默降级为日常模型
@@ -947,7 +949,11 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case agentloop.ToolCallResult:
-		// todo_write 结果已在面板渲染，消息流中静默
+		// 工具失败计数(按 ErrorKind)累计进会话 stats,复盘一步到位
+		if msg.ErrorKind != "" && m.cm != nil {
+			m.cm.AddToolError(msg.ErrorKind)
+		}
+		// todo_write 结果已在面板渲染,消息流中静默
 		if msg.ToolCallName == "todo_create" || msg.ToolCallName == "todo_update" {
 			return m, nil
 		}
@@ -1000,6 +1006,9 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				NotifKind: notifInfo,
 			})
 			m.trimParas()
+			m.recordEvent(session.EventCompaction, "info", map[string]any{
+				"tier": msg.Compaction.Tier, "tokens_saved": msg.Compaction.TokensSaved,
+			})
 		}
 		if msg.Compaction.HardLimitReached {
 			msgText := m.msg().SysContextHardLimit
@@ -1015,6 +1024,13 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				NotifKind: msgKind,
 			})
 			m.trimParas()
+			level := "warn"
+			if msg.Compaction.HardLimitReason == "tier3_failures" {
+				level = "error"
+			}
+			m.recordEvent(session.EventCompaction, level, map[string]any{
+				"hard_limit": true, "reason": msg.Compaction.HardLimitReason,
+			})
 		}
 		m.flushTranscript()
 		return m, nil
@@ -1927,6 +1943,15 @@ func truncateToolStreamOutput(s string) string {
 	return head + strings.Join(tail, "\n")
 }
 
+// recordEvent 将系统通知作为结构化事件写入 transcript(type=event,
+// 由 ContextManager 缓冲、下次 Save 落盘)。payload 仅含结构化字段。
+func (m *model) recordEvent(subtype, level string, payload any) {
+	if m.cm == nil {
+		return
+	}
+	m.cm.RecordSystemEvent(subtype, level, payload)
+}
+
 // handleTurnDone 处理 turn 终止。
 // generation 为 loop 启动时的 runGeneration 值。
 // generation > 0 且与当前 runGeneration 不一致 → 该 TurnDone 属于已被取代的旧 turn。
@@ -2031,6 +2056,10 @@ func (m *model) handleTurnDone(ev agentloop.TurnDone, generation int) {
 				Text:      fmt.Sprintf(m.msg().TurnCompleted, ev.Step, elapsedStr, shortTokens(loopIn), shortTokens(loopOut)),
 				NotifKind: notifInfo,
 			})
+			m.recordEvent(session.EventTurnDuration, "info", map[string]any{
+				"reason": "completed", "steps": ev.Step, "ms": elapsedMs,
+				"in_tokens": loopIn, "out_tokens": loopOut,
+			})
 		case agentloop.ReasonMaxSteps:
 			m.paras = append(m.paras, Paragraph{
 				Type:      paraSystem,
@@ -2038,12 +2067,23 @@ func (m *model) handleTurnDone(ev agentloop.TurnDone, generation int) {
 				Text:      fmt.Sprintf(m.msg().TurnMaxSteps, ev.Step, elapsedStr, shortTokens(loopIn), shortTokens(loopOut)),
 				NotifKind: notifInfo,
 			})
+			m.recordEvent(session.EventTurnDuration, "info", map[string]any{
+				"reason": "max_steps", "steps": ev.Step, "ms": elapsedMs,
+				"in_tokens": loopIn, "out_tokens": loopOut,
+			})
 		case agentloop.ReasonAborted:
 			abortText := fmt.Sprintf(m.msg().TurnAborted, elapsedStr)
 			abortKind := notifInfo
 			if m.toolTimeout > 0 && isTimeoutError(ev.Err) {
 				abortText = fmt.Sprintf(m.msg().TurnToolTimeout, m.toolTimeoutSource, formatDuration(m.toolTimeout.Milliseconds()), elapsedStr)
 				abortKind = notifError
+				m.recordEvent(session.EventToolTimeout, "warn", map[string]any{
+					"tool": m.toolTimeoutSource, "ms": m.toolTimeout.Milliseconds(),
+				})
+			} else {
+				m.recordEvent(session.EventTurnDuration, "info", map[string]any{
+					"reason": "aborted", "steps": ev.Step, "ms": elapsedMs,
+				})
 			}
 			m.paras = append(m.paras, Paragraph{
 				Type:      paraSystem,
@@ -2052,6 +2092,12 @@ func (m *model) handleTurnDone(ev agentloop.TurnDone, generation int) {
 				NotifKind: abortKind,
 			})
 		case agentloop.ReasonModelError:
+			if m.cm != nil {
+				m.cm.AddModelError()
+			}
+			m.recordEvent(session.EventModelError, "error", map[string]any{
+				"steps": ev.Step, "ms": elapsedMs,
+			})
 			m.paras = append(m.paras, Paragraph{
 				Type:      paraSystem,
 				State:     stateDone,
@@ -2062,6 +2108,9 @@ func (m *model) handleTurnDone(ev agentloop.TurnDone, generation int) {
 			text := fmt.Sprintf(m.msg().TurnToolFatal, elapsedStr, humanizeError(ev.Err))
 			if m.toolTimeout > 0 && isTimeoutError(ev.Err) {
 				text = fmt.Sprintf(m.msg().TurnToolTimeout, m.toolTimeoutSource, formatDuration(m.toolTimeout.Milliseconds()), elapsedStr)
+				m.recordEvent(session.EventToolTimeout, "warn", map[string]any{
+					"tool": m.toolTimeoutSource, "ms": m.toolTimeout.Milliseconds(),
+				})
 			}
 			m.paras = append(m.paras, Paragraph{
 				Type:      paraSystem,
