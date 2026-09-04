@@ -26,6 +26,7 @@ func newDeepSeekAdapter(cfg ClientConfig) *deepSeekAdapter {
 	if baseURL == "" {
 		baseURL = "https://api.deepseek.com"
 	}
+	baseURL = normalizeDeepSeekBaseURL(baseURL)
 	return &deepSeekAdapter{
 		model:          cfg.Model,
 		apiKey:         cfg.APIKey,
@@ -34,6 +35,16 @@ func newDeepSeekAdapter(cfg ClientConfig) *deepSeekAdapter {
 		headers:        cfg.Headers,
 		responseFormat: cfg.ResponseFormat,
 	}
+}
+
+// normalizeDeepSeekBaseURL 去掉 baseURL 尾部斜杠与冗余的 /v1 段。
+// DeepSeek 官方文档中 https://api.deepseek.com 与 https://api.deepseek.com/v1
+// 均为合法写法,而本 adapter 统一追加 /v1 路径前缀;若配置按 OpenAI 兼容惯例
+// 填写(如网关 http://localhost:11434/v1,setup 提示示例),原样拼接会得到
+// /v1/v1/chat/completions 404。自定义路径前缀(如 /proxy/v1)不受影响,仅剥
+// 路径最后一段恰为 v1 的情况。
+func normalizeDeepSeekBaseURL(raw string) string {
+	return strings.TrimSuffix(strings.TrimRight(raw, "/"), "/v1")
 }
 
 func (a *deepSeekAdapter) BaseURL() string {

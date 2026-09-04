@@ -27,7 +27,8 @@ type providerAdapter interface {
 	// 入参 err 为 doRequest 返回的原始错误，adapter 根据 Provider 语义分类
 	ClassifyError(err error) ErrorClass
 
-	// BaseURL 返回 Provider 的 API 端点（如 https://api.deepseek.com/v1）
+	// BaseURL 返回 Provider 的 API 端点(deepseek 为根地址,请求路径内部补
+	// /v1;openai/kimi/glm 自带版本路径,如 https://api.openai.com/v1)
 	BaseURL() string
 
 	// AuthHeader 返回认证头键值对（如 "Authorization", "Bearer sk-xxx"）

@@ -387,6 +387,7 @@ func (m *setupModel) buildForm() {
 		case "deepseek":
 			desc = "deepseek-v4-pro (Recommended) / deepseek-v4-flash"
 			subDesc = fmt.Sprintf(lc.SetupSubModelDesc, "deepseek-v4-flash")
+			baseURLDesc = lc.SetupBaseURLDescDeepSeek
 		case "openai":
 			desc = "gpt-4o (Recommended) / gpt-4o-mini"
 			subDesc = fmt.Sprintf(lc.SetupSubModelDesc, "gpt-4o-mini")

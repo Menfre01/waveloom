@@ -52,6 +52,41 @@ func TestDeepSeekBuildRequest(t *testing.T) {
 	}
 }
 
+func TestRegression_DeepSeekBaseURLV1NotDoubled(t *testing.T) {
+	// REGRESSION: base_url 按 OpenAI 兼容惯例以 /v1 结尾(DeepSeek 官方文档
+	// 与 setup 网关示例均如此示范)时,原实现拼出 /v1/v1/chat/completions
+	// 返回 404;构造 adapter 时归一剥掉尾部冗余 /v1,再统一补标准路径。
+	tests := []struct {
+		name    string
+		baseURL string
+		want    string // chat completions 请求 URL
+	}{
+		{name: "官方根地址", baseURL: "https://api.deepseek.com", want: "https://api.deepseek.com/v1/chat/completions"},
+		{name: "官方文档 /v1 写法", baseURL: "https://api.deepseek.com/v1", want: "https://api.deepseek.com/v1/chat/completions"},
+		{name: "/v1 带尾部斜杠", baseURL: "https://api.deepseek.com/v1/", want: "https://api.deepseek.com/v1/chat/completions"},
+		{name: "本地 OpenAI 兼容网关", baseURL: "http://localhost:11434/v1", want: "http://localhost:11434/v1/chat/completions"},
+		{name: "网关自定义前缀", baseURL: "https://gw.example.com/proxy/v1", want: "https://gw.example.com/proxy/v1/chat/completions"},
+		{name: "空值回退默认", baseURL: "", want: "https://api.deepseek.com/v1/chat/completions"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			adapter := newDeepSeekAdapter(ClientConfig{
+				APIKey:  "sk-deepseek",
+				Model:   "custom-chat-model",
+				BaseURL: tt.baseURL,
+			})
+			req, err := adapter.BuildRequest(context.Background(),
+				[]Message{{Role: RoleUser, Content: "hi"}}, nil)
+			if err != nil {
+				t.Fatalf("BuildRequest returned error: %v", err)
+			}
+			if got := req.URL.String(); got != tt.want {
+				t.Errorf("request URL = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestDeepSeekBuildRequest_ImagesStrippedOnNonVisionModel(t *testing.T) {
 	// REGRESSION: 历史带图消息在切换非视觉模型后不再整体拦截,
 	// wire 层剥离图片(Message 不变),请求正常发出。

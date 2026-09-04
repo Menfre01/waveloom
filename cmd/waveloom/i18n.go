@@ -155,6 +155,10 @@ type Messages struct {
 	SetupAPIKeyInvalidFmt string // 含 %v
 	SetupProviderOther   string
 	SetupBaseURLDesc     string
+
+	// 仅 deepseek:根地址即可(官方 /v1 写法与网关 /v1 由 adapter 归一)
+	SetupBaseURLDescDeepSeek string
+
 	SetupSubModelDesc    string // 含 %s — 子模型推荐值
 	SetupDoneTitle       string
 	SetupDoneConfigSaved string
@@ -420,7 +424,9 @@ var zhCN = Messages{
 	SetupStepTheme:       "Step %d/%d — 主题",
 	SetupProviderOther:   "Other (OpenAI-compatible)",
 	SetupSubModelDesc:    "%s (Recommended) — 子模型默认模型",
-	SetupBaseURLDesc:     "兼容 OpenAI API 的服务地址，如 http://localhost:11434/v1",
+	SetupBaseURLDesc:     "兼容 OpenAI API 的服务地址,如 http://localhost:11434/v1",
+
+	SetupBaseURLDescDeepSeek: "DeepSeek API 根地址即可(如 https://api.deepseek.com);填网关地址时尾部 /v1 会自动归一,无需自带",
 	SetupAPIKeyEmptyError: "API Key 不能为空",
 	SetupAPIKeyInvalidFmt: "API Key 验证失败: %v",
 	SetupDoneTitle:       "设置完成！",
@@ -761,6 +767,8 @@ var enUS = Messages{
 	SetupStepTheme:       "Step %d/%d — Theme",
 	SetupProviderOther:   "Other (OpenAI-compatible)",
 	SetupBaseURLDesc:     "OpenAI-compatible API endpoint, e.g. http://localhost:11434/v1",
+
+	SetupBaseURLDescDeepSeek: "DeepSeek root endpoint (e.g. https://api.deepseek.com); a trailing /v1 gateway suffix is normalized automatically",
 	SetupSubModelDesc:    "%s (Recommended) — default sub model",
 	SetupAPIKeyEmptyError: "API Key cannot be empty",
 	SetupAPIKeyInvalidFmt: "API key validation failed: %v",
