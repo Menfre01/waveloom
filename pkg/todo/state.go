@@ -12,7 +12,6 @@ import (
 	"sync"
 )
 
-
 // ---------------------------------------------------------------------------
 // TodoItem — 单条 todo 项
 // ---------------------------------------------------------------------------
@@ -236,7 +235,6 @@ func (s *TodoState) StatusSummary() string {
 
 	var b strings.Builder
 	b.WriteString("## Current Todo Status\n")
-	b.WriteString("→ Verify status accuracy before taking action. Update via todo_create / todo_update if any status is wrong.\n")
 	if inProgressCount > 1 {
 		fmt.Fprintf(&b, "→ ⚠️ %d tasks are in_progress — only ONE should be in_progress (exception: spawning parallel subagents right now).\n", inProgressCount)
 	}

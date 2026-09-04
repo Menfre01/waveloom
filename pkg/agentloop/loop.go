@@ -76,9 +76,16 @@ type Config struct {
 	// 空字符串 → 不注入。
 	AgentsMD string
 
-	// TodoState session 级 todo 状态，跨 Loop 持久。
+	// TodoState session 级 todo 状态,跨 Loop 持久。
 	// nil → todo_update 工具禁用。
 	TodoState *todo.TodoState
+
+	// BackgroundCompletions 返回 turn 内新完成的后台任务通知 XML
+	// (每个工具 step 执行后调用一次;空串 = 无新完成)。nil → 不启用。
+	// 由持有 session.ContextManager 的入口注入(与 PrepareRun 共享游标,
+	// 天然去重);用于把后台任务完成信号在 turn 内送达模型,避免模型自建
+	// sleep watcher 轮询。
+	BackgroundCompletions func() string
 
 	// Model 覆盖 LLM Client 的默认 model。空 = 使用 Client 默认。
 	// 用于 subagent 按任务复杂度选择不同模型。
@@ -98,6 +105,11 @@ type Config struct {
 
 	// LSPManager LSP diagnostic manager
 	LSPManager *lsp.Manager
+
+	// ThrottleStore 会话级 web 限流状态(web_fetch/web_search 共享)。
+	// nil → Loop 自建一个(默认);fork 子代理应由父显式传入父 store,
+	// 否则子代理会覆盖父 ctx 注入后对刚被限流的 host 继续轰炸。
+	ThrottleStore *tool.ThrottleStore
 }
 
 // DefaultToolTimeout 是单个工具执行的推荐超时时间（5 分钟）。
@@ -213,6 +225,9 @@ type Loop struct {
 
 	// stepsSinceLastTodoReminder 记录自上次注入 todo 提醒以来的 assistant step 数。
 	stepsSinceLastTodoReminder int
+	// lastTodoStatusSummary 上次每-step 注入的 todo 状态快照;summary 未变化
+	// 时跳过注入(状态变化才注入;周期可见性由 maybeInjectTodoReminder 兜底)。
+	lastTodoStatusSummary string
 	// lastChanceTodoInjected 在 loop 即将以 ReasonCompleted 终止时,	// 若检测到残留的非 completed todo 项,注入一次"最后机会"提醒后置为 true。
 	// todo_update 成功执行时重置为 false。防止 LLM 忘记最后一次 todo 更新导致残留。
 	lastChanceTodoInjected bool
@@ -230,6 +245,8 @@ type Loop struct {
 
 	readStateStore    *tool.ReadStateStore
 
+	throttleStore *tool.ThrottleStore
+
 	// hookRunner 执行 hooks。nil → 跳过 hooks。
 	// todoMultiInProgressMsg 由 executeTodoMutate 在检测到多个 in_progress 时设置，
 	// 由 executeToolCalls 在 buildToolMessages 之后消费并注入 user 消息。
@@ -242,11 +259,16 @@ type Loop struct {
 
 // New 创建一个新的 Loop 实例。
 func New(llmClient llm.Client, toolRegistry tool.Registry, config Config) *Loop {
+	ts := config.ThrottleStore
+	if ts == nil {
+		ts = tool.NewThrottleStore()
+	}
 	return &Loop{
 		llmClient:    llmClient,
 		toolRegistry: toolRegistry,
 		config:       config,
 		readStateStore: tool.NewReadStateStore(),
+		throttleStore:  ts,
 	}
 }
 
@@ -1078,23 +1100,26 @@ func (l *Loop) injectTodoStatus(msgs *[]llm.Message) {
 	}
 	summary := l.config.TodoState.StatusSummary()
 	if summary == "" {
+		l.lastTodoStatusSummary = ""
 		return
 	}
+	// 仅在状态变化时注入:重复快照无新增信息,却每步占用 cache-miss 区
+	// token(实测 ~20 次/轮 ≈ 全部 miss 的 26%);周期可见性由
+	// maybeInjectTodoReminder(持久化、前缀缓存友好)兜底,防遗忘不受损。
+	if summary == l.lastTodoStatusSummary {
+		return
+	}
+	l.lastTodoStatusSummary = summary
 	*msgs = append(*msgs, llm.Message{
 		Role:    llm.RoleUser,
-		Content: todoStatusText(summary),
+		Content: summary,
 	})
-}
-
-// todoStatusText 构造 todo 状态消息文本。当前仅返回状态快照本身，// 不再追加操作规则（规则已在 system prompt + FormatResult 双重覆盖）。
-func todoStatusText(summary string) string {
-	return summary
 }
 
 // todoReminderText 构造 todo 提醒消息文本:状态摘要 + 提醒引导。
 func todoReminderText(summary string, stepsSince int) string {
 	return summary + "\n\n" +
-		fmt.Sprintf("[system:todo] %d steps since last todo_update. Your todo list is stale — call todo_update NOW to update task statuses. Mark completed tasks as 'completed' and set the next pending task to 'in_progress'.", stepsSince)
+		fmt.Sprintf("[system:todo] %d steps since last todo_update. If you have completed a task or your focus changed, call todo_update to sync the list — otherwise ignore this reminder (do NOT call todo_update just to acknowledge it).", stepsSince)
 }
 
 // updateTodoCounters 在每个 step 工具执行后更新 todo 提醒计数器。

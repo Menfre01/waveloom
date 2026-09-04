@@ -77,8 +77,10 @@ func (l *Loop) executeToolCalls(ctx context.Context, calls []llm.ToolCall, state
 		ctx = WithAgentsMD(ctx, l.config.AgentsMD)
 	}
 
-// Inject session-level ReadStateStore for read/edit conflict detection (跨 step 持久化).
-ctx = tool.WithReadState(ctx, l.readStateStore)
+	// Inject session-level ReadStateStore for read/edit conflict detection (跨 step 持久化).
+	ctx = tool.WithReadState(ctx, l.readStateStore)
+	// Inject session-level ThrottleStore for web rate-limit state (跨 step/跨 turn 持久化)。
+	ctx = tool.WithThrottleStore(ctx, l.throttleStore)
 	// Inject LSP Manager for tools that need symbol/document out-of-band access (e.g., read outline).
 	if l.config.LSPManager != nil {
 		ctx = lsp.WithLSPManager(ctx, l.config.LSPManager)
@@ -631,6 +633,19 @@ ctx = tool.WithReadState(ctx, l.readStateStore)
 		l.todoMultiInProgressMsg = ""
 	}
 
+	// 后台任务完成通知:每个工具 step 后检查一次(由入口注入实现)。
+	// 本 step 工具执行期间完成的任务,通知紧随 tool 消息注入,模型下一次
+	// 调用即知——完成信号 turn 内可达,无需自建 sleep watcher 轮询。
+	// 与 PrepareRun 共享游标,已送达的完成不会在下一轮重复报告。
+	if l.config.BackgroundCompletions != nil {
+		if notice := l.config.BackgroundCompletions(); notice != "" {
+			messages = append(messages, llm.Message{
+				Role:    llm.RoleUser,
+				Content: notice,
+			})
+		}
+	}
+
 	return messages, reason, execErr
 }
 
@@ -779,10 +794,28 @@ func (l *Loop) buildToolMessages(
 		// 阶梯:count=3 警告 → count=5 警告 → count=8 终止
 		// (count=1 正常调用,count=2 试错不警告)
 		if warnThresholds[l.consecutiveSameError] {
-			warnContent := fmt.Sprintf(
-				"[system:backoff] You have received %d consecutive %q errors on the %q tool. Reassess your approach — try a different tool, different parameters, or re-examine the task. Do not repeat the same call pattern. If the root cause remains unclear, consider delegating analysis to a subagent for a fresh perspective.",
-				l.consecutiveSameError, firstRecoverableKind, firstRecoverableTool,
-			)
+			var warnContent string
+			switch {
+			case firstRecoverableTool == "edit":
+				// edit 特化:hunk 失配的恢复路径只有 re-read——通用文案里的
+				// "try a different tool" 与 edit 的禁 bash/python/sed 规则冲突。
+				warnContent = fmt.Sprintf(
+					"[system:backoff] You have received %d consecutive %q errors on the edit tool. The file content you are patching differs from what you expect — re-read the target file (read with context lines) and rebuild the hunk from the fresh content. Do NOT retry the same hunk unchanged, and do NOT fall back to bash/python/sed for file modification.",
+					l.consecutiveSameError, firstRecoverableKind,
+				)
+			case firstRecoverableKind == tool.ErrKindRateLimited || firstRecoverableKind == tool.ErrKindBlocked:
+				// 限流/封锁特化:错误信息已含最早可重试时间——对策是"到点再试
+				// 或换源",不是"换工具"(换工具也绕不开同一个被限流的 host)。
+				warnContent = fmt.Sprintf(
+					"[system:backoff] You have received %d consecutive %q errors on the %q tool. The target is rate-limited or blocked — wait until the time given in the error message, then retry, or switch to another source/backend. Repeating the same request before then will keep failing and may deepen the rate limit.",
+					l.consecutiveSameError, firstRecoverableKind, firstRecoverableTool,
+				)
+			default:
+				warnContent = fmt.Sprintf(
+					"[system:backoff] You have received %d consecutive %q errors on the %q tool. Reassess your approach — try a different tool, different parameters, or re-examine the task. Do not repeat the same call pattern. If the root cause remains unclear, consider delegating analysis to a subagent for a fresh perspective.",
+					l.consecutiveSameError, firstRecoverableKind, firstRecoverableTool,
+				)
+			}
 			warnMsg := llm.Message{
 				Role:    llm.RoleUser,
 				Content: warnContent,
@@ -792,7 +825,13 @@ func (l *Loop) buildToolMessages(
 		}
 
 		if l.consecutiveSameError >= maxConsecutiveSameError {
-			if fatalErr == nil {
+			if firstRecoverableKind == tool.ErrKindRateLimited || firstRecoverableKind == tool.ErrKindBlocked {
+				// 限流/封锁不升级 fatal:不同 host 的 429 会被累计成
+				// "同错重复 N 次"误杀整轮(爬取型任务);工具层 ThrottleStore
+				// 已在退避期内短路,到上限说明模型无视提示——重置计数停止
+				// 告警即可,不应终止整个 turn。
+				l.consecutiveSameError = 0
+			} else if fatalErr == nil {
 				fatalReason = ReasonToolFatal
 				fatalErr = fmt.Errorf(
 					"tool %q error %q repeated %d times consecutively — stopping to avoid infinite retry loop",

@@ -539,8 +539,11 @@ func TestTodoReminderText_ContainsStalenessCount(t *testing.T) {
 	if contains(text, "Ignore if not applicable") {
 		t.Errorf("todoReminderText should NOT contain escape hatch 'Ignore if not applicable'")
 	}
-	if !contains(text, "todo_update NOW") {
-		t.Errorf("todoReminderText should contain urgency signal 'NOW'")
+	if !contains(text, "If you have completed a task") {
+		t.Errorf("todoReminderText should be conditional (sync only on real change), got: %s", text)
+	}
+	if !contains(text, "ignore this reminder") {
+		t.Errorf("todoReminderText should tell the model it may ignore the reminder, got: %s", text)
 	}
 }
 
@@ -697,8 +700,8 @@ func TestMaybeInjectTodoReminder_UpdatesExistingSlot(t *testing.T) {
 	if !contains(state.Messages[0].Content, "Old Task") {
 		t.Error("old todo-status should remain unchanged")
 	}
-	if !contains(state.Messages[1].Content, "todo_update NOW") {
-		t.Error("appended reminder should contain 'todo_update NOW'")
+	if !contains(state.Messages[1].Content, "If you have completed a task") {
+		t.Error("appended reminder should be conditional (sync only on real change)")
 	}
 }
 
@@ -764,6 +767,35 @@ func TestInjectTodoStatus_NoNilTodoState(t *testing.T) {
 	msgs := []llm.Message{}
 	loop.injectTodoStatus(&msgs)
 	// 不 panic 即通过
+}
+
+func TestRegression_InjectTodoStatusSkipsUnchangedSummary(t *testing.T) {
+	// 每-step 注入仅在状态变化时发生:重复快照无新增信息却占用 cache-miss
+	// 区 token(实测 ≈ 全部 miss 的 26%);周期可见性由 reminder 兜底,
+	// 防遗忘不受损。
+	ts := todo.NewTodoState()
+	ts.Apply(todo.TodoWriteParams{
+		Todos: []todo.TodoItem{{Content: "Task A", Status: "in_progress"}}})
+	loop := New(nil, nil, Config{TodoState: ts})
+	msgs := []llm.Message{}
+
+	loop.injectTodoStatus(&msgs)
+	if len(msgs) != 1 {
+		t.Fatalf("first inject should append status, got %d messages", len(msgs))
+	}
+
+	msgs = msgs[:0]
+	loop.injectTodoStatus(&msgs) // summary 未变化
+	if len(msgs) != 0 {
+		t.Errorf("unchanged summary must NOT be re-injected, got %d messages", len(msgs))
+	}
+
+	ts.Apply(todo.TodoWriteParams{
+		Todos: []todo.TodoItem{{Content: "Task B", Status: "pending"}}}) // 状态变化
+	loop.injectTodoStatus(&msgs)
+	if len(msgs) != 1 {
+		t.Errorf("changed summary should be injected, got %d messages", len(msgs))
+	}
 }
 
 // ============================================================================

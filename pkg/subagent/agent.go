@@ -441,6 +441,9 @@ func (a *AgentTool) executeFork(ctx context.Context, p AgentParams) (*tool.ToolR
 		TodoState:     nil,
 		Compactor:     compactor,
 		ToolsOverride: reqTools,
+		// 透传父会话的 web 限流状态:子代理不得对父刚被限流的 host 继续轰炸
+		// (父 executeToolCalls 注入 ctx;loop.New 无 config 时会自建新 store)。
+		ThrottleStore: tool.ThrottleStoreFromContext(ctx),
 	})
 
 	startTime := time.Now()
@@ -534,6 +537,8 @@ func (a *AgentTool) executeCold(ctx context.Context, p AgentParams) (*tool.ToolR
 		Model:         model,
 		TodoState:     nil,
 		Compactor:     a.newCompactor(),
+		// 冷启动子代理同样共享父会话的限流状态(同一进程内的抓取流量)
+		ThrottleStore: tool.ThrottleStoreFromContext(ctx),
 	})
 
 	startTime := time.Now()
@@ -1131,9 +1136,8 @@ func buildForkMessages(parentRaw interface{}, description, prompt string) []llm.
 			}
 			j := i + 1
 			for ; j < len(filtered) && filtered[j].Role == llm.RoleTool; j++ {
-				if _, ok := ids[filtered[j].ToolCallID]; ok {
-					delete(ids, filtered[j].ToolCallID)
-				}
+				// delete 对不存在的 key 是 no-op,无需守卫
+				delete(ids, filtered[j].ToolCallID)
 			}
 			if len(ids) > 0 {
 				// 孤儿轮次(结果被压缩/拼接丢弃):清理并跳过其 tool 段
