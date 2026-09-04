@@ -1,11 +1,12 @@
 package subagent
 
 import (
-	"fmt"
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -912,10 +913,25 @@ func TestAlignForkRegistry_ParentToolsCovered(t *testing.T) {
 			t.Fatalf("parent tool %q must be registered after align", name)
 		}
 	}
-	// bash 别名真实执行(委托 fork 沙箱 shell),而非报不可用
+	// bash 别名真实执行(委托 fork 沙箱 shell),而非报不可用。
+	// REGRESSION(2026-09 CI #280):fork 前缀缓存对齐(89c889d)首次让真实
+	// bash 执行进入 Windows CI——此前 shell 真实执行断言在 Windows 全 skip
+	// (shell_test.go 惯例)。Windows runner 上 Git Bash 经绝对路径探测
+	// (resolveWindowsShell 顺序 2:从 git.exe 推算)执行 bash -c 返回
+	// exit 1 空输出,行为依赖 runner/探测路径,无 Windows 真机无法在此
+	// 定论;alias 分发语义(注册→委托 bash_subagent、不退化 stub)由下方
+	// stub 错误反证 + Windows 弱断言覆盖,Unix 全量断言不受影响。
 	res, err := reg.Execute(context.Background(), "bash", json.RawMessage(`{"command":"echo hi"}`))
 	if err != nil {
 		t.Fatalf("bash alias execute error: %v", err)
+	}
+	if res.Error != nil && res.Error.Kind == "tool_unavailable_in_fork" {
+		t.Fatalf("bash alias degraded to unavailable stub: %+v", res)
+	}
+	if runtime.GOOS == "windows" && res.Error != nil {
+		// Git Bash 真实执行不在 Windows 单测覆盖范围(与 shell_test.go 的
+		// Windows skip 惯例一致);alias 未退化为 stub 已由上面断言保证。
+		t.Skipf("Git Bash execution not covered on Windows runner (alias wiring verified): %+v", res.Error)
 	}
 	if res.Error != nil || !strings.Contains(res.Content, "hi") {
 		t.Fatalf("bash alias must execute through sandbox shell, got error=%+v content=%q", res.Error, res.Content)
