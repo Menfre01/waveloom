@@ -161,6 +161,30 @@ func TestRegression_ACPSessionFallbackNotProjectLocal(t *testing.T) {
 	}
 }
 
+// TestRegression_ACPFallbackModelNotDeprecated 验证 ACP 兜底模型名不是官方
+// 已停用/已下线的模型名。
+// REGRESSION: 原兜底为 "deepseek-chat",该名已于 2026-07-24 停止服务
+// (官方更新日志 2026-04-24 公告),settings 缺失 model 字段时 ACP 会话的
+// 首个 LLM 请求直接 404。兜底值需随官方在售模型同步更新。
+func TestRegression_ACPFallbackModelNotDeprecated(t *testing.T) {
+	// 官方已停用(2026-07-24)与已下线(2026-09-10,仅名字仍被承接)的模型名
+	deprecated := []string{
+		"deepseek-chat",
+		"deepseek-reasoner",
+		"deepseek-v4-flash",
+		"deepseek-v4-flash-vision-exp",
+	}
+	for _, name := range deprecated {
+		if defaultACPModelName == name {
+			t.Errorf("ACP 兜底模型不得使用停用/下线模型名 %q", name)
+		}
+	}
+	if defaultACPModelName != llm.ModelDeepSeekFlash {
+		t.Errorf("defaultACPModelName = %q, want %q(官方在售模型正名)",
+			defaultACPModelName, llm.ModelDeepSeekFlash)
+	}
+}
+
 func TestACPCommandRunner(t *testing.T) {
 	dir := t.TempDir()
 	settingsPath := filepath.Join(dir, "settings.json")

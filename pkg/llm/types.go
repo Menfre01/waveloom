@@ -287,32 +287,41 @@ const (
 // 仅作为 curr_model / --model 的选择值,绝不进入 Client 配置或 API 请求。
 const ModelChoiceProPlan = "proplan"
 
-// ModelDeepSeekV4Flash / ModelDeepSeekV4Pro / ModelDeepSeekV4FlashVision 是
-// DeepSeek Responses API 支持的官方模型集(视觉模型同样支持 Responses,
-// 图片以 input_image 内容块承载)。Provider=deepseek 且生效模型为三者之一时,
-// adapter 自动切换为 Responses API 格式。
+// ModelDeepSeekFlash / ModelDeepSeekV4Flash / ModelDeepSeekV4Pro /
+// ModelDeepSeekV4FlashVision 是 DeepSeek Responses API 支持的官方模型集
+// (视觉模型同样支持 Responses,图片以 input_image 内容块承载)。
+// Provider=deepseek 且生效模型为其中之一时,adapter 自动切换为 Responses API 格式。
 const (
+	// ModelDeepSeekFlash 是 DeepSeek-V4.1-Flash(2026-09-10 发布)的模型名,
+	// 原生多模态(图像理解);旧名 deepseek-v4-flash 与
+	// deepseek-v4-flash-vision-exp 对应模型已下线,请求由其承接。
+	ModelDeepSeekFlash = "deepseek-flash"
+
 	ModelDeepSeekV4Flash = "deepseek-v4-flash"
 	ModelDeepSeekV4Pro   = "deepseek-v4-pro"
-	// ModelDeepSeekV4FlashVision 是 DeepSeek 多模态(图像理解)模型,
-	// 官方定价与 flash 一致;仅此模型接受图片输入。
+	// ModelDeepSeekV4FlashVision 是已下线的多模态(图像理解)实验模型名,
+	// 仍可调用并由 V4.1-Flash 承接,官方定价与 flash 一致。
 	ModelDeepSeekV4FlashVision = "deepseek-v4-flash-vision-exp"
 )
 
 // IsVisionModel 判断模型是否支持图片输入。
-// 容忍 provider 前缀形式(如 "deepseek/deepseek-v4-flash-vision-exp")。
+// deepseek-flash(V4.1-Flash)原生多模态,是当前视觉模型正名;legacy 的
+// deepseek-v4-flash-vision-exp 仍由 V4.1-Flash 承接,同样接受图片。
+// legacy 的 deepseek-v4-flash 不在此列(官方图像理解文档未承诺该旧名传图),
+// 误传的图片由 wire 层剥离而非整体拦截。
+// 容忍 provider 前缀形式(如 "deepseek/deepseek-flash")。
 func IsVisionModel(model string) bool {
 	if i := strings.IndexByte(model, '/'); i >= 0 {
 		model = model[i+1:]
 	}
-	return model == ModelDeepSeekV4FlashVision
+	return model == ModelDeepSeekFlash || model == ModelDeepSeekV4FlashVision
 }
 
 // ClientConfig 在构造 Client 时传入，运行期不可变。
 type ClientConfig struct {
 	Provider       ProviderType      // Provider 类型
 	APIKey         string            // API Key
-	Model          string            // 模型名称,如 "deepseek-v4-pro"
+	Model          string            // 模型名称,如 "deepseek-flash"
 	BaseURL        string            // 可选，留空使用 Provider 默认端点
 	ResponseFormat string            // 可选，强制输出格式："json_object" 启用 JSON 模式，空字符串不设置
 	ExtraParams    map[string]any    // 可选，注入 Provider 特殊参数（如 DeepSeek 的 frequency_penalty 等）
@@ -335,6 +344,10 @@ type StreamingEvent struct {
 	// WebSearchStatus 标记服务端 web_search 工具的状态更新(Responses API 独有):
 	// "in_progress" / "searching" / "completed"。服务端自动执行搜索并注入上下文,
 	// 客户端无需本地执行;agent loop 据此生成虚拟 ToolCall 事件供 TUI 展示。
+	//
+	// DORMANT(2026-09-10):官方已回收 Responses API 的内置 web_search(兼容性明细
+	// → Tools 表列为"忽略"),新响应不再产生该状态;链路保留以备服务端重新启用。
+	// 历史 web_search_call item 的回传不受影响(见 WebSearchCalls)。
 	WebSearchStatus string
 	// WebSearchCallID 是 web_search_call item 的 ID(非 function call id)。
 	WebSearchCallID string

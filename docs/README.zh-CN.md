@@ -100,14 +100,14 @@ waveloom
 ## 功能亮点
 
 - **前缀缓存深度优化** — System Prompt 固定,消息只在末尾追加,四级水位线压缩后字节永不变化,最大公共前缀持续命中
-- **多模态识图** — `@图片路径` 引用图片,`deepseek-v4-flash-vision-exp` 支持描述截图、OCR 文字、分析图表
+- **多模态识图** — `@图片路径` 引用图片,`deepseek-flash`(DeepSeek-V4.1-Flash,原生多模态)支持描述截图、OCR 文字、分析图表
 - **权限安全模型** — 三级决策(allow / deny / ask),规则引擎支持模式匹配,底层 5 层工具输出安全管线(Unicode 清洗 → 注入扫描 → 边界标记 → 风险分级 → 安全截断)。写操作和命令执行需要你确认。
 - **OS 级沙箱** — 可选执行隔离:bubblewrap(Linux)/ Seatbelt(macOS)实现只读根、工作区可写、可配置凭据遮蔽(`denyRead`/`credentials.files`,推荐清单见 settings 文档)、环境变量剥离、可配置环境变量注入(把 `GOPATH`/`GOMODCACHE`/`npm_config_cache` 等构建缓存重定向进工作区)与网络控制(`off`/`on`)。`--bypass-permissions` 自动激活;通过 `settings.json` 的 `"sandbox"` 段或 `--sandbox-network off|on` 配置。
 - **Hook 系统** — PreToolUse / PostToolUse / Notification / Stop 四种事件,支持 permission_mode 字段。默认 fail-open——hook 崩溃不阻塞工具执行,exit code 2 显式拦截。通过 `settings.json` 配置。
 - **会话持久恢复** — 关闭终端几天后 `waveloom --continue` 回来,Agent 记得所有上下文接着工作
 - **Checkpoint/Rewind 时间旅行** — 回退到任意历史消息,同时恢复所有文件变更。Fork 模式原 session 完整保留,历史永不丢失
 - **Plan 模式** — 先规划后执行的二阶段工作流:探索设计 → 审批 → 编码。`Shift+Tab` 一键进入/退出,Guard 写保护拦截。
-- **子代理模型配置** — 在 `settings.json` 中设置 `"sub_model": "deepseek-v4-flash"`,explorer 子代理使用此轻量模型执行代码搜索和发现(约 2 倍便宜);evaluate 和 verification 子代理始终使用主模型保证审查质量。LLM 根据任务自主选择 pro/flash。
+- **子代理模型配置** — 在 `settings.json` 中设置 `"sub_model": "deepseek-flash"`,explorer 子代理使用此模型执行代码搜索和发现;evaluate 和 verification 子代理始终使用主模型保证审查质量。LLM 根据任务自主选择主/次模型。注:V4.1-Pro 上线前,DeepSeek 将 `deepseek-v4-pro` 路由至 V4.1-Flash,主次模型后端相同。
 - **14 个内置工具** — `read` / `write` / `edit` / `bash` / `web_fetch` / `web_search` / `ask_user_question` / `enter_plan_mode` / `exit_plan_mode` / `skill` / `agent` / `kill_background_task` / `todo_create` / `todo_update`
 - **i18n 多语言** — 完整中英双语界面,`--locale` CLI 参数 / `/locale` 命令,LANG 环境变量自动检测
 ---
@@ -115,10 +115,10 @@ waveloom
 ## 常见问题
 
 **Q: 怎么切换模型?**
-输入 `/model` 选择,或 `waveloom --model deepseek-v4-flash`。选择 `proplan` 后,plan mode 使用 pro 模型、日常任务使用 flash 模型(`/model proplan`)。需在 `settings.json` 中配置 `model`(plan 模式用)与 `sub_model`(日常任务用),未配置时无法选择 proplan。
+输入 `/model` 选择,或 `waveloom --model deepseek-flash`。选择 `proplan` 后,plan mode 使用 `model`、日常任务使用 `sub_model`(`/model proplan`)。需在 `settings.json` 中同时配置两者,未配置时无法选择 proplan。
 
-**Q: deepseek-v4-flash 下 web_search 还能用吗?**
-可以——`deepseek-v4-flash` 下 Waveloom 自动切换 DeepSeek Responses API,web_search 转为服务端内置搜索(不依赖 DuckDuckGo/Brave)。其他模型保持本地搜索后端。
+**Q: deepseek-flash 下 web_search 还能用吗?**
+可以——`web_search` 在所有 Provider 下都走本地后端(默认 DuckDuckGo,Brave 需设置 `BRAVE_API_KEY`)。注:DeepSeek 曾在 Responses API 提供内置服务端搜索,该能力已被官方回收(兼容性表将内置 `web_search` 列为「忽略」),因此 Waveloom 对全部模型都以普通 function 工具暴露该能力。
 
 **Q: 怎么切换 Provider?**
 输入 `/provider` 弹出交互式 Provider 选择器(↑↓ 选择 / Enter 确认 / Esc 取消),或 `/provider kimi` 直接切换。Profile 配置在 `settings.json` 的 `llm.profiles` 中。
@@ -130,7 +130,7 @@ Key 存储在本地 `~/.waveloom/`,直连 DeepSeek / Kimi / GLM / OpenAI,不经�
 输入 `/locale` 切换中英文界面，或 `waveloom --locale en-US`。设置自动保存到 `settings.json`。
 
 **Q: 怎么为 explorer 子代理配置轻量模型?**
-在 `settings.json` 的 `llm` 段中添加 `"sub_model": "deepseek-v4-flash"`。Explorer 子代理使用此模型执行代码搜索和发现任务——约 2 倍便宜。evaluate 和 verification 子代理始终使用主模型(`model`,如 `deepseek-v4-pro`)保证审查质量。无需运行时切换。
+在 `settings.json` 的 `llm` 段中添加 `"sub_model": "deepseek-flash"`。Explorer 子代理使用此模型执行代码搜索和发现任务。evaluate 和 verification 子代理始终使用主模型(`model`)保证审查质量。无需运行时切换。
 
 **Q: 支持哪些语言?**
 Waveloom 适用于任何文本项目。编辑后 LSP 诊断自动验证 Go、Rust、TypeScript/JavaScript、C/C++ 代码。其他语言使用原生构建工具(`go build`、`npx tsc`、`cargo build`、`make` 等)。

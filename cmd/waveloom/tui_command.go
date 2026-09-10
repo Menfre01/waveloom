@@ -843,8 +843,9 @@ func (m *model) commitModelSwitch(modelID string) {
 
 // effortChoicesForProvider 返回当前 provider 支持的 thinking 档位(对照官方文档):
 // DeepSeek: off/low/high/max(官方 api-docs.deepseek.com/guides/thinking_mode:
-// effort 值域 none/low/high/max,none 关闭思考;medium→high、xhigh→max 由服务端
-// 映射,故不暴露这两个兼容值);
+// effort 值域 none/low/high/max,none 关闭思考;minimal→low、medium→high、
+// xhigh→high、ultra→max 为官方兼容档位,由服务端归一(chat 路径另有本地映射
+// mapReasoningEffort),故不暴露这些兼容值);
 // OpenAI: low/medium/high(官方 reasoning_effort 值域,无 max 档位,无思考开关);
 // GLM: low/high/max(官方 docs.bigmodel.cn GLM-5.3:始终思考,仅三档,默认 max;
 // thinking.type=disabled 会报错 → 不提供 off;5.2 兼容 High/Max);

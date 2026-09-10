@@ -528,9 +528,10 @@ func (l *Loop) Run(ctx context.Context, messages []llm.Message) <-chan StepEvent
 					}
 				}
 
-				// 服务端 web_search 状态 → 虚拟 ToolCall 事件(TUI 进度对齐)。
-				// Responses API 模式下搜索由服务端自动执行并注入上下文,
-				// 此事件仅用于 TUI 展示,不进入 toolCalls(无需本地执行)。
+				// 历史 web_search_call 状态 → 虚拟 ToolCall 事件(TUI 进度对齐)。
+				// 内置 web_search 已被官方回收(新会话不再产生该事件),保留用于
+				// 服务端未来重新启用;此事件仅用于 TUI 展示,
+				// 不进入 toolCalls(无需本地执行)。
 				if ev.WebSearchStatus != "" {
 				if virtual := webSearchVirtualEvent(ev, state.StepCount+1, webSearchStartedAt); virtual != nil {
 						if !sendEvent(ctx, ch, virtual) {
@@ -950,8 +951,10 @@ func (l *Loop) requestTools() []llm.ToolSpec {
 	return toLLMToolSpecs(l.toolRegistry.List())
 }
 
-// webSearchVirtualEvent 将服务端 web_search 状态转为虚拟 ToolCall 事件。
-// Responses API(deepseek-v4-flash)模式下搜索由服务端自动执行:
+// webSearchVirtualEvent 将历史服务端 web_search 状态转为虚拟 ToolCall 事件。
+// 背景:官方已回收 Responses API 的内置 web_search(兼容性明细 → Tools 表列为
+// "忽略"),新响应不再产生 web_search_call;此处保留用于历史会话回传的 item
+// (官方承诺仍会还原并拼接进上下文)以及旧模型期间的会话展示:
 // - in_progress → ToolCallStart:创建 web_search 段落 + spinner(TUI 进度反馈)
 // - completed → ToolCallResult:段落完成,展示搜索结果注入说明
 // - searching 中间态无附加信息,忽略

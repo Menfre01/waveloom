@@ -183,7 +183,7 @@ External Agents → Add Agent → Add Custom Agent, or edit your settings file d
 ```
 
 `command` must be an executable on your PATH or an absolute path; append extra flags to `args`
-(e.g. `["acp", "--model", "deepseek-chat"]`).
+(e.g. `["acp", "--model", "deepseek-flash"]`).
 
 ### What works in Zed
 

@@ -814,8 +814,10 @@ func TestDoTurn_ImageBlockedOnNonVisionModel(t *testing.T) {
 	if p.Type != paraSystem || p.State != stateDone || p.NotifKind != notifError {
 		t.Errorf("paragraph = %+v, want paraSystem/stateDone/notifError", p)
 	}
-	if !strings.Contains(p.Text, llm.ModelDeepSeekV4FlashVision) {
-		t.Errorf("paragraph text should mention %s, got %q", llm.ModelDeepSeekV4FlashVision, p.Text)
+	// 提示的目标模型须是当前视觉模型正名(deepseek-flash);legacy
+	// deepseek-v4-flash-vision-exp 已下线,不应作为引导值(2026-09-10 迁移)
+	if !strings.Contains(p.Text, llm.ModelDeepSeekFlash) {
+		t.Errorf("paragraph text should mention %s, got %q", llm.ModelDeepSeekFlash, p.Text)
 	}
 	// 拦截发生在 turn 计数之前,不消耗 turn
 	if m.hudTurns != 0 {

@@ -24,7 +24,7 @@ Minimal config:
 |-------|-------------|---------|
 | `api_key` | DeepSeek API Key, falls back to `LLM_API_KEY` env var when empty | — |
 | `provider` | `deepseek`, `kimi`, `glm`, or `openai` | `deepseek` |
-| `model` | Model name | `deepseek-v4-pro` |
+| `model` | Model name | `deepseek-flash` |
 | `base_url` | API endpoint | `https://api.deepseek.com` |
 | `timeout` | Request timeout | `600s` |
 | `extra_params` | Extra parameters (thinking, reasoning_effort, etc.) | Thinking mode on by default |
@@ -336,7 +336,7 @@ when network is on).
 
 | Flag | Description | Default |
 |------|-------------|---------|
-| `--model` | Model name | `deepseek-v4-pro` |
+| `--model` | Model name | `deepseek-flash` |
 | `--system-prompt` | Custom system prompt | Built-in prompt |
 | `--max-turns N` | Maximum turns, 0 = unlimited | `0` (unlimited) |
 | `--context-limit 1M` | Context window size, supports `1M` / `200k` / raw number | `1M` |

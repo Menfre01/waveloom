@@ -13,8 +13,8 @@ go run ./cmd/editbench/
 go run ./cmd/editbench/ -filter "atomic"    # 只看某一类
 go run ./cmd/editbench/ -json               # JSON 输出
 
-# Layer 3: LLM-in-the-loop 可用性评估（真实 LLM 驱动）
-LLM_API_KEY=sk-xxx go run ./cmd/llmedit/ -provider deepseek -model deepseek-chat
+# Layer 3: LLM-in-the-loop 可用性评估(真实 LLM 驱动)
+LLM_API_KEY=sk-xxx go run ./cmd/llmedit/ -provider deepseek -model deepseek-flash
 ```
 
 ## 三层架构
@@ -85,7 +85,7 @@ go run ./cmd/editbench/ -json | jq '.pass_rate'
 
 ```sh
 # DeepSeek
-LLM_API_KEY=sk-xxx go run ./cmd/llmedit/ -provider deepseek -model deepseek-chat
+LLM_API_KEY=sk-xxx go run ./cmd/llmedit/ -provider deepseek -model deepseek-flash
 
 # Kimi
 LLM_API_KEY=sk-xxx go run ./cmd/llmedit/ -provider kimi -model kimi-latest

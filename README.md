@@ -100,14 +100,14 @@ waveloom
 ## Highlights
 
 - **Prefix cache optimized** — Fixed System Prompt, append-only message history, four-tier watermark compaction. Maximum common prefix stays cache-hot across turns.
-- **Multimodal vision** — Reference images with `@shot.png`; `deepseek-v4-flash-vision-exp` describes screenshots, OCRs text, and analyzes charts.
+- **Multimodal vision** — Reference images with `@shot.png`; `deepseek-flash` (DeepSeek-V4.1-Flash, natively multimodal) describes screenshots, OCRs text, and analyzes charts.
 - **Permission safety** — Three-tier decisions (allow / deny / ask) with pattern-matching rule engine, backed by a 5-layer tool output security pipeline (Unicode cleaning → injection scan → boundary markers → risk grading → safe truncation). Every write operation requires your confirmation.
 - **OS-level sandbox** — Optional execution isolation via bubblewrap (Linux) / Seatbelt (macOS): read-only root, workspace-only writes, configurable credential masking (`filesystem.denyRead` / `credentials.files`; recommended list in the settings docs), env var stripping, configurable env injection (redirect build-tool caches like `GOPATH`/`GOMODCACHE`/`npm_config_cache` into the workspace), and network control (`off` / `on`). Auto-activated with `--bypass-permissions`; configure via `"sandbox"` in `settings.json` or `--sandbox-network off|on`.
 - **Hook system** — PreToolUse / PostToolUse / Notification / Stop hooks with permission_mode field. Fail-open by default — hook crashes never block tool execution; exit code 2 explicitly blocks. Configured via `settings.json`.
 - **Session persistence** — Close the terminal, come back days later with `waveloom --continue`. The agent remembers all prior context.
 - **Checkpoint/Rewind** — Rewind to any previous message with full file state restoration. Fork mode preserves original session intact — history never lost.
 - **Plan Mode** — Two-stage workflow: explore & design first, implement after approval. `Shift+Tab` to enter/exit, Guard-enforced write protection.
-- **Sub_model configuration** — Set `"sub_model": "deepseek-v4-flash"` in `settings.json` to assign a lightweight model for explore subagents. Explore uses flash (~2× cheaper) for code search and discovery; evaluate/verification subagents use pro for full reasoning. LLM auto-selects between pro/flash based on task complexity. Saves ~50% on subagent token cost.
+- **Sub_model configuration** — Set `"sub_model": "deepseek-flash"` in `settings.json` to assign a lighter model for explore subagents. Explore uses the sub model for code search and discovery; evaluate/verification subagents use the primary model for full reasoning. LLM auto-selects between the two based on task complexity. Note: until V4.1-Pro ships (DeepSeek routes `deepseek-v4-pro` to V4.1-Flash), primary and sub model share the same backend.
 - **14 built-in tools** — `read` / `write` / `edit` / `bash` / `web_fetch` / `web_search` / `ask_user_question` / `enter_plan_mode` / `exit_plan_mode` / `skill` / `agent` / `kill_background_task` / `todo_create` / `todo_update`.
 - **i18n multilingual** — Full zh-CN / en-US bilingual UI. `--locale` CLI flag, `/locale` command, auto-detect from LANG.
 
@@ -116,10 +116,10 @@ waveloom
 ## FAQ
 
 **Q: How do I switch models?**
-Type `/model` in interactive mode, or `waveloom --model deepseek-v4-flash`. Select `proplan` to use the pro model in plan mode and the flash model for regular tasks (`/model proplan`). Requires `model` (plan mode) and `sub_model` (regular tasks) configured in `settings.json`; it falls back to a plain model error otherwise.
+Type `/model` in interactive mode, or `waveloom --model deepseek-flash`. Select `proplan` to use the `model` in plan mode and the `sub_model` for regular tasks (`/model proplan`). Requires both configured in `settings.json`; it falls back to a plain model error otherwise.
 
-**Q: Does web_search work with deepseek-v4-flash?**
-Yes — with `deepseek-v4-flash`, Waveloom automatically switches to the DeepSeek Responses API and `web_search` becomes a server-side built-in search (no DuckDuckGo/Brave dependency). Other models keep the local search backends.
+**Q: Does web_search work with deepseek-flash?**
+Yes — `web_search` runs on the local backend (DuckDuckGo by default, Brave via `BRAVE_API_KEY`) on every provider. Note: DeepSeek used to offer a server-side built-in `web_search` in the Responses API; it has since been retired (the compatibility table now lists built-in `web_search` as *Ignored*), so Waveloom exposes it as a regular function tool for all models.
 
 **Q: How do I switch LLM providers?**
 Type `/provider` to open the interactive provider picker (overlay with ↑↓ select / Enter confirm / Esc cancel), or `/provider kimi` to switch directly. Profiles are configured in `settings.json` under `llm.profiles`.
@@ -131,7 +131,7 @@ Stored locally at `~/.waveloom/`. Keys connect directly to DeepSeek / Kimi / GLM
 Type `/locale` to toggle between Chinese and English, or `waveloom --locale zh-CN`. The setting persists automatically in `settings.json`.
 
 **Q: How do I configure a lightweight model for explore subagents?**
-Add `"sub_model": "deepseek-v4-flash"` to the `llm` section in `settings.json`. The explore subagent uses this model for code search and discovery tasks — ~2× cheaper than the primary model. For evaluate/verification subagents, the primary model (`model`, e.g. `deepseek-v4-pro`) is used for full reasoning quality. No runtime switching needed.
+Add `"sub_model": "deepseek-flash"` to the `llm` section in `settings.json`. The explore subagent uses this model for code search and discovery tasks. For evaluate/verification subagents, the primary model (`model`) is used for full reasoning quality. No runtime switching needed.
 
 **Q: What languages are supported?**
 Waveloom works with any text-based project. Post-edit LSP diagnostics automatically verify code correctness for Go, Rust, TypeScript/JavaScript, and C/C++. Other languages use native build tools (`go build`, `npx tsc`, `cargo build`, `make`, etc.).

@@ -3,7 +3,9 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -103,6 +105,14 @@ func main() {
 			return
 		}
 		slog.Error("create LLM client", "err", humanizeError(err))
+		// 原实现只写日志(用户不可见)后 exit 1;补 stderr 提示与针对性排障建议。
+		fmt.Fprintln(os.Stderr, "✗ failed to load settings: "+humanizeError(err))
+		if errors.Is(err, fs.ErrPermission) {
+			fmt.Fprintln(os.Stderr, "  hint: sandbox filesystem.denyRead may mask settings.json itself (it is part of the")
+			fmt.Fprintln(os.Stderr, "        recommended credential-masking list), so waveloom cannot read its own config")
+			fmt.Fprintln(os.Stderr, "        when launched inside the agent. Remove that path from denyRead, or run")
+			fmt.Fprintln(os.Stderr, "        waveloom outside the sandbox.")
+		}
 		os.Exit(1)
 	}
 
@@ -462,11 +472,15 @@ func resolveSettingsPaths(explicit string) (globalPath, projectPath string) {
 func createLLMClient(globalPath, projectPath, cliModel, cliProvider string, loc Locale) (llm.Client, llm.ClientConfig, *llm.LLMSettings, error) {
 	globalSettings, err := llm.LoadSettingsIfExists(globalPath)
 	if err != nil {
-		panic(fmt.Sprintf("settings parse error in %s: %v", globalPath, err))
+		// REGRESSION: 原实现 panic。实战触发场景:沙箱 filesystem.denyRead 遮蔽了
+		// settings.json 自身(docs/settings.md 的推荐凭据遮蔽清单包含它),在 agent
+		// 的 bash 工具内运行 waveloom 时读该文件返回 EPERM → 直接崩栈,用户只看到
+		// goroutine dump、无从判断成因。改返回 error,由调用方给出可操作提示。
+		return nil, llm.ClientConfig{}, nil, fmt.Errorf("reading settings %s: %w", globalPath, err)
 	}
 	projectSettings, err := llm.LoadSettingsIfExists(projectPath)
 	if err != nil {
-		panic(fmt.Sprintf("settings parse error in %s: %v", projectPath, err))
+		return nil, llm.ClientConfig{}, nil, fmt.Errorf("reading settings %s: %w", projectPath, err)
 	}
 
 	merged := llm.MergeLLMSettings(globalSettings, projectSettings)
@@ -703,11 +717,11 @@ type fileSettingsProvider struct {
 func (p *fileSettingsProvider) LoadLLM() (*llm.LLMSettings, error) {
 	globalSettings, err := llm.LoadSettingsIfExists(p.globalPath)
 	if err != nil {
-		panic(fmt.Sprintf("settings parse error in %s: %v", p.globalPath, err))
+		return nil, fmt.Errorf("reading settings %s: %w", p.globalPath, err)
 	}
 	projectSettings, err := llm.LoadSettingsIfExists(p.projectPath)
 	if err != nil {
-		panic(fmt.Sprintf("settings parse error in %s: %v", p.projectPath, err))
+		return nil, fmt.Errorf("reading settings %s: %w", p.projectPath, err)
 	}
 	merged := llm.MergeLLMSettings(globalSettings, projectSettings)
 	if merged != nil {

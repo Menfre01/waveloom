@@ -47,6 +47,8 @@ type ToolCallStart struct {
 	Arguments    string // JSON 编码的调用参数
 	// ServerSide 标记该事件为服务端自动执行的虚拟事件(Responses API 的
 	// web_search_call),非本地工具调用;TUI 据此区分渲染样式。
+	// DORMANT(2026-09-10):内置 web_search 已被官方回收,新会话不再产生该事件;
+	// 保留以备服务端重新启用。
 	ServerSide bool
 }
 
@@ -88,6 +90,7 @@ type ToolCallResult struct {
 	Fatal        bool   // 错误是否致命(ErrorClassFatal),TUI 据此区分红/金色样式
 	// ServerSide 标记该结果为服务端自动执行的虚拟事件(Responses API 的
 	// web_search_call),非本地工具执行结果;TUI 据此区分渲染样式。
+	// DORMANT(2026-09-10):内置 web_search 已被官方回收,新会话不再产生该结果。
 	ServerSide bool
 
 	// DiffHunks 为 edit_file 等工具提供的结构化 diff,供 TUI 渲染带行号的统一 diff 视图。

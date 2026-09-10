@@ -2,9 +2,8 @@
     "llm": {
         "api_key": "sk-your-deepseek-key",
         "provider": "deepseek",
-        "model": "deepseek-v4-pro",
-        "sub_model": "deepseek-v4-flash",
-        "mode": "normal",
+        "model": "deepseek-flash",
+        "sub_model": "deepseek-flash",
         "base_url": "https://api.deepseek.com",
         "timeout": "600s",
         "retry": {
@@ -21,13 +20,21 @@
         "profiles": {
             "kimi": {
                 "api_key": "sk-your-kimi-key",
-                "model": "kimi-k2",
-                "base_url": "https://api.moonshot.cn/v1"
+                "model": "kimi-k3",
+                "sub_model": "kimi-k2.7-code-highspeed",
+                "base_url": "https://api.kimi.com/coding/v1"
             },
             "openai": {
                 "api_key": "sk-your-openai-key",
-                "model": "gpt-5",
+                "model": "gpt-4o",
+                "sub_model": "gpt-4o-mini",
                 "base_url": "https://api.openai.com/v1"
+            },
+            "glm": {
+                "api_key": "sk-your-glm-key",
+                "model": "glm-5.3",
+                "sub_model": "glm-5.3-flash",
+                "base_url": "https://open.bigmodel.cn/api/coding/paas/v4"
             }
         }
     },

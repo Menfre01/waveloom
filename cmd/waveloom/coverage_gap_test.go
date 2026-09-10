@@ -706,8 +706,13 @@ func TestNewSetupModel_Defaults(t *testing.T) {
 	if m.state.locale != "zh-CN" {
 		t.Errorf("locale = %q, want zh-CN", m.state.locale)
 	}
-	if m.state.model != "deepseek-v4-pro" {
-		t.Errorf("model = %q", m.state.model)
+	// 官方 2026-09-10 起 deepseek-flash(V4.1-Flash)为最新模型;V4.1-Pro 上线前
+	// deepseek-v4-pro 亦由 V4.1-Flash 承接,故主/次模型默认均为 deepseek-flash
+	if m.state.model != "deepseek-flash" {
+		t.Errorf("model = %q, want deepseek-flash", m.state.model)
+	}
+	if m.state.subModel != "deepseek-flash" {
+		t.Errorf("subModel = %q, want deepseek-flash", m.state.subModel)
 	}
 	if m.state.contextLimit != "1M" {
 		t.Errorf("contextLimit = %q, want 1M", m.state.contextLimit)
@@ -769,6 +774,66 @@ func TestRenderSetupLogo(t *testing.T) {
 		got := renderSetupLogo(100)
 		if len(strings.Split(got, "\n")) != len(asciiArt)+1 {
 			t.Errorf("expected %d lines, got %d", len(asciiArt)+1, len(strings.Split(got, "\n")))
+		}
+	})
+}
+// TestRegression_SettingsReadFailureReturnsError 回归防护:settings.json 读取/解析
+// 失败不得 panic。实战触发场景:沙箱 filesystem.denyRead 遮蔽了 settings.json 自身
+// (docs/settings.md 的推荐凭据遮蔽清单包含它),在 agent 的 bash 工具内运行
+// waveloom 时读该文件返回 EPERM → 原实现直接 panic,用户只看到 goroutine 堆栈、
+// 无从判断成因。4 处入口的签名本就返回 error,统一改走 error 路径。
+func TestRegression_SettingsReadFailureReturnsError(t *testing.T) {
+	dir := t.TempDir()
+	bad := filepath.Join(dir, "bad.json")
+	if err := os.WriteFile(bad, []byte("{ this is not json"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	missing := filepath.Join(dir, "missing.json")
+
+	t.Run("createLLMClient", func(t *testing.T) {
+		_, _, _, err := createLLMClient(bad, missing, "", "", LocaleEnUS)
+		if err == nil {
+			t.Fatal("malformed global settings should return error")
+		}
+		if !strings.Contains(err.Error(), "bad.json") {
+			t.Errorf("error should name the offending path, got: %v", err)
+		}
+	})
+
+	t.Run("fileSettingsProvider", func(t *testing.T) {
+		p := &fileSettingsProvider{projectPath: bad, globalPath: missing}
+		if _, err := p.LoadLLM(); err == nil {
+			t.Fatal("malformed settings should return error")
+		}
+	})
+
+	t.Run("acpSettingsStore", func(t *testing.T) {
+		s := &acpSettingsStore{projectPath: bad, globalPath: missing}
+		if _, err := s.LoadLLM(); err == nil {
+			t.Fatal("malformed settings should return error")
+		}
+	})
+
+	t.Run("tuiSettingsStore", func(t *testing.T) {
+		s := &tuiSettingsStore{projectPath: bad, globalPath: missing}
+		if _, err := s.LoadLLM(); err == nil {
+			t.Fatal("malformed settings should return error")
+		}
+	})
+
+	// needsSetup 原实现吞掉读取错误(s, _ :=),把"存在但读不了"误判为"没配置" →
+	// 沙箱场景下用户被弹去跑 setup 向导,真实成因(denyRead 遮蔽)被掩盖。
+	t.Run("needsSetup does not treat unreadable config as unconfigured", func(t *testing.T) {
+		work := t.TempDir()
+		t.Chdir(work)
+		if err := os.MkdirAll(filepath.Join(work, ".waveloom"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(work, ".waveloom", "settings.json"), []byte("{bad"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if needsSetup() {
+			t.Error("不可读/损坏的项目配置不应触发 setup 向导(应报读取错误)")
 		}
 	})
 }

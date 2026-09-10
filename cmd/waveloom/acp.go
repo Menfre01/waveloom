@@ -18,6 +18,12 @@ import (
 	"github.com/Menfre01/waveloom/pkg/tool"
 )
 
+// defaultACPModelName 是 ACP 模式下 settings.Model 缺失时的兜底模型名。
+// REGRESSION: 原实现兜底为 "deepseek-chat",该模型名已于 2026-07-24 停止服务
+// (官方更新日志 2026-04-24 公告),配置缺失时 ACP 会话首个请求直接 404。
+// 兜底值随官方在售模型更新:2026-09-10 起为 deepseek-flash(DeepSeek-V4.1-Flash)。
+const defaultACPModelName = llm.ModelDeepSeekFlash
+
 // runACP 处理 waveloom acp 子命令,以 ACP Agent 模式运行。
 // 子命令 `waveloom acp setup` 是标准 terminal auth 路径的登录入口
 // (客户端 base args ["acp"] + authMethod args ["setup"] 追加而成);
@@ -167,13 +173,13 @@ Options:
 	// skill loader(与 TUI 一致;ACP 无会话变量,sessionID 传空)
 	skillLoader := skill.NewLoader(cwd, homeDir, "", "medium", guard)
 
-	modelName := "deepseek-chat"
+	modelName := defaultACPModelName
 	var subModel string
 	if llmSettings != nil {
 		modelName = llmSettings.Model
 		subModel = llmSettings.SubModel
 		if modelName == "" {
-			modelName = "deepseek-chat"
+			modelName = defaultACPModelName
 		}
 	}
 

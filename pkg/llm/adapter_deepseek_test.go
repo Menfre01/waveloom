@@ -1429,6 +1429,46 @@ func TestResponsesBuildRequest_Endpoint(t *testing.T) {
 	}
 }
 
+// TestResponsesBuildRequest_FlashV41Model 验证 V4.1-Flash 正名(deepseek-flash):
+// 官方 2026-09-10 起 deepseek-v4-flash / deepseek-v4-flash-vision-exp 对应模型
+// 已下线,deepseek-flash 为最新模型名。该名必须命中 Responses API 匹配——
+// 否则静默降级到 Chat Completions(丢失 Responses 协议专有特性)并触发降级告警。
+// 同时 V4.1-Flash 原生多模态,图片以 input_image 块承载。
+func TestResponsesBuildRequest_FlashV41Model(t *testing.T) {
+	adapter := newDeepSeekAdapter(ClientConfig{
+		Provider: ProviderDeepSeek,
+		APIKey:   "sk-deepseek",
+		Model:    ModelDeepSeekFlash,
+		BaseURL:  "https://api.deepseek.com",
+	})
+	messages := []Message{
+		{Role: RoleSystem, Content: "sys"},
+		{Role: RoleUser, Content: "look", Images: []ImagePart{{MIME: "image/png", B64: "AAAA"}}},
+	}
+	req, err := adapter.BuildStreamRequest(context.Background(), messages, nil)
+	if err != nil {
+		t.Fatalf("BuildStreamRequest error: %v", err)
+	}
+	if req.URL.Path != "/v1/responses" {
+		t.Errorf("path = %q, want /v1/responses (deepseek-flash 必须走 Responses API)", req.URL.Path)
+	}
+	var body map[string]any
+	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	if body["model"] != ModelDeepSeekFlash {
+		t.Errorf("model = %v, want %q", body["model"], ModelDeepSeekFlash)
+	}
+	blocks := body["input"].([]any)[0].(map[string]any)["content"].([]any)
+	if len(blocks) != 2 || blocks[1].(map[string]any)["type"] != "input_image" {
+		t.Errorf("blocks = %#v, want [input_text, input_image]", blocks)
+	}
+	// 官方端点 + 正名不得触发降级告警
+	if shouldWarnChatFallback("https://api.deepseek.com", ModelDeepSeekFlash) {
+		t.Error("deepseek-flash 命中 Responses 匹配,不应告警降级")
+	}
+}
+
 // TestResponsesBuildRequest_ModelOverride 验证 ModelOverride 切换模型时每请求独立判定端点。
 func TestResponsesBuildRequest_ModelOverride(t *testing.T) {
 	// 配置为自定义模型名(chat),但 override 为 v4-flash → 走 responses
@@ -1573,12 +1613,12 @@ func TestResponsesBuildRequest_InputItems(t *testing.T) {
 	}
 }
 
-// TestResponsesBuildRequest_WebSearchTool 验证 web_search 转为服务端声明,
-// 其他工具保持 function 声明。
+// TestResponsesBuildRequest_WebSearchTool 验证 Responses 路径下 web_search
+// 仍以 function 声明暴露(与其他工具同构),不再转为服务端内置工具声明。
 func TestResponsesBuildRequest_WebSearchTool(t *testing.T) {
 	adapter := newResponsesAdapter()
 	tools := []ToolSpec{
-		{Name: "web_search", Description: "Search the web"},
+		{Name: "web_search", Description: "Search the web", Parameters: map[string]any{"type": "object"}},
 		{Name: "read_file", Description: "Read a file", Parameters: map[string]any{"type": "object"}},
 	}
 	req, err := adapter.BuildRequest(context.Background(), []Message{{Role: RoleUser, Content: "Hi"}}, tools)
@@ -1591,19 +1631,120 @@ func TestResponsesBuildRequest_WebSearchTool(t *testing.T) {
 	}
 	toolsArr := body["tools"].([]any)
 	if len(toolsArr) != 2 {
-		t.Fatalf("tools len = %d, want 2 (web_search 声明 + read_file function)", len(toolsArr))
+		t.Fatalf("tools len = %d, want 2 (web_search + read_file)", len(toolsArr))
 	}
-	// 实现顺序:function 声明在前,web_search 服务端声明最后追加
-	fnTool := toolsArr[0].(map[string]any)
-	if fnTool["type"] != "function" || fnTool["name"] != "read_file" {
-		t.Errorf("tools[0] = %v, want function read_file", fnTool)
+	byName := map[string]map[string]any{}
+	for _, item := range toolsArr {
+		m, ok := item.(map[string]any)
+		if !ok {
+			t.Fatalf("tool item = %T, want object", item)
+		}
+		if m["type"] != "function" {
+			t.Errorf("tool %v type = %v, want function", m["name"], m["type"])
+		}
+		byName[fmt.Sprint(m["name"])] = m
 	}
-	wsTool := toolsArr[1].(map[string]any)
-	if wsTool["type"] != "web_search" {
-		t.Errorf("tools[1] = %v, want {type: web_search}", wsTool)
+	if byName["web_search"] == nil {
+		t.Error("web_search 必须以 function 形式出现在 tools 中(schema 层搜索能力不可缺失)")
 	}
-	if _, hasName := wsTool["name"]; hasName {
-		t.Errorf("web_search 声明不应包含 function schema 字段 name")
+	if byName["read_file"] == nil {
+		t.Error("read_file 应保持 function 声明")
+	}
+	// 顺序须与入参一致:fork 首请求对齐父缓存前缀依赖 tools 数组逐字节稳定
+	got0 := fmt.Sprint(toolsArr[0].(map[string]any)["name"])
+	got1 := fmt.Sprint(toolsArr[1].(map[string]any)["name"])
+	if got0 != "web_search" || got1 != "read_file" {
+		t.Errorf("tools 顺序 = [%s %s], want [web_search read_file](与入参同序)", got0, got1)
+	}
+}
+
+// TestRegression_ResponsesWebSearchStaysLocalFunction 回归防护:官方已回收
+// Responses API 的内置 web_search(api-docs.deepseek.com/zh-cn/guides/responses_api
+// → 兼容性明细 → Tools:「web_search / file_search / ... 等内置工具 忽略」)。
+// 原实现把本地 web_search 摘出 function 列表、只发 {type:"web_search"} 服务端
+// 声明,导致 schema 层搜索能力归零:模型看不到该工具,只能靠 system prompt 文本
+// "违规"调用才回落到本地后端,而服务端对声明静默忽略 → 表现为搜索不可用。
+// 修复后 web_search 必须始终以 function 暴露,且不得再发送服务端内置声明。
+func TestRegression_ResponsesWebSearchStaysLocalFunction(t *testing.T) {
+	adapter := newResponsesAdapter()
+	tools := []ToolSpec{
+		{Name: "web_search", Description: "Search the web", Parameters: map[string]any{"type": "object"}},
+	}
+	req, err := adapter.BuildRequest(context.Background(), []Message{{Role: RoleUser, Content: "Hi"}}, tools)
+	if err != nil {
+		t.Fatalf("BuildRequest error: %v", err)
+	}
+	var body map[string]any
+	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	toolsArr := body["tools"].([]any)
+	if len(toolsArr) != 1 {
+		t.Fatalf("tools len = %d, want 1 (仅 web_search)", len(toolsArr))
+	}
+	ws := toolsArr[0].(map[string]any)
+	if ws["type"] != "function" {
+		t.Errorf("web_search type = %v, want function(服务端内置声明已被官方忽略,不得再发)", ws["type"])
+	}
+	if ws["name"] != "web_search" {
+		t.Errorf("name = %v, want web_search", ws["name"])
+	}
+	if ws["description"] != "Search the web" {
+		t.Errorf("description = %v, want 工具描述透传", ws["description"])
+	}
+	// 根因是"schema 层能力归零":parameters 必须完整透传,否则模型无法构造调用
+	if params, ok := ws["parameters"].(map[string]any); !ok || params["type"] != "object" {
+		t.Errorf("parameters = %v, want 透传 object schema", ws["parameters"])
+	}
+	// 流式路径同源(共用 buildResponsesTools):同样不得出现服务端内置工具声明
+	streamReq, err := adapter.BuildStreamRequest(context.Background(), []Message{{Role: RoleUser, Content: "Hi"}}, tools)
+	if err != nil {
+		t.Fatalf("BuildStreamRequest error: %v", err)
+	}
+	var streamBody map[string]any
+	if err := json.NewDecoder(streamReq.Body).Decode(&streamBody); err != nil {
+		t.Fatalf("decode stream body: %v", err)
+	}
+	for _, item := range streamBody["tools"].([]any) {
+		if m := item.(map[string]any); m["type"] == "web_search" {
+			t.Error("不得再发送 {type:\"web_search\"} 服务端内置工具声明(官方已忽略)")
+		}
+	}
+}
+
+// TestRegression_ResponsesWebSearchCallEmptyIDDropped 回归防护:resume 外部/旧版
+// JSONL 会话时,web_search_call 可能缺 ID(手工编辑或第三方写入)。无 ID 的 item
+// 无法在服务端配对,直接回传会发出 "id":"" 触发 400 使该会话首轮请求失败;
+// buildResponsesInput 必须丢弃它们(与 responsesWebSearchCalls 的空 ID 守卫对称)。
+func TestRegression_ResponsesWebSearchCallEmptyIDDropped(t *testing.T) {
+	adapter := newResponsesAdapter()
+	messages := []Message{
+		{Role: RoleUser, Content: "search something"},
+		{Role: RoleAssistant, Content: "done", WebSearchCalls: []WebSearchCall{
+			{ID: "", Status: "completed"},
+			{ID: "ws_ok", Status: "completed"},
+		}},
+	}
+	req, err := adapter.BuildRequest(context.Background(), messages, nil)
+	if err != nil {
+		t.Fatalf("BuildRequest error: %v", err)
+	}
+	var body map[string]any
+	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	var got []map[string]any
+	for _, item := range body["input"].([]any) {
+		m := item.(map[string]any)
+		if m["type"] == "web_search_call" {
+			got = append(got, m)
+		}
+	}
+	if len(got) != 1 {
+		t.Fatalf("web_search_call item 数 = %d, want 1(缺 ID 的须丢弃)", len(got))
+	}
+	if got[0]["id"] != "ws_ok" {
+		t.Errorf("保留的 item id = %v, want ws_ok", got[0]["id"])
 	}
 }
 
@@ -1643,6 +1784,8 @@ func TestShouldWarnChatFallback(t *testing.T) {
 			"https://api.deepseek.com", "deepseek-v4-flash-20260820", true},
 		{"official endpoint with exact model skips",
 			"https://api.deepseek.com", "deepseek-v4-flash", false},
+		{"official endpoint with flash v41 skips",
+			"https://api.deepseek.com", "deepseek-flash", false},
 		{"proxy endpoint with prefix model skips",
 			"https://proxy.example.com", "deepseek/deepseek-v4-flash", false},
 		{"official endpoint with non-deepseek model skips",

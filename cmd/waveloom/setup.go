@@ -67,8 +67,11 @@ func newSetupModel(loc Locale) *setupModel {
 			theme:        "auto",
 			locale:       string(loc),
 			prov:         "deepseek",
-			model:        "deepseek-v4-pro",
-			subModel:     "deepseek-v4-flash",
+			// 官方 2026-09-10 起 deepseek-flash(V4.1-Flash)为最新模型;
+			// V4.1 Pro 上线前 deepseek-v4-pro 亦由 V4.1-Flash 承接,
+			// 主/次模型统一用 deepseek-flash(不展示已下线的旧模型名)。
+			model:        "deepseek-flash",
+			subModel:     "deepseek-flash",
 			baseURL:      "https://api.deepseek.com",
 			lc:           lc,
 			contextLimit: "1M",
@@ -243,8 +246,8 @@ func (m *setupModel) handleStepComplete() {
 			m.state.subModel = "gpt-4o-mini"
 			m.state.baseURL = "https://api.openai.com/v1"
 		case "deepseek":
-			m.state.model = "deepseek-v4-pro"
-			m.state.subModel = "deepseek-v4-flash"
+			m.state.model = "deepseek-flash"
+			m.state.subModel = "deepseek-flash"
 			m.state.baseURL = "https://api.deepseek.com"
 		case "kimi":
 			m.state.model = "kimi-k3"
@@ -385,8 +388,8 @@ func (m *setupModel) buildForm() {
 		baseURLDesc := lc.SetupBaseURLDesc
 		switch m.state.prov {
 		case "deepseek":
-			desc = "deepseek-v4-pro (Recommended) / deepseek-v4-flash"
-			subDesc = fmt.Sprintf(lc.SetupSubModelDesc, "deepseek-v4-flash")
+			desc = "deepseek-flash (Recommended) / deepseek-v4-pro"
+			subDesc = fmt.Sprintf(lc.SetupSubModelDesc, "deepseek-flash")
 			baseURLDesc = lc.SetupBaseURLDescDeepSeek
 		case "openai":
 			desc = "gpt-4o (Recommended) / gpt-4o-mini"
@@ -669,12 +672,23 @@ func writeFullSetup(path string, llmSettings *llm.LLMSettings, locale, theme, co
 
 func needsSetup() bool {
 	projectPath := filepath.Join(".waveloom", "settings.json")
-	if s, _ := llm.LoadSettingsIfExists(projectPath); s != nil && s.APIKey != "" {
+	// 读错误(存在但不可读/解析失败,如沙箱 denyRead 遮蔽 settings.json)不属于
+	// setup 场景:引导用户重跑向导只会掩盖真实成因,应交由启动错误分支报错。
+	// REGRESSION: 原实现吞掉 err(s, _ :=),把"读不到"误判为"没配置"。
+	s, err := llm.LoadSettingsIfExists(projectPath)
+	if err != nil {
+		return false
+	}
+	if s != nil && s.APIKey != "" {
 		return false
 	}
 	homeDir, _ := os.UserHomeDir()
 	globalPath := filepath.Join(homeDir, ".waveloom", "settings.json")
-	if s, _ := llm.LoadSettingsIfExists(globalPath); s != nil && s.APIKey != "" {
+	s, err = llm.LoadSettingsIfExists(globalPath)
+	if err != nil {
+		return false
+	}
+	if s != nil && s.APIKey != "" {
 		return false
 	}
 	if os.Getenv("LLM_API_KEY") != "" {

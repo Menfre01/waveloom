@@ -24,7 +24,7 @@ Waveloom 首次运行在 `.waveloom/settings.json` 生成默认配置。配置�
 |------|------|--------|
 | `api_key` | DeepSeek API Key，为空时回退 `LLM_API_KEY` 环境变量 | — |
 | `provider` | `deepseek`、`kimi`、`glm` 或 `openai` | `deepseek` |
-| `model` | 模型名 | `deepseek-v4-pro` |
+| `model` | 模型名 | `deepseek-flash` |
 | `base_url` | API 地址 | `https://api.deepseek.com` |
 | `timeout` | 请求超时 | `600s` |
 | `extra_params` | 额外参数（thinking、reasoning_effort 等） | 思考模式默认开启 |
@@ -330,7 +330,7 @@ macOS 额外建议追加:`~/Library/Keychains`、`~/Library/HTTPStorages`、
 
 | 参数 | 说明 | 默认值 |
 |------|------|--------|
-| `--model` | 模型名 | `deepseek-v4-pro` |
+| `--model` | 模型名 | `deepseek-flash` |
 | `--system-prompt` | 自定义系统提示词 | 内置提示词 |
 | `--max-turns N` | 最大轮数，0 不限制 | `0`（不限制） |
 | `--context-limit 1M` | 上下文窗口大小，支持 `1M` / `200k` / 数字 | `1M` |

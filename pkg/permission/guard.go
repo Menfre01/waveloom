@@ -158,6 +158,11 @@ func NewGuard(opts ...GuardOption) *GuardImpl {
 	g.toolRiskClass["read_file"] = RiskClassRead
 	g.toolRiskClass["read"] = RiskClassRead
 	g.toolRiskClass["web_fetch"] = RiskClassRead
+	// web_search 与 web_fetch 同为只读网络查询(仅发出查询、返回标题/URL/摘要,
+	// 无本地副作用)。Responses 路径搜索由服务端执行改为本地 function 调用后
+	// (2026-09-10,内置 web_search 被官方回收),未注册会落入默认 ask → TUI 每次
+	// 搜索弹确认,与 web_fetch 分类不对称。
+	g.toolRiskClass["web_search"] = RiskClassRead
 	g.toolRiskClass["write_file"] = RiskClassWrite
 	g.toolRiskClass["write"] = RiskClassWrite
 	g.toolRiskClass["edit_file"] = RiskClassWrite

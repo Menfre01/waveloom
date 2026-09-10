@@ -76,7 +76,7 @@ func (a *deepSeekAdapter) BuildStreamRequest(ctx context.Context, messages []Mes
 }
 
 // isDeepSeekOfficialEndpoint 判断 baseURL 是否为 DeepSeek 官方端点。
-// 仅官方端点支持 Responses API 与服务端 web_search;第三方代理端点
+// 仅官方端点支持 Responses API 协议;第三方代理端点
 // (one-api 等)走 chat + 本地工具是正确行为,不应告警。
 func isDeepSeekOfficialEndpoint(baseURL string) bool {
 	return strings.Contains(baseURL, "api.deepseek.com")
@@ -84,7 +84,7 @@ func isDeepSeekOfficialEndpoint(baseURL string) bool {
 
 // shouldWarnChatFallback 判定是否需要降级告警:官方端点 + 模型名疑似
 // deepseek(含 "deepseek" 子串)但未命中 Responses 匹配——提示模型名
-// 拼写/前缀问题导致静默降级(服务端 web_search 不可用)。第三方端点或
+// 拼写/前缀问题导致静默降级(退到 Chat Completions 协议)。第三方端点或
 // 非 deepseek 名不告警(chat + 本地工具是正确行为);精确命中 Responses
 // 的模型名不告警(实际也不会走到 chat 分支)。
 func shouldWarnChatFallback(baseURL, model string) bool {
@@ -101,16 +101,17 @@ func shouldWarnChatFallback(baseURL, model string) bool {
 func (a *deepSeekAdapter) warnIfChatFallback(ctx context.Context) {
 	m := a.effectiveModel(ctx)
 	if shouldWarnChatFallback(a.baseURL, m) {
-		slog.Warn("deepseek model name not matched for Responses API — falling back to chat completions (server-side web_search unavailable)",
+		slog.Warn("deepseek model name not matched for Responses API — falling back to chat completions (check model name spelling/prefix)",
 			"model", m, "base_url", a.baseURL)
 	}
 }
 
 // isDeepSeekResponsesModel 判断模型是否使用 Responses API(/v1/responses)。
-// 官方文档:Responses API 的 model 可选值为 deepseek-v4-flash / deepseek-v4-pro /
-// deepseek-v4-flash-vision-exp(视觉模型同样支持 Responses API,图片以
-// input_image 内容块承载,见 guides/vision#responses-api;旧模型名
-// deepseek-chat / deepseek-reasoner 已废弃)。
+// 官方文档:Responses API 的 model 可选值为 deepseek-flash(V4.1-Flash,
+// 2026-09-10 起的最新模型)/ deepseek-v4-pro 等;旧名 deepseek-v4-flash 与
+// deepseek-v4-flash-vision-exp 仍可调用,由 V4.1-Flash 承接。视觉模型同样
+// 支持 Responses API,图片以 input_image 内容块承载,见 guides/vision#responses-api;
+// 更早的 deepseek-chat / deepseek-reasoner 已停止服务。
 //
 // 匹配规则:对 effectiveModel(settings.llm.model 或 --model 参数的**原样值**,
 // 系统不自动拼接 "provider/" 前缀)做精确字符串比较;带 "deepseek/" 前缀的
@@ -123,7 +124,8 @@ func (a *deepSeekAdapter) warnIfChatFallback(ctx context.Context) {
 // 未剥离——同一前缀视觉模型名在两处判定分叉(走 chat 时仍识别为视觉模型
 // 携带图片,但不走 Responses API)。
 func isDeepSeekResponsesModel(model string) bool {
-	return model == ModelDeepSeekV4Flash ||
+	return model == ModelDeepSeekFlash ||
+		model == ModelDeepSeekV4Flash ||
 		model == ModelDeepSeekV4Pro ||
 		model == ModelDeepSeekV4FlashVision
 }
@@ -178,7 +180,7 @@ func (a *deepSeekAdapter) buildChatRequestBody(ctx context.Context, messages []M
 }
 
 // ---------------------------------------------------------------------------
-// Responses API(deepseek-v4-flash / deepseek-v4-pro / deepseek-v4-flash-vision-exp)
+// Responses API(deepseek-flash / deepseek-v4-pro / legacy v4-flash 系列)
 // ---------------------------------------------------------------------------
 
 // buildResponsesRequestBody 构造 Responses API 请求 body。
@@ -189,9 +191,10 @@ func (a *deepSeekAdapter) buildResponsesRequestBody(ctx context.Context, message
 
 	// DeepSeek 思考模式:携带 tools 参数的请求必须完整回传所有轮次的
 	// reasoning(含无 tool_calls 的轮次),否则 400。无 tools 时省略。
-	// 图片按模型能力决定 wire 层是否携带:视觉模型(vision-exp)的图片转为
-	// input_image 块;非视觉模型剥离历史图片(Message 不变,切回视觉模型
-	// 自动恢复),避免每轮因历史带图失败。
+	// 图片按模型能力决定 wire 层是否携带:视觉模型(deepseek-flash,
+	// legacy vision-exp 同由 V4.1-Flash 承接)的图片转为 input_image 块;
+	// 非视觉模型剥离历史图片(Message 不变,切回视觉模型自动恢复),
+	// 避免每轮因历史带图失败。
 	instructions, input := buildResponsesInput(messages, len(tools) > 0, IsVisionModel(a.effectiveModel(ctx)))
 	if instructions != "" {
 		body["instructions"] = instructions
@@ -322,8 +325,15 @@ func buildResponsesInput(messages []Message, echoReasoning, includeImages bool) 
 					})
 				}
 			}
-			// 服务端 web_search 输出 item 原样回传(多轮对话恢复搜索结果上下文)
+			// 历史 web_search_call item 原样回传(对接历史会话/旧模型产生的搜索结果;
+			// 官方承诺仍会还原并拼接进上下文。内置 web_search 已回收,新响应不再产生)
 			for _, wsc := range m.WebSearchCalls {
+				// REGRESSION: resume 外部/旧版 JSONL 可能带缺 ID 的 web_search_call
+				// block,直接回传会发出 "id":"" 触发服务端 400 使会话首轮失败;
+				// 无 ID 无法配对,丢弃(与 responsesWebSearchCalls 的空 ID 守卫一致)。
+				if wsc.ID == "" {
+					continue
+				}
 				item := map[string]any{"type": "web_search_call", "id": wsc.ID}
 				// Status 为空时省略字段(resume 恢复的旧 JSONL 可能无 status;
 				// OpenAI 协议中 status 可选,避免发送空字符串被服务端拒绝)
@@ -377,25 +387,24 @@ func responsesUserContent(text string, images []ImagePart, includeImages bool) [
 }
 
 // buildResponsesTools 将内部 ToolSpec 列表转为 Responses API tools 声明。
-// web_search 本地工具转为服务端内置工具声明 {type: "web_search"}(服务端自动执行,
-// 不暴露 function schema),其余工具转为 function 声明。
+// 所有工具(含 web_search)统一以 function 声明暴露 —— 与 Chat Completions 路径一致。
+//
+// REGRESSION(官方能力回收,2026-09-10 核对):Responses API 的内置工具 web_search
+// 已被官方忽略(api-docs.deepseek.com/zh-cn/guides/responses_api → 兼容性明细 →
+// Tools:「web_search / file_search / ... 等内置工具 忽略」)。原实现把本地
+// web_search 摘出 function 列表、改发 {type:"web_search"} 服务端声明,导致 schema
+// 层搜索能力归零:模型看不到该工具,只能靠 system prompt 文本"违规"调用才回落到
+// 本地后端,而服务端对声明静默忽略 → 实际表现为搜索不可用。
+// 修复:web_search 保持 function 声明,由本地 DuckDuckGo/Brave 后端执行。
 func buildResponsesTools(tools []ToolSpec) []any {
-	var result []any
-	hasWebSearch := false
+	result := make([]any, 0, len(tools))
 	for _, t := range tools {
-		if t.Name == "web_search" {
-			hasWebSearch = true
-			continue
-		}
 		result = append(result, map[string]any{
 			"type":        "function",
 			"name":        t.Name,
 			"description": t.Description,
 			"parameters":  t.Parameters,
 		})
-	}
-	if hasWebSearch {
-		result = append(result, map[string]any{"type": "web_search"})
 	}
 	return result
 }
@@ -422,7 +431,7 @@ func isResponsesResponse(body []byte) bool {
 
 // parseResponsesResponse 解析 Responses API 非流式响应。
 // output items: message(文本) / function_call(工具调用) / reasoning(思考链) /
-// web_search_call(服务端自动执行,忽略)。
+// web_search_call(历史 item:原样捕获供多轮回传;内置搜索已回收,新响应不再产生)。
 func (a *deepSeekAdapter) parseResponsesResponse(body []byte) (*Response, error) {
 	var resp responsesResponse
 	if err := json.Unmarshal(body, &resp); err != nil {

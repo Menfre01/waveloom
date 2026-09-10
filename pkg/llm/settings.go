@@ -469,7 +469,10 @@ func NewClientFromLLMSettings(settings *LLMSettings) (Client, ClientConfig, erro
 func DefaultSettings() *LLMSettings {
 	return &LLMSettings{
 		Provider: "deepseek",
-		Model:    "deepseek-v4-pro",
+		// 官方 2026-09-10 起 deepseek-flash(DeepSeek-V4.1-Flash)为最新模型;
+		// V4.1 Pro 上线前 deepseek-v4-pro 的请求亦由 V4.1-Flash 承接,
+		// 故默认模型直接用 deepseek-flash(官方定价页:模型名请使用 deepseek-flash)。
+		Model:    "deepseek-flash",
 		BaseURL:  "https://api.deepseek.com",
 		Timeout:  "600s",
 		Retry: &RetrySettings{

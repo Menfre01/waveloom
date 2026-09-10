@@ -63,11 +63,11 @@ type acpSettingsStore struct {
 func (s *acpSettingsStore) LoadLLM() (*llm.LLMSettings, error) {
 	global, err := llm.LoadSettingsIfExists(s.globalPath)
 	if err != nil {
-		panic(fmt.Sprintf("settings parse error in %s: %v", s.globalPath, err))
+		return nil, fmt.Errorf("reading settings %s: %w", s.globalPath, err)
 	}
 	project, err := llm.LoadSettingsIfExists(s.projectPath)
 	if err != nil {
-		panic(fmt.Sprintf("settings parse error in %s: %v", s.projectPath, err))
+		return nil, fmt.Errorf("reading settings %s: %w", s.projectPath, err)
 	}
 	return llm.MergeLLMSettings(global, project), nil
 }

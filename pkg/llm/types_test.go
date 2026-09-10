@@ -381,16 +381,25 @@ func TestMessagesHaveImages(t *testing.T) {
 
 func TestIsVisionModel_PrefixTolerant(t *testing.T) {
 	if !IsVisionModel(ModelDeepSeekV4FlashVision) {
-		t.Error("bare vision model name should be vision")
+		t.Error("bare legacy vision model name should be vision")
 	}
 	if !IsVisionModel("deepseek/" + ModelDeepSeekV4FlashVision) {
-		t.Error("provider-prefixed vision model should be vision")
+		t.Error("provider-prefixed legacy vision model should be vision")
 	}
+	// V4.1-Flash(deepseek-flash)原生多模态,是当前视觉模型正名
+	if !IsVisionModel(ModelDeepSeekFlash) {
+		t.Error("deepseek-flash should be a vision model (V4.1 Flash is natively multimodal)")
+	}
+	if !IsVisionModel("deepseek/" + ModelDeepSeekFlash) {
+		t.Error("provider-prefixed deepseek-flash should be a vision model")
+	}
+	// legacy v4-flash 名不判定为视觉:官方图像理解文档只承诺
+	// deepseek-flash 与 vision-exp 旧名可传图
 	if IsVisionModel(ModelDeepSeekV4Flash) {
-		t.Error("flash is not a vision model")
+		t.Error("legacy v4-flash is not treated as a vision model")
 	}
 	if IsVisionModel("deepseek/" + ModelDeepSeekV4Flash) {
-		t.Error("prefixed flash is not a vision model")
+		t.Error("prefixed legacy flash is not a vision model")
 	}
 }
 

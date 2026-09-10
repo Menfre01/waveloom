@@ -2839,8 +2839,9 @@ func (m *model) doTurn(userInput string) tea.Cmd {
 	// 0.1 收集图片引用 → 多模态消息;仅视觉模型支持图片,
 	// 非视觉模型直接拦截并提示(不消耗 turn,不发起 API 调用)
 	images := collectImageParts(refs)
-	// 拦截仅限 DeepSeek(官方仅 vision-exp 接受图片);OpenAI/Kimi
-	// 等端点由各自 API 决定,adapter 已正确组包,不在此处拦截。
+	// 拦截仅限 DeepSeek(官方视觉模型为 deepseek-flash,legacy vision-exp 由
+	// V4.1-Flash 承接);OpenAI/Kimi 等端点由各自 API 决定,adapter 已正确组包,
+	// 不在此处拦截。
 	if len(images) > 0 && strings.HasPrefix(m.hudModel, "deepseek") && !llm.IsVisionModel(m.hudModel) {
 		// 错误以系统段落呈现(与 TurnModelError 等终止原因一致),持久可见;
 		// 不写入 noticeBanner——footer 通知会在用户下次输入时被清空,
@@ -2849,7 +2850,7 @@ func (m *model) doTurn(userInput string) tea.Cmd {
 			Type:      paraSystem,
 			State:     stateDone,
 			Text: fmt.Sprintf("✗ 模型 %s 不支持图片,请 /model 切换 %s",
-				m.hudModel, llm.ModelDeepSeekV4FlashVision),
+				m.hudModel, llm.ModelDeepSeekFlash),
 			NotifKind: notifError,
 		})
 		return nil
@@ -4811,11 +4812,11 @@ type tuiSettingsStore struct {
 func (s *tuiSettingsStore) LoadLLM() (*llm.LLMSettings, error) {
 	global, err := llm.LoadSettingsIfExists(s.globalPath)
 	if err != nil {
-		panic(fmt.Sprintf("settings parse error in %s: %v", s.globalPath, err))
+		return nil, fmt.Errorf("reading settings %s: %w", s.globalPath, err)
 	}
 	project, err := llm.LoadSettingsIfExists(s.projectPath)
 	if err != nil {
-		panic(fmt.Sprintf("settings parse error in %s: %v", s.projectPath, err))
+		return nil, fmt.Errorf("reading settings %s: %w", s.projectPath, err)
 	}
 	return llm.MergeLLMSettings(global, project), nil
 }

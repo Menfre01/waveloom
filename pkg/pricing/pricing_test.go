@@ -7,16 +7,19 @@ import (
 
 func TestLookup_ExactMatch(t *testing.T) {
 	// Lookup 委托 LookupCurrency → time.Now();用 LookupCurrencyAt 显式高峰时刻断言表内价
-	p := LookupCurrencyAt("deepseek", "deepseek-v4-flash", CNY, beijingTime(10, 0))
-	if p.CacheHit != 0.10 || p.CacheMiss != 3.0 || p.Output != 9.0 {
-		t.Errorf("deepseek-v4-flash: got %+v", p)
+	// 正名 deepseek-flash 与 legacy 名(V4-Flash 已下线,由 V4.1-Flash 承接)同价
+	for _, model := range []string{"deepseek-flash", "deepseek-v4-flash"} {
+		p := LookupCurrencyAt("deepseek", model, CNY, beijingTime(10, 0))
+		if p.CacheHit != 0.04 || p.CacheMiss != 2.0 || p.Output != 8.0 {
+			t.Errorf("%s: got %+v", model, p)
+		}
 	}
 }
 
 func TestLookup_ProviderWildcard(t *testing.T) {
 	p := LookupCurrencyAt("deepseek", "deepseek-unknown-model", CNY, beijingTime(10, 0))
-	if p.CacheHit != 0.10 || p.CacheMiss != 3.0 || p.Output != 9.0 {
-		t.Errorf("deepseek wildcard: got %+v, expected V4 Flash fallback", p)
+	if p.CacheHit != 0.04 || p.CacheMiss != 2.0 || p.Output != 8.0 {
+		t.Errorf("deepseek wildcard: got %+v, expected V4.1 Flash fallback", p)
 	}
 }
 
@@ -130,19 +133,26 @@ func TestCurrencySymbol(t *testing.T) {
 
 func TestTableFor(t *testing.T) {
 	cnyT := tableFor(CNY)
-	if cnyT["deepseek/deepseek-v4-flash"].CacheHit != 0.10 {
-		t.Error("CNY table should have deepseek-v4-flash at 0.10 (peak)")
+	if cnyT["deepseek/deepseek-flash"].CacheHit != 0.04 {
+		t.Error("CNY table should have deepseek-flash at 0.04 (peak)")
+	}
+	// 旧模型名(deepseek-v4-flash 已下线,请求由 V4.1-Flash 承接)同价
+	if cnyT["deepseek/deepseek-v4-flash"] != cnyT["deepseek/deepseek-flash"] {
+		t.Error("CNY legacy v4-flash should match flash pricing")
 	}
 	// 图像理解模型与 flash 同价(官方定价页)
-	if cnyT["deepseek/deepseek-v4-flash-vision-exp"] != cnyT["deepseek/deepseek-v4-flash"] {
+	if cnyT["deepseek/deepseek-v4-flash-vision-exp"] != cnyT["deepseek/deepseek-flash"] {
 		t.Error("CNY vision-exp should match flash pricing")
 	}
 
 	usdT := tableFor(USD)
-	if usdT["deepseek/deepseek-v4-flash"].CacheHit != 0.014 {
-		t.Error("USD table should have deepseek-v4-flash at 0.014 (peak)")
+	if usdT["deepseek/deepseek-flash"].CacheHit != 0.006 {
+		t.Error("USD table should have deepseek-flash at 0.006 (peak)")
 	}
-	if usdT["deepseek/deepseek-v4-flash-vision-exp"] != usdT["deepseek/deepseek-v4-flash"] {
+	if usdT["deepseek/deepseek-v4-flash"] != usdT["deepseek/deepseek-flash"] {
+		t.Error("USD legacy v4-flash should match flash pricing")
+	}
+	if usdT["deepseek/deepseek-v4-flash-vision-exp"] != usdT["deepseek/deepseek-flash"] {
 		t.Error("USD vision-exp should match flash pricing")
 	}
 }
@@ -197,9 +207,9 @@ func TestRegression_WeekendIsOffPeak(t *testing.T) {
 		t.Error("周五 10:00 应判高峰时段,实际判为空闲")
 	}
 
-	// 周末高峰窗口内应返回空闲半价:0.10/3.0/9.0 → 0.05/1.5/4.5
+	// 周末高峰窗口内应返回空闲半价:0.04/2.0/8.0 → 0.02/1.0/4.0
 	p := LookupCurrencyAt("deepseek", "deepseek-v4-flash", CNY, satPeakWindow)
-	if p.CacheHit != 0.05 || p.CacheMiss != 1.5 || p.Output != 4.5 {
+	if p.CacheHit != 0.02 || p.CacheMiss != 1.0 || p.Output != 4.0 {
 		t.Errorf("周六 10:00 应返回空闲半价,got %+v", p)
 	}
 }
@@ -213,27 +223,27 @@ func TestRegression_PreToUNotHalved(t *testing.T) {
 	// 生效前(2026-07-15 周二 20:00 北京时间,issue #7 示例):平价,不打折
 	preToU := time.Date(2026, 7, 15, 20, 0, 0, 0, time.FixedZone("CST", 8*3600))
 	p := LookupCurrencyAt("deepseek", "deepseek-v4-flash", CNY, preToU)
-	if p.CacheHit != 0.10 || p.CacheMiss != 3.0 || p.Output != 9.0 {
+	if p.CacheHit != 0.04 || p.CacheMiss != 2.0 || p.Output != 8.0 {
 		t.Errorf("生效前应返回平价表内价,got %+v", p)
 	}
 
 	// 生效前一刻(2026-08-16 15:59:59 UTC):仍为平价
 	justBefore := time.Date(2026, 8, 16, 15, 59, 59, 0, time.UTC)
 	p = LookupCurrencyAt("deepseek", "deepseek-v4-flash", CNY, justBefore)
-	if p.Output != 9.0 {
+	if p.Output != 8.0 {
 		t.Errorf("生效前一刻应返回平价表内价,got Output=%v", p.Output)
 	}
 
 	// 生效时刻整(2026-08-16 16:00:00 UTC = 北京 2026-08-17 00:00,空闲时段):折半
 	atEffective := time.Date(2026, 8, 16, 16, 0, 0, 0, time.UTC)
 	p = LookupCurrencyAt("deepseek", "deepseek-v4-flash", CNY, atEffective)
-	if p.CacheHit != 0.05 || p.CacheMiss != 1.5 || p.Output != 4.5 {
+	if p.CacheHit != 0.02 || p.CacheMiss != 1.0 || p.Output != 4.0 {
 		t.Errorf("生效时刻起应套用峰谷规则(此时为空闲半价),got %+v", p)
 	}
 
 	// 生效后高峰窗口:仍为表内价(门槛不影响高峰)
 	peak := LookupCurrencyAt("deepseek", "deepseek-v4-flash", CNY, beijingTime(10, 0))
-	if peak.Output != 9.0 {
+	if peak.Output != 8.0 {
 		t.Errorf("生效后高峰窗口应返回表内价,got Output=%v", peak.Output)
 	}
 }
@@ -241,13 +251,13 @@ func TestRegression_PreToUNotHalved(t *testing.T) {
 func TestLookupCurrencyAt_OffPeakHalf(t *testing.T) {
 	// 高峰时段:表内价格原样
 	peak := LookupCurrencyAt("deepseek", "deepseek-v4-flash", CNY, beijingTime(10, 0))
-	if peak.CacheHit != 0.10 || peak.CacheMiss != 3.0 || peak.Output != 9.0 {
+	if peak.CacheHit != 0.04 || peak.CacheMiss != 2.0 || peak.Output != 8.0 {
 		t.Errorf("peak price: got %+v", peak)
 	}
 
 	// 空闲时段:高峰价 × 0.5
 	off := LookupCurrencyAt("deepseek", "deepseek-v4-flash", CNY, beijingTime(13, 0))
-	if off.CacheHit != 0.05 || off.CacheMiss != 1.5 || off.Output != 4.5 {
+	if off.CacheHit != 0.02 || off.CacheMiss != 1.0 || off.Output != 4.0 {
 		t.Errorf("off-peak price: got %+v", off)
 	}
 
@@ -274,6 +284,76 @@ func TestLookupCurrencyAt_USD_OffPeakHalf(t *testing.T) {
 	off := LookupCurrencyAt("deepseek", "deepseek-v4-pro", USD, beijingTime(13, 0))
 	if off.CacheHit != 0.022 || off.CacheMiss != 0.66 || off.Output != 1.98 {
 		t.Errorf("USD off-peak price: got %+v", off)
+	}
+}
+
+// TestLookupCurrencyAt_FlashV41 验证 V4.1-Flash(deepseek-flash)新价:
+// 官方 2026-09-10 定价更新,高峰期 CNY 0.04/2.0/8.0、USD 0.006/0.3/1.2,
+// 空闲时段减半。
+func TestLookupCurrencyAt_FlashV41(t *testing.T) {
+	tests := []struct {
+		name string
+		c    Currency
+		peak Price
+		off  Price
+	}{
+		{"CNY", CNY,
+			Price{CacheHit: 0.04, CacheMiss: 2.0, Prompt: 2.0, Output: 8.0},
+			Price{CacheHit: 0.02, CacheMiss: 1.0, Prompt: 1.0, Output: 4.0}},
+		{"USD", USD,
+			Price{CacheHit: 0.006, CacheMiss: 0.3, Prompt: 0.3, Output: 1.2},
+			Price{CacheHit: 0.003, CacheMiss: 0.15, Prompt: 0.15, Output: 0.6}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			peak := LookupCurrencyAt("deepseek", "deepseek-flash", tt.c, beijingTime(10, 0))
+			if peak != tt.peak {
+				t.Errorf("peak = %+v, want %+v", peak, tt.peak)
+			}
+			off := LookupCurrencyAt("deepseek", "deepseek-flash", tt.c, beijingTime(13, 0))
+			if off != tt.off {
+				t.Errorf("off-peak = %+v, want %+v", off, tt.off)
+			}
+		})
+	}
+}
+
+// TestRegression_ProRoutedToFlashPrice 回归防护:官方公告(2026-09-10)——
+// 北京时间 2026-09-14 12:00 起至 V4.1 Pro 上线前,deepseek-v4-pro 的请求
+// 全部路由到 V4.1-Flash,并按 V4.1 Flash 单价计费。原定价表沿用 pro 价
+// (输出 27 元/百万 vs 实际 8 元/百万),用户可见成本高估约 3.4 倍。
+func TestRegression_ProRoutedToFlashPrice(t *testing.T) {
+	bj := func(day, hour, min int) time.Time {
+		return time.Date(2026, 9, day, hour, min, 0, 0, time.FixedZone("CST", 8*3600))
+	}
+
+	// 生效前一刻(北京 2026-09-14 周一 11:59,高峰窗口内):仍是 pro 价
+	before := LookupCurrencyAt("deepseek", "deepseek-v4-pro", CNY, bj(14, 11, 59))
+	if before.CacheHit != 0.30 || before.CacheMiss != 9.0 || before.Output != 27.0 {
+		t.Errorf("路由生效前应为 pro 价,got %+v", before)
+	}
+
+	// 生效时刻整(北京 2026-09-14 12:00 = UTC 04:00,空闲时段):按 flash 价计费
+	atSwitch := LookupCurrencyAt("deepseek", "deepseek-v4-pro", CNY, bj(14, 12, 0))
+	if atSwitch.CacheHit != 0.02 || atSwitch.CacheMiss != 1.0 || atSwitch.Output != 4.0 {
+		t.Errorf("路由生效起应按 flash 空闲价计费,got %+v", atSwitch)
+	}
+
+	// 路由期内高峰窗口(北京 2026-09-15 周二 10:00):flash 高峰价
+	peak := LookupCurrencyAt("deepseek", "deepseek-v4-pro", CNY, bj(15, 10, 0))
+	if peak.CacheHit != 0.04 || peak.CacheMiss != 2.0 || peak.Output != 8.0 {
+		t.Errorf("路由期内高峰应返回 flash 高峰价,got %+v", peak)
+	}
+
+	// USD 表同样路由
+	usdPeak := LookupCurrencyAt("deepseek", "deepseek-v4-pro", USD, bj(15, 10, 0))
+	if usdPeak.CacheHit != 0.006 || usdPeak.CacheMiss != 0.3 || usdPeak.Output != 1.2 {
+		t.Errorf("USD 路由期内高峰应返回 flash 高峰价,got %+v", usdPeak)
+	}
+
+	// 其他 provider 不受路由影响
+	if got := LookupCurrencyAt("kimi", "kimi-k3", CNY, bj(15, 10, 0)); got.Output != 100.0 {
+		t.Errorf("kimi 不应受 pro 路由影响,got %+v", got)
 	}
 }
 

@@ -220,6 +220,12 @@ func (e TranscriptEntry) ToMessage() llm.Message {
 				Arguments: string(block.Input),
 			})
 		case "web_search_call":
+			// REGRESSION: 外部/旧版 JSONL 可能带缺 ID 的 block;无 ID 的 item
+			// 无法在回传时配对(buildResponsesInput 会丢弃),此处直接不恢复,
+			// 避免占位却不产生任何效果。
+			if block.ID == "" {
+				continue
+			}
 			msg.WebSearchCalls = append(msg.WebSearchCalls, llm.WebSearchCall{
 				ID:     block.ID,
 				Status: block.Status,

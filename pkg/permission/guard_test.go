@@ -1295,6 +1295,32 @@ func TestRegression_NoCircuitBreakerBlocking(t *testing.T) {
 	}
 }
 
+// TestRegression_WebSearchRiskClassRead 回归防护:web_search 必须与 web_fetch 同为
+// RiskClassRead —— 两者都是只读网络查询(仅发出查询、返回标题/URL/摘要,无本地副作用)。
+// Responses 路径的搜索由服务端执行改为本地 function 调用后,若未注册风险等级会落入
+// 默认 ask,导致 TUI 每次搜索都弹权限确认(而 web_fetch 自动放行),分类不对称且打断体验。
+func TestRegression_WebSearchRiskClassRead(t *testing.T) {
+	dir := t.TempDir()
+	g := NewGuard(WithWorkingDirs(dir))
+	if got := g.toolRiskClass["web_search"]; got != RiskClassRead {
+		t.Errorf("web_search risk class = %q, want %q", got, RiskClassRead)
+	}
+	result := g.Check(context.Background(), "web_search", json.RawMessage(`{"query": "golang generics"}`))
+	if result.Decision != DecisionAllow {
+		t.Errorf("web_search default decision = %s, want %s(与 web_fetch 对称,只读查询不弹窗)",
+			result.Decision, DecisionAllow)
+	}
+
+	// 分类调整不得绕过显式 deny 规则(deny 优先级高于风险分类的默认放行)
+	if err := g.AddRule(Rule{Behavior: RuleDeny, ToolName: "web_search"}, ScopeSession); err != nil {
+		t.Fatalf("AddRule: %v", err)
+	}
+	denied := g.Check(context.Background(), "web_search", json.RawMessage(`{"query": "golang generics"}`))
+	if denied.Decision != DecisionDeny {
+		t.Errorf("web_search with deny rule = %s, want %s", denied.Decision, DecisionDeny)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // REGRESSION: WithExtraWorkingDirs — 0% 覆盖补充
 // ---------------------------------------------------------------------------

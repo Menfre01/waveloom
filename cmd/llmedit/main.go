@@ -1,7 +1,7 @@
 // llmedit — Layer 3 LLM-in-the-loop 编辑可用性评估 CLI
 //
 // 用法:
-//   go run ./cmd/llmedit/ -provider deepseek -model deepseek-v4-pro
+//   go run ./cmd/llmedit/ -provider deepseek -model deepseek-flash
 //   go run ./cmd/llmedit/ -n 5          每个任务重复 5 次取平均
 //
 // API key 查找顺序:
@@ -45,7 +45,7 @@ func main() {
 
 	provider := flag.String("provider", "deepseek", "LLM provider")
 	apiKeyFlag := flag.String("api-key", "", "API key")
-	model := flag.String("model", "deepseek-v4-pro", "模型名称")
+	model := flag.String("model", "deepseek-flash", "模型名称")
 	baseURL := flag.String("base-url", "", "自定义 API 端点")
 	taskDir := flag.String("dir", "eval/llmedit/testdata/tasks", "任务目录")
 	taskFilter := flag.String("task", "", "任务名过滤(子串匹配,为空跑全部)")

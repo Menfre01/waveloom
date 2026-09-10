@@ -358,6 +358,49 @@ func TestFindProtectionStartIdx_ShortMessages(t *testing.T) {
 	}
 }
 
+// TestFindProtectionStartIdx_Images 验证保护区计算在含图消息上的行为:图片按
+// 张数 × imageTokensPerImage 计入预算(官方 2026-09 起单图上限 1024),
+// 且 base64 体积完全不参与——否则一张数 MB 的图会瞬间吃满预算,使保护区吞掉
+// 整段历史、压缩彻底失效。
+func TestFindProtectionStartIdx_Images(t *testing.T) {
+	imgMsg := llm.Message{
+		Role:    llm.RoleUser,
+		Content: "look at this",
+		Images:  []llm.ImagePart{{MIME: "image/png", B64: "A"}},
+	}
+	x := estimatedTokensFromMessage(imgMsg)
+	msgs := []llm.Message{
+		{Role: llm.RoleUser, Content: "first"},
+		{Role: llm.RoleAssistant, Content: "second"},
+		imgMsg,
+	}
+	// 预算恰为一条带图消息的估算 → 从末尾累加一条即达标 → 起点 = 末条索引
+	if idx := findProtectionStartIdx(msgs, x); idx != 2 {
+		t.Errorf("budget = 1 image message: idx = %d, want 2", idx)
+	}
+	// 预算多 1 token → 需再吃掉一条前序消息 → 起点前移
+	if idx := findProtectionStartIdx(msgs, x+1); idx != 1 {
+		t.Errorf("budget = 1 image message + 1: idx = %d, want 1", idx)
+	}
+
+	// base64 体积不参与估算(1MB 与 1 字节等价)
+	huge := imgMsg
+	huge.Images = []llm.ImagePart{{MIME: "image/png", B64: strings.Repeat("A", 1<<20)}}
+	if got := estimatedTokensFromMessage(huge); got != x {
+		t.Errorf("1MB base64 与 1 字节的估算应相等: got %d, want %d", got, x)
+	}
+
+	// 多图按张数累加,同样参与保护区边界
+	ten := llm.Message{Role: llm.RoleUser, Content: "look", Images: make([]llm.ImagePart, 10)}
+	tx := estimatedTokensFromMessage(ten)
+	if tx < 10*imageTokensPerImage {
+		t.Errorf("十图消息估算 = %d, want ≥ %d", tx, 10*imageTokensPerImage)
+	}
+	if idx := findProtectionStartIdx([]llm.Message{{Role: llm.RoleUser, Content: "earlier"}, ten}, tx); idx != 1 {
+		t.Errorf("十图预算: idx = %d, want 1", idx)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // estimatedTokensFromContent
 // ---------------------------------------------------------------------------
@@ -372,7 +415,7 @@ func TestEstimatedTokensFromContent(t *testing.T) {
 }
 
 func TestEstimatedTokensFromMessage_ImagesFixedCost(t *testing.T) {
-	// 图片按官方单图 token 上限(384)估算,base64 体积不得进入估算
+	// 图片按官方单图 token 上限(imageTokensPerImage)估算,base64 体积不得进入估算
 	base := estimatedTokensFromMessage(llm.Message{Role: llm.RoleUser, Content: "look at this"})
 	big := strings.Repeat("A", 1_000_000) // ~1MB base64 载荷
 	withImg := estimatedTokensFromMessage(llm.Message{
@@ -384,7 +427,7 @@ func TestEstimatedTokensFromMessage_ImagesFixedCost(t *testing.T) {
 		t.Errorf("with image = %d, want %d + %d = %d (base64 must not leak into estimate)",
 			withImg, base, imageTokensPerImage, base+imageTokensPerImage)
 	}
-	// 两张图 = 2 × 384
+	// 两张图 = 2 × imageTokensPerImage
 	base2 := estimatedTokensFromMessage(llm.Message{Role: llm.RoleUser})
 	two := estimatedTokensFromMessage(llm.Message{
 		Role:   llm.RoleUser,

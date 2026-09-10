@@ -173,7 +173,7 @@ External Agents → Add Agent → Add Custom Agent,或直接编辑 settings 文�
 ```
 
 `command` 需为 PATH 中的可执行名或绝对路径;如需指定工作目录/额外 flag,追加到 `args`
-(如 `["acp", "--model", "deepseek-chat"]`)。
+(如 `["acp", "--model", "deepseek-flash"]`)。
 
 ### 在 Zed 中可用的能力
 

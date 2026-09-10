@@ -53,7 +53,7 @@ The **footer status bar** shows: current model, context usage (progress bar), ca
 
 ```sh
 waveloom "explain the design of pkg/llm/client.go"
-waveloom --model deepseek-v4-pro "write unit tests for UserService"
+waveloom --model deepseek-flash "write unit tests for UserService"
 echo "review the code under pkg/llm/" | waveloom
 ```
 

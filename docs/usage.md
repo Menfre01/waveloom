@@ -53,7 +53,7 @@ waveloom
 
 ```sh
 waveloom "解释 pkg/llm/client.go 的设计"
-waveloom --model deepseek-v4-pro "给 UserService 写单元测试"
+waveloom --model deepseek-flash "给 UserService 写单元测试"
 echo "review pkg/llm/ 下的代码" | waveloom
 ```
 

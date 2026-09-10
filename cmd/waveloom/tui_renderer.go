@@ -76,6 +76,7 @@ type Paragraph struct {
 	ToolFatal     bool   // 错误是否致命,TUI 据此区分红(fatal)/金(recoverable)样式
 	// ToolServerSide 标记该工具为服务端自动执行(Responses API 的 web_search_call),
 	// 非本地工具调用;TUI 据此显示 "(server)" 摘要而非空参数 + (0ms)。
+	// DORMANT(2026-09-10):内置 web_search 已被官方回收,仅服务端未来重新启用时生效。
 	ToolServerSide bool
 	DiffHunks      []tool.DiffHunk // edit_file 结构化 diff(nil = 不适用或纯文本回退)
 

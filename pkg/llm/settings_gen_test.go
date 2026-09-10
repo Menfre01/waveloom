@@ -16,8 +16,9 @@ func TestDefaultSettings(t *testing.T) {
 	if s.Provider != "deepseek" {
 		t.Errorf("Provider = %q, want %q", s.Provider, "deepseek")
 	}
-	if s.Model != "deepseek-v4-pro" {
-		t.Errorf("Model = %q, want %q", s.Model, "deepseek-v4-pro")
+	// 官方 2026-09-10 起 deepseek-flash(V4.1-Flash)为最新模型
+	if s.Model != ModelDeepSeekFlash {
+		t.Errorf("Model = %q, want %q", s.Model, ModelDeepSeekFlash)
 	}
 	if s.BaseURL != "https://api.deepseek.com" {
 		t.Errorf("BaseURL = %q, want %q", s.BaseURL, "https://api.deepseek.com")
