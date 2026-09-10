@@ -1,3 +1,16 @@
+## [v0.9.0] — 2026-09-10
+
+### Added
+- **DeepSeek V4.1-Flash support**: DeepSeek released V4.1-Flash on 2026-09-10 (model name `deepseek-flash`, natively multimodal). It is wired into automatic protocol selection (Responses API plus the server-side search declaration) and the vision check; the default model, setup wizard, shell completions and example config were switched over, and the legacy names `deepseek-v4-flash` / `deepseek-v4-flash-vision-exp` are served by V4.1-Flash. The ACP fallback model was updated as well (the old `deepseek-chat` was retired on 2026-07-24 and would 404 whenever the config lacks a `model` field). Image context budgeting now follows the new official scaling rule (~1300×1300, 1024 tokens per image cap)
+- **Peak/off-peak pricing and pro routing sync**: price tables updated for the 2026-09-10 adjustment (cache hit 0.02/0.04, cache miss 1/2, output 4/8 CNY per million, off-peak/peak). From 12:00 Beijing time on 2026-09-14, `deepseek-v4-pro` is served by V4.1-Flash and billed at Flash rates — the local cost display switches at that moment automatically (evaluated at runtime, no restart or upgrade needed) instead of overstating cost by more than 3× under pro rates
+
+### Fixed
+- **web_search silently degraded on the Responses path**: DeepSeek retired the built-in `web_search` for the Responses API (listed as *Ignored* in the compatibility table). The previous implementation removed the local web_search tool and sent only that ignored server-side declaration, leaving the tool schema with no search capability at all — the model could only fall back to local search by going against its own tool list, so search worked only intermittently. It is now exposed as a regular function again (matching the Chat Completions path) and runs reliably on the local DuckDuckGo/Brave backend. The tool is also classified as read-only, so it no longer prompts for permission on every call. The historical `web_search_call` echo path is preserved (the API still restores those results into context)
+- **Crash on startup inside the sandbox**: when `settings.json` could not be read or parsed, four entry points (main flow / ACP / TUI / subagent) panicked with a goroutine dump. The real-world trigger is a sandbox `denyRead` entry masking `settings.json` itself (it is part of the recommended credential-masking list), which makes launching waveloom from inside the agent crash with no hint about the cause. They now return a clear error, and startup failures print the file path, the sandbox explanation and how to fix it; `needsSetup` no longer swallows read errors, so an unreadable config is no longer mistaken for an unconfigured one (which used to trigger the setup wizard)
+- **Resuming external or older sessions could fail the first request**: `web_search_call` items without an ID were still echoed back as `"id":""` and rejected by the API, failing the whole first request; such items are now dropped both when echoing and when deserializing
+
+---
+
 ## [v0.8.2] — 2026-09-04
 
 ### Added

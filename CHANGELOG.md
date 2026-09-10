@@ -1,3 +1,18 @@
+## [v0.9.0] — 2026-09-10
+
+### 新增功能
+- **DeepSeek V4.1-Flash 支持**:官方 2026-09-10 发布 V4.1-Flash(模型名 `deepseek-flash`,原生多模态识图),纳入自动协议适配(Responses API 与服务端搜索声明)与视觉模型判定;默认模型、setup 向导、shell 补全、示例配置同步切换;旧名 `deepseek-v4-flash` / `deepseek-v4-flash-vision-exp` 由 V4.1-Flash 承接;ACP 兜底模型同步更新(原 `deepseek-chat` 已于 7-24 停服,配置缺失 model 字段时直接 404);图片上下文预算按官方新缩放规则修正(约 1300×1300,单图上限 1024 token)
+- **峰谷价格与 pro 路由计费同步**:按 9-10 官方调价更新双币种价表(缓存命中 0.02/0.04、未命中 1/2、输出 4/8 元每百万,空闲/高峰);`deepseek-v4-pro` 自北京时间 9-14 12:00 起由 V4.1-Flash 承接并按 Flash 单价计费,本地成本显示在该时刻自动切换(运行时判定,无需重启或升级),避免此前按 pro 价高估三倍以上
+
+### 修复
+- **Responses 路径 web_search 静默退化**:官方已回收 Responses API 的内置 `web_search`(兼容性明细列为"忽略"),原实现把本地 web_search 摘出工具表、只发被服务端静默忽略的声明,导致工具表层搜索能力归零——模型只能靠系统提示词兜底才回落本地搜索,表现为搜索时灵时不灵;现统一以普通 function 暴露(与 Chat Completions 路径一致),搜索稳定走本地 DuckDuckGo/Brave。同时该工具归入只读风险分级,不再逐次弹权限确认。历史 `web_search_call` 回传链路保留(官方承诺仍会还原搜索结果上下文)
+- **沙箱内启动直接崩溃**:`settings.json` 读取/解析失败时四处入口(主流程 / ACP / TUI / subagent)panic 并打印 goroutine 堆栈;实际触发场景是沙箱 `denyRead` 遮蔽 `settings.json` 自身(推荐凭据遮蔽清单包含它),在 agent 内启动 waveloom 必崩且无从判断成因。现改为返回明确错误,启动失败时给出文件路径、沙箱成因与解决路径;`needsSetup` 不再吞掉读取错误,避免"读不到"被误判为"未配置"而误触发配置向导
+- **恢复外部/旧版会话可能首轮 400**:`web_search_call` 项缺 ID 时仍以 `"id":""` 回传被服务端拒绝,导致整个会话首轮失败;现于回传与反序列化两侧丢弃无 ID 项
+
+---
+
+📝 [Changelog (English)](https://github.com/Menfre01/waveloom/blob/dev/CHANGELOG.en.md)
+
 ## [v0.8.2] — 2026-09-04
 
 ### 新增功能
