@@ -1,3 +1,10 @@
+## [v0.9.1] — 2026-09-14
+
+### Fixed
+- **Correct billing restored for deepseek-v4-pro**: DeepSeek's pricing page now states that V4 Pro remains available after 2026-09-14 with unchanged billing — the previously announced routing to V4.1-Flash (billed at Flash rates) has been cancelled. Since 12:00 Beijing time on 2026-09-14, v0.9.0 displayed pro usage at Flash rates, understating cost by ~3.4× (8 vs 27 CNY per million output tokens). The routing is removed and pro is billed at its own rates again (peak: 0.30 cache-hit / 9.0 cache-miss / 27.0 output CNY per million; half price off-peak). Peak/off-peak logic is unaffected
+
+---
+
 ## [v0.9.0] — 2026-09-10
 
 ### Added
