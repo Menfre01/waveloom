@@ -32,8 +32,8 @@ type Price struct {
 // 生效时刻之前为平价(无折半),由 peakPricingEffectiveAt 门槛控制。
 var cnyTable = map[string]Price{
 	// DeepSeek(2026-09-10 起 V4.1-Flash 定价;legacy v4-flash 系列含图像理解
-	// 模型同价。deepseek-v4-pro 自 2026-09-14 12:00 北京时间起由 V4.1-Flash
-	// 承接并按 Flash 价计费,由 proRoutedToFlashAt 门槛改查 flash 条目)
+	// 模型同价。deepseek-v4-pro 定价页最新公告:2026-09-14 之后继续提供、
+	// 计费不变,按本条 pro 价计费——原先预告的路由到 V4.1-Flash 计费已作废)
 	"deepseek/deepseek-flash":               {CacheHit: 0.04, CacheMiss: 2.0, Prompt: 2.0, Output: 8.0},
 	"deepseek/deepseek-v4-flash":            {CacheHit: 0.04, CacheMiss: 2.0, Prompt: 2.0, Output: 8.0},
 	"deepseek/deepseek-v4-flash-vision-exp": {CacheHit: 0.04, CacheMiss: 2.0, Prompt: 2.0, Output: 8.0},
@@ -67,8 +67,8 @@ var cnyTable = map[string]Price{
 // 生效时刻之前为平价(无折半),由 peakPricingEffectiveAt 门槛控制。
 var usdTable = map[string]Price{
 	// DeepSeek(2026-09-10 起 V4.1-Flash 定价;legacy v4-flash 系列含图像理解
-	// 模型同价。deepseek-v4-pro 自 2026-09-14 12:00 北京时间起由 V4.1-Flash
-	// 承接并按 Flash 价计费,由 proRoutedToFlashAt 门槛改查 flash 条目)
+	// 模型同价。deepseek-v4-pro 定价页最新公告:2026-09-14 之后继续提供、
+	// 计费不变,按本条 pro 价计费——原先预告的路由到 V4.1-Flash 计费已作废)
 	"deepseek/deepseek-flash":               {CacheHit: 0.006, CacheMiss: 0.3, Prompt: 0.3, Output: 1.2},
 	"deepseek/deepseek-v4-flash":            {CacheHit: 0.006, CacheMiss: 0.3, Prompt: 0.3, Output: 1.2},
 	"deepseek/deepseek-v4-flash-vision-exp": {CacheHit: 0.006, CacheMiss: 0.3, Prompt: 0.3, Output: 1.2},
@@ -107,12 +107,10 @@ func LookupCurrency(provider, model string, c Currency) Price {
 // DeepSeek 自 peakPricingEffectiveAt(2026-08-16 16:00 UTC)起采用峰谷定价:
 // 高峰时段(北京时间周一至周五 9:00-12:00、14:00-18:00)使用表内价格,
 // 空闲时段为高峰价 × 0.5;生效时刻之前为平价,表内价格原样返回。
-// deepseek-v4-pro 自 proRoutedToFlashAt(2026-09-14 12:00 北京时间)起由
-// V4.1-Flash 承接请求,计费按 Flash 条目(见 modelForPricing)。
 // 其他 provider(kimi/openai 等)不受峰谷影响,返回表内价格。
 func LookupCurrencyAt(provider, model string, c Currency, at time.Time) Price {
 	table := tableFor(c)
-	p, ok := table[provider+"/"+modelForPricing(provider, model, at)]
+	p, ok := table[provider+"/"+model]
 	if !ok {
 		p, ok = table[provider+"/"]
 	}
@@ -133,31 +131,6 @@ func LookupCurrencyAt(provider, model string, c Currency, at time.Time) Price {
 // 2026-08-16 16:00 UTC = 2026-08-17 00:00 北京时间;此前的历史时间一律按平价计,
 // 不适用峰谷折半(官方公告: Effective 00:00 Beijing Time on August 17, 2026)。
 var peakPricingEffectiveAt = time.Date(2026, 8, 16, 16, 0, 0, 0, time.UTC)
-
-// modelDeepSeekFlash / modelDeepSeekV4Pro 是与 llm 包模型常量对应的字面量
-// (pricing 包不依赖 llm 包,避免包间耦合)。
-const (
-	modelDeepSeekFlash = "deepseek-flash"
-	modelDeepSeekV4Pro = "deepseek-v4-pro"
-)
-
-// proRoutedToFlashAt DeepSeek V4 Pro 路由切换时刻(UTC)。
-// 2026-09-14 04:00 UTC = 2026-09-14 12:00 北京时间。官方公告(2026-09-10):
-// 自该时刻起至未来 V4.1 Pro 上线前,deepseek-v4-pro 的请求将全部路由到
-// DeepSeek-V4.1-Flash,并按 V4.1 Flash 单价计费。
-// 参考: https://api-docs.deepseek.com/zh-cn/updates
-var proRoutedToFlashAt = time.Date(2026, 9, 14, 4, 0, 0, 0, time.UTC)
-
-// modelForPricing 返回计费应采用的模型名,处理服务端路由导致的计费归属变化。
-// deepseek-v4-pro 在路由期(2026-09-14 12:00 北京起至 V4.1 Pro 上线前)由
-// V4.1-Flash 承接并按 Flash 单价计费;沿用 pro 条目会高估约 3.4 倍
-// (输出 27 元/百万 vs 实际 8 元/百万)。V4.1 Pro 上线后应移除此路由。
-func modelForPricing(provider, model string, at time.Time) string {
-	if provider == "deepseek" && model == modelDeepSeekV4Pro && !at.Before(proRoutedToFlashAt) {
-		return modelDeepSeekFlash
-	}
-	return model
-}
 
 // IsPeakTime 判断指定时间是否处于 DeepSeek 高峰时段。
 // 高峰时段(北京时间): 周一至周五 9:00-12:00、14:00-18:00;其余(含整个周末)为空闲时段。

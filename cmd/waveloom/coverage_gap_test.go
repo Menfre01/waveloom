@@ -706,8 +706,8 @@ func TestNewSetupModel_Defaults(t *testing.T) {
 	if m.state.locale != "zh-CN" {
 		t.Errorf("locale = %q, want zh-CN", m.state.locale)
 	}
-	// 官方 2026-09-10 起 deepseek-flash(V4.1-Flash)为最新模型;V4.1-Pro 上线前
-	// deepseek-v4-pro 亦由 V4.1-Flash 承接,故主/次模型默认均为 deepseek-flash
+	// 官方 2026-09-10 起 deepseek-flash(V4.1-Flash)为最新模型且为定价页
+	// 推荐模型名;deepseek-v4-pro 自 2026-09-14 起继续提供,默认主/次仍均用 flash
 	if m.state.model != "deepseek-flash" {
 		t.Errorf("model = %q, want deepseek-flash", m.state.model)
 	}

@@ -107,7 +107,7 @@ waveloom
 - **Session persistence** — Close the terminal, come back days later with `waveloom --continue`. The agent remembers all prior context.
 - **Checkpoint/Rewind** — Rewind to any previous message with full file state restoration. Fork mode preserves original session intact — history never lost.
 - **Plan Mode** — Two-stage workflow: explore & design first, implement after approval. `Shift+Tab` to enter/exit, Guard-enforced write protection.
-- **Sub_model configuration** — Set `"sub_model": "deepseek-flash"` in `settings.json` to assign a lighter model for explore subagents. Explore uses the sub model for code search and discovery; evaluate/verification subagents use the primary model for full reasoning. LLM auto-selects between the two based on task complexity. Note: until V4.1-Pro ships (DeepSeek routes `deepseek-v4-pro` to V4.1-Flash), primary and sub model share the same backend.
+- **Sub_model configuration** — Set `"sub_model": "deepseek-flash"` in `settings.json` to assign a lighter model for explore subagents. Explore uses the sub model for code search and discovery; evaluate/verification subagents use the primary model for full reasoning. LLM auto-selects between the two based on task complexity. Note: as of 2026-09-14, DeepSeek continues to serve `deepseek-v4-pro` with unchanged billing — a distinct backend from flash.
 - **14 built-in tools** — `read` / `write` / `edit` / `bash` / `web_fetch` / `web_search` / `ask_user_question` / `enter_plan_mode` / `exit_plan_mode` / `skill` / `agent` / `kill_background_task` / `todo_create` / `todo_update`.
 - **i18n multilingual** — Full zh-CN / en-US bilingual UI. `--locale` CLI flag, `/locale` command, auto-detect from LANG.
 

@@ -107,7 +107,7 @@ waveloom
 - **会话持久恢复** — 关闭终端几天后 `waveloom --continue` 回来,Agent 记得所有上下文接着工作
 - **Checkpoint/Rewind 时间旅行** — 回退到任意历史消息,同时恢复所有文件变更。Fork 模式原 session 完整保留,历史永不丢失
 - **Plan 模式** — 先规划后执行的二阶段工作流:探索设计 → 审批 → 编码。`Shift+Tab` 一键进入/退出,Guard 写保护拦截。
-- **子代理模型配置** — 在 `settings.json` 中设置 `"sub_model": "deepseek-flash"`,explorer 子代理使用此模型执行代码搜索和发现;evaluate 和 verification 子代理始终使用主模型保证审查质量。LLM 根据任务自主选择主/次模型。注:V4.1-Pro 上线前,DeepSeek 将 `deepseek-v4-pro` 路由至 V4.1-Flash,主次模型后端相同。
+- **子代理模型配置** — 在 `settings.json` 中设置 `"sub_model": "deepseek-flash"`,explorer 子代理使用此模型执行代码搜索和发现;evaluate 和 verification 子代理始终使用主模型保证审查质量。LLM 根据任务自主选择主/次模型。注:DeepSeek 自 2026-09-14 起继续提供 `deepseek-v4-pro`(计费方式不变),与 flash 为不同后端。
 - **14 个内置工具** — `read` / `write` / `edit` / `bash` / `web_fetch` / `web_search` / `ask_user_question` / `enter_plan_mode` / `exit_plan_mode` / `skill` / `agent` / `kill_background_task` / `todo_create` / `todo_update`
 - **i18n 多语言** — 完整中英双语界面,`--locale` CLI 参数 / `/locale` 命令,LANG 环境变量自动检测
 ---

@@ -318,42 +318,33 @@ func TestLookupCurrencyAt_FlashV41(t *testing.T) {
 	}
 }
 
-// TestRegression_ProRoutedToFlashPrice 回归防护:官方公告(2026-09-10)——
-// 北京时间 2026-09-14 12:00 起至 V4.1 Pro 上线前,deepseek-v4-pro 的请求
-// 全部路由到 V4.1-Flash,并按 V4.1 Flash 单价计费。原定价表沿用 pro 价
-// (输出 27 元/百万 vs 实际 8 元/百万),用户可见成本高估约 3.4 倍。
-func TestRegression_ProRoutedToFlashPrice(t *testing.T) {
+// TestRegression_ProNotRoutedToFlash 回归防护:官方定价页公告——
+// 为响应用户需求,决定在 2026-09-14 之后继续提供 DeepSeek V4 Pro 的 API
+// 调用服务,计费方式保持不变。此前(2026-09-10 公告)预告 pro 自 2026-09-14
+// 12:00 北京时间起由 V4.1-Flash 承接并按 Flash 单价计费,代码曾据此实现
+// 路由。公告调整后路由逻辑已撤销:若重新引入,pro 用量将按 flash 价计费,
+// 输出低估约 3.4 倍(8 元 vs 27 元/百万),用户可见成本显示错误。
+func TestRegression_ProNotRoutedToFlash(t *testing.T) {
 	bj := func(day, hour, min int) time.Time {
 		return time.Date(2026, 9, day, hour, min, 0, 0, time.FixedZone("CST", 8*3600))
 	}
 
-	// 生效前一刻(北京 2026-09-14 周一 11:59,高峰窗口内):仍是 pro 价
-	before := LookupCurrencyAt("deepseek", "deepseek-v4-pro", CNY, bj(14, 11, 59))
-	if before.CacheHit != 0.30 || before.CacheMiss != 9.0 || before.Output != 27.0 {
-		t.Errorf("路由生效前应为 pro 价,got %+v", before)
-	}
-
-	// 生效时刻整(北京 2026-09-14 12:00 = UTC 04:00,空闲时段):按 flash 价计费
+	// 原路由切换时刻(北京 2026-09-14 周一 12:00,空闲时段):保持 pro 价(闲时半价)
 	atSwitch := LookupCurrencyAt("deepseek", "deepseek-v4-pro", CNY, bj(14, 12, 0))
-	if atSwitch.CacheHit != 0.02 || atSwitch.CacheMiss != 1.0 || atSwitch.Output != 4.0 {
-		t.Errorf("路由生效起应按 flash 空闲价计费,got %+v", atSwitch)
+	if atSwitch.CacheHit != 0.15 || atSwitch.CacheMiss != 4.5 || atSwitch.Output != 13.5 {
+		t.Errorf("原切换时刻应保持 pro 价(闲时半价),got %+v", atSwitch)
 	}
 
-	// 路由期内高峰窗口(北京 2026-09-15 周二 10:00):flash 高峰价
+	// 切换后高峰窗口(北京 2026-09-15 周二 10:00):pro 高峰价
 	peak := LookupCurrencyAt("deepseek", "deepseek-v4-pro", CNY, bj(15, 10, 0))
-	if peak.CacheHit != 0.04 || peak.CacheMiss != 2.0 || peak.Output != 8.0 {
-		t.Errorf("路由期内高峰应返回 flash 高峰价,got %+v", peak)
+	if peak.CacheHit != 0.30 || peak.CacheMiss != 9.0 || peak.Output != 27.0 {
+		t.Errorf("切换后高峰应返回 pro 价,got %+v", peak)
 	}
 
-	// USD 表同样路由
+	// USD 表同样保持 pro 价
 	usdPeak := LookupCurrencyAt("deepseek", "deepseek-v4-pro", USD, bj(15, 10, 0))
-	if usdPeak.CacheHit != 0.006 || usdPeak.CacheMiss != 0.3 || usdPeak.Output != 1.2 {
-		t.Errorf("USD 路由期内高峰应返回 flash 高峰价,got %+v", usdPeak)
-	}
-
-	// 其他 provider 不受路由影响
-	if got := LookupCurrencyAt("kimi", "kimi-k3", CNY, bj(15, 10, 0)); got.Output != 100.0 {
-		t.Errorf("kimi 不应受 pro 路由影响,got %+v", got)
+	if usdPeak.CacheHit != 0.044 || usdPeak.CacheMiss != 1.32 || usdPeak.Output != 3.96 {
+		t.Errorf("USD 切换后高峰应返回 pro 价,got %+v", usdPeak)
 	}
 }
 

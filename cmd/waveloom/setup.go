@@ -67,9 +67,9 @@ func newSetupModel(loc Locale) *setupModel {
 			theme:        "auto",
 			locale:       string(loc),
 			prov:         "deepseek",
-			// 官方 2026-09-10 起 deepseek-flash(V4.1-Flash)为最新模型;
-			// V4.1 Pro 上线前 deepseek-v4-pro 亦由 V4.1-Flash 承接,
-			// 主/次模型统一用 deepseek-flash(不展示已下线的旧模型名)。
+			// 官方 2026-09-10 起 deepseek-flash(V4.1-Flash)为最新模型
+			// 且为定价页推荐模型名;deepseek-v4-pro 自 2026-09-14 起继续
+			// 提供(计费不变),主/次模型仍统一用 deepseek-flash(不展示旧模型名)。
 			model:        "deepseek-flash",
 			subModel:     "deepseek-flash",
 			baseURL:      "https://api.deepseek.com",
