@@ -46,10 +46,13 @@ eval/swebench/
 # Claude Code
 .claude/
 
-# 规格书（内部设计文档，不对外公开）
+# 规格书(内部设计文档,不对外公开)
 specs/
 
-# 视频脚本（不纳入发布版本）
+# OpenSpec 工作目录(本地变更提案,不入仓库)
+openspec/
+
+# 视频脚本(不纳入发布版本)
 docs/video-script.md
 
 # 营销素材
