@@ -19,6 +19,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/Menfre01/waveloom/pkg/pathutil"
 	"github.com/Menfre01/waveloom/pkg/permission"
@@ -51,15 +52,42 @@ type LoadedSkill struct {
 
 // frontmatter 是 SKILL.md 的 YAML 头部解析结果。
 type frontmatter struct {
-	Name                  string
-	Description           string
-	WhenToUse             string `yaml:"when_to_use"`
-	ArgumentHint          string `yaml:"argument-hint"`
-	Arguments             any    `yaml:"arguments"` // string or []string
-	AllowedTools          []string `yaml:"allowed-tools"`
-	Paths                 []string `yaml:"paths"` // 条件激活路径（gitignore-style glob）
-	DisableModelInvocation bool   `yaml:"disable-model-invocation"`
-	UserInvocable         *bool  `yaml:"user-invocable"` // pointer to detect unset
+	Name                   string             `yaml:"name"`
+	Description            string             `yaml:"description"`
+	WhenToUse              string             `yaml:"when_to_use"`
+	ArgumentHint           string             `yaml:"argument-hint"`
+	Arguments              any                `yaml:"arguments"` // string or []string
+	AllowedTools           flexibleStringList `yaml:"allowed-tools"`
+	Paths                  flexibleStringList `yaml:"paths"` // 条件激活路径(gitignore-style glob)
+	DisableModelInvocation bool               `yaml:"disable-model-invocation"`
+	UserInvocable          *bool              `yaml:"user-invocable"` // pointer to detect unset
+}
+
+// flexibleStringList 兼容 Claude Code frontmatter 的两种写法:
+//
+//	allowed-tools: Bash(openspec:*)            # 标量,按顶层逗号拆成多项
+//	allowed-tools: ["Bash(git *)", "Read"]     # 列表
+//
+// 标量形式按括号外的逗号切分,因此 "Bash(git branch:*, git diff:*)" 仍是一个条目。
+type flexibleStringList []string
+
+func (s *flexibleStringList) UnmarshalYAML(node *yaml.Node) error {
+	switch node.Kind {
+	case yaml.ScalarNode:
+		*s = permission.SplitRuleList(node.Value)
+	case yaml.SequenceNode:
+		var list []string
+		if err := node.Decode(&list); err != nil {
+			return err
+		}
+		*s = list
+	case yaml.AliasNode:
+		if node.Alias == nil {
+			return nil
+		}
+		return s.UnmarshalYAML(node.Alias)
+	}
+	return nil
 }
 
 // ---------------------------------------------------------------------------
@@ -184,10 +212,16 @@ func isDirFollowingSymlink(dir string, entry os.DirEntry) bool {
 	if entry.IsDir() {
 		return true
 	}
-	if entry.Type()&os.ModeSymlink == 0 {
+	return isDirSymlink(filepath.Join(dir, entry.Name()), entry)
+}
+
+// isDirSymlink 判断 path 是否为指向目录的符号链接(entry 为 path 对应的 DirEntry)。
+// filepath.WalkDir 不跟随 symlink,需要单独判断以决定递归还是跳过。
+func isDirSymlink(path string, entry os.DirEntry) bool {
+	if entry.IsDir() || entry.Type()&os.ModeSymlink == 0 {
 		return false
 	}
-	st, err := os.Stat(filepath.Join(dir, entry.Name()))
+	st, err := os.Stat(path)
 	return err == nil && st.IsDir()
 }
 
@@ -233,49 +267,133 @@ func (l *Loader) scanSkillsDir(dir string, priority int, seen map[string]bool) [
 	return infos
 }
 
+// scanCommandsDir 扫描 commands 目录下的 .md 文件,支持嵌套子目录。
+// 嵌套目录以 ":" 连接为限定名:commands/opsx/apply.md → "opsx:apply"(对齐 Claude Code)。
 func (l *Loader) scanCommandsDir(dir string, priority int, seen map[string]bool) []SkillInfo {
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return nil
-	}
-
 	var infos []SkillInfo
-	for _, entry := range entries {
-		if isDirFollowingSymlink(dir, entry) {
-			continue
-		}
-		name := strings.TrimSuffix(entry.Name(), ".md")
-		if name == entry.Name() { // not .md file
-			continue
-		}
-		// 若同名 skill（目录形式）已存在，跳过
-		if seen[name] {
-			continue
-		}
-		skillFile := filepath.Join(dir, entry.Name())
 
+	addCommand := func(filePath, name string) {
+		// 若同名 skill(目录形式或更浅层 command)已存在,跳过
+		if name == "" || seen[name] {
+			return
+		}
 		// 检查是否为条件 skill
-		if l.isConditional(skillFile) {
+		if l.isConditional(filePath) {
 			if l.activatedConditionalNames[name] {
-				info, ok := l.parseSkillInfo(skillFile, name, true)
-				if ok && !seen[info.Name] {
+				if info, ok := l.parseSkillInfo(filePath, name, true); ok && !seen[info.Name] {
 					seen[info.Name] = true
 					infos = append(infos, info)
 				}
 			} else {
-				l.storeConditional(skillFile, name)
+				l.storeConditional(filePath, name)
 			}
-			continue
+			return
 		}
-
-		info, ok := l.parseSkillInfo(skillFile, name, true)
-		if !ok {
-			continue
+		info, ok := l.parseSkillInfo(filePath, name, true)
+		if !ok || seen[info.Name] {
+			return
 		}
 		seen[info.Name] = true
 		infos = append(infos, info)
 	}
+
+	// WalkDir 的根节点按 Lstat 处理:若 commands 目录本身是指向目录的 symlink
+	// (如 ~/.claude/commands -> ~/dotfiles/commands),必须先解析真实路径才能下钻。
+	root := dir
+	if resolved, evalErr := filepath.EvalSymlinks(dir); evalErr == nil {
+		root = resolved
+	}
+
+	_ = filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil || path == root {
+			return nil
+		}
+		if strings.HasPrefix(entry.Name(), ".") {
+			if entry.IsDir() {
+				return fs.SkipDir // 隐藏目录(如 .git)不下钻
+			}
+			return nil
+		}
+		if isDirSymlink(path, entry) {
+			// REGRESSION: symlink 指向目录时不能当作扁平 command 文件处理
+			return nil
+		}
+		if entry.IsDir() {
+			return nil // 继续下钻嵌套目录
+		}
+		if !strings.HasSuffix(entry.Name(), ".md") {
+			return nil
+		}
+		rel, relErr := filepath.Rel(root, path)
+		if relErr != nil {
+			return nil
+		}
+		addCommand(path, commandNameFromRel(rel))
+		return nil
+	})
+
 	return infos
+}
+
+// commandNameFromRel 将 command 文件相对路径转换为命令名:
+// apply.md → "apply",opsx/apply.md → "opsx:apply"。
+// 含空段或上跳段的路径返回空串(调用方跳过)。
+func commandNameFromRel(rel string) string {
+	trimmed := strings.TrimSuffix(filepath.ToSlash(rel), ".md")
+	if trimmed == "" {
+		return ""
+	}
+	segments := strings.Split(trimmed, "/")
+	for _, seg := range segments {
+		if seg == "" || seg == "." || seg == ".." {
+			return ""
+		}
+	}
+	return strings.Join(segments, ":")
+}
+
+// commandRelPath 将限定命令名还原为相对路径:opsx:apply → opsx/apply。
+// 名字不含 ":" 或含非法路径段时返回 false。
+func commandRelPath(name string) (string, bool) {
+	if !strings.Contains(name, ":") {
+		return "", false
+	}
+	segments := strings.Split(name, ":")
+	for _, seg := range segments {
+		if seg == "" || seg == "." || seg == ".." || strings.ContainsAny(seg, `/\`) {
+			return "", false
+		}
+	}
+	return filepath.Join(segments...), true
+}
+
+// isSafeSkillName 判断名称是否可安全用于路径拼接:
+// 拒绝路径分隔符与上跳段,避免 Load 被用于读取 skills 目录外的文件。
+func isSafeSkillName(name string) bool {
+	if name == "" || strings.ContainsAny(name, `/\`) {
+		return false
+	}
+	for _, seg := range strings.Split(name, ":") {
+		if seg == "" || seg == "." || seg == ".." {
+			return false
+		}
+	}
+	return true
+}
+
+// isValidSkillName 判断 frontmatter name 能否作为可调用标识符。
+// 含空白(如 "OPSX: Apply")的名字无法通过 "/name" 调用(Registry 按首个空格分词),
+// 直接忽略并回退到目录名/文件名。
+func isValidSkillName(name string) bool {
+	if name == "" {
+		return false
+	}
+	for _, r := range name {
+		if unicode.IsSpace(r) || r == '/' || r == '\\' {
+			return false
+		}
+	}
+	return true
 }
 
 // isConditional 检查 SKILL.md 是否有 paths frontmatter（条件 skill）。
@@ -322,7 +440,7 @@ func (l *Loader) ActivateForPaths(filePaths []string) []string {
 		if err != nil || len(fm.Paths) == 0 {
 			continue
 		}
-		if matchAnyPath(filePaths, fm.Paths) {
+		if matchAnyPath(filePaths, []string(fm.Paths)) {
 			l.activatedConditionalNames[name] = true
 			delete(l.conditionalSkills, name)
 			activated = append(activated, name)
@@ -364,7 +482,8 @@ func (l *Loader) parseSkillInfo(filePath, defaultName string, isFlatFile bool) (
 	}
 
 	name := defaultName
-	if fm.Name != "" {
+	// frontmatter name 仅在其可作为标识符时生效(如 "OPSX: Apply" 这类展示名会被忽略)
+	if isValidSkillName(fm.Name) {
 		name = fm.Name
 	}
 
@@ -404,6 +523,10 @@ func (l *Loader) parseSkillInfo(filePath, defaultName string, isFlatFile bool) (
 
 // Load 加载并渲染指定名称的 skill。
 func (l *Loader) Load(name string, args string) (*LoadedSkill, error) {
+	// 名称直接参与路径拼接,先拒绝路径分隔符/上跳段
+	if !isSafeSkillName(name) {
+		return nil, fmt.Errorf("skill not found: %s", name)
+	}
 	projectRoot := pathutil.FindProjectRoot(l.CWD)
 
 	type candidate struct {
@@ -426,6 +549,13 @@ func (l *Loader) Load(name string, args string) (*LoadedSkill, error) {
 		cmdFile := filepath.Join(base, name+".md")
 		if fileExists(cmdFile) {
 			candidates = append(candidates, candidate{cmdFile, true})
+		}
+		// 嵌套 command:opsx:apply → commands/opsx/apply.md
+		if rel, ok := commandRelPath(name); ok {
+			nested := filepath.Join(base, rel+".md")
+			if fileExists(nested) {
+				candidates = append(candidates, candidate{nested, true})
+			}
 		}
 	}
 
@@ -496,7 +626,7 @@ func (l *Loader) loadFromFile(filePath, skillName, args string, isFlatFile bool)
 
 	// 清除上一轮 skill 的 Guard 白名单，然后注册本轮的白名单
 	l.clearGuardSkillWhitelist()
-	patterns := permission.ParseAllowedBashPatterns(fm.AllowedTools)
+	patterns := permission.ParseAllowedBashPatterns([]string(fm.AllowedTools))
 	if len(patterns) > 0 {
 		l.setGuardSkillWhitelist(patterns)
 	}
@@ -509,7 +639,7 @@ func (l *Loader) loadFromFile(filePath, skillName, args string, isFlatFile bool)
 
 	// 规范名称
 	name := skillName
-	if fm.Name != "" {
+	if isValidSkillName(fm.Name) {
 		name = fm.Name
 	}
 
@@ -593,9 +723,16 @@ func parseSKILLmd(filePath string, isFlatFile bool) (fm frontmatter, body string
 			body = parts[1]
 
 			if uerr := yaml.Unmarshal([]byte(fmRaw), &fm); uerr != nil {
-				// 畸形 YAML：整个文件作为 body
+				// 整体解码失败:降级为逐字段解码,只丢弃类型不符的字段。
+				// REGRESSION: 曾直接丢弃整个 frontmatter,导致 Claude Code 的
+				// `allowed-tools: Bash(openspec:*)`(标量写法)让 name/description
+				// 一并静默消失,skill 在列表里只剩空描述。
 				fm = frontmatter{}
-				body = text
+				if !decodeFrontmatterLenient(fmRaw, &fm) {
+					// YAML 语法本身非法:整个文件作为 body
+					fm = frontmatter{}
+					body = text
+				}
 			}
 		} else if strings.HasPrefix(text[4:], "---\n") {
 			// 空 frontmatter: "---\n---\n..."
@@ -613,6 +750,60 @@ func parseSKILLmd(filePath string, isFlatFile bool) (fm frontmatter, body string
 	}
 
 	return fm, strings.TrimSpace(body), dirPath, supportingFiles, nil
+}
+
+// decodeFrontmatterLenient 逐字段解码 frontmatter,跳过类型不符的字段。
+// 返回 false 表示 YAML 语法本身非法(无法按映射解析),调用方应整体弃用 frontmatter。
+func decodeFrontmatterLenient(raw string, fm *frontmatter) bool {
+	var doc yaml.Node
+	if err := yaml.Unmarshal([]byte(raw), &doc); err != nil {
+		return false
+	}
+	if doc.Kind != yaml.DocumentNode || len(doc.Content) == 0 {
+		return false
+	}
+	mapping := doc.Content[0]
+	if mapping.Kind != yaml.MappingNode {
+		return false
+	}
+
+	for i := 0; i+1 < len(mapping.Content); i += 2 {
+		key, value := mapping.Content[i], mapping.Content[i+1]
+		switch key.Value {
+		case "name":
+			decodeFieldLenient(value, &fm.Name)
+		case "description":
+			decodeFieldLenient(value, &fm.Description)
+		case "when_to_use":
+			decodeFieldLenient(value, &fm.WhenToUse)
+		case "argument-hint":
+			decodeFieldLenient(value, &fm.ArgumentHint)
+		case "arguments":
+			decodeFieldLenient(value, &fm.Arguments)
+		case "allowed-tools":
+			decodeFieldLenient(value, &fm.AllowedTools)
+		case "paths":
+			decodeFieldLenient(value, &fm.Paths)
+		case "disable-model-invocation":
+			decodeFieldLenient(value, &fm.DisableModelInvocation)
+		case "user-invocable":
+			decodeFieldLenient(value, &fm.UserInvocable)
+		}
+	}
+	return true
+}
+
+// decodeFieldLenient 解码单个 YAML 节点;类型不符时保留 dst 零值,不中断整体解析。
+// 标量节点对字符串字段做宽松转换(如 `description: 123` 取原文)。
+func decodeFieldLenient[T any](node *yaml.Node, dst *T) {
+	if err := node.Decode(dst); err == nil {
+		return
+	}
+	if node.Kind == yaml.ScalarNode {
+		if s, ok := any(dst).(*string); ok {
+			*s = node.Value
+		}
+	}
 }
 
 // scanSupportingFiles 扫描 dirPath 下所有非 SKILL.md 的常规文件。
