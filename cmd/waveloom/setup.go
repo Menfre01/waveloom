@@ -257,6 +257,10 @@ func (m *setupModel) handleStepComplete() {
 			m.state.model = "glm-5.3"
 			m.state.subModel = "glm-5.3-flash"
 			m.state.baseURL = "https://open.bigmodel.cn/api/coding/paas/v4"
+		case "yolo-auto":
+			m.state.model = "yolo"
+			m.state.subModel = "yolo-small"
+			m.state.baseURL = "https://yolo-auto.com/v1"
 		}
 		m.step++
 	case 3:
@@ -355,6 +359,7 @@ func (m *setupModel) buildForm() {
 				huh.NewOption("Kimi", "kimi"),
 				huh.NewOption("GLM Coding Plan", "glm"),
 				huh.NewOption("OpenAI", "openai"),
+				huh.NewOption("Yolo-Auto", "yolo-auto"),
 			).
 			Value(&provVal)
 		m.form = huh.NewForm(huh.NewGroup(sel)).
@@ -400,6 +405,9 @@ func (m *setupModel) buildForm() {
 		case "glm":
 			desc = "glm-5.3 (Recommended) / glm-5.2 / glm-5.3-flash"
 			subDesc = fmt.Sprintf(lc.SetupSubModelDesc, "glm-5.3-flash")
+		case "yolo-auto":
+			desc = "yolo (Recommended) / yolo-small; catalog auto-discovered via /v1/models"
+			subDesc = fmt.Sprintf(lc.SetupSubModelDesc, "yolo-small")
 		}
 		modelInp := huh.NewInput().
 			Key("model").
@@ -724,6 +732,8 @@ func apiKeyPageURL(provider string) string {
 	switch provider {
 	case "glm":
 		return "https://open.bigmodel.cn/"
+	case "yolo-auto":
+		return "https://yolo-auto.com/"
 	default:
 		return fmt.Sprintf("https://platform.%s.com/api_keys", provider)
 	}

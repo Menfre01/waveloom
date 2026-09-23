@@ -23,14 +23,14 @@ Waveloom 首次运行在 `.waveloom/settings.json` 生成默认配置。配置�
 | 字段 | 说明 | 默认值 |
 |------|------|--------|
 | `api_key` | DeepSeek API Key，为空时回退 `LLM_API_KEY` 环境变量 | — |
-| `provider` | `deepseek`、`kimi`、`glm` 或 `openai` | `deepseek` |
+| `provider` | `deepseek`、`kimi`、`glm`、`openai` 或 `yolo-auto` | `deepseek` |
 | `model` | 模型名 | `deepseek-flash` |
 | `base_url` | API 地址 | `https://api.deepseek.com` |
 | `timeout` | 请求超时 | `600s` |
 | `extra_params` | 额外参数（thinking、reasoning_effort 等） | 思考模式默认开启 |
 | `retry` | 重试策略 `{"max_retries":3, "initial_backoff":"1s", "max_backoff":"30s", "multiplier":2.0}` | 默认重试策略 |
 | `sub_model` | 子代理默认模型(explore 子代理使用此模型执行代码搜索和发现,约 2 倍便宜) | 自动配对(pro → flash) |
-| `profiles` | 多 Provider 配置,以 provider 名为键(如 `"kimi"`、`"glm"`、`"openai"`)。每个 profile 可包含 `api_key`、`model`、`sub_model`、`base_url`、`extra_params`。配合 `--provider` CLI 参数切换。Provider 无关字段(`timeout`、`retry`、`headers`)从顶层继承 | — |
+| `profiles` | 多 Provider 配置,以 provider 名为键(如 `"kimi"`、`"glm"`、`"openai"`、`"yolo-auto"`)。每个 profile 可包含 `api_key`、`model`、`sub_model`、`base_url`、`extra_params`。配合 `--provider` CLI 参数切换。Provider 无关字段(`timeout`、`retry`、`headers`)从顶层继承 | — |
 
 ```json
 {
@@ -52,11 +52,19 @@ Waveloom 首次运行在 `.waveloom/settings.json` 生成默认配置。配置�
         "model": "glm-5.3",
         "sub_model": "glm-5.3-flash",
         "base_url": "https://open.bigmodel.cn/api/coding/paas/v4"
+      },
+      "yolo-auto": {
+        "api_key": "yolo-your-key",
+        "model": "yolo",
+        "sub_model": "yolo-small",
+        "base_url": "https://yolo-auto.com/v1"
       }
     }
   }
 }
 ```
+
+Yolo-Auto(https://yolo-auto.com)是 OpenAI 兼容端点:公开模型别名为 `yolo` 与 `yolo-small`,可用目录由 `GET /v1/models` 自动发现,模型选择器直接从该端点取列表;固定套餐制、不按 token 计费,本地成本统计按 0 计。API Key 在 https://yolo-auto.com 创建,形如 `yolo_...`。
 
 ### permissions 配置
 

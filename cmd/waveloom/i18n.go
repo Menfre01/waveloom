@@ -494,10 +494,10 @@ var zhCN = Messages{
   单次执行：waveloom "解释这段代码"`,
 
 	// ── /provider ──
-	ProviderDescription:       "显示或切换 LLM Provider（kimi / deepseek / openai）",
+	ProviderDescription:       "显示或切换 LLM Provider（deepseek / kimi / glm / openai / yolo-auto）",
 	ProviderList:              "当前 Provider: %s（模型: %s）",
 	ProviderAvailable:         "可用 Provider:\n%s",
-	ProviderUnknown:           "未知 Provider: %s。可用: kimi, deepseek, openai",
+	ProviderUnknown:           "未知 Provider: %s。可用: deepseek, kimi, glm, openai, yolo-auto",
 	ProviderSwitched:          "Provider 已从 %s 切换到 %s。",
 	ProviderNoProfiles:        "配置文件未设置 provider profiles。请先通过设置向导配置。",
 	ProviderNotConfigured:     "(未配置)",
@@ -558,7 +558,7 @@ var zhCN = Messages{
   --bypass-permissions    跳过权限检查(TUI 交互确认;one-shot/ACP 默认启用)
   --no-sandbox            显式关闭沙箱(one-shot/ACP 默认激活;Docker 等已隔离环境可关闭)
   --tool-timeout D         单个工具执行超时(Go Duration 格式,如 10m / 600s / 0s,0 禁用,默认 10m)
-  --provider NAME         LLM Provider(kimi / deepseek / openai),覆盖配置文件并查找 profiles 中匹配配置
+  --provider NAME         LLM Provider(deepseek / kimi / glm / openai / yolo-auto),覆盖配置文件并查找 profiles 中匹配配置
   --resume ID             恢复指定 session ID 的对话
   --continue              恢复最近一个 session 的对话
   --name NAME             为 session 命名(展示用,ls 显示;resume 仍用 ID)
@@ -569,7 +569,7 @@ var zhCN = Messages{
   --settings PATH            显式指定项目配置文件
 
   llm.api_key              API Key（必填；为空时回退 LLM_API_KEY 环境变量）
-  llm.provider              Provider（kimi / deepseek / openai，默认 deepseek）
+  llm.provider              Provider（deepseek / kimi / glm / openai / yolo-auto，默认 deepseek）
   llm.profiles              多 Provider 配置（以 provider 名为键；当前 provider 的 api_key / model / base_url 覆盖顶层同名字段）
   llm.model                 模型名称
   llm.base_url              API 端点
@@ -836,10 +836,10 @@ var enUS = Messages{
   Sessions are auto-saved on exit. Use waveloom --continue to resume.`,
 
 	// ── /provider ──
-	ProviderDescription:       "Show or switch LLM Provider (kimi / deepseek / openai)",
+	ProviderDescription:       "Show or switch LLM Provider (deepseek / kimi / glm / openai / yolo-auto)",
 	ProviderList:              "Current Provider: %s (Model: %s)",
 	ProviderAvailable:         "Available Providers:\n%s",
-	ProviderUnknown:           "Unknown Provider: %s. Available: kimi, deepseek, openai",
+	ProviderUnknown:           "Unknown Provider: %s. Available: deepseek, kimi, glm, openai, yolo-auto",
 	ProviderSwitched:          "Provider switched from %s to %s.",
 	ProviderNoProfiles:        "No provider profiles configured. Please run setup first.",
 	ProviderNotConfigured:     "(not configured)",
@@ -900,7 +900,7 @@ Options:
   --bypass-permissions    Skip permission checks (TUI prompts; one-shot/ACP enable by default)
   --no-sandbox            Explicitly disable sandbox (enabled by default in one-shot/ACP; for Docker-like isolated environments)
   --tool-timeout D         Single tool execution timeout (Go Duration format, e.g. 10m / 600s / 0s, 0 disables, default 10m)
-  --provider NAME         LLM Provider (kimi / deepseek / openai), overrides config file and looks up matching entry in profiles
+  --provider NAME         LLM Provider (deepseek / kimi / glm / openai / yolo-auto), overrides config file and looks up matching entry in profiles
   --resume ID             Resume session by ID
   --continue              Resume the most recent session
   --name NAME             Name the session (display only, shown by ls; resume still uses ID)
@@ -911,7 +911,7 @@ Configuration (settings.json):
   --settings PATH            Explicitly specify project config file
 
   llm.api_key              API key (required; falls back to LLM_API_KEY env var)
-  llm.provider              Provider (kimi / deepseek / openai, default: deepseek)
+  llm.provider              Provider (deepseek / kimi / glm / openai / yolo-auto, default: deepseek)
   llm.profiles              Per-provider configs keyed by provider name; active provider's api_key / model / base_url override top-level fields
   llm.model                 Model name
   llm.base_url              API endpoint

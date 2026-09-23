@@ -23,14 +23,14 @@ Minimal config:
 | Field | Description | Default |
 |-------|-------------|---------|
 | `api_key` | DeepSeek API Key, falls back to `LLM_API_KEY` env var when empty | — |
-| `provider` | `deepseek`, `kimi`, `glm`, or `openai` | `deepseek` |
+| `provider` | `deepseek`, `kimi`, `glm`, `openai`, or `yolo-auto` | `deepseek` |
 | `model` | Model name | `deepseek-flash` |
 | `base_url` | API endpoint | `https://api.deepseek.com` |
 | `timeout` | Request timeout | `600s` |
 | `extra_params` | Extra parameters (thinking, reasoning_effort, etc.) | Thinking mode on by default |
 | `retry` | Retry policy `{"max_retries":3, "initial_backoff":"1s", "max_backoff":"30s", "multiplier":2.0}` | Default retry policy |
 | `sub_model` | Sub-agent default model (explore subagent uses this model for code search and discovery, ~2x cheaper) | Auto-paired (pro → flash) |
-| `profiles` | Multi-provider configuration, keyed by provider name (e.g., `"kimi"`, `"glm"`, `"openai"`). Each profile may contain `api_key`, `model`, `sub_model`, `base_url`, `extra_params`. Used with `--provider` CLI flag. Provider-independent fields (`timeout`, `retry`, `headers`) are inherited from the top level | — |
+| `profiles` | Multi-provider configuration, keyed by provider name (e.g., `"kimi"`, `"glm"`, `"openai"`, `"yolo-auto"`). Each profile may contain `api_key`, `model`, `sub_model`, `base_url`, `extra_params`. Used with `--provider` CLI flag. Provider-independent fields (`timeout`, `retry`, `headers`) are inherited from the top level | — |
 
 ```json
 {
@@ -52,11 +52,19 @@ Minimal config:
         "model": "glm-5.3",
         "sub_model": "glm-5.3-flash",
         "base_url": "https://open.bigmodel.cn/api/coding/paas/v4"
+      },
+      "yolo-auto": {
+        "api_key": "yolo-your-key",
+        "model": "yolo",
+        "sub_model": "yolo-small",
+        "base_url": "https://yolo-auto.com/v1"
       }
     }
   }
 }
 ```
+
+Yolo-Auto (https://yolo-auto.com) is an OpenAI-compatible endpoint: its public model aliases are `yolo` and `yolo-small`, the available catalog is auto-discovered from `GET /v1/models` (the model picker reads that endpoint directly), and billing is flat-rate, so the local cost display counts 0. Create an API key at https://yolo-auto.com; keys look like `yolo_...`.
 
 ### permissions Configuration
 

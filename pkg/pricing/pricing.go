@@ -53,6 +53,9 @@ var cnyTable = map[string]Price{
 	"openai/gpt-4.1": {Prompt: 14.0, Output: 56.0},
 	"openai/":        {Prompt: 14.0, Output: 56.0},
 
+	// Yolo-Auto(固定套餐制,不按 token 计费;模型别名 yolo / yolo-small)
+	"yolo-auto/": {Prompt: 0, Output: 0},
+
 	// 全局通配
 	"*/*": {Prompt: 7.0, Output: 14.0},
 }
@@ -87,6 +90,9 @@ var usdTable = map[string]Price{
 	"openai/gpt-4o":  {Prompt: 2.50, Output: 10.00},
 	"openai/gpt-4.1": {Prompt: 2.00, Output: 8.00},
 	"openai/":        {Prompt: 2.00, Output: 8.00},
+
+	// Yolo-Auto(flat-rate plans, no per-token billing; aliases yolo / yolo-small)
+	"yolo-auto/": {Prompt: 0, Output: 0},
 
 	// 全局通配
 	"*/*": {Prompt: 1.00, Output: 2.00},
