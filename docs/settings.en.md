@@ -354,3 +354,36 @@ when network is on).
 | `--version` | Show version | — |
 
 Priority: **CLI flags > `.waveloom/settings.json` (project) > `~/.waveloom/settings.json` (global)**
+
+## Tsubasa
+
+Use a named profile with the existing OpenAI-compatible adapter. Save this in a separate settings file and select `tsubasa-fast` or `tsubasa-pro`:
+
+```json
+{
+  "llm": {
+    "provider": "tsubasa",
+    "profiles": {
+      "tsubasa": {
+        "model": "tsubasa-fast",
+        "base_url": "https://api.tsubasa.sh/v1",
+        "extra_params": { "max_tokens": 4096 }
+      }
+    }
+  },
+  "compaction": { "context_limit_tokens": 32768 }
+}
+```
+
+Launch it with your dedicated key passed only to this process:
+
+```sh
+LLM_API_KEY="$TSUBASA_API_KEY" waveloom --settings /path/to/tsubasa.json
+```
+
+Prompts and the key are sent to `api.tsubasa.sh`. Both aliases have a 32,768-token
+context; the example reserves 4,096 tokens for output. The output ceilings are
+8,192 for Fast and 16,384 for Pro. Keep instructions, tool definitions and history
+within the remaining context. Do not add reasoning or image settings without
+checking the endpoint's supported capabilities. Existing provider credentials in
+merged settings take precedence over `LLM_API_KEY`; remove `api_key` from every merged global/project LLM block and the selected profile before choosing the environment variable. [Tsubasa API documentation](https://tsubasa.sh/docs/api).

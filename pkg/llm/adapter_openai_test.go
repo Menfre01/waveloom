@@ -897,3 +897,51 @@ func TestOpenAIBuildRequest_WithImages_ContentBlocks(t *testing.T) {
 }
 
 // httpStatusError 用于测试 ClassifyError，在 client.go 中定义。
+
+func TestRegression_OpenAIWireOmitsSessionMetadata(t *testing.T) {
+	messages := []Message{
+		{ID: "internal-user", Role: RoleUser, Content: "Hello"},
+		{ID: "internal-assistant", Role: RoleAssistant, Model: "old-model", FinishReason: "tool_calls", Usage: &UsageInfo{}, ToolCalls: []ToolCall{{ID: "call_1", Name: "lookup", Arguments: `{}`}}},
+		{ID: "internal-tool", Role: RoleTool, Content: "", ToolCallID: "call_1", Name: "lookup"},
+		{Role: RoleUser, Content: "Look", Images: []ImagePart{{MIME: "image/png", B64: "aGVsbG8="}}},
+	}
+	adapter := newOpenAIAdapter(ClientConfig{Model: "custom-model"})
+	for _, stream := range []bool{false, true} {
+		body := adapter.buildRequestBody(context.Background(), messages, nil, stream)
+		encoded, err := json.Marshal(body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var decoded struct {
+			Messages []map[string]any `json:"messages"`
+		}
+		if err := json.Unmarshal(encoded, &decoded); err != nil {
+			t.Fatal(err)
+		}
+		for _, message := range decoded.Messages {
+			for _, field := range []string{"id", "model", "stop_reason", "usage", "images", "web_search_calls", "reasoning_content"} {
+				if _, exists := message[field]; exists {
+					t.Errorf("stream=%v: unexpected wire field %s", stream, field)
+				}
+			}
+		}
+		if decoded.Messages[2]["content"] != "" || decoded.Messages[2]["tool_call_id"] != "call_1" || decoded.Messages[2]["name"] != "lookup" {
+			t.Fatalf("tool result lost: %v", decoded.Messages[2])
+		}
+		if len(decoded.Messages[1]["tool_calls"].([]any)) != 1 {
+			t.Fatal("tool call lost")
+		}
+		if len(decoded.Messages[3]["content"].([]any)) != 2 {
+			t.Fatal("image content lost")
+		}
+	}
+	if messages[0].ID != "internal-user" || messages[1].Model != "old-model" {
+		t.Fatal("session messages mutated")
+	}
+	// Existing compatible backends may require nonempty reasoning history.
+	body := adapter.buildRequestBody(context.Background(), []Message{{Role: RoleAssistant, Content: "Done", ReasoningContent: "Thought"}}, nil, false)
+	encoded, _ := json.Marshal(body)
+	if !strings.Contains(string(encoded), `"reasoning_content":"Thought"`) {
+		t.Fatal("nonempty reasoning history lost")
+	}
+}

@@ -62,7 +62,7 @@ func (a *openAIAdapter) buildRequestBody(ctx context.Context, messages []Message
 	} else {
 		body["model"] = a.model
 	}
-	body["messages"] = WireMessages(messages)
+	body["messages"] = openAIWireMessages(messages)
 	body["stream"] = stream
 
 	if len(tools) > 0 {
@@ -85,6 +85,31 @@ func (a *openAIAdapter) buildRequestBody(ctx context.Context, messages []Message
 	}
 
 	return body
+}
+
+// openAIWireMessages 只发送协议字段，保留会话中的 checkpoint 和用量元数据。
+func openAIWireMessages(messages []Message) []map[string]any {
+	out := make([]map[string]any, 0, len(messages))
+	for _, message := range messages {
+		wire := map[string]any{"role": message.Role, "content": message.Content}
+		if len(message.Images) > 0 {
+			wire["content"] = wireImageBlocks(message.Content, message.Images)
+		}
+		if len(message.ToolCalls) > 0 {
+			wire["tool_calls"] = message.ToolCalls
+		}
+		if message.ToolCallID != "" {
+			wire["tool_call_id"] = message.ToolCallID
+		}
+		if message.Name != "" {
+			wire["name"] = message.Name
+		}
+		if message.ReasoningContent != "" {
+			wire["reasoning_content"] = message.ReasoningContent
+		}
+		out = append(out, wire)
+	}
+	return out
 }
 
 func (a *openAIAdapter) ParseResponse(body []byte) (*Response, error) {

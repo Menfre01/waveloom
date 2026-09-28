@@ -348,3 +348,34 @@ macOS 额外建议追加:`~/Library/Keychains`、`~/Library/HTTPStorages`、
 | `--version` | 显示版本号 | — |
 
 配置优先级：**CLI 参数 > `.waveloom/settings.json`（项目） > `~/.waveloom/settings.json`（全局）**
+
+## Tsubasa
+
+通过现有 OpenAI 兼容 adapter 使用命名 profile。将下面配置保存为独立文件，模型可选择 `tsubasa-fast` 或 `tsubasa-pro`：
+
+```json
+{
+  "llm": {
+    "provider": "tsubasa",
+    "profiles": {
+      "tsubasa": {
+        "model": "tsubasa-fast",
+        "base_url": "https://api.tsubasa.sh/v1",
+        "extra_params": { "max_tokens": 4096 }
+      }
+    }
+  },
+  "compaction": { "context_limit_tokens": 32768 }
+}
+```
+
+仅向当前进程传入专用密钥：
+
+```sh
+LLM_API_KEY="$TSUBASA_API_KEY" waveloom --settings /path/to/tsubasa.json
+```
+
+提示词和密钥会发送到 `api.tsubasa.sh`。两个模型的上下文窗口均为 32,768 token；
+示例为输出预留 4,096 token。Fast 的输出上限是 8,192，Pro 是 16,384。
+指令、工具定义和历史记录必须在剩余上下文内。添加推理或图片设置前，请确认端点支持。
+合并配置中已保存的 provider 密钥优先于 `LLM_API_KEY`；使用环境变量时，请移除所有合并的全局/项目 LLM 配置及所选 profile 中已保存的 `api_key`。[Tsubasa API 文档](https://tsubasa.sh/docs/api)。
