@@ -47,10 +47,12 @@ eval/swebench/
 .claude/
 
 # 规格书(内部设计文档,不对外公开)
-specs/
+# 仅根目录 specs/:无前导斜杠的 `specs/` 会匹配任意层级,连带吃掉
+# openspec/specs/ 与 openspec/changes/*/specs/(OpenSpec 的 delta spec)
+/specs/
 
-# OpenSpec 工作目录(本地变更提案,不入仓库)
-openspec/
+# OpenSpec 需求管理目录:specs/ 是活需求文档、changes/archive/ 是需求变更历史,
+# 两者都是仓库资产,需纳入版本控制(2026-11 起作为需求管理引擎)
 
 # 视频脚本(不纳入发布版本)
 docs/video-script.md

@@ -190,9 +190,32 @@ Release notes 以用户可感知的功能变化为描述单位，分类汇总：
 
 ## Agent skills
 
-### Issue tracker
+### OpenSpec — 需求管理引擎
+
+内部需求一律走 OpenSpec,不跳过提案直接写代码:**propose → apply → archive**。
+CLI 已安装(`openspec` v1.13.1),项目根已有 `openspec/`(schema: `spec-driven`)。
+
+| 阶段 | 入口 | 产出 |
+|------|------|------|
+| 提案 | `/openspec-propose` | `openspec/changes/<name>/`:proposal.md(what & why)、`specs/<capability>/spec.md`(delta,非主干 spec)、design.md(how)、tasks.md(实施步骤) |
+| 实施 | `/openspec-apply-change` | 按 tasks.md 落地代码,逐项勾选任务;Wave 拆分在此阶段执行(见「开发流程」) |
+| 归档 | `/openspec-archive-change` | 变更移入 `openspec/changes/archive/`,delta 合入 `openspec/specs/` 成为新的主干 spec |
+
+辅助入口:`/openspec-explore`(先摸清现状再提案)、`/openspec-update-change`(提案落地中调整)、`/openspec-sync-specs`(手动同步主干 spec)。
+
+约束:
+
+- **提案与实施分离**:propose 只产出规划 artifact,不在同一响应里改代码;实施需用户显式发起 apply。
+- **先确认根**:写任何文件前跑 `openspec list --json` 读 `root`;`"root": null` 表示未初始化,不要用命令副作用创建 `openspec/`。
+- **归档前置**:`openspec validate` 通过才归档;归档是需求资产的冻结,不是清理临时目录。
+- **纳入版本控制**:`openspec/specs/` 是活需求文档,`openspec/changes/archive/` 是变更历史,两者随仓库 review——不再 gitignore。
+- **需求边界**:内部需求、设计、任务拆解走 OpenSpec;GitHub issues 只承载外部反馈、bug 报告与社区讨论。
+
+### Issue tracker — 外部反馈
 
 Issues and specs live as GitHub issues, operated via the `gh` CLI. See `docs/agents/issue-tracker.md`.
+
+内部需求的来源与状态以 OpenSpec 为准(见上节);此处的 issue 只用于接收外部反馈、bug 报告与社区讨论,不作为内部需求 backlog。
 
 ### Triage labels
 

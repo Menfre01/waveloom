@@ -1,0 +1,57 @@
+schema: spec-driven
+
+# Project context — 创建 artifact 时注入给 AI
+context: |
+  Waveloom:终端编码 agent,Go 1.25+ 实现。
+
+  技术栈:
+  - LLM:DeepSeek(默认 deepseek-flash)/ Kimi / OpenAI,通过 llm.Client 接口 + adapter
+  - TUI:Bubble Tea v2 + Glamour + Lipgloss
+  - LSP:gopls / rust-analyzer / typescript-language-server / clangd,edit/write 后自动诊断
+  - ACP v1 Agent 端(JSON-RPC over stdio)
+
+  硬性约束:
+  - 构建/安装/运行一律用项目构建系统:make build / make install / make run;
+    禁止直接调用 go build / go install
+  - 跨平台:Windows / Linux / Darwin 三平台兼容。路径拼接用 filepath.Join,
+    遍历用 filepath.WalkDir / os.ReadDir,禁止依赖外部命令(find / ls / dir)
+  - TDD:先写测试,覆盖率 ≥97%(排除 OS/文件系统不可模拟路径)
+  - 每个 bug 修复必须附回归防护:可测的写 TestRegression_<简述>,
+    不可测的在修复点上方加 `// REGRESSION: <根因>。无法单测:<理由>`
+  - 绘图优先 Mermaid
+  - Conventional Commits(`<type>(<scope>): <subject>`,subject 中文祈使句 ≤72 字符)
+  - 禁止自动提交;必须等用户明确指令后才 git add / commit / push
+
+  文档:specs/ 是内部组件规格书(不纳入公开仓库),docs/ 是中英双语公开文档。
+
+# Per-artifact rules
+rules:
+  proposal:
+    - 用中文撰写
+    - 必须含 "Non-goals" 一节,明确本提案不解决什么
+    - 用户可感知的变化要单独说明;内部重构与不可见修复分开列
+    - 断言问题存在时必须给证据:文件:行号,或实测数据(会话日志 / 基准)
+    - 涉及官方 API 行为时,引用官方文档原文与日期,不用印象代替核实
+  design:
+    - 架构与数据流用 Mermaid 表达
+    - 列出不变量、边界条件与失败时的降级路径
+    - 跨平台影响单独成节
+  tasks:
+    - 每个 task 有单一可验证产出,标注涉及的文件路径
+    - 按 Wave 拆分:组件内高内聚、组件间低耦合;同一 Wave 内不修改同一文件
+    - 验证命令写进 task(如 `go test ./pkg/<name>/ -run TestXxx`)
+
+# Per-operation guidance
+operations:
+  apply:
+    guidance:
+      - 改动后跑对应包的测试;涉及 3+ 文件或 50+ 行时做代码审查(逻辑正确性 /
+        跨平台兼容 / 边界条件 / 安全风险)
+      - 禁止直接 go build,统一 make build
+      - 发现提案外的阻塞问题时,先记入 tasks.md 再决定是否扩大范围,不要静默扩大
+      - 修改 pkg/ 或 cmd/ 后运行中的 TUI 不会热重载,需重启验证
+  archive:
+    guidance:
+      - 归档前 openspec validate 必须通过
+      - 确认 tasks.md 全部勾选;有遗留项就说明原因,不留悬空任务
+      - 归档后同步 CHANGELOG.md 与 CHANGELOG.en.md(按用户可感知原则判定是否列入)
