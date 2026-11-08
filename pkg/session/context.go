@@ -45,6 +45,9 @@ type Stats struct {
 type ContextManager struct {
 	mu          sync.RWMutex
 	messages    []llm.Message
+	// systemPrompt 是构造时注入的 system prompt 原文;LoadFromFile 用它覆盖
+	// 历史会话里保存的旧版本(见该函数内的 REGRESSION 注释)。
+	systemPrompt string
 	stats       Stats
 	sessionPath string // session 落盘路径(空表示不落盘)
 	sessionName string // 展示用 session 名称(--name 设置,仅展示不参与恢复)
@@ -93,7 +96,8 @@ type compactorState interface {
 // systemPrompt 非空时作为 messages[0] 注入，确保它始终是公共前缀的起点。
 func New(systemPrompt string) *ContextManager {
 	cm := &ContextManager{
-		compactor: compaction.NewCompactor(compaction.DefaultCompactionConfig(), nil),
+		compactor:    compaction.NewCompactor(compaction.DefaultCompactionConfig(), nil),
+		systemPrompt: systemPrompt,
 	}
 	if systemPrompt != "" {
 		cm.messages = []llm.Message{
@@ -107,7 +111,8 @@ func New(systemPrompt string) *ContextManager {
 // 推荐用法：New(systemPrompt) + cm.Compactor() 手动配置，或直接使用 NewCompactor。
 func NewWithCompaction(systemPrompt string, config compaction.CompactionConfig, summarizer compaction.Summarizer) *ContextManager {
 	cm := &ContextManager{
-		compactor: compaction.NewCompactor(config, summarizer),
+		compactor:    compaction.NewCompactor(config, summarizer),
+		systemPrompt: systemPrompt,
 	}
 	if systemPrompt != "" {
 		cm.messages = []llm.Message{
@@ -591,6 +596,15 @@ func (cm *ContextManager) LoadFromFile(path string) bool {
 	// 恢复 FileHistory 状态
 	if fileHistory != nil {
 		cm.fhData = fileHistory
+	}
+
+	// 用本次构建的 system prompt 覆盖历史中保存的旧版本。
+	// REGRESSION: LoadFromFile 曾整体采用磁盘消息,而 .waveloom/sessions/*.json 的
+	// messages[0] 保存的就是当时的整份 system prompt —— 提示词升级后 --resume /
+	// --continue 会沿用旧文本,新增与修复的规则一条都不生效(升级形同虚设)。
+	// 只替换已有 system 消息的内容,不插入:缺失 system 消息的历史保持原样。
+	if cm.systemPrompt != "" && len(messages) > 0 && messages[0].Role == llm.RoleSystem {
+		messages[0].Content = cm.systemPrompt
 	}
 
 	// 反序列化后完整性校验
