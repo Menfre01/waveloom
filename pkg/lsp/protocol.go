@@ -127,6 +127,8 @@ type TextDocumentSyncOptions struct {
 	Change    int  `json:"change"` // 1 = Full
 }
 
+// UnmarshalJSON 兼容 textDocumentSync 的两种 JSON 形态:
+// 数字(TextDocumentSyncKind)或对象(TextDocumentSyncOptions)。
 func (t *TextDocumentSyncKindOrOptions) UnmarshalJSON(data []byte) error {
 	// 尝试解析为数字 (TextDocumentSyncKind)
 	var kind int
@@ -159,8 +161,8 @@ type DidOpenTextDocumentParams struct {
 
 // DidChangeTextDocumentParams 是 textDocument/didChange 通知的参数。
 type DidChangeTextDocumentParams struct {
-	TextDocument   VersionedTextDocumentIdentifier   `json:"textDocument"`
-	ContentChanges []TextDocumentContentChangeEvent   `json:"contentChanges"`
+	TextDocument   VersionedTextDocumentIdentifier  `json:"textDocument"`
+	ContentChanges []TextDocumentContentChangeEvent `json:"contentChanges"`
 }
 
 // DidCloseTextDocumentParams 是 textDocument/didClose 通知的参数。

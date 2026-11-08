@@ -61,7 +61,6 @@ func (r *Runner) addRuntimeWarn(msg string) {
 	r.runtimeWarns = append(r.runtimeWarns, msg)
 }
 
-
 // Validate 检查所有 hook 命令是否可达，返回警告信息列表。
 // 启动时调用，用户可感知 hook 配置错误。
 func (r *Runner) Validate() []string {
@@ -89,9 +88,11 @@ func (r *Runner) Validate() []string {
 	}
 	return warnings
 }
+
 // ── 公开方法 ──
+
 // RunPreToolUse 执行 PreToolUse hooks。
-// toolUseID 来自 LLM 返回的 ToolCall.ID，传给 hook 脚本。
+// toolUseID 来自 LLM 返回的 ToolCall.ID,传给 hook 脚本。
 func (r *Runner) RunPreToolUse(ctx context.Context, toolName, toolUseID string, toolInput json.RawMessage) (*HookResult, error) {
 	return r.runHooks(ctx, EventPreToolUse, toolName, toolUseID, toolInput, "")
 }
@@ -167,6 +168,7 @@ func (r *Runner) RunStop(ctx context.Context, message string) (blocked bool) {
 	}
 	return blocked
 }
+
 // ── 内部逻辑 ──
 func (r *Runner) runHooks(ctx context.Context, event EventType, toolName, toolUseID string, toolInput json.RawMessage, toolResult string, exitCode ...int) (*HookResult, error) {
 	configs := r.hooks[event]

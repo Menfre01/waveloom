@@ -27,6 +27,7 @@ const (
 	stateClosed                      // 已关闭，不再恢复
 )
 
+// String 返回状态的字符串表示,用于日志与错误信息。
 func (s serverState) String() string {
 	switch s {
 	case stateNew:
