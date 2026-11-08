@@ -12,6 +12,7 @@ import (
 	"github.com/Menfre01/waveloom/pkg/llm"
 	"github.com/Menfre01/waveloom/pkg/logging"
 	"github.com/Menfre01/waveloom/pkg/permission"
+	"github.com/Menfre01/waveloom/pkg/prompt"
 	"github.com/Menfre01/waveloom/pkg/sandbox"
 	"github.com/Menfre01/waveloom/pkg/skill"
 	"github.com/Menfre01/waveloom/pkg/subagent"
@@ -160,6 +161,13 @@ Options:
 
 	// 构建 system prompt
 	systemPrompt := buildSystemPrompt(cwd, DetectLocale())
+
+	// 尾部规则:决策边界 / 交付形态 / 动作完整性。
+	// ACP 链在此之后不再追加任何 system prompt 内容,故此处即绝对末尾。
+	// REGRESSION: 同 main.go —— 这些规则曾只写在 default.md 中部,实测 MID 区遵从 0/12。
+	if prompt.TailRules != "" {
+		systemPrompt += "\n\n" + prompt.TailRules
+	}
 
 	// 环境探测 + 注入
 	// 注意:ACP 模式下不做完整的环境探测以避免阻塞 stdio 通道

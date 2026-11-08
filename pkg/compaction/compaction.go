@@ -453,11 +453,15 @@ func truncateByStrategy(content string, s truncationStrategy) (string, bool) {
 
 		if s.tailLines > 0 {
 			tail := strings.Join(lines[len(lines)-s.tailLines:], "\n")
-			result := fmt.Sprintf("%s\n\n[... %d lines omitted — full result already processed by Agent]\n\n%s", head, omitted, tail)
+			// REGRESSION: 原文案声称 "full result already processed by Agent",暗示模型
+			// 已知晓被省略的内容;实际这些行已从上下文永久丢弃,模型据此以为"看过"
+			// 而跳过重读,基于不存在的记忆继续推理。
+			result := fmt.Sprintf("%s\n\n[... %d lines omitted — removed from context; re-run or re-read if you need them]\n\n%s", head, omitted, tail)
 			return result, true
 		}
 
-		result := fmt.Sprintf("%s\n\n[... %d lines omitted]\n", head, omitted)
+		// 同上:不暗示内容已被处理,给出恢复路径。
+		result := fmt.Sprintf("%s\n\n[... %d lines omitted — removed from context; re-run or re-read if you need them]\n", head, omitted)
 		return result, true
 	}
 
@@ -467,8 +471,9 @@ func truncateByStrategy(content string, s truncationStrategy) (string, bool) {
 		if idx := strings.LastIndex(content[:cutPoint], "\n"); idx > cutPoint/2 {
 			cutPoint = idx
 		}
+		// REGRESSION: 同行数截断 —— 不得声称内容已被处理,实际已丢弃。
 		content = content[:cutPoint] + fmt.Sprintf(
-			"\n[... content truncated: %d → %d chars — full result already processed by Agent]",
+			"\n[... content truncated: %d → %d chars — removed from context; re-run or re-read if you need it]",
 			len(content), cutPoint,
 		)
 		return content, true

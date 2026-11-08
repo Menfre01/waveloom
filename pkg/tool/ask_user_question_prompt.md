@@ -4,11 +4,12 @@ Use this tool when you need to:
 
 1. Gather user preferences or requirements
 2. Clarify ambiguous instructions
-3. Get decisions on implementation choices as you work
-4. Offer choices to the user about what direction to take
+3. Confirm an irreversible action, a step outside the project boundary, or a decision with material cost
+4. Confirm a scope or direction change that contradicts what the user already asked for
 
 Usage discipline (keep questions rare and high-value):
 - Only ask when you cannot reasonably infer the answer from context, files, or web search — each interruption costs flow.
+- Implementation choices inside the project are yours to make — naming, file layout, which existing helper to reuse, how to structure the change. Do not ask.
 - For multi-choice questions, always mark the option you recommend with "(Recommended)".
 
 Usage notes:

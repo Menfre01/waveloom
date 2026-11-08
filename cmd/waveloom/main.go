@@ -24,6 +24,7 @@ import (
 	"github.com/Menfre01/waveloom/pkg/mcp"
 	"github.com/Menfre01/waveloom/pkg/memory"
 	"github.com/Menfre01/waveloom/pkg/permission"
+	"github.com/Menfre01/waveloom/pkg/prompt"
 	"github.com/Menfre01/waveloom/pkg/reference"
 	"github.com/Menfre01/waveloom/pkg/sandbox"
 	"github.com/Menfre01/waveloom/pkg/shellutil"
@@ -280,11 +281,21 @@ waitLoop:
 		systemPrompt += skillListing
 	}
 
-	// 注入工具使用指南：ToolWithPrompt.Prompt() → C1 system prompt。
+	// 注入工具使用指南:ToolWithPrompt.Prompt() → C1 system prompt。
 	// 按需组装 — 仅已注册且实现了 ToolWithPrompt 的工具会贡献内容。
-	// 放在 system prompt 最后（TAIL 末尾），Coding Scenarios / Agent Tool 等关键决策内容在前。
+	// 工具指南靠近尾部但**不是最后** —— 尾部规则(TailRules)必须追加在其后:
+	// experiments/attention_position 实测竞争条件下 MID 位置指令遵从 0/12、
+	// END 83%,行为约束放在工具指南之前等于放进遵从率接近零的区域。
 	if toolPrompts := registry.FormatToolPrompts(); toolPrompts != "" {
 		systemPrompt += "\n\n" + toolPrompts
+	}
+
+	// 尾部规则:决策边界 / 交付形态 / 动作完整性。
+	// REGRESSION: 这些规则曾只写在 default.md 中部(Coding Scenarios、Quality Gates),
+	// 实测落在 MID 区被完全忽略,表现为"知道怎么改却只给建议、把实现选择抛回用户"。
+	// 必须保持在组装链绝对末尾 —— 其后不得再追加任何内容。
+	if prompt.TailRules != "" {
+		systemPrompt += "\n\n" + prompt.TailRules
 	}
 
 	// 合并工具超时:优先级 CLI > project settings.json > global settings.json > 默认 5m
