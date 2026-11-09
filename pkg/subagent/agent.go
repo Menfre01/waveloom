@@ -728,12 +728,24 @@ func (t *forkUnavailableTool) Execute(ctx context.Context, raw json.RawMessage) 
 }
 
 func (a *AgentTool) allTools() []tool.Tool {
+	// 官方搜索/抓取后端凭据:与父会话共用同一份设置,provider 切换即时生效。
+	officialCreds := tool.OfficialCredentials(func() (string, string, string) {
+		if a.Settings == nil {
+			return "", "", ""
+		}
+		cfg, err := a.Settings.LoadLLM()
+		if err != nil || cfg == nil {
+			return "", "", ""
+		}
+		return cfg.APIKey, cfg.Provider, cfg.BaseURL
+	})
+
 	return []tool.Tool{
 		tool.Wrap(&tool.ReadFile{}),
 		tool.Wrap(&tool.EditFile{}),
 		tool.Wrap(&tool.WriteFile{}),
-		tool.Wrap(&tool.WebFetch{}),
-		tool.Wrap(&tool.WebSearch{}),
+		tool.Wrap((&tool.WebFetch{}).WithCredentials(officialCreds)),
+		tool.Wrap((&tool.WebSearch{}).WithCredentials(officialCreds)),
 		tool.Wrap(&tool.Shell{AllowBg: false, SandboxMgr: a.SandboxMgr}), // bash_subagent 同样进沙箱
 	}
 }

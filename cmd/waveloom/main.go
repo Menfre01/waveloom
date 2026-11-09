@@ -412,8 +412,17 @@ func registerBuiltinTools(r tool.Registry, skillLoader *skill.Loader, llmClient 
 	r.Register(tool.Wrap(&tool.WriteFile{}))
 	shellTool := &tool.Shell{AllowBg: true, SandboxMgr: sandboxMgr} // "bash"
 	r.Register(tool.Wrap(shellTool))
-	r.Register(tool.Wrap(&tool.WebFetch{}))
-	r.Register(tool.Wrap(&tool.WebSearch{}))
+	// 官方搜索/抓取后端凭据:与 LLM 同域同 key,每次调用现读设置,
+	// provider 运行时切换即时生效(design D1)。非 deepseek 或无 key 时不启用。
+	officialCreds := tool.OfficialCredentials(func() (string, string, string) {
+		cfg, err := settings.LoadLLM()
+		if err != nil || cfg == nil {
+			return "", "", ""
+		}
+		return cfg.APIKey, cfg.Provider, cfg.BaseURL
+	})
+	r.Register(tool.Wrap((&tool.WebFetch{}).WithCredentials(officialCreds)))
+	r.Register(tool.Wrap((&tool.WebSearch{}).WithCredentials(officialCreds)))
 
 	// Skill 工具
 	if skillLoader != nil {

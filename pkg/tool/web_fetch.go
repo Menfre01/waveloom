@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html"
 	"io"
@@ -13,6 +14,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 //go:embed web_fetch_prompt.md
@@ -27,6 +29,15 @@ const (
 	MaxWebFetchMaxSize      = 5 << 20  // 5MB
 	DefaultWebFetchTimeoutMs = 30000   // 30s
 	MaxWebFetchTimeoutMs    = 120000   // 120s
+)
+
+const (
+	// officialFetchPath 是官方抓取端点路径(相对 base URL)。
+	officialFetchPath = "/v1/tools/fetch"
+	// officialFetchHostKey 是 ThrottleStore 的分片键。
+	// 官方 Search 与 Fetch 的 QPS 限额独立(100 / 25),必须分开分片;
+	// throttleHost 会在第一个冒号处截断,故此处不能用 host:port 形态。
+	officialFetchHostKey = "api.deepseek.com#fetch"
 )
 
 // webFetchRetryBackoff 限流退避的默认等待时间(无 Retry-After 头时)。
@@ -84,8 +95,24 @@ type WebFetchParams struct {
 }
 
 type WebFetch struct{
-	httpClient    *http.Client // 可注入的 HTTP 客户端；nil 使用默认
-	skipHostCheck bool         // 跳过主机 IP 校验（仅测试用）
+	httpClient    *http.Client // 可注入的 HTTP 客户端;nil 使用默认
+	skipHostCheck bool         // 跳过主机 IP 校验(仅测试用)
+
+	officialBaseURL string // 测试用官方端点覆盖;空则用凭据返回的 base URL
+
+	// credentials 为 nil 时不启用官方后端,行为与改动前一致。
+	credentials SearchCredentials
+
+	// officialSuspendedUntil 是官方抓取后端的禁用截止时间(UnixNano,0 = 未禁用)。
+	// WebFetch 是 ConcurrentSafe 的,必须原子访问。
+	officialSuspendedUntil atomic.Int64
+}
+
+// WithCredentials 注入官方抓取后端凭据;nil 表示不启用官方后端。
+// 返回自身以便链式构造:tool.Wrap((&tool.WebFetch{}).WithCredentials(creds))。
+func (t *WebFetch) WithCredentials(creds SearchCredentials) *WebFetch {
+	t.credentials = creds
+	return t
 }
 
 func (t *WebFetch) Name() string         { return "web_fetch" }
@@ -143,6 +170,129 @@ var webFetchClient = &http.Client{
 	},
 }
 
+// officialFetchResponse 是官方抓取端点的响应结构。
+type officialFetchResponse struct {
+	Title   string `json:"title"`
+	Content string `json:"content"`
+}
+
+// officialCredentials 返回官方抓取后端凭据;未配置时 ok=false。
+func (t *WebFetch) officialCredentials() (apiKey, baseURL string, ok bool) {
+	if t.credentials == nil {
+		return "", "", false
+	}
+	apiKey, baseURL, ok = t.credentials()
+	if !ok || apiKey == "" {
+		return "", "", false
+	}
+	if baseURL == "" {
+		baseURL = officialDefaultBaseURL
+	}
+	if t.officialBaseURL != "" {
+		baseURL = t.officialBaseURL
+	}
+	return apiKey, baseURL, true
+}
+
+// officialCoolingDown 判断官方抓取后端是否处于 402 冷却窗口内。
+func (t *WebFetch) officialCoolingDown() bool {
+	until := t.officialSuspendedUntil.Load()
+	return until != 0 && time.Now().UnixNano() < until
+}
+
+// fetchOfficial 调用官方抓取端点,返回标题与 Markdown 正文。
+// 内容已是 Markdown,调用方无需再做 HTML 清洗。
+func (t *WebFetch) fetchOfficial(ctx context.Context, baseURL, apiKey, targetURL string) (title, content string, err error) {
+	payload, mErr := json.Marshal(map[string]any{"url": targetURL})
+	if mErr != nil {
+		return "", "", &officialSearchError{detail: "encode request: " + mErr.Error()}
+	}
+
+	endpoint := normalizeOfficialBaseURL(baseURL) + officialFetchPath
+	req, rErr := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(payload))
+	if rErr != nil {
+		return "", "", &officialSearchError{detail: "build request: " + rErr.Error()}
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+apiKey)
+
+	resp, dErr := t.client().Do(req)
+	if dErr != nil {
+		return "", "", &officialSearchError{detail: dErr.Error()}
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		detail, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		return "", "", &officialSearchError{status: resp.StatusCode, detail: strings.TrimSpace(string(detail))}
+	}
+
+	var parsed officialFetchResponse
+	if err := json.NewDecoder(io.LimitReader(resp.Body, officialMaxResponseBytes)).Decode(&parsed); err != nil {
+		return "", "", &officialSearchError{status: resp.StatusCode, detail: "decode response: " + err.Error()}
+	}
+	return parsed.Title, parsed.Content, nil
+}
+
+// handleOfficialFetchFailure 按 design D3 处理官方抓取失败,返回降级说明。
+func (t *WebFetch) handleOfficialFetchFailure(throttle *ThrottleStore, err error) string {
+	var oe *officialSearchError
+	if !errors.As(err, &oe) {
+		return "official fetch backend failed, fell back to local: " + err.Error()
+	}
+
+	switch {
+	case oe.status == http.StatusPaymentRequired:
+		// 402 充值前不会自愈,但用户可能刚充值:用冷却窗口而非永久禁用。
+		t.officialSuspendedUntil.Store(time.Now().Add(officialSuspendCooldown).UnixNano())
+		return fmt.Sprintf("official fetch backend out of balance (HTTP 402); paused for %s, local fetch used",
+			officialSuspendCooldown)
+	case oe.status == http.StatusTooManyRequests:
+		retryAt, consec := throttle.ReportRateLimited(officialFetchHostKey, time.Time{}, time.Now())
+		return fmt.Sprintf("official fetch backend rate limited (HTTP 429, %d consecutive failures, earliest retry %s UTC); local fetch used",
+			consec, retryAt.UTC().Format(time.RFC3339))
+	case oe.status >= http.StatusInternalServerError:
+		return fmt.Sprintf("official fetch backend error (HTTP %d); local fetch used", oe.status)
+	case oe.status != 0:
+		return fmt.Sprintf("official fetch backend returned HTTP %d; local fetch used", oe.status)
+	default:
+		return "official fetch backend unreachable; local fetch used: " + oe.detail
+	}
+}
+
+// formatOfficialFetch 渲染官方抓取结果,沿用本地后端的体积上限与截断告知。
+func (t *WebFetch) formatOfficialFetch(targetURL, title, content string, maxSize int, duration time.Duration, note string) *ToolResult {
+	truncated := false
+	if len(content) > maxSize {
+		content = content[:maxSize]
+		truncated = true
+	}
+
+	var buf bytes.Buffer
+	fmt.Fprintf(&buf, "Fetched %s  (DeepSeek Fetch)  %s", targetURL, duration.Round(time.Millisecond))
+	if note != "" {
+		fmt.Fprintf(&buf, "\n[fallback] %s", note)
+	}
+	buf.WriteString("\nContent-Type: text/markdown")
+	fmt.Fprintf(&buf, "\nSize: %s", formatSize(int64(len(content))))
+	if truncated {
+		fmt.Fprintf(&buf, " [truncated from > %s]", formatSize(int64(maxSize)))
+	}
+	if title != "" {
+		fmt.Fprintf(&buf, "\nTitle: %s", title)
+	}
+	buf.WriteString("\n\n")
+	buf.WriteString(content)
+
+	return &ToolResult{
+		Content: buf.String(),
+		Meta: ToolMeta{
+			Duration:  duration,
+			ByteCount: len(content),
+		},
+	}
+}
+
 func (t *WebFetch) Execute(ctx context.Context, p WebFetchParams) (*ToolResult, error) {
 	// ── Step 0: 父 context 已取消 → 提前返回 ──
 	if err := ctx.Err(); err != nil {
@@ -194,6 +344,46 @@ func (t *WebFetch) Execute(ctx context.Context, p WebFetchParams) (*ToolResult, 
 	// 会话级限流检查:退避/封锁期内直接短路,不发网络请求。
 	throttle := ThrottleStoreFromContext(ctx)
 	host := parsedURL.Host
+
+	// 官方抓取端点优先(design D2):URL 校验已在 Step 1 完成,两个后端
+	// 共享同一道前置校验(design D6)。失败按 D3 降级本地,不使调用失败。
+	var officialNote string
+	if apiKey, baseURL, ok := t.officialCredentials(); ok && !t.officialCoolingDown() {
+		if allowed, retryAt, _, consec := throttle.Reserve(officialFetchHostKey, time.Now()); !allowed {
+			officialNote = fmt.Sprintf("official fetch backend in backoff (%d consecutive failures, earliest retry %s UTC); local fetch used",
+				consec, retryAt.UTC().Format(time.RFC3339))
+		} else {
+			// 官方尝试使用独立预算(固定取一半),保证任何 timeout 下
+			// 本地降级接手时 ctx 仍有剩余,不会被官方超时拖死。
+			fetchCtx, fetchCancel := context.WithTimeout(ctx, timeout/2)
+			title, content, officialErr := t.fetchOfficial(fetchCtx, baseURL, apiKey, p.URL)
+			fetchCancel()
+			if officialErr == nil && content != "" {
+				throttle.ReportSuccess(officialFetchHostKey)
+				return t.formatOfficialFetch(p.URL, title, content, maxSize, time.Since(start), ""), nil
+			}
+			if officialErr != nil {
+				officialNote = t.handleOfficialFetchFailure(throttle, officialErr)
+			} else {
+				// 200 但无内容:官方无法抽取,交本地再试(spec 允许降级)。
+				officialNote = "official fetch returned no content; local fetch used"
+			}
+		}
+	}
+
+	// localFail 把官方后端失败原因并入本地失败结果,理由同 web_search:
+	// 官方 402/429 降级后若本地也失败,原输出只剩本地错误,用户不知官方因何被跳过。
+	localFail := func(result *ToolResult) *ToolResult {
+		if result == nil || officialNote == "" {
+			return result
+		}
+		result.Content += "\n[official-backend] " + officialNote
+		if result.Error != nil {
+			result.Error.Message += "; official backend: " + officialNote
+		}
+		return result
+	}
+
 	if allowed, retryAt, state, consec := throttle.Reserve(host, time.Now()); !allowed {
 		kind := ErrKindRateLimited
 		stateName := "限流退避中"
@@ -226,7 +416,7 @@ func (t *WebFetch) Execute(ctx context.Context, p WebFetchParams) (*ToolResult, 
 		if err != nil {
 			duration := time.Since(start)
 			if attemptCtx.Err() == context.DeadlineExceeded {
-				return &ToolResult{
+				return localFail(&ToolResult{
 					Content: fmt.Sprintf("Request timed out after %s.\nURL: %s", formatDuration(timeout), p.URL),
 					Meta:    ToolMeta{Duration: duration},
 					Error: &ToolError{
@@ -234,10 +424,10 @@ func (t *WebFetch) Execute(ctx context.Context, p WebFetchParams) (*ToolResult, 
 						Kind:    ErrKindTimeout,
 						Message: fmt.Sprintf("request timed out after %s. Increase timeout_ms or try a lighter URL", formatDuration(timeout)),
 					},
-				}, nil
+				}), nil
 			}
-			return toolError(ErrorClassRecoverable, ErrKindCommandFailed,
-				fmt.Sprintf("request failed: %v. Check the URL and your network, or try web_search to find the resource", err), err), nil
+			return localFail(toolError(ErrorClassRecoverable, ErrKindCommandFailed,
+				fmt.Sprintf("request failed: %v. Check the URL and your network, or try web_search to find the resource", err), err)), nil
 		}
 
 		// 读取响应体(受大小限制,分块检查 context 取消)。限流判定在
@@ -308,7 +498,7 @@ func (t *WebFetch) Execute(ctx context.Context, p WebFetchParams) (*ToolResult, 
 			until, consec := throttle.ReportBlocked(host, time.Now())
 			msg := fmt.Sprintf("HTTP 403 %s — 目标站策略封锁(非限流头)。连续失败 %d 次,冷却至 %s(UTC)。重试同一 URL 无意义——换源、换抓取方式,或冷却结束后再试",
 				resp.Status, consec, until.UTC().Format(time.RFC3339))
-			return &ToolResult{
+			return localFail(&ToolResult{
 				Content: fmt.Sprintf("HTTP %d %s\nURL: %s\n\n%s",
 					resp.StatusCode, resp.Status, p.URL, preview),
 				Meta: ToolMeta{
@@ -320,7 +510,7 @@ func (t *WebFetch) Execute(ctx context.Context, p WebFetchParams) (*ToolResult, 
 					Kind:    ErrKindBlocked,
 					Message: msg,
 				},
-			}, nil
+			}), nil
 		}
 		// 限流类(429/503/403+RA):错误携带会话级连续次数与最早可重试时间
 		if isRateLimitedStatus(resp.StatusCode, resp.Header) {
@@ -330,7 +520,7 @@ func (t *WebFetch) Execute(ctx context.Context, p WebFetchParams) (*ToolResult, 
 			}
 			msg := fmt.Sprintf("HTTP %d %s (%s限流)。连续失败 %d 次,最早可重试 %s(UTC)。到点前重试同一 URL 大概率仍失败——先处理其他任务或换源",
 				resp.StatusCode, resp.Status, verb, throttleConsec, throttleUntil.UTC().Format(time.RFC3339))
-			return &ToolResult{
+			return localFail(&ToolResult{
 				Content: fmt.Sprintf("HTTP %d %s\nURL: %s\n\n%s",
 					resp.StatusCode, resp.Status, p.URL, preview),
 				Meta: ToolMeta{
@@ -342,10 +532,10 @@ func (t *WebFetch) Execute(ctx context.Context, p WebFetchParams) (*ToolResult, 
 					Kind:    ErrKindRateLimited,
 					Message: msg,
 				},
-			}, nil
+			}), nil
 		}
 		msg := fmt.Sprintf("HTTP %d %s. Use web_search to find an alternative URL if the page is unavailable", resp.StatusCode, resp.Status)
-		return &ToolResult{
+		return localFail(&ToolResult{
 			Content: fmt.Sprintf("HTTP %d %s\nURL: %s\n\n%s",
 				resp.StatusCode, resp.Status, p.URL, preview),
 			Meta: ToolMeta{
@@ -357,7 +547,7 @@ func (t *WebFetch) Execute(ctx context.Context, p WebFetchParams) (*ToolResult, 
 				Kind:    ErrKindCommandFailed,
 				Message: msg,
 			},
-		}, nil
+		}), nil
 
 	}
 	// 成功响应:清零会话级限流状态(连续失败计数/退避/封锁)。
@@ -372,6 +562,10 @@ func (t *WebFetch) Execute(ctx context.Context, p WebFetchParams) (*ToolResult, 
 	var buf bytes.Buffer
 	fmt.Fprintf(&buf, "Fetched %s  HTTP %d", p.URL, resp.StatusCode)
 	fmt.Fprintf(&buf, "  %s", duration.Round(time.Millisecond))
+	// 本地兜底时说明官方后端为何未生效,避免"为什么这次没有 Markdown"的困惑。
+	if officialNote != "" {
+		fmt.Fprintf(&buf, "\n[fallback] %s", officialNote)
+	}
 	fmt.Fprintf(&buf, "\nContent-Type: %s", contentType)
 	fmt.Fprintf(&buf, "\nSize: %s", formatSize(int64(len(bodyBytes))))
 	if truncated {
