@@ -47,6 +47,9 @@ specs/           各组件规格书(修改前先阅读;内部文档,不纳入公
   - 文件系统操作优先使用 `filepath.WalkDir`、`os.ReadDir` 等标准库,禁止直接调用外部命令(如 `find`、`ls`、`dir`)
   - 路径拼接必须使用 `filepath.Join`,分隔符使用 `filepath.Separator`,禁止硬编码 `/` 或 `\`
   - 外部 API 调用前确认第三方包是否声明了跨平台支持,必要时用 `runtime.GOOS` 条件编译
+  - **平台差异排查**:CI 只在单一平台失败时,先取事实再改代码
+    - 第一步在失败分支埋诊断(打印 `runtime.GOOS`、关键路径、对照执行结果、输入数据),一轮 CI 拿到确定事实后再改;禁止连续提交猜测性修复用 CI 试错 —— 实测 Windows 上 skill 注入失败,猜测性修复走了 4 轮才收敛,埋诊断后 1 轮定位
+    - 已踩过的 Windows 陷阱(代码内均有 `REGRESSION:` 注释):Git Bash 的子进程 stdout 不能指向文件句柄(会 exit 1 且零输出);`System32\bash.exe` 是 WSL 启动器,未装发行版时任何命令都 exit 1;Git for Windows 有 `Git\cmd` 与 `Git\bin` 两种布局,推算 bash 路径时两种都要覆盖
 
 ## 代码审查
 
