@@ -1205,16 +1205,24 @@ func (l *Loader) execShell(command, dir string) string {
 	cmd.Dir = dir
 	setSysProcAttrSkill(cmd)
 
-	// 创建输出文件（O_APPEND，合并 stdout/stderr）
-	outputPath := filepath.Join(pathutil.TempDir(), fmt.Sprintf("waveloom-skill-%d.log", time.Now().UnixNano()))
-	outputFile, err := os.OpenFile(outputPath, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o600)
-	useFileFD := err == nil
 	var stdout, stderr strings.Builder
-	if useFileFD {
-		defer func() { _ = outputFile.Close() }()
-		cmd.Stdout = outputFile
-		cmd.Stderr = outputFile
-	} else {
+	// 输出方式:Unix 用文件 fd 消除管道 SIGPIPE 问题;Windows 用内存 buffer。
+	// REGRESSION: Windows 上把子进程 stdout/stderr 指向文件句柄时,Git Bash 的
+	// `echo` 写失败返回 exit 1 且无任何输出 —— skill 注入全部静默失败,而同一
+	// shell 同一命令用 CombinedOutput(pipe) 正常。SIGPIPE 是 Unix 特有概念,
+	// Windows 无需该规避,直接用 buffer。
+	outputPath := ""
+	useFileFD := false
+	if runtime.GOOS != "windows" {
+		outputPath = filepath.Join(pathutil.TempDir(), fmt.Sprintf("waveloom-skill-%d.log", time.Now().UnixNano()))
+		if outputFile, err := os.OpenFile(outputPath, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o600); err == nil {
+			useFileFD = true
+			defer func() { _ = outputFile.Close() }()
+			cmd.Stdout = outputFile
+			cmd.Stderr = outputFile
+		}
+	}
+	if !useFileFD {
 		cmd.Stdout = &stdout
 		cmd.Stderr = &stderr
 	}

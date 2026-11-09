@@ -63,34 +63,48 @@ func ShellInterpreter() (binary string, args []string) {
 	return cachedShell.bin, cachedShell.args
 }
 
-// resolveWindowsShell 在 Windows 上定位 Git Bash 的 bash.exe。
-// 探测顺序：
-//  1. PATH 中的 bash / bash.exe（运行在 Git Bash 中时最可靠）
-//  2. WAVELOOM_GIT_BASH_PATH 环境变量
-//  3. 从 git.exe 路径推算 ../../bin/bash.exe
-//  4. 常见安装路径（C:\Program Files\Git\bin\bash.exe）
-//  5. 都找不到 → 返回空字符串，由调用方报错
-func resolveWindowsShell() (string, []string) {
-	// 0. 直接查找 PATH（用户在 Git Bash 中运行 waveloom 时 bash.exe 就在 PATH 中）
-	if bashPath, err := exec.LookPath("bash.exe"); err == nil {
-		return bashPath, []string{"-c"}
+// isWSLBashLauncher 判断路径是否为 WSL 的 bash 启动器。
+//
+// Windows 10+ 自带 %SystemRoot%\System32\bash.exe,它是 WSL 入口而非 Git Bash:
+// 未安装 WSL 发行版时执行任何命令都返回 exit 1 且无输出。GitHub Actions 的
+// windows-latest 镜像正是这种状态 —— 裸 LookPath("bash.exe") 会命中它,
+// 导致所有 shell 执行静默失败。
+func isWSLBashLauncher(path string) bool {
+	if path == "" {
+		return false
 	}
-	if bashPath, err := exec.LookPath("bash"); err == nil {
-		return bashPath, []string{"-c"}
+	sysRoot := os.Getenv("SystemRoot")
+	if sysRoot == "" {
+		sysRoot = `C:\Windows`
 	}
+	launcher := filepath.Clean(filepath.Join(sysRoot, "System32", "bash.exe"))
+	return strings.EqualFold(filepath.Clean(path), launcher)
+}
 
-	// 1. 环境变量
+// resolveWindowsShell 在 Windows 上定位 Git Bash 的 bash.exe。
+// 探测顺序:
+//  1. WAVELOOM_GIT_BASH_PATH 环境变量(用户显式指定,最高优先)
+//  2. 从 git.exe 路径推算 ../../bin/bash.exe(最可靠的自动探测)
+//  3. PATH 中的 bash / bash.exe,排除 WSL 启动器
+//  4. 常见安装路径(C:\Program Files\Git\bin\bash.exe)
+//  5. 都找不到 → 返回空字符串,由调用方报错
+//
+// REGRESSION: 原实现把裸 PATH 查找放第一位。GitHub windows-latest 的 PATH 里有
+// %SystemRoot%\System32\bash.exe(WSL 启动器),被优先选中后 skill 动态注入
+// `echo a done` 返回 "exit status 1" 且无输出,TestRegression_AllowedToolsScalar
+// StringFeedsWhitelist 在 Windows CI 上失败。Git 推算优先 + 显式排除 WSL 启动器修复。
+func resolveWindowsShell() (string, []string) {
+	// 1. 环境变量(显式指定优先于一切自动探测)
 	if envPath := os.Getenv("WAVELOOM_GIT_BASH_PATH"); envPath != "" {
 		if fi, err := os.Stat(envPath); err == nil && !fi.IsDir() {
 			return envPath, []string{"-c"}
 		}
-		slog.Warn("WAVELOOM_GIT_BASH_PATH set but path does not exist, falling back to PATH lookup", "path", envPath)
+		slog.Warn("WAVELOOM_GIT_BASH_PATH set but path does not exist, falling back to auto-detection", "path", envPath)
 	}
 
-	// 2. 从 git.exe 推算
+	// 2. 从 git.exe 推算:gitPath 形如 C:\Program Files\Git\cmd\git.exe,
+	//    bash 在 ..\..\bin\bash.exe
 	if gitPath, err := exec.LookPath("git"); err == nil {
-		// gitPath 形如 C:\Program Files\Git\cmd\git.exe
-		// bash 在 ..\..\bin\bash.exe
 		gitDir := filepath.Dir(gitPath)
 		bashPath := filepath.Join(gitDir, "..", "..", "bin", "bash.exe")
 		if fi, err := os.Stat(bashPath); err == nil && !fi.IsDir() {
@@ -98,7 +112,14 @@ func resolveWindowsShell() (string, []string) {
 		}
 	}
 
-	// 3. 常见安装路径
+	// 3. PATH 查找,跳过 WSL 启动器
+	for _, name := range []string{"bash.exe", "bash"} {
+		if bashPath, err := exec.LookPath(name); err == nil && !isWSLBashLauncher(bashPath) {
+			return bashPath, []string{"-c"}
+		}
+	}
+
+	// 4. 常见安装路径
 	commonPaths := []string{
 		`C:\Program Files\Git\bin\bash.exe`,
 	}
@@ -108,6 +129,6 @@ func resolveWindowsShell() (string, []string) {
 		}
 	}
 
-	// 4. 找不到 → 返回空，由 ShellInterpreter 调用方处理
+	// 5. 找不到 → 返回空,由 ShellInterpreter 调用方处理
 	return "", nil
 }

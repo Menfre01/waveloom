@@ -2,12 +2,14 @@ package skill
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
 
 	"github.com/Menfre01/waveloom/pkg/permission"
+	"github.com/Menfre01/waveloom/pkg/shellutil"
 )
 
 // ===========================================================================
@@ -72,7 +74,42 @@ allowed-tools: Bash(echo a:*, echo b:*)
 		t.Fatalf("Load should pass lint with scalar allowed-tools, got: %v", err)
 	}
 	if !strings.Contains(loaded.Body, "done") {
+		reportShellDiagnostics(t)
+		// 对照:直接给正确命令走 skill 的 execShell 路径,
+		// 区分是执行链路问题还是注入命令提取问题。
+		skillDir := filepath.Join(home, ".claude", "skills", "test")
+		t.Logf("runCommand(\"echo a done\") = %q", l.runCommand("echo a done", skillDir))
+		t.Logf("extractInjectionCommands = %#v", extractInjectionCommands("!`echo a done`"))
 		t.Errorf("injection not executed: %q", loaded.Body)
+	}
+}
+
+// reportShellDiagnostics 在注入执行失败时打印 shell 解析环境。
+// Windows CI 上 `echo a done` 返回 exit 1 且无输出,需要区分是 shell 选错
+// (WSL 启动器 / 路径缺失)还是命令本身失败。
+func reportShellDiagnostics(t *testing.T) {
+	t.Helper()
+	bin, shellArgs := shellutil.ShellInterpreter()
+	t.Logf("GOOS=%s ShellInterpreter=(%q, %v)", runtime.GOOS, bin, shellArgs)
+	t.Logf("HOME=%q USERPROFILE=%q SystemRoot=%q",
+		os.Getenv("HOME"), os.Getenv("USERPROFILE"), os.Getenv("SystemRoot"))
+
+	run := func(label, dir string) {
+		args := append(append([]string{}, shellArgs...), "echo "+label+"-ok")
+		cmd := exec.Command(bin, args...)
+		if dir != "" {
+			cmd.Dir = dir
+		}
+		out, err := cmd.CombinedOutput()
+		t.Logf("%s (Dir=%q): out=%q err=%v", label, dir, out, err)
+	}
+
+	run("direct", "")                          // bash 本身能否执行
+	tmp := t.TempDir()
+	run("tempdir", tmp)                        // t.TempDir() 作为工作目录
+	skillDir := filepath.Join(tmp, ".claude", "skills", "test")
+	if err := os.MkdirAll(skillDir, 0o755); err == nil {
+		run("skilldir", skillDir)              // skill 目录作为工作目录
 	}
 }
 

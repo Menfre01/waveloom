@@ -32,3 +32,31 @@ func TestIsBackgroundCommand(t *testing.T) {
 		}
 	}
 }
+
+// REGRESSION: Windows 自带 %SystemRoot%\System32\bash.exe 是 WSL 启动器而非
+// Git Bash。GitHub windows-latest 的 PATH 里有它,裸 LookPath("bash.exe") 会命中,
+// 未装 WSL 发行版时任何命令都返回 exit 1 且无输出 —— skill 动态注入全部静默失败。
+func TestIsWSLBashLauncher(t *testing.T) {
+	t.Setenv("SystemRoot", "/fake-windows")
+
+	cases := []struct {
+		name string
+		path string
+		want bool
+	}{
+		{"system32-bash", "/fake-windows/System32/bash.exe", true},
+		{"case-insensitive", "/FAKE-WINDOWS/system32/BASH.EXE", true},
+		{"with-dot-segments", "/fake-windows/./System32/../System32/bash.exe", true},
+		{"git-bash", "/Program Files/Git/bin/bash.exe", false},
+		{"unix-bash", "/bin/bash", false},
+		{"empty", "", false},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := isWSLBashLauncher(c.path); got != c.want {
+				t.Errorf("isWSLBashLauncher(%q) = %v, want %v", c.path, got, c.want)
+			}
+		})
+	}
+}
