@@ -1,3 +1,18 @@
+## [v0.10.0] — 2026-11-09
+
+### 新增功能
+- **DeepSeek 官方搜索与抓取后端**:接入官方 2026-10-17 开放的自研搜索引擎独立端点(`POST /v1/tools/search`、`POST /v1/tools/fetch`,5 元/千次成功调用),作为 `web_search` / `web_fetch` 的首选后端。搜索结果携带重排分数(0–3,≥1.5 为高质量)、权威度(0–4,≥3 为权威源)与发布时间,长摘要只附给高分前 3 条以控制上下文体积;`web_fetch` 直接返回 Markdown,省去 HTML→文本的启发式抽取。失败按状态码分流:200 空结果不回退(避免重复付费)、402 余额不足进入 5 分钟冷却窗口(充值后不需重启)、429 走会话级退避、5xx/超时/连接错误静默降级;本地后端也失败时,错误信息同时携带官方后端失败原因,避免把"余额不足"误判为网络问题。凭据与 LLM 同域同 key,每次调用现读设置,`/provider` 切换即时生效。无凭据时行为与改动前完全一致
+
+### 修复
+- **Windows 上 shell 调用全部静默失败**:skill 动态注入等场景把子进程 stdout/stderr 指向文件句柄时,Git Bash 的 `echo` 写失败返回 exit 1 且无任何输出,表现为 skill 加载后内容为空。文件 fd 方案本是为消除 Unix 管道 SIGPIPE,Windows 无此概念,改用内存 buffer 收集。同时修正 Windows shell 探测:顺序改为 显式环境变量 → git.exe 推算 → PATH → 常见路径,并在 PATH 查找中排除 `System32\bash.exe`(WSL 入口,未装发行版时任何命令都 exit 1);git 推算不再固定按 `..\..\bin` 计算,覆盖 `Git\cmd` 与 `Git\bin` 两种安装布局
+- **`--resume` 沿用旧 system prompt**:恢复历史会话时整体采用磁盘消息,而 session 的 `messages[0]` 保存的就是当时的整份系统提示词,导致提示词升级后老会话一条新规则都不生效——升级对历史会话形同虚设;现恢复时用本次构建的 prompt 覆盖
+- **系统提示词文本损坏与行为约束失效**:4 处 Go 字符串拼接残留经 `go:embed` 原样进入 system prompt;`web_search`/`web_fetch` 引用的 `## Information Sources` 节缺失(搜索纪律整节悬空);成本倍数 240x 是拿输出价对比缓存命中价且未写明比较对象(对未命中输入实际约 4x,失真的成本信号会诱导模型过度压缩输出)。行为约束此前集中在提示词中段,而实测竞争条件下 END 位置指令遵从 10/12、MID 0/12 —— 现抽到 `tail.md`,由主流程与 ACP 两个入口在组装链绝对末尾注入,承载决策边界(可逆操作自主执行、不制造决策点)、禁止建议式收尾、动作完整性;`ask_user_question` 不再把项目内实现选择抛给用户,`Quality Gates` 移除可援引的"卡住就提建议"出口
+- **`allowed-tools` 标量写法导致 skill 元信息全丢**:Claude Code 允许标量字符串(openspec CLI 生成的 `allowed-tools: Bash(openspec:*)` 即此),旧实现解码失败后丢弃整份 frontmatter,name/description 静默消失,skill 列表只剩空描述;现标量/列表双兼容,整体解码失败时降级逐字段解析。同时支持嵌套 commands 目录(`commands/opsx/apply.md` → `opsx:apply`)与限定名回查,并拒绝含路径分隔符或上跳段的名称
+
+---
+
+📝 [Changelog (English)](https://github.com/Menfre01/waveloom/blob/dev/CHANGELOG.en.md)
+
 ## [v0.9.1] — 2026-09-14
 
 ### 修复

@@ -119,7 +119,7 @@ waveloom
 Type `/model` in interactive mode, or `waveloom --model deepseek-flash`. Select `proplan` to use the `model` in plan mode and the `sub_model` for regular tasks (`/model proplan`). Requires both configured in `settings.json`; it falls back to a plain model error otherwise.
 
 **Q: Does web_search work with deepseek-flash?**
-Yes — `web_search` runs on the local backend (DuckDuckGo by default, Brave via `BRAVE_API_KEY`) on every provider. Note: DeepSeek used to offer a server-side built-in `web_search` in the Responses API; it has since been retired (the compatibility table now lists built-in `web_search` as *Ignored*), so Waveloom exposes it as a regular function tool for all models.
+Yes. On the `deepseek` provider, `web_search` uses DeepSeek's own search API (5 CNY per 1000 successful calls) and returns a rerank score, an authority tier and a publish date for each hit; `web_fetch` likewise returns clean Markdown. When that backend is unavailable — a different provider, no API key, rate limiting or an out-of-balance account — it falls back automatically to the local backend (DuckDuckGo by default, Brave via `BRAVE_API_KEY`), and the output marks which backend actually served the result. This is unrelated to the retired server-side built-in `web_search` of the Responses API (still listed as *Ignored* in the compatibility table): Waveloom always exposes search as a regular function tool.
 
 **Q: How do I switch LLM providers?**
 Type `/provider` to open the interactive provider picker (overlay with ↑↓ select / Enter confirm / Esc cancel), or `/provider kimi` to switch directly. Profiles are configured in `settings.json` under `llm.profiles`.
