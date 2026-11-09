@@ -81,6 +81,31 @@ func isWSLBashLauncher(path string) bool {
 	return strings.EqualFold(filepath.Clean(path), launcher)
 }
 
+// findBashNearGit 从 git.exe 所在目录向上探测 Git Bash 的 bash.exe。
+//
+// Git for Windows 有两种布局,git.exe 位置不同:
+//   - C:\Program Files\Git\cmd\git.exe  -> bash 在 ..\bin\bash.exe
+//   - C:\Program Files\Git\bin\git.exe  -> bash 在同级 bash.exe
+//
+// REGRESSION: 原实现固定按 `..\..\bin\bash.exe` 推算,遇到 bin 布局会算到
+// C:\Program Files\bin\bash.exe(不存在);GitHub windows-latest 正是 bin 布局,
+// 推算失败后只能靠 PATH 兜底。现改为向上最多 3 层、每层试同级与 bin 子目录。
+func findBashNearGit(gitPath string) string {
+	dir := filepath.Dir(gitPath)
+	for depth := 0; depth < 3; depth++ {
+		for _, candidate := range []string{
+			filepath.Join(dir, "bash.exe"),
+			filepath.Join(dir, "bin", "bash.exe"),
+		} {
+			if fi, err := os.Stat(candidate); err == nil && !fi.IsDir() {
+				return candidate
+			}
+		}
+		dir = filepath.Dir(dir)
+	}
+	return ""
+}
+
 // resolveWindowsShell 在 Windows 上定位 Git Bash 的 bash.exe。
 // 探测顺序:
 //  1. WAVELOOM_GIT_BASH_PATH 环境变量(用户显式指定,最高优先)
@@ -102,12 +127,9 @@ func resolveWindowsShell() (string, []string) {
 		slog.Warn("WAVELOOM_GIT_BASH_PATH set but path does not exist, falling back to auto-detection", "path", envPath)
 	}
 
-	// 2. 从 git.exe 推算:gitPath 形如 C:\Program Files\Git\cmd\git.exe,
-	//    bash 在 ..\..\bin\bash.exe
+	// 2. 从 git.exe 推算(cmd 与 bin 两种布局都覆盖)
 	if gitPath, err := exec.LookPath("git"); err == nil {
-		gitDir := filepath.Dir(gitPath)
-		bashPath := filepath.Join(gitDir, "..", "..", "bin", "bash.exe")
-		if fi, err := os.Stat(bashPath); err == nil && !fi.IsDir() {
+		if bashPath := findBashNearGit(gitPath); bashPath != "" {
 			return bashPath, []string{"-c"}
 		}
 	}

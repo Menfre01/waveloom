@@ -1,6 +1,10 @@
 package shellutil
 
-import "testing"
+import (
+	"os"
+	"path/filepath"
+	"testing"
+)
 
 func TestIsBackgroundCommand(t *testing.T) {
 	tests := []struct {
@@ -30,6 +34,55 @@ func TestIsBackgroundCommand(t *testing.T) {
 		if got != tt.want {
 			t.Errorf("IsBackgroundCommand(%q) = %v, want %v", tt.cmd, got, tt.want)
 		}
+	}
+}
+
+// findBashNearGit 覆盖 Git for Windows 的两种安装布局。
+// REGRESSION: 原实现固定按 ..\..\bin\bash.exe 推算,bin 布局会算到
+// C:\Program Files\bin(不存在),GitHub windows-latest 正是这种布局。
+func TestFindBashNearGit(t *testing.T) {
+	root := t.TempDir()
+
+	writeStub := func(path string) {
+		t.Helper()
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", filepath.Dir(path), err)
+		}
+		if err := os.WriteFile(path, []byte("stub"), 0o755); err != nil {
+			t.Fatalf("write %s: %v", path, err)
+		}
+	}
+
+	// 布局 A:Git/cmd/git.exe + Git/bin/bash.exe
+	layoutCmd := filepath.Join(root, "a", "Git")
+	writeStub(filepath.Join(layoutCmd, "cmd", "git.exe"))
+	writeStub(filepath.Join(layoutCmd, "bin", "bash.exe"))
+
+	// 布局 B:Git/bin/git.exe + Git/bin/bash.exe(同级)
+	layoutBin := filepath.Join(root, "b", "Git")
+	writeStub(filepath.Join(layoutBin, "bin", "git.exe"))
+	writeStub(filepath.Join(layoutBin, "bin", "bash.exe"))
+
+	// 布局 C:只有 git.exe,没有 bash
+	layoutNone := filepath.Join(root, "c", "Git")
+	writeStub(filepath.Join(layoutNone, "cmd", "git.exe"))
+
+	cases := []struct {
+		name    string
+		gitPath string
+		want    string
+	}{
+		{"cmd-layout", filepath.Join(layoutCmd, "cmd", "git.exe"), filepath.Join(layoutCmd, "bin", "bash.exe")},
+		{"bin-layout", filepath.Join(layoutBin, "bin", "git.exe"), filepath.Join(layoutBin, "bin", "bash.exe")},
+		{"no-bash", filepath.Join(layoutNone, "cmd", "git.exe"), ""},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := findBashNearGit(c.gitPath); got != c.want {
+				t.Errorf("findBashNearGit(%q) = %q, want %q", c.gitPath, got, c.want)
+			}
+		})
 	}
 }
 
